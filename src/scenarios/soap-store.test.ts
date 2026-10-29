@@ -7,7 +7,7 @@ import {
   SchemaIssue,
   SchemaTransformation,
 } from "effect";
-import { type HttpClient, HttpBody } from "effect/http";
+import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { lane } from "#lane";
 import {
   Body,
@@ -1488,6 +1488,47 @@ describe(`soap-store (${lane.name})`, () => {
             expect(fromUrl).toContain("<wsdl:definitions");
             expect((yield* backend.ledger).map(({ target }) => target)).toEqual(
               ["/soap?wsdl", "/soap?wsdl=", "/soap?wsdl"],
+            );
+          }),
+      );
+
+    for (const [client, layer] of lane.clients)
+      it.live(
+        `[QRY-1] currently, client middleware that appends a URL parameter re-serialises the query and ?wsdl becomes ?wsdl= (#24); editing the URL text keeps it (${client})`,
+        () =>
+          Effect.gen(function* () {
+            const backend = yield* start();
+            const described = (
+              transformClient: (
+                client: HttpClient.HttpClient,
+              ) => HttpClient.HttpClient,
+            ) =>
+              Operation.make(
+                Request.get(`${backend.origin}/soap?wsdl`),
+                Response.when(() => true, Body.text),
+                { transformClient },
+              )
+                .execute(undefined)
+                .pipe(Effect.provide(layer));
+            // Effect builds the dispatch URL with URLSearchParams when a request carries
+            // parameters, which writes the whole query again as form data.
+            const byParameter = yield* described(
+              HttpClient.mapRequest(
+                HttpClientRequest.appendUrlParam("client", "suite"),
+              ),
+            );
+            const byText = yield* described(
+              HttpClient.mapRequest((request) =>
+                HttpClientRequest.setUrl(
+                  request,
+                  `${request.url}&client=suite`,
+                ),
+              ),
+            );
+            expect(byParameter).not.toContain("<wsdl:definitions");
+            expect(byText).toContain("<wsdl:definitions");
+            expect((yield* backend.ledger).map(({ target }) => target)).toEqual(
+              ["/soap?wsdl=&client=suite", "/soap?wsdl&client=suite"],
             );
           }),
       );
