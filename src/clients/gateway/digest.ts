@@ -51,6 +51,10 @@ const parameters = (value: string): Map<string, string> | string => {
   return result;
 };
 
+/** A quoted string: backslash and double quote escaped, as the parameter parser reads them. */
+const quote = (value: string): string =>
+  `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+
 /** A `WWW-Authenticate` value in the RFC 2069 form: MD5 only, and no `qop` this client cannot answer. */
 export const ChallengeFromHeader = Schema.String.pipe(
   Schema.decodeTo(
@@ -91,10 +95,10 @@ export const ChallengeFromHeader = Schema.String.pipe(
       },
       encode: (challenge) =>
         Effect.succeed(
-          `Digest realm="${challenge.realm}", nonce="${challenge.nonce}"` +
+          `Digest realm=${quote(challenge.realm)}, nonce=${quote(challenge.nonce)}` +
             (challenge.opaque === undefined
               ? ""
-              : `, opaque="${challenge.opaque}"`) +
+              : `, opaque=${quote(challenge.opaque)}`) +
             ", algorithm=MD5" +
             (challenge.stale ? ", stale=true" : ""),
         ),
@@ -118,9 +122,6 @@ export const challengeDecoder = Body.decoder((response) =>
     ),
   ),
 );
-
-const quote = (value: string): string =>
-  `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 
 export interface Credentials {
   readonly username: string;
