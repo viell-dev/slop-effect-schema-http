@@ -174,6 +174,9 @@ provider`
   - `[PAY-3a] a depth-1 multistatus lists the collection and its subcollections, which the listing
 skips`
   - `[PAY-3a] the WSDL names every client action's URI in both bindings`
+  - `[PAY-3a] an operation outside the store's namespace is refused, even when SOAPAction names the same namespace`
+    (a wrong namespace in both places, in SOAP 1.1 and 1.2, and a missing one: plain-text 400)
+  - `[PAY-3a] any prefix bound to the store's namespace dispatches, wherever the binding is declared`
   - SOAP 1.2 through the store: the `[HDR-5f]` tests.
   - Round trips: `[PAY-3a] ListDocuments results round-trip all three list shapes and refuse the
 others`, `[PAY-3a] SOAP 1.1 and 1.2 documents round-trip a payload and refuse the other
