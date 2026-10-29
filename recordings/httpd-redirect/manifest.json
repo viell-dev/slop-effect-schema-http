@@ -1,0 +1,46 @@
+{
+  "set": "httpd-redirect",
+  "description": "Redirect permanent from httpd 2.4's mod_alias for the gateway's old desktop path: its Location and its page, for a GET with the report's query and for a POST.",
+  "recorded": "2026-10-29T23:48:08.798Z",
+  "images": [
+    "httpd:2.4.69@sha256:d3accb516506c05ae0068bb54ba6798a10b249b64db91268fca692326cb02b4b"
+  ],
+  "built": "sha256:76af47ada8346005343399a888b59371c0714a6a2db9795259b3379614d9f139",
+  "versions": {
+    "httpd": [
+      "Server version: Apache/2.4.69 (Unix)",
+      "Server built:   Oct 28 2026 01:15:47"
+    ]
+  },
+  "substitutions": [
+    "The gateway documents its old desktop path as an Apache 1.3 Redirect permanent. No maintained Apache 1.3 image exists; this is httpd 2.4.69's mod_alias, whose page is httpd 2.4's.",
+    "Apache 1.3's Redirect needed an absolute URL as its target; httpd 2.4 also takes a URL-path and completes it from the request. With the Host header this recording sends, both produce the same Location."
+  ],
+  "client": "scripts/record.mjs: a raw TCP socket from the host to the published port; each request is written as listed, with Content-Length and Connection: close added. The Host header names port 8080, which httpd copies into Location.",
+  "commands": [
+    "docker build -t hostile-recording-httpd-redirect recordings/httpd-redirect",
+    "docker run -d --name hostile-recording-httpd-redirect -p 127.0.0.1::80 hostile-recording-httpd-redirect",
+    "docker port hostile-recording-httpd-redirect 80/tcp",
+    "docker exec hostile-recording-httpd-redirect httpd -v"
+  ],
+  "exchanges": [
+    {
+      "name": "get",
+      "description": "The desktop client's GET of the balance report, with its query.",
+      "method": "GET",
+      "target": "/cgi-bin/rpt.exe?session=sso-7f3a9c41&report=balance&account=00012345",
+      "status": "HTTP/1.1 301 Moved Permanently",
+      "request": "get.request.http",
+      "response": "get.response.http"
+    },
+    {
+      "name": "post",
+      "description": "A form POST to the old path.",
+      "method": "POST",
+      "target": "/cgi-bin/rpt.exe?session=sso-7f3a9c41",
+      "status": "HTTP/1.1 301 Moved Permanently",
+      "request": "post.request.http",
+      "response": "post.response.http"
+    }
+  ]
+}

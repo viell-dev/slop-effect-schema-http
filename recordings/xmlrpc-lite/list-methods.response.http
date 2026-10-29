@@ -1,0 +1,8 @@
+HTTP/1.1 200 OK
+Date: Thu, 29 Oct 2026 23:25:33 GMT
+Server: libwww-perl-daemon/6.16
+Content-Length: 373
+Content-Type: text/xml
+SOAPServer: SOAP::Lite/Perl/1.27
+
+<?xml version="1.0" encoding="UTF-8"?><methodResponse><params><param><value><array><data><value><string>system.listMethods</string></value><value><string>report.count</string></value><value><string>account.title</string></value><value><string>invoice.get</string></value><value><string>extract.fetch</string></value></data></array></value></param></params></methodResponse>

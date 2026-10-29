@@ -1,0 +1,136 @@
+{
+  "description": "XML-RPC replies from XMLRPC::Lite 0.717 (SOAP::Lite 1.27) under its HTTP daemon, serving the gateway's five methods over data.json.",
+  "host": "gateway.example",
+  "port": 8080,
+  "probe": {
+    "method": "GET",
+    "target": "/"
+  },
+  "client": "scripts/record.mjs: a raw TCP socket from the host to the published port; each request is written as listed, with Content-Length and Connection: close added.",
+  "substitutions": [
+    "The gateway's service page says XMLRPC::Lite took over the endpoint from Frontier::RPC. This is XMLRPC::Lite 0.717, the release split out of SOAP::Lite, as Debian 12 packages it, under its own HTTP daemon (XMLRPC::Transport::HTTP::Daemon on HTTP::Daemon) instead of Apache.",
+    "The handlers are this set's lite.pl, written for the recording; the serializer, the dispatcher, the content-type check and the HTTP server are the modules'."
+  ],
+  "versions": {
+    "perl": ["perl", "-e", "print qq{$^V\\n}"],
+    "modules": [
+      "perl",
+      "-MXMLRPC::Lite",
+      "-MSOAP::Lite",
+      "-MHTTP::Daemon",
+      "-e",
+      "print qq{XMLRPC::Lite $XMLRPC::Lite::VERSION\\nSOAP::Lite $SOAP::Lite::VERSION\\nHTTP::Daemon $HTTP::Daemon::VERSION\\n}"
+    ],
+    "packages": [
+      "dpkg-query",
+      "--show",
+      "libxmlrpc-lite-perl",
+      "libsoap-lite-perl",
+      "libhttp-daemon-perl",
+      "libxml-parser-perl",
+      "perl"
+    ]
+  },
+  "exchanges": [
+    {
+      "name": "list-methods",
+      "description": "system.listMethods: an array of strings.",
+      "request": {
+        "method": "POST",
+        "target": "/RPC2",
+        "headers": [["Content-Type", "text/xml"]],
+        "body": "<?xml version=\"1.0\"?>\n<methodCall><methodName>system.listMethods</methodName><params></params></methodCall>\n"
+      }
+    },
+    {
+      "name": "report-count",
+      "description": "report.count(\"202610\"): an integer.",
+      "request": {
+        "method": "POST",
+        "target": "/RPC2",
+        "headers": [["Content-Type", "text/xml"]],
+        "body": "<?xml version=\"1.0\"?>\n<methodCall><methodName>report.count</methodName><params><param><value><string>202610</string></value></param></params></methodCall>\n"
+      }
+    },
+    {
+      "name": "account-title",
+      "description": "account.title(\"00012345\"): a title with letters outside ASCII, returned as a typed string.",
+      "request": {
+        "method": "POST",
+        "target": "/RPC2",
+        "headers": [["Content-Type", "text/xml"]],
+        "body": "<?xml version=\"1.0\"?>\n<methodCall><methodName>account.title</methodName><params><param><value><string>00012345</string></value></param></params></methodCall>\n"
+      }
+    },
+    {
+      "name": "invoice-get",
+      "description": "invoice.get(7): a struct of an integer, an all-digit string, a double, a boolean, two dates and an array of structs whose text needs escaping.",
+      "request": {
+        "method": "POST",
+        "target": "/RPC2",
+        "headers": [["Content-Type", "text/xml"]],
+        "body": "<?xml version=\"1.0\"?>\n<methodCall><methodName>invoice.get</methodName><params><param><value><i4>7</i4></value></param></params></methodCall>\n"
+      }
+    },
+    {
+      "name": "invoice-unpaid",
+      "description": "invoice.get(8): false, the zero date, a migrated impossible date and an empty array.",
+      "request": {
+        "method": "POST",
+        "target": "/RPC2",
+        "headers": [["Content-Type", "text/xml"]],
+        "body": "<?xml version=\"1.0\"?>\n<methodCall><methodName>invoice.get</methodName><params><param><value><i4>8</i4></value></param></params></methodCall>\n"
+      }
+    },
+    {
+      "name": "extract-fetch",
+      "description": "extract.fetch(\"202610\"): 320 bytes of ISO-8859-1 as a typed base64 value.",
+      "request": {
+        "method": "POST",
+        "target": "/RPC2",
+        "headers": [["Content-Type", "text/xml"]],
+        "body": "<?xml version=\"1.0\"?>\n<methodCall><methodName>extract.fetch</methodName><params><param><value><string>202610</string></value></param></params></methodCall>\n"
+      }
+    },
+    {
+      "name": "fault-not-found",
+      "description": "invoice.get(999): the handler dies with a SOAP::Fault carrying the gateway's 404.",
+      "request": {
+        "method": "POST",
+        "target": "/RPC2",
+        "headers": [["Content-Type", "text/xml"]],
+        "body": "<?xml version=\"1.0\"?>\n<methodCall><methodName>invoice.get</methodName><params><param><value><i4>999</i4></value></param></params></methodCall>\n"
+      }
+    },
+    {
+      "name": "fault-unknown-method",
+      "description": "An unknown method.",
+      "request": {
+        "method": "POST",
+        "target": "/RPC2",
+        "headers": [["Content-Type", "text/xml"]],
+        "body": "<?xml version=\"1.0\"?>\n<methodCall><methodName>report.missing</methodName><params></params></methodCall>\n"
+      }
+    },
+    {
+      "name": "fault-malformed",
+      "description": "A call that is not well-formed XML: a bare ampersand.",
+      "request": {
+        "method": "POST",
+        "target": "/RPC2",
+        "headers": [["Content-Type", "text/xml"]],
+        "body": "<?xml version=\"1.0\"?>\n<methodCall><methodName>account.title</methodName><params><param><value><string>A & B</string></value></param></params></methodCall>\n"
+      }
+    },
+    {
+      "name": "not-xml",
+      "description": "A well-formed call sent as text/plain.",
+      "request": {
+        "method": "POST",
+        "target": "/RPC2",
+        "headers": [["Content-Type", "text/plain"]],
+        "body": "<?xml version=\"1.0\"?>\n<methodCall><methodName>report.count</methodName><params><param><value><string>202610</string></value></param></params></methodCall>\n"
+      }
+    }
+  ]
+}

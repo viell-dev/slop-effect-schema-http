@@ -1,0 +1,5 @@
+GET /admin/audit.cgi?period=202610 HTTP/1.1
+Host: gateway.example
+User-Agent: curl/8.23.0
+Accept: */*
+

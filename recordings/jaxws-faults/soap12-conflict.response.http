@@ -1,0 +1,11 @@
+HTTP/1.1 500 Internal Server Error
+Date: Thu, 29 Oct 2026 23:49:39 GMT
+Transfer-encoding: chunked
+Content-type: application/soap+xml; charset=utf-8
+
+5c
+<?xml version="1.0" ?><S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-envelope"><S:Body>
+186
+<S:Fault xmlns:ns4="http://schemas.xmlsoap.org/soap/envelope/"><S:Code><S:Value>S:Receiver</S:Value></S:Code><S:Reason><S:Text xml:lang="en">Document DOC-000001 is locked by archive-robot</S:Text></S:Reason><S:Detail><LockConflict xmlns="urn:docvault:store:2003"><HeldBy>archive-robot</HeldBy><Expires>2026-11-01T12:05:00Z</Expires></LockConflict></S:Detail></S:Fault></S:Body></S:Envelope>
+0
+

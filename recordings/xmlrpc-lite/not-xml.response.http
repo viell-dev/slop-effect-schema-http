@@ -1,0 +1,8 @@
+HTTP/1.1 200 OK
+Date: Thu, 29 Oct 2026 23:25:33 GMT
+Server: libwww-perl-daemon/6.16
+Content-Length: 386
+Content-Type: text/xml
+SOAPServer: SOAP::Lite/Perl/1.27
+
+<?xml version="1.0" encoding="UTF-8"?><methodResponse><fault><value><struct><member><name>faultString</name><value><string>Content-Type must be 'text/xml,' 'multipart/*,' 'application/soap+xml,' 'or 'application/dime' instead of 'text/plain'</string></value></member><member><name>faultCode</name><value><string>Client</string></value></member></struct></value></fault></methodResponse>

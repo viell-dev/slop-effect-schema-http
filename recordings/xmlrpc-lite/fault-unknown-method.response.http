@@ -1,0 +1,9 @@
+HTTP/1.1 200 OK
+Date: Thu, 29 Oct 2026 23:25:33 GMT
+Server: libwww-perl-daemon/6.16
+Content-Length: 670
+Content-Type: text/xml
+SOAPServer: SOAP::Lite/Perl/1.27
+
+<?xml version="1.0" encoding="UTF-8"?><methodResponse><fault><value><struct><member><name>faultString</name><value><string>Failed to access class (report): Can't locate report.pm in @INC (you may need to install the report module) (@INC contains: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.36.0 /usr/local/share/perl/5.36.0 /usr/lib/x86_64-linux-gnu/perl5/5.36 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.36 /usr/share/perl/5.36 /usr/local/lib/site_perl) at (eval 141) line 1.
+</string></value></member><member><name>faultCode</name><value><string>Client</string></value></member></struct></value></fault></methodResponse>

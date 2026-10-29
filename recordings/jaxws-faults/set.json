@@ -1,0 +1,103 @@
+{
+  "description": "SOAP 1.1 and 1.2 faults from the JAX-WS reference implementation in JDK 8, for the three ways DocVault's LockDocument refuses a call.",
+  "host": "soap-store.example",
+  "port": 8080,
+  "probe": {
+    "method": "GET",
+    "target": "/soap?wsdl"
+  },
+  "client": "scripts/record.mjs: a raw TCP socket from the host to the published port; each request is written as listed, with Content-Length and Connection: close added.",
+  "substitutions": [
+    "DocVault's LockDocument is documented as a contractor's SOAP 1.1 fault writer on a servlet container (2011). This is the JAX-WS reference implementation bundled with JDK 8, publishing Provider endpoints on the JDK's own HTTP server with Endpoint.publish, for SOAP 1.1 at /soap and SOAP 1.2, with the SOAP 1.2 HTTP binding, at /soap12.",
+    "The endpoints are this set's Store.java, Soap11.java and Soap12.java, written for the recording: they throw SOAPFaultException with faults built by SAAJ, which the runtime serializes and sends with its own status and headers."
+  ],
+  "versions": {
+    "java": ["java", "-version"]
+  },
+  "exchanges": [
+    {
+      "name": "soap11-missing-owner",
+      "description": "SOAP 1.1, a call without Owner: a sender fault with an empty detail.",
+      "request": {
+        "method": "POST",
+        "target": "/soap",
+        "headers": [
+          ["Content-Type", "text/xml; charset=utf-8"],
+          ["SOAPAction", "\"urn:docvault:store:2003#LockDocument\""]
+        ],
+        "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><LockDocument xmlns=\"urn:docvault:store:2003\"><Id>DOC-000001</Id></LockDocument></soap:Body></soap:Envelope>"
+      }
+    },
+    {
+      "name": "soap11-not-found",
+      "description": "SOAP 1.1, an unknown id: a sender fault with DocumentNotFound in its detail.",
+      "request": {
+        "method": "POST",
+        "target": "/soap",
+        "headers": [
+          ["Content-Type", "text/xml; charset=utf-8"],
+          ["SOAPAction", "\"urn:docvault:store:2003#LockDocument\""]
+        ],
+        "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><LockDocument xmlns=\"urn:docvault:store:2003\"><Id>DOC-999999</Id><Owner>clerk-7</Owner></LockDocument></soap:Body></soap:Envelope>"
+      }
+    },
+    {
+      "name": "soap11-conflict",
+      "description": "SOAP 1.1, a document another owner has locked: a receiver fault with LockConflict in its detail.",
+      "request": {
+        "method": "POST",
+        "target": "/soap",
+        "headers": [
+          ["Content-Type", "text/xml; charset=utf-8"],
+          ["SOAPAction", "\"urn:docvault:store:2003#LockDocument\""]
+        ],
+        "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><LockDocument xmlns=\"urn:docvault:store:2003\"><Id>DOC-000001</Id><Owner>clerk-7</Owner></LockDocument></soap:Body></soap:Envelope>"
+      }
+    },
+    {
+      "name": "soap12-missing-owner",
+      "description": "SOAP 1.2, a call without Owner: a sender fault with an empty detail.",
+      "request": {
+        "method": "POST",
+        "target": "/soap12",
+        "headers": [
+          [
+            "Content-Type",
+            "application/soap+xml; charset=utf-8; action=\"urn:docvault:store:2003#LockDocument\""
+          ]
+        ],
+        "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<env:Envelope xmlns:env=\"http://www.w3.org/2003/05/soap-envelope\"><env:Body><LockDocument xmlns=\"urn:docvault:store:2003\"><Id>DOC-000001</Id></LockDocument></env:Body></env:Envelope>"
+      }
+    },
+    {
+      "name": "soap12-not-found",
+      "description": "SOAP 1.2, an unknown id: a sender fault with DocumentNotFound in its detail.",
+      "request": {
+        "method": "POST",
+        "target": "/soap12",
+        "headers": [
+          [
+            "Content-Type",
+            "application/soap+xml; charset=utf-8; action=\"urn:docvault:store:2003#LockDocument\""
+          ]
+        ],
+        "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<env:Envelope xmlns:env=\"http://www.w3.org/2003/05/soap-envelope\"><env:Body><LockDocument xmlns=\"urn:docvault:store:2003\"><Id>DOC-999999</Id><Owner>clerk-7</Owner></LockDocument></env:Body></env:Envelope>"
+      }
+    },
+    {
+      "name": "soap12-conflict",
+      "description": "SOAP 1.2, a document another owner has locked: a receiver fault with LockConflict in its detail.",
+      "request": {
+        "method": "POST",
+        "target": "/soap12",
+        "headers": [
+          [
+            "Content-Type",
+            "application/soap+xml; charset=utf-8; action=\"urn:docvault:store:2003#LockDocument\""
+          ]
+        ],
+        "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<env:Envelope xmlns:env=\"http://www.w3.org/2003/05/soap-envelope\"><env:Body><LockDocument xmlns=\"urn:docvault:store:2003\"><Id>DOC-000001</Id><Owner>clerk-7</Owner></LockDocument></env:Body></env:Envelope>"
+      }
+    }
+  ]
+}
