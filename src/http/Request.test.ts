@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Redacted, Result, Schema } from "effect";
+import { Cause, Effect, Exit, Option, Redacted, Schema } from "effect";
 import { HttpClientRequest, UrlParams } from "effect/http";
 import { bodyText } from "../../test/support.js";
 import * as Body from "./Body.js";
@@ -632,27 +632,8 @@ describe("Request.path", () => {
     Request.path(Id, (id, encode) => `https://api.test/files/${encode(id)}`),
   );
 
-  // Known defect: the path render step is not mapped to InvalidRequest. This pins the current
-  // outcome; remove it when the issue is fixed.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/5
-  it.effect("currently dies when a path value cannot be percent-encoded", () =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        compile(unencodable, { path: loneSurrogate }),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) return;
-      expect(Cause.hasFails(exit.cause)).toBe(false);
-      const defect = Cause.findDefect(exit.cause);
-      expect(
-        Result.isSuccess(defect) ? defect.success : undefined,
-      ).toBeInstanceOf(URIError);
-    }),
-  );
-
-  // Known defect: the intended outcome is a typed InvalidRequest. Remove `.fails` when the issue is
-  // fixed. https://github.com/viell-dev/slop-effect-schema-http/issues/5
-  it.effect.fails(
+  it.effect(
     "fails with InvalidRequest when a path value cannot be percent-encoded",
     () =>
       Effect.gen(function* () {
@@ -662,11 +643,43 @@ describe("Request.path", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (!Exit.isFailure(exit)) return;
         expect(Cause.hasDies(exit.cause)).toBe(false);
+        const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+        expect(error).toBeInstanceOf(Request.InvalidRequest);
         expect(
-          Option.getOrUndefined(Cause.findErrorOption(exit.cause)),
-        ).toBeInstanceOf(Request.InvalidRequest);
+          error instanceof Request.InvalidRequest ? error.cause : undefined,
+        ).toBeInstanceOf(URIError);
       }),
   );
+
+  it.effect(
+    "fails with InvalidRequest when a replaced path encoder throws",
+    () =>
+      Effect.gen(function* () {
+        const refused = new Error("segment refused");
+        const error = yield* Effect.flip(
+          compile(unencodable, { path: ".." }).pipe(
+            Effect.provide(
+              UrlEncoding.layer({
+                ...UrlEncoding.defaults,
+                path: () => {
+                  throw refused;
+                },
+              }),
+            ),
+          ),
+        );
+        expect(error).toBeInstanceOf(Request.InvalidRequest);
+        expect(
+          error instanceof Request.InvalidRequest ? error.cause : undefined,
+        ).toBe(refused);
+      }),
+  );
+
+  it("adds InvalidRequest to the request's error type", () => {
+    expectTypeOf<
+      Effect.Error<ReturnType<typeof unencodable.prepare>>
+    >().toEqualTypeOf<Schema.SchemaError | Request.InvalidRequest>();
+  });
 });
 
 /** A deliberate native relabelling of the body, reusable on any request. */
