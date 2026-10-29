@@ -81,7 +81,11 @@ corepack pnpm library        # fetch the library source at the commit in library
 corepack pnpm exec playwright install chromium   # once, for the browser lane
 corepack pnpm check          # TypeScript (including type-level tests) and Prettier
 corepack pnpm lint           # Oxlint
-corepack pnpm test           # the suite
+corepack pnpm test           # each lane as its own run, then the catalogue against their results
 ```
+
+`pnpm test` runs `test:node`, `test:browser` and `test:catalogue` in turn; each lane writes a JUnit
+report to `artifacts/`, and CI runs the same three scripts. For part of the suite, use
+`corepack pnpm exec vitest run <file> --project node` (or `browser`).
 
 Deliver changes through pull requests into `hostile-servers-test`.

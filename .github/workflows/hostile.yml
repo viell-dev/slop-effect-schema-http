@@ -27,7 +27,14 @@ jobs:
       - run: pnpm library
       - run: pnpm check
       - run: pnpm lint
-      - run: pnpm test --reporter=default --reporter=junit --outputFile.junit=artifacts/junit.xml
+      # Each lane runs on its own, so a lane that finds no tests fails instead of hiding behind the
+      # other. Both write JUnit reports to artifacts/; the browser lane runs even if the Node lane
+      # failed, and the catalogue is checked against the executed results once both pass.
+      - id: node
+        run: pnpm test:node
+      - if: ${{ !cancelled() && steps.node.outcome != 'skipped' }}
+        run: pnpm test:browser
+      - run: pnpm test:catalogue
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
