@@ -54,6 +54,7 @@
                   "**/harness/control*",
                   "**/harness/registry*",
                   "**/harness/providers*",
+                  "**/harness/proxy*",
                   "**/harness/lane.node*",
                   "**/harness/lane.browser*",
                   "node:*"
@@ -80,6 +81,7 @@
                   "**/harness/control*",
                   "**/harness/registry*",
                   "**/harness/providers*",
+                  "**/harness/proxy*",
                   "**/harness/lane.node*",
                   "**/harness/lane.browser*"
                 ],
