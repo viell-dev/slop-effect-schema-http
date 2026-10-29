@@ -669,6 +669,22 @@ describe("Request.path", () => {
   );
 });
 
+/** A deliberate native relabelling of the body, reusable on any request. */
+const relabel = <I, E, R, H extends boolean, Q extends boolean>(
+  self: Request.Request<I, E, R, H, Q>,
+) =>
+  self.pipe(
+    Request.mapEffect((request) =>
+      Effect.succeed(
+        HttpClientRequest.setHeader(
+          request,
+          "content-type",
+          "application/merge-patch+json",
+        ),
+      ),
+    ),
+  );
+
 describe("Request.body", () => {
   it.effect("encodes the body and lets the codec own Content-Type", () =>
     Effect.gen(function* () {
@@ -730,25 +746,28 @@ describe("Request.body", () => {
       }),
   );
 
-  const ContentType = Schema.Struct({
+  const Framing = Schema.Struct({
     "Content-Type": Schema.String,
+    "Content-Length": Schema.String,
     "X-Trace": Schema.String,
   });
-
+  const framing = {
+    "Content-Type": "text/plain",
+    "Content-Length": "999",
+    "X-Trace": "t1",
+  };
+  const Trace = Schema.Struct({ "X-Trace": Schema.String });
   // https://github.com/viell-dev/slop-effect-schema-http/issues/6
   it.effect(
-    "keeps the codec's Content-Type when a header schema follows the body",
+    "keeps the codec's Content-Type and Content-Length when a header schema follows the body",
     () =>
       Effect.gen(function* () {
         const compiled = yield* compile(
           Request.post("https://api.test/items").pipe(
             Request.body(Body.json),
-            Request.headers(ContentType),
+            Request.headers(Framing),
           ),
-          {
-            body: { name: "x" },
-            headers: { "Content-Type": "text/plain", "X-Trace": "t1" },
-          },
+          { body: { name: "x" }, headers: framing },
         );
         expect(compiled.request.headers["content-type"]).toBe(
           "application/json",
@@ -765,7 +784,7 @@ describe("Request.body", () => {
   );
 
   it.effect(
-    "leaves a multipart Content-Type to the transport when a header schema follows the body",
+    "leaves multipart framing to the transport when a header schema follows the body",
     () =>
       Effect.gen(function* () {
         const form = new FormData();
@@ -773,38 +792,110 @@ describe("Request.body", () => {
         const compiled = yield* compile(
           Request.post("https://api.test/upload").pipe(
             Request.body(Body.formData),
-            Request.headers(ContentType),
+            Request.headers(Framing),
           ),
           {
             body: form,
-            headers: { "Content-Type": "multipart/form-data", "X-Trace": "t1" },
+            headers: { ...framing, "Content-Type": "multipart/form-data" },
           },
         );
         expect(compiled.request.body._tag).toBe("FormData");
         expect(compiled.request.headers["content-type"]).toBeUndefined();
+        expect(compiled.request.headers["content-length"]).toBeUndefined();
         expect(compiled.headerLines).toEqual([["X-Trace", "t1"]]);
       }),
   );
 
   it.effect(
-    "keeps a header schema's Content-Type on a request without a body",
+    "keeps a native body-header edit across a later header schema",
+    () =>
+      Effect.gen(function* () {
+        const input = { body: { name: "x" }, headers: framing };
+        // The edit survives a schema that never mentions Content-Type, and one that sets it.
+        const unrelated = yield* compile(
+          Request.post("https://api.test/items").pipe(
+            Request.body(Body.json),
+            relabel,
+            Request.headers(Trace),
+          ),
+          { body: input.body, headers: { "X-Trace": "t1" } },
+        );
+        const conflicting = yield* compile(
+          Request.post("https://api.test/items").pipe(
+            Request.body(Body.json),
+            relabel,
+            Request.headers(Framing),
+          ),
+          input,
+        );
+        for (const compiled of [unrelated, conflicting]) {
+          expect(compiled.request.headers["content-type"]).toBe(
+            "application/merge-patch+json",
+          );
+          expect(compiled.headerLines).toContainEqual([
+            "content-type",
+            "application/merge-patch+json",
+          ]);
+        }
+        // An edit applied after the schema is simply the last word.
+        const after = yield* compile(
+          Request.post("https://api.test/items").pipe(
+            Request.body(Body.json),
+            Request.headers(Framing),
+            relabel,
+          ),
+          input,
+        );
+        expect(after.request.headers["content-type"]).toBe(
+          "application/merge-patch+json",
+        );
+      }),
+  );
+
+  it.effect(
+    "keeps a header schema's body fields on a request without a body",
     () =>
       Effect.gen(function* () {
         const compiled = yield* compile(
           Request.del("https://api.test/items/1").pipe(
-            Request.headers(ContentType),
+            Request.headers(Framing),
           ),
-          {
-            headers: { "Content-Type": "application/json", "X-Trace": "t1" },
-          },
+          { headers: { ...framing, "Content-Type": "application/json" } },
         );
         expect(compiled.request.headers["content-type"]).toBe(
           "application/json",
         );
         expect(compiled.headerLines).toEqual([
           ["Content-Type", "application/json"],
+          ["Content-Length", "999"],
           ["X-Trace", "t1"],
         ]);
+      }),
+  );
+
+  it.effect(
+    "lets Body.empty applied after a header schema remove its body fields",
+    () =>
+      Effect.gen(function* () {
+        const input = { body: undefined, headers: framing };
+        const emptyFirst = yield* compile(
+          Request.del("https://api.test/items/1").pipe(
+            Request.body(Body.empty),
+            Request.headers(Framing),
+          ),
+          input,
+        );
+        expect(emptyFirst.request.headers["content-type"]).toBe("text/plain");
+        const emptyLast = yield* compile(
+          Request.del("https://api.test/items/1").pipe(
+            Request.headers(Framing),
+            Request.body(Body.empty),
+          ),
+          input,
+        );
+        expect(emptyLast.request.headers["content-type"]).toBeUndefined();
+        expect(emptyLast.request.headers["content-length"]).toBeUndefined();
+        expect(emptyLast.headerLines).toEqual([["X-Trace", "t1"]]);
       }),
   );
 
