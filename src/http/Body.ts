@@ -81,7 +81,11 @@ const decodeFailure = (
     }),
   });
 
-/** Any JSON value. Unlike `response.json`, an empty body is a decoding failure rather than `null`. */
+/**
+ * Any JSON value, encoded with `HttpBody.json`. Like it, a value `JSON.stringify` omits, such as `undefined`,
+ * encodes as an empty body; use {@link jsonSchema} to validate first. Unlike `response.json`, an empty
+ * response body is a decoding failure rather than `null`.
+ */
 export const json: Codec<
   unknown,
   HttpBody.HttpBodyError,
