@@ -105,6 +105,8 @@ npx playwright install chromium   # once, for the browser lane
 npm run check                     # TypeScript (incl. type-level tests), Prettier, catalogue, boundaries
 npm run lint                      # Oxlint
 npm test                          # each lane as its own run, then the catalogue against their results
+npm run library:pack              # build, pack and install the library at library-ref (packed lane)
+npm run packed                    # Node lane, catalogue and tsc against the installed package
 ```
 
 `.npmrc` sets `ignore-scripts=true`; keep it, and review any dependency that needs an install script
@@ -113,5 +115,14 @@ before adding an exception. It also skips `pre` and `post` scripts, so do not ad
 `npm test` runs `test:node`, `test:browser` and `test:catalogue` in turn; each lane writes a JUnit
 report to `artifacts/`, and CI runs the same three scripts. For part of the suite, use
 `npx vitest run <file> --project node` (or `browser`).
+
+The source lanes are the default. Run `npm run library:pack` and `npm run packed` as well after
+moving `library-ref`, or when a change touches how the suite imports the library, its subpaths or
+its types; CI runs them after the source lanes. The packed lane is the Node lane against the
+installed package, and `tsconfig.packed.json` type-checks the suite against its declarations
+without `skipLibCheck`. README's "The packed lane" says what it covers. Only the packed lane runs
+and type-checks `*.packed.test.ts` files, which may import package subpaths; keep every other
+import of the library to its root, which both lanes resolve. Keep `tsconfig.packed.json`'s aliases
+equal to `tsconfig.json`'s without the library's; `npm run check` enforces it.
 
 Deliver changes through pull requests into `hostile-servers-test`.

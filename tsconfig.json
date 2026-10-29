@@ -14,5 +14,6 @@
       "#lane": ["./src/harness/lane.node.ts"]
     }
   },
-  "include": ["src/**/*", "vitest.config.ts"]
+  "include": ["src/**/*", "vitest.config.ts"],
+  "exclude": ["src/**/*.packed.test.ts"]
 }

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "skipLibCheck": false,
+    "paths": {
+      "#lane": ["./src/harness/lane.node.ts"]
+    }
+  },
+  "exclude": []
+}

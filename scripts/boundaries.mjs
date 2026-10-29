@@ -29,6 +29,9 @@
 //   that resolves to nothing is refused rather than accepted;
 // - what remains is a package, which must be a declared dependency.
 //
+// `tsconfig.packed.json`, the packed lane's configuration, must have tsconfig.json's aliases
+// without the library's, so this one resolution holds for both.
+//
 // Usage: `node scripts/boundaries.mjs [root]`; the root defaults to this repository.
 import {
   existsSync,
@@ -40,6 +43,7 @@ import {
 import { isBuiltin } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import ts from "typescript";
 
 const LIBRARY = "viell-effect-schema-http";
@@ -92,6 +96,31 @@ if (tsconfig.config.extends !== undefined)
 const compilerOptions = tsconfig.config.compilerOptions ?? {};
 const paths = compilerOptions.paths ?? {};
 const pathsBase = resolve(root, compilerOptions.baseUrl ?? ".");
+
+// The packed lane type-checks with tsconfig.packed.json, which drops the library's alias so that
+// `viell-effect-schema-http` resolves to the installed package. This check classifies the library
+// before any alias, so it holds for both configurations only while every other alias is the same:
+// read the packed one as TypeScript does, following `extends`, and refuse any other difference.
+const packedConfig = join(root, "tsconfig.packed.json");
+if (existsSync(packedConfig)) {
+  const packed = ts.getParsedCommandLineOfConfigFile(packedConfig, undefined, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic: () => undefined,
+  });
+  const expected = Object.fromEntries(
+    Object.entries(paths).filter(([key]) => key !== LIBRARY),
+  );
+  if (packed === undefined || packed.errors.length > 0)
+    problems.push("tsconfig.packed.json: TypeScript cannot read it");
+  else if (
+    !isDeepStrictEqual(packed.options.paths ?? {}, expected) ||
+    resolve(packed.options.baseUrl ?? packed.options.pathsBasePath ?? root) !==
+      pathsBase
+  )
+    problems.push(
+      `tsconfig.packed.json: its paths must be tsconfig.json's without ${LIBRARY}, from the same base`,
+    );
+}
 
 const sources = (directory) =>
   readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
