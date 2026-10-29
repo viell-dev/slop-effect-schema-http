@@ -148,9 +148,10 @@ const sourceFile = (base) => {
 /**
  * The key of a `paths` or `imports` map that selects `specifier`, as TypeScript and Node choose it:
  * an exact key, or else the pattern with the longest prefix before its `*`; with the text `*` stands
- * for.
+ * for. Between patterns with equally long prefixes, Node's `imports` resolution prefers the longer
+ * key (`longerKeyWins`); TypeScript's `paths` keeps the first.
  */
-const select = (map, specifier) => {
+const select = (map, specifier, longerKeyWins = false) => {
   if (Object.hasOwn(map, specifier)) return { key: specifier, star: "" };
   let best;
   for (const key of Object.keys(map)) {
@@ -162,7 +163,13 @@ const select = (map, specifier) => {
       !specifier.endsWith(suffix)
     )
       continue;
-    if (best === undefined || prefix.length > best.prefix)
+    if (
+      best === undefined ||
+      prefix.length > best.prefix ||
+      (longerKeyWins &&
+        prefix.length === best.prefix &&
+        key.length > best.key.length)
+    )
       best = {
         key,
         prefix: prefix.length,
@@ -210,16 +217,18 @@ const targetsOf = (from, specifier) => {
   const targets = [];
   const viaPaths = select(paths, specifier);
   if (viaPaths !== undefined) {
-    mapped = true;
     for (const pattern of [paths[viaPaths.key]].flat()) {
       const path = sourceFile(
         resolve(pathsBase, pattern.replaceAll("*", viaPaths.star)),
       );
       if (path !== undefined) targets.push({ kind: "file", path });
     }
+    // TypeScript falls back to package lookup when no `paths` candidate exists, so an unresolved
+    // mapping decides nothing for a bare specifier; a `#…` specifier is still settled below.
+    if (targets.length > 0) mapped = true;
   }
   const viaImports = specifier.startsWith("#")
-    ? select(imports, specifier)
+    ? select(imports, specifier, true)
     : undefined;
   if (viaImports !== undefined) {
     mapped = true;

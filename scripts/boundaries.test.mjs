@@ -193,4 +193,34 @@ describe("boundaries.mjs", () => {
       },
     );
   });
+
+  it("picks between equal-prefix imports patterns as Node does: the longer key wins", () => {
+    assert.deepEqual(
+      run({
+        imports: {
+          // `#a/xml.ts` loads the backend; `#b/xml.ts` loads a format helper.
+          "#a/*": "./src/clients/*",
+          "#a/*.ts": "./src/backends/store/*.ts",
+          "#b/*": "./src/backends/store/*",
+          "#b/*.ts": "./src/formats/*.ts",
+        },
+        extra: {
+          "src/clients/review.ts": 'import "#a/xml.ts";\nimport "#b/xml.ts";\n',
+        },
+      }),
+      {
+        status: 1,
+        problems: [
+          `src/clients/review.ts: imports #a/xml.ts (src/backends/store/xml.ts): ${OVER_HTTP}`,
+        ],
+      },
+    );
+  });
+
+  it("falls back to package lookup when no tsconfig.json paths candidate exists, as TypeScript does", () => {
+    assert.deepEqual(run({ paths: { "*": ["./src/generated/*"] } }), {
+      status: 0,
+      problems: [],
+    });
+  });
 });
