@@ -297,16 +297,66 @@ exact id refuses a value the platform parser already rounded`.
 
 - **AUTH-5** Double-submit CSRF: the token arrives as a cookie and in the body and must be echoed in
   a header; Node sends no cookies, so the cookie-reading endpoint needs `Cookie` set by hand.
-  Status: pending.
+  Status: tested, in both lanes unless marked Node.
+  - `[AUTH-5] fetches the token first and echoes it, with the cookie carried by the transport's own cookie handling`
+  - `[AUTH-5] a SameSite=Lax cookie never returns to a cross-site page, while Node's explicit jar ignores SameSite`
+  - `[AUTH-5] a Cookie header set by hand reaches the service from Node and is dropped by the browser`
+  - `[AUTH-5] echoing the cookie's percent-encoded spelling instead of the body token is refused as incorrect`
+  - Node: `[AUTH-5] the lines provider sends a hand-set Cookie line verbatim and keeps no cookies; a pair the service never issued is refused`
+  - Values: `[AUTH-5] the CSRF header schema …`, `[AUTH-5] the CSRF failure page …` (one-way, reverse
+    refused with its reason).
+  - Providers and cookies, as observed: Node's Fetch and the lines provider keep no cookies and show
+    `Set-Cookie`; a hand-set `Cookie` goes out verbatim. `HttpClient.withCookiesRef` sends the
+    cookie's original (percent-encoded) spelling and replaces any hand-set `Cookie` line, and it
+    ignores `SameSite`. Chromium hides `Set-Cookie`, drops a hand-set `Cookie`, and stores and sends
+    the cookie only with `credentials: "include"` and `SameSite=None; Secure`, because the test page
+    (`localhost`) and the backends (`127.0.0.1`) are different sites. Cookies are scoped by host, not
+    port, so every backend on `127.0.0.1` shares one browser cookie store across tests.
 - **AUTH-6** HMAC signing over method, path, timestamp, and the encoded body, with a validity
   window: signing runs after body encoding and once per attempt, regardless of its position in the
   declaration pipeline. A tampered body, a stale timestamp, and a missing CSRF token are distinct
-  typed responses. Status: pending.
+  typed responses. Status: tested, in both lanes.
+  - `[AUTH-6] signs each attempt in client middleware after body encoding, over method, path, timestamp and the exact body bytes`
+  - `[AUTH-6] the signature does not depend on where the body sits in the declaration pipeline`
+  - `[AUTH-6] once-per-evaluation signing depends on its position: before the body it signs an empty body`
+  - `[AUTH-6] a retry after a 503 with Retry-After re-signs the attempt beyond the validity window`
+  - `[AUTH-6] once-per-evaluation signing replays its signature on an immediate retry, refused as replayed`
+  - `[AUTH-6] once-per-evaluation signing goes stale when the retry waits out the window`
+  - `[AUTH-6] a tampered body, a stale timestamp and a missing CSRF token are three distinct typed responses`
+  - `[AUTH-6] a refused Token credential is its own typed response, selected by its challenge ahead of the plain 401 rule`
+  - `[AUTH-6] an empty subject is refused before dispatch; a blank one reaches the service and is refused there`
+  - `[AUTH-6] a held announcement under a caller's timeout fails as a TimeoutError; the service sees the abort and records nothing`
+  - `[AUTH-6] the failure points: an unretried 503 and a 500 page are unexpected responses, a frozen channel is a typed refusal`
+  - Values: `[AUTH-6] the Token credential round-trips its Rails form and refuses other spellings`.
+  - The once-per-evaluation control uses `Request.mapEffect`, which the design names for signing
+    once per evaluation. A computed header (`Request.setHeader(name, () => …)`) has the same timing
+    but cannot see the encoded body, and the raw setters are unavailable once a header schema owns
+    the group, as the CSRF headers do here.
 - **HDR-4** `Deprecation`, `Sunset`, and `Warning` all announcing retirement on one response: read
-  all three through a header schema. Status: pending.
+  all three through a header schema. Status: tested.
+  - `[HDR-4] reads Deprecation, Sunset and both Warning values from one response through a header schema`
+  - ``[HDR-4] the draft-era `Deprecation: true` fails the strict header schema as a DecodeError``
+  - `[HDR-4] under the service's own CORS, a page can read only Warning, so the header schema fails there`
+    (in Chromium the schema fails as a `DecodeError`; Node reads every header).
+  - Node: `[HDR-4] the lines provider reports both Warning lines, which the normalized header map joins`
+  - Values: round trips and refusals for `HttpDate`, `StructuredDate`, `WarningList` and
+    `Retirement`. Fetch joins the two `Warning` lines with `, `; the schema splits outside quoted
+    strings, since warn-texts and warn-dates contain commas.
 - **HDR-7a** CORS preflight answers as a Node client observes them: an allowlist omitting
   `Content-Type` on one endpoint, one rejecting trace headers, and `OPTIONS` answered without the
-  application headers. Status: pending.
+  application headers. Status: tested.
+  - Node: `[HDR-7a] the subscriptions preflight omits Content-Type: a browser would refuse the JSON POST that Node sends unchecked`
+  - Node: `[HDR-7a] the announcement preflight refuses trace headers; disabling propagation for this service removes them`
+  - Node: `[HDR-7a] v1 OPTIONS is answered by the container without the application's headers, unlike the v1 GET`
+  - `[HDR-7a] the service's own CORS answers decide what a page may send; Node sends everything unchecked`
+    (Chromium refuses each request after its preflight, as a transport error, and records which
+    headers it asked for).
+  - `[HDR-7a] with each hostile CORS behaviour switched off, a page reaches every endpoint`
+  - Values: `[HDR-7a] token lists …`, `[HDR-7a] the preflight request and CORS answer schemas …`.
+  - Trace propagation is disabled per service by providing `HttpClient.TracerPropagationEnabled`
+    as `false` around this service's client in `transformClient`. With it on, even the CSRF
+    bootstrap needs a preflight in a browser. Each hostile behaviour has a backend switch under
+    `cors` for the browser lane (HDR-7b).
 
 ## Cross-service flows (`flows`)
 
