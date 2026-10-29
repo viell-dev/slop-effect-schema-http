@@ -35,6 +35,20 @@ jobs:
       - if: ${{ !cancelled() && steps.node.outcome != 'skipped' }}
         run: npm run test:browser
       - run: npm run test:catalogue
+      # The packed lane: the library built and packed at the same commit and installed into
+      # node_modules, then the Node lane (its JUnit report in artifacts/ too) and the type-check
+      # against that package. It runs whenever the Node lane ran, whatever the source lanes'
+      # results; its catalogue check, like theirs, runs once its lane passes.
+      - id: pack
+        if: ${{ !cancelled() && steps.node.outcome != 'skipped' }}
+        run: npm run library:pack
+      - id: packed
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        run: npm run packed:test
+      - if: ${{ !cancelled() && steps.packed.outcome == 'success' }}
+        run: npm run packed:catalogue
+      - if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        run: npm run packed:tsc
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

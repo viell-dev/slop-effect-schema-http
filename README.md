@@ -94,3 +94,43 @@ providers are:
 marked tested has a test whose title carries its ID. `npm test` verifies it against the executed
 results: every entry marked tested has a passed, not skipped, test carrying its ID in at least one
 lane.
+
+### The packed lane
+
+The packed lane tests the library as an application installs it. Use the source lanes above for
+everyday work, because they need no build; run the packed lane as well after moving `library-ref`,
+or when a change concerns how the suite imports the library. CI runs both.
+
+```sh
+npm run library:pack   # also build and pack the library at library-ref, and install the package
+npm run packed         # the Node lane, its catalogue check and a type-check, against the package
+```
+
+`npm run library:pack` fetches the source as `npm run library` does, then writes the whole commit
+into `.library/build/` with Git, runs `npm ci` and `npm run build` there, and packs the package
+with `npm pack` into `.library/viell-effect-schema-http.tgz`. It installs that tarball into the
+suite's `node_modules` with `npm install --no-save`, where the package finds the suite's own
+`effect` as its peer, and `.library/PACKED` records the commit it was packed from. Install scripts
+stay off for the library's build too. `npm run packed` then runs:
+
+- `packed:test`, the Node lane without the source alias, so `viell-effect-schema-http` resolves
+  through the package's `exports` map. It adds `src/harness/package.packed.test.ts`, which imports
+  the package root and every subpath export the installed `package.json` lists. The run refuses to
+  start unless `node_modules` holds the package packed for the requested ref, and it writes
+  `artifacts/junit-packed.xml`. For part of it, use `npx vitest run <file> --mode packed`.
+- `packed:catalogue`, the catalogue check against that report alone: every entry marked tested
+  needs a passed test in the packed lane.
+- `packed:tsc`, the whole suite type-checked against the package's emitted declarations with
+  `tsconfig.packed.json`, without `skipLibCheck`. Tests named `*.packed.test.ts` are type-checked
+  only there and run only in this lane. `npm run check` refuses a `tsconfig.packed.json` whose
+  aliases differ from `tsconfig.json`'s by more than the library's, so the boundary check holds in
+  both.
+
+The packed lane covers the package's `exports` map, its emitted JavaScript and declarations, and
+the peer `effect` as npm resolves it. It does not cover the browser lane, which always imports the
+source, or a bundled application, tracked in
+[#35](https://github.com/viell-dev/slop-effect-schema-http/issues/35). Nor does it isolate the
+package from the suite's other dependencies: a package the library imports without declaring it
+would go unnoticed if the suite happens to install it. A check of the packed package in an
+isolated consumer, in the library's own CI, is tracked in
+[#15](https://github.com/viell-dev/slop-effect-schema-http/issues/15).
