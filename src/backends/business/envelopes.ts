@@ -8,34 +8,28 @@ import {
 } from "../../harness/server.js";
 
 /*
- * The `/v1/` half of the JSON business API: customers, orders, exports, the ledger and a handful of
- * reference endpoints. It is the oldest part of the service. Each convention below is a historical
- * accident that a paying integration now depends on, so nobody can remove it. The backend is a
- * black box: it shares no code with any consumer and implements every wire format itself.
+ * The `/v1/` half of the JSON business API. The backend is a black box: it shares no code with any
+ * consumer and implements every wire format itself. Every route passes the firewall check first.
+ *
+ * Service documentation: services/business.md
  */
 
 type Lines = ReadonlyArray<readonly [string, string]>;
 
-/**
- * Plain JSON options of this part of the business API. Every field is fixture data with a default;
- * tests pass the values they assert on.
- */
+/** The `envelopes` test options, documented under "Test options" in the service page. */
 export interface Options {
-  /** Seed customers. Tiers are enum names; created customers continue after the largest id. */
   readonly customers?: ReadonlyArray<{
     readonly id: number;
     readonly name: string;
     readonly tier: string;
     readonly creditHold?: boolean;
   }>;
-  /** Products that orders may reference, served in this order by the OData facade. */
   readonly products?: ReadonlyArray<{
     readonly sku: string;
     readonly name: string;
     readonly priceCents: number;
     readonly discontinued?: boolean;
   }>;
-  /** One ledger account. Entry ids are decimal strings, because JSON numbers cannot carry them. */
   readonly ledger?: {
     readonly account: string;
     readonly entries: ReadonlyArray<{
@@ -44,14 +38,12 @@ export interface Options {
       readonly memo: string;
     }>;
   };
-  /** Rows of the aging report, in integer cents. */
   readonly aging?: ReadonlyArray<{
     readonly customerId: number;
     readonly name: string;
     readonly current: number;
     readonly overdue30: number;
   }>;
-  /** Warehouses by region code. */
   readonly warehouses?: Readonly<
     Record<
       string,
@@ -66,12 +58,10 @@ export interface Options {
     readonly code: string;
     readonly decimals: number;
   }>;
-  /** Exchange rates against `base`, as decimal strings. */
   readonly rates?: {
     readonly base: string;
     readonly rates: Readonly<Record<string, string>>;
   };
-  /** How many status checks of an export report it pending, however far the work has got. */
   readonly pendingPolls?: number;
 }
 
@@ -141,10 +131,7 @@ const defaults: Required<Options> = {
   pendingPolls: 2,
 };
 
-/**
- * Jackson's default content type on the Spring stack that serves `/v1/`. Every JSON reply carries it
- * unless a quirk below says otherwise.
- */
+/** Jackson's default content type on the Spring stack, for every JSON reply but the exceptions. */
 const springJson = "application/json;charset=UTF-8";
 
 const reply = (status: number, value: unknown, lines: Lines = []): Reply =>
@@ -173,12 +160,7 @@ const malformed = (): Reply =>
     ],
   });
 
-/*
- * Customer tiers are a Java enum. In 2014 a mobile team switched Jackson's WRITE_ENUMS_USING_INDEX on
- * to shave bytes from list payloads, so every response sends the ordinal. Deserialization was never
- * touched, so requests still send names, and only exact names. The enum may only ever grow at the
- * end, or every stored ordinal in every partner's cache changes meaning.
- */
+/* Customer tiers in ordinal order: requests send names, responses the index. */
 const tierNames = ["STANDARD", "SILVER", "GOLD", "PLATINUM"] as const;
 type TierName = (typeof tierNames)[number];
 const isTierName = (value: unknown): value is TierName =>
@@ -224,11 +206,7 @@ const seedCustomers = (
     }),
   );
 
-/*
- * "Not found" is a 200. The customer controller was written against a 2009 SOAP facade that had no
- * status codes, and the partner SDKs generated from it still branch on `result`. A 404 from this path
- * would make those SDKs throw an unhandled exception, so the envelope stays.
- */
+/* The customer controller's "not found" envelope, in a 200. */
 const notFound = (id: number | string): Reply =>
   reply(200, {
     result: "NOT_FOUND",
@@ -248,7 +226,7 @@ const validateName = (
       : undefined;
   if (typeof value !== "string")
     return { field: "name", code: "type", message: "must be a string" };
-  // `@NotBlank`: the server trims before checking, which the client's non-empty check does not.
+  // `@NotBlank` trims before checking.
   if (value.trim() === "")
     return { field: "name", code: "blank", message: "must not be blank" };
   return undefined;
@@ -282,11 +260,7 @@ const invalid = (
   return present.length === 0 ? undefined : reply(422, { errors: present });
 };
 
-/*
- * The F5 web application firewall in front of `/v1/` rejects anything that looks like markup in the
- * request target, with its stock HTML page. The security team owns its policy; it predates every
- * consumer of this API and answers before the application sees the request.
- */
+/* The firewall's markup check over the decoded request target. */
 const looksLikeMarkup = (target: string): boolean => {
   let decoded = target;
   try {
@@ -340,28 +314,17 @@ const rejected = (
   exception: `com.example.orders.${exception}: ${message}`,
 });
 
-/*
- * Ledger entry ids are 64-bit Snowflake ids from the 2019 ledger rewrite. Above 2^53 the platform's
- * JSON number type cannot tell neighbours apart, so 9007199254740993 reads as 9007199254740992,
- * the previous row's id. The rewrite's own clients are Java; nobody quotes the ids.
- */
-
 /** JSON with 64-bit integers written as exact digits, as the Java serializer does. */
 const exactJson = (value: unknown): string =>
   JSON.stringify(value, (_, item: unknown) =>
     typeof item === "bigint" ? `\u0000${item.toString()}\u0000` : item,
   ).replace(/"\\u0000(-?\d+)\\u0000"/g, "$1");
 
-/** Express's JSONP framing, which the 2012 rates microservice still uses. */
+/** Express's JSONP framing. */
 const jsonpFrame = (callback: string, body: string): string =>
   `/**/ typeof ${callback} === 'function' && ${callback}(${body});`;
 
-/*
- * The aging report serves saved column layouts from the reporting UI. `layout` picks one; the
- * default is the documented order. Finance swapped the money columns in 2019 to read arrears first,
- * and the summary layout drops the name. Both money columns are integer cents, so a client that trusts
- * positions swaps them without noticing.
- */
+/* The aging report's saved column layouts. */
 const agingLayouts: Readonly<Record<string, ReadonlyArray<string>>> = {
   default: ["customerId", "name", "current", "overdue30"],
   finance: ["customerId", "name", "overdue30", "current"],
@@ -377,10 +340,7 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
   const fixture: Required<Options> = { ...defaults, ...options };
   const customers = seedCustomers(fixture.customers);
   let nextCustomerId = Math.max(1000, ...customers.keys()) + 1;
-  /*
-   * Products for orders. Prices are integer cents internally; the OData facade renders them as
-   * Edm.Decimal strings.
-   */
+  /* Products for orders, priced in integer cents. */
   const catalogue = new Map(
     fixture.products.map((product) => [product.sku, product] as const),
   );
@@ -389,12 +349,7 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
     id: BigInt(entry.id),
   }));
   const agingRows = fixture.aging;
-  /*
-   * Long-running exports report PENDING for their first status checks (two by default) no matter
-   * how far the work has got. A 2015 "temporary" throttle stopped dashboards from hammering the
-   * status table; the scheduler's own tick hides the delay for real work, so nobody has noticed it
-   * is still there.
-   */
+  /* The 2015 throttle: the status checks of each export that report it pending. */
   const pendingPolls = fixture.pendingPolls;
   let creations = 0;
   const orders: Array<{
@@ -484,14 +439,9 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
 
   const all: ReadonlyArray<Route> = [
     /*
-     * Creation answers 200 rather than 201, with an empty acknowledgement and the new resource only
-     * in `Location`: the 2012 controller returned `ResponseEntity.ok()` and partner SDKs check for
-     * exactly 200.
-     *
-     * Two containers serve this path behind a round-robin balancer. Ops documentation says both
-     * absolutize `Location`; only the legacy servlet container does, building it from the request's
-     * Host header. The Node container sends the path exactly as the handler wrote it, because Node's
-     * http module never rewrites `Location`. Which form a client sees is the balancer's choice.
+     * The balancer alternates between the two containers, starting with app-1. The legacy one
+     * builds an absolute `Location` from the request's Host header; the other's path goes out as
+     * written, because Node's http module never rewrites `Location`.
      */
     {
       method: "POST",
@@ -526,12 +476,7 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
         ]);
       },
     },
-    /*
-     * Pagination. The controller reads a one-based `page` and `per_page`. The `Link` header is added
-     * by the API gateway's 2017 pagination plugin, which only speaks zero-based `offset` and `limit`;
-     * the controller ignores both, so following a link literally reads the first page again. Mobile
-     * apps parse the header and partners send `page`, so neither side can move.
-     */
+    /* The controller pages by `page`; the gateway plugin's `Link` speaks `offset` and `limit`. */
     {
       method: "GET",
       path: "/v1/customers",
@@ -587,11 +532,7 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
           : reply(200, { result: "OK", customer: wire(customer) });
       },
     },
-    /*
-     * PATCH answers with the customer as it was loaded, before the changes apply: the open-session-
-     * in-view filter (2013) serializes the entity before Hibernate flushes. Two partners diff this
-     * response against their request to detect concurrent edits, so it stays.
-     */
+    /* PATCH serializes the customer before applying the changes. */
     {
       method: "PATCH",
       path: /^\/v1\/customers\/(?<id>\d+)$/,
@@ -611,11 +552,7 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
         return reply(200, { result: "OK", customer: before });
       },
     },
-    /*
-     * Archiving answers 204, and the handler still writes a debug body that the 2018 runbook
-     * documents as "the archive receipt". Node's http server drops body writes on a 204, so the
-     * receipt never reaches the wire, whatever the runbook says.
-     */
+    /* The handler writes a debug body on its 204, which Node's http server drops. */
     {
       method: "POST",
       path: /^\/v1\/customers\/(?<id>\d+)\/archive$/,
@@ -633,10 +570,7 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
         };
       },
     },
-    /*
-     * Saving preferences answers 200 with a JSON content type and zero bytes: a 2017 refactor
-     * changed the return type to `void` but left `produces = APPLICATION_JSON` on the mapping.
-     */
+    /* Saving preferences: a JSON content type over zero bytes. */
     {
       method: "PUT",
       path: /^\/v1\/customers\/(?<id>\d+)\/preferences$/,
@@ -674,13 +608,7 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
           : reply(200, customer.preferences);
       },
     },
-    /*
-     * Order placement never answers anything but 200. In 2016 the hardware balancer's health monitor
-     * was pointed at live traffic and ejects a node that answers too many 4xx or 5xx; customer typos
-     * took nodes out of rotation. Since then failures travel in `X-Error-Code` and `X-Error-Message`
-     * on a 200, and the error filter writes the exception's text under the JSON content type. The
-     * monitor belongs to a network team on another continent.
-     */
+    /* Order placement: every outcome is a 200, failures in headers. */
     {
       method: "POST",
       path: "/v1/orders",
@@ -693,10 +621,7 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
         ]);
       },
     },
-    /*
-     * The batch endpoint (2018) answers 200 for any batch it could read, with the status each item
-     * would have had as its own request inside the envelope.
-     */
+    /* The batch endpoint places each order as `/v1/orders` would and reports its status. */
     {
       method: "POST",
       path: "/v1/orders/batch",
@@ -719,10 +644,6 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
         return reply(200, { batchId: `B-${nextBatch++}`, results });
       },
     },
-    /*
-     * Exports answer 202 with a relative-path `Location` (resolved against the request URL it lands
-     * at `/v1/exports/<id>`) and `Retry-After` in seconds.
-     */
     {
       method: "POST",
       path: "/v1/exports",
@@ -793,10 +714,6 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
           : textReply(200, exactJson({ entry }), springJson);
       },
     },
-    /*
-     * Regions come from a 2010 MVC controller that renders JSON through a view template; the view
-     * resolver's default content type is `text/html`, and the CMS that embeds the page sniffs it.
-     */
     {
       method: "GET",
       path: "/v1/regions",
@@ -807,7 +724,6 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
           "text/html; charset=UTF-8",
         ),
     },
-    /* Currencies still pass an IIS handler mapping from 2009 that labels JSON `text/json`. */
     {
       method: "GET",
       path: "/v1/currencies",
@@ -818,11 +734,7 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
           "text/json; charset=utf-8",
         ),
     },
-    /*
-     * The product catalogue is a WCF Data Services (OData v2) facade from 2011 in verbose JSON: the
-     * `d` wrapper, `__metadata` per entity, `__count` as a string, decimals as strings, and
-     * `odata=verbose` in the content type. An Excel add-in on every sales laptop reads it.
-     */
+    /* The OData v2 facade, in verbose JSON. */
     {
       method: "GET",
       path: "/v1/odata/Products",
@@ -865,10 +777,6 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
         );
       },
     },
-    /*
-     * The dashboard feed was written for the 2014 AngularJS back office, which strips an
-     * anti-JSON-hijacking prefix. The prefix is part of the contract now.
-     */
     {
       method: "GET",
       path: "/v1/dashboard",
@@ -884,11 +792,7 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
           springJson,
         ),
     },
-    /*
-     * Exchange rates are served as JSONP for a 2012 storefront widget. The CDN in front of them keys
-     * its cache on the path alone, so the first caller's callback name is served to everyone until
-     * the entry expires. The CDN contract is renewed every three years and nobody owns the rule.
-     */
+    /* The CDN's cache, keyed on the path alone, holds the first answer for the whole start. */
     {
       method: "GET",
       path: "/v1/rates",
@@ -948,11 +852,7 @@ export const routes = (options?: Options): ReadonlyArray<Route> => {
               { field: "region", code: "missing", message: "must not be null" },
             ],
           });
-        /*
-         * The warehouse directory is an XML service behind a 2011 XML-to-JSON bridge. The bridge
-         * unwraps a one-element list into a bare object and drops an empty list entirely. Mobile
-         * clients written against the bridge parse exactly that, so it cannot be fixed.
-         */
+        // The XML-to-JSON bridge's unwrapping of one item and dropping of none.
         const found = fixture.warehouses[region] ?? [];
         return reply(
           200,

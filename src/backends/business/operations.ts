@@ -1,121 +1,10 @@
 /**
- * # JSON business API: the operations era (`/v2/`)
+ * The `/v2/` half of the JSON business API: the service's routes behind `front`, which plays the
+ * API gateway (merged slashes, the method allowlist and the override tunnel), with `viaEdge` as the
+ * edge cache in front of the catalogue. It imports only Node built-ins and the harness, and formats
+ * and parses every value convention with its own code. Options are merged over {@link defaults}.
  *
- * The second generation of the business API, built in 2014 by the platform team on a .NET stack
- * and put behind the company's API gateway and edge cache in 2016. It answers under `/v2/`; the
- * envelope-era routes under `/v1/` belong to `envelopes.ts`. Paths below are relative to the
- * server origin.
- *
- * This backend is a black box: it imports only Node built-ins and the harness, and formats and
- * parses every value convention with its own code. Consumers learn its behaviour through HTTP.
- *
- * ## Configuration
- *
- * Pass {@link Options} as the `operations` member of the business handler's options, such as
- * `lane.backend("business", { operations: { token: "…" } })`. Every member is optional and merged
- * over {@link defaults}. Options are plain JSON, so the browser lane can send them to the Node
- * side. Each handler gets fresh state, so tests never share tasks, caches, nonces or limiter
- * state.
- *
- * - `token`: the only bearer token the service accepts.
- * - `searchLatency`: milliseconds `GET /v2/search` waits before answering, per query text
- *   (queries not listed answer at once). A client abort ends the wait.
- * - `longPollHold`: milliseconds `GET /v2/events` holds a poll open without events (default
- *   25 000).
- * - `clock`: fixed epoch milliseconds for data stamps such as a task's `created`, or `null` for
- *   real time (the default). `Retry-After` timing always uses real time, because clients wait in
- *   real time.
- * - `tasks`, `customers`, `invoices`, `invoicesModified` and `catalog`: the starting data, in the
- *   service's internal model. Pass the values a test asserts on; the defaults are small, generic
- *   sets.
- *
- * Tests observe the server's own view of client aborts through `GET /v2/ops/abandoned` (below).
- *
- * ## Conventions shared by every `/v2/` route
- *
- * - **Gateway method allowlist (STAT-11).** The gateway forwards only GET, HEAD, POST and OPTIONS
- *   (plus PURGE to the edge). PUT, PATCH, DELETE and any other method get `405` with `Allow: GET,
- *   HEAD, POST, OPTIONS`, `Via: 1.1 api-gateway` and `{"message":"Method Not Allowed"}`. The
- *   service registers updates and deletes only behind the tunnel, so a raw PUT or DELETE has no
- *   route even past the gateway.
- * - **Method override tunnel (STAT-11).** A POST with `X-HTTP-Method-Override: PUT`, `PATCH` or
- *   `DELETE` is handled as that method; any other value answers `400` with
- *   `{"error":"unsupported_override"}`. The header is ignored on other methods.
- * - **Merged slashes (QRY-3).** The gateway runs nginx's `merge_slashes on`, so
- *   `/v2/tasks//history` is routed as `/v2/tasks/history`. The ledger keeps the target as sent.
- * - **Bearer authentication.** Tasks, search and payouts need `Authorization: Bearer <token>`,
- *   with the scheme matched case-insensitively. A missing token answers `401` with
- *   `WWW-Authenticate: Bearer realm="business-v2"` and `{"error":"invalid_request"}`; a wrong one
- *   answers `401` with `error="invalid_token"` in the challenge and `{"error":"invalid_token"}`.
- * - **JSON bodies.** A request body must be `application/json` (else `415`) and parse (else `400`
- *   with `{"error":"malformed_json"}`). Validation failures answer `422` with
- *   `{"errors":[{"field":…,"message":…}]}`. Other errors are `{"error":<code>,…}`.
- * - **Value conventions.** Epoch milliseconds as numbers; ASP.NET dates `/Date(ms)/` or
- *   `/Date(ms±hhmm)/` whose offset is decorative, written with escaped slashes `"\/Date(…)\/"`;
- *   US local time `M/d/yyyy h:mm:ss AM` with no zone; HTTP-dates in headers; money as `$1,234.56`;
- *   flags as `"Y"` and `"N"`; `-1` for an unlimited count; lists as space-delimited strings.
- *
- * ## Resources for the cross-service flows
- *
- * - `POST /v2/tasks` creates a task from `{ title, assigneeId, priority, due?, notes? }` and
- *   answers `201` with a relative `Location: /v2/tasks/T-<n>` and the task. `title` is non-blank
- *   text up to 200 characters, `assigneeId` matches `[A-Za-z0-9._:@-]{1,64}`, `priority` is an
- *   integer from 1 (urgent) to 4 (low), `due` is `null` or an ASP.NET date, and `notes` is `null`
- *   or text up to 2000 characters. A task reads back as `{ id, title, assigneeId, priority, due,
- *   notes, done, created }`: `due` and `notes` are `null` when unset, `done` is `"Y"` or `"N"`,
- *   and `created` is epoch milliseconds from `clock`. Ids are `T-1001`, `T-1002`, … in creation
- *   order, seeded tasks first.
- * - `GET /v2/tasks?assignee=…&status=open|done` lists tasks as `{ applied, items, count }`, where
- *   `applied` echoes the filters the service used. Repeated parameters keep only the last value
- *   (QRY-2).
- * - `GET /v2/tasks/<id>` reads one task, or answers `404` with
- *   `{"error":"task_not_found","id":…}`.
- * - `POST /v2/tasks/<id>` with `X-HTTP-Method-Override: PUT` replaces a task (the creation fields
- *   plus optional `done`), with `PATCH` changes only the given fields, and with `DELETE` removes
- *   it with `204`. Without an override it answers `400` with `{"error":"override_required"}`.
- * - `GET /v2/tasks/history` is the audit history of every task and `GET /v2/tasks/<id>/history`
- *   that of one task, both as `{ events: [{ task, action, at }] }`.
- * - `GET /v2/search?q=…` searches titles and notes case-insensitively, answering `{ query, hits }`
- *   after `searchLatency[q]` milliseconds. A missing or blank `q` answers `400` with
- *   `{"error":"query_required"}`.
- * - Task and search responses carry no caching headers, so a browser does not reuse them.
- *
- * ## Operational endpoints
- *
- * - `GET /v2/rates/<PAIR>` (STAT-8): `420 Enhance Your Calm` with `Retry-After: 1`, again for an
- *   early return; then `503` once while the quote feed reconnects (no `Retry-After`); then `200`.
- * - `GET /v2/reports/<name>` (STAT-9): `429` with `Retry-After: 1`, then `503` with `Retry-After`
- *   as an HTTP-date, then `200`. An early return gets the same answer again. The dates are whole
- *   seconds at least 500 ms ahead, so a client waits between 0.5 and 1.5 seconds.
- * - `GET /v2/exports/<name>` (STAT-9): `429` with `Retry-After` as an HTTP-date, then `200`.
- * - `GET /v2/catalog/prices` (HDR-8): behind an edge cache keyed on the path and the last `v`
- *   query value only. The edge ignores request `Cache-Control` and `Pragma`, adds `X-Cache: HIT`
- *   or `MISS`, `Age` and `Via: 1.1 edge`, and starts warm with `catalog.stale` cached for the plain
- *   path. `PURGE /v2/catalog/prices` empties every variant of the path and answers
- *   `{"status":"ok","purged":<n>}`. `POST /v2/catalog/prices` with `{ sku, price }` changes the
- *   origin without telling the edge. Prices read as `{ version, prices: [{ sku, price }] }`, with
- *   `Cache-Control: public, max-age=86400`, which a browser's own cache honours too.
- * - `GET /v2/invoices` and `GET /v2/invoices/<id>` (VAL-1b to VAL-5b) answer with `Last-Modified`
- *   and rows of `{ id, customer, amount, paid, issued, due, printed, tags, poNumber?, seatLimit }`.
- *   A customer is expanded to `{ id, name, country }` the first time it appears in a response and
- *   a bare id afterwards. `poNumber` is written exactly as stored, including its absent spellings.
- *   `POST /v2/invoices/<id>` with `X-HTTP-Method-Override: PUT` replaces one after strict
- *   validation. The routes send no `Cache-Control`, so a browser may reuse a list by heuristic
- *   freshness from `Last-Modified`.
- * - `POST /v2/payouts` (RET-1) with `{ amount, to }`: needs a bearer token, `X-Nonce` (a decimal
- *   integer strictly greater than the last one accepted) and `X-Signature` (hex HMAC-SHA256 keyed
- *   by the token over `<nonce>.` followed by the body bytes). The signature is checked first, then
- *   the replay (`409` with `{"error":"nonce_replayed"}`), then the warm-up: the first two requests
- *   that pass the replay check meet `503` with an HTTP-date `Retry-After` (a whole second at least
- *   250 ms ahead), and an early return meets `503` again. A nonce is spent as soon as it passes the
- *   replay check. Success is `201` with `{ payout, amount, to, nonce }`.
- * - `GET /v2/events` (RET-2): a long poll held open for `longPollHold` milliseconds, answered `200`
- *   with `{ events: [], next }` when nothing happens. `POST /v2/events` with `{ type }` publishes
- *   an event and releases held polls.
- * - `GET /v2/ops/abandoned?atLeast=<n>`: the held requests (`search` and `events`) whose client
- *   went away before the answer, as `{ abandoned: [{ route, target }] }` in the order the service
- *   noticed. With `atLeast`, it waits up to two seconds for that many before answering. SRE added
- *   it in 2018 so the load balancer's drain script could wait for clients to let go.
+ * Service documentation: services/business.md
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { json, router, type Route } from "../../harness/route.js";
@@ -170,7 +59,6 @@ export interface InvoiceSeed {
   readonly due: DotNetDate;
   readonly printed: WallClock;
   readonly tags: ReadonlyArray<string>;
-  /** Written as is: a string or `null`; a missing key stays missing. */
   readonly poNumber?: string | null;
   readonly seatLimit: number | "unlimited";
 }
@@ -180,7 +68,7 @@ export interface PriceSeed {
   readonly cents: number;
 }
 
-/** Plain JSON options: no functions, dates or class instances. Missing members take defaults. */
+/** The `operations` test options, documented under "Test options" in the service page. */
 export interface Options {
   readonly token?: string;
   readonly searchLatency?: Readonly<Record<string, number>>;
@@ -189,9 +77,7 @@ export interface Options {
   readonly tasks?: ReadonlyArray<TaskSeed>;
   readonly customers?: ReadonlyArray<CustomerSeed>;
   readonly invoices?: ReadonlyArray<InvoiceSeed>;
-  /** `Last-Modified` of the invoice routes until a write, in epoch milliseconds (whole seconds). */
   readonly invoicesModified?: number;
-  /** The origin's prices and the stale list the edge holds for the plain path at start. */
   readonly catalog?: {
     readonly prices: ReadonlyArray<PriceSeed>;
     readonly stale: ReadonlyArray<PriceSeed>;
@@ -395,10 +281,7 @@ const error = (
   lines: Lines = [],
 ): Reply => json(status, { error: code, ...extra }, lines);
 
-/**
- * JSON as the 2014 serializer wrote it, with ASP.NET dates behind escaped slashes. Mobile apps
- * released that year match on the escaped form, so it cannot change.
- */
+/** JSON as the 2014 serializer wrote it, with ASP.NET dates behind escaped slashes. */
 const dotNetJson = (
   status: number,
   value: unknown,
@@ -441,10 +324,7 @@ const readObject = (request: Received): BodyResult => {
     : { ok: false, reply: invalid([{ field: "", message: "an object" }]) };
 };
 
-/**
- * The value of a query parameter. The PHP front end that preceded this service kept the last of
- * repeated names, and the 2014 port reproduced that so existing links kept working.
- */
+/** The value of a query parameter: the last of repeated names. */
 const lastQueryValue = (request: Received, name: string): string | undefined =>
   new URL(request.target, "http://service.invalid").searchParams
     .getAll(name)
@@ -765,8 +645,6 @@ export const routes = (given?: Options): ReadonlyArray<Route> => {
       state === undefined ||
       (state.stage === "calm" && now < state.until - slack)
     ) {
-      // Copied from Twitter's 2012 API by the platform team; mobile clients key their back-off on
-      // 420, so moving to 429 would break every app still in the field.
       const until = state?.until ?? now + 1000;
       calm.set(pair, { stage: "calm", until });
       return {
@@ -780,7 +658,6 @@ export const routes = (given?: Options): ReadonlyArray<Route> => {
       };
     }
     if (state.stage === "calm") {
-      // The quote feed drops its upstream session whenever the limiter trips; nobody owns it.
       calm.set(pair, { stage: "feed", until: now });
       return error(503, "quote_feed_reconnecting");
     }
@@ -817,8 +694,6 @@ export const routes = (given?: Options): ReadonlyArray<Route> => {
       ]);
     }
     if (state.stage === "limited") {
-      // The report generator's maintenance filter is a Java servlet that has written Retry-After
-      // with setDateHeader since 2009, so it arrives as an HTTP-date.
       const until = nextWholeSecond(500);
       reportState.set(name, { stage: "maintenance", until });
       return error(503, "maintenance", {}, [
@@ -838,7 +713,6 @@ export const routes = (given?: Options): ReadonlyArray<Route> => {
     const until = exportState.get(name);
     const now = Date.now();
     if (until === undefined || now < until - slack) {
-      // The export limiter shares the servlet filter above, so its 429 carries a date as well.
       const next = until ?? nextWholeSecond(500);
       exportState.set(name, next);
       return error(429, "rate_limited", {}, [
@@ -859,17 +733,13 @@ export const routes = (given?: Options): ReadonlyArray<Route> => {
     string,
     { readonly reply: Reply; readonly stored: number }
   >();
-  // Yesterday's deploy warmed the edge with the previous price list.
+  // Warm at start with the stale list, stored an hour ago.
   edge.set(catalogPath, {
     reply: json(200, priceJson(1, options.catalog.stale), cacheable),
     stored: Date.now() - 3_600_000,
   });
 
-  /**
-   * The edge in front of `/v2/catalog/`. Its cache key is the path plus the `v` parameter only:
-   * the CDN contract renegotiated in 2016 dropped header-based bypass after a cache-busting flood
-   * of `Cache-Control: no-cache`, and the marketing site's versioned URLs need `v`.
-   */
+  /** The edge in front of the catalogue, keyed on the path plus the `v` parameter only. */
   const viaEdge = (request: Received, forward: () => Reply): Reply => {
     if (request.method === "PURGE") {
       let purged = 0;
@@ -931,10 +801,7 @@ export const routes = (given?: Options): ReadonlyArray<Route> => {
   );
   let lastModified = options.invoicesModified;
 
-  /**
-   * The 2014 serializer expands a customer the first time it appears in a response and writes the
-   * bare id afterwards, to keep list payloads small for the mobile apps.
-   */
+  /** Invoice rows, expanding each customer at its first appearance in the response only. */
   const invoiceJson = (rows: ReadonlyArray<InvoiceSeed>) => {
     const seen = new Set<number>();
     return rows.map((row) => {
@@ -950,7 +817,6 @@ export const routes = (given?: Options): ReadonlyArray<Route> => {
         due: formatDotNet(row.due),
         printed: formatWallClock(row.printed),
         tags: row.tags.join(" "),
-        // Three generations of import jobs wrote absence differently; the column keeps them all.
         ...(row.poNumber === undefined ? {} : { poNumber: row.poNumber }),
         seatLimit: row.seatLimit === "unlimited" ? -1 : row.seatLimit,
       };
@@ -1056,15 +922,14 @@ export const routes = (given?: Options): ReadonlyArray<Route> => {
       !timingSafeEqual(presented, expected)
     )
       return error(401, "bad_signature");
-    // The replay check runs before the warm-up check: the nonce filter was installed in front of
-    // the service in 2017, so a nonce is spent even when the service then refuses to work.
+    // The replay check runs before the warm-up check, so a nonce is spent even when the service
+    // then refuses to work.
     const nonce = BigInt(nonceText);
     if (nonce <= lastNonce)
       return error(409, "nonce_replayed", { last: lastNonce.toString() });
     lastNonce = nonce;
     const now = Date.now();
-    // The payout worker loads its ledger cache lazily in two stages after every deploy, and the
-    // deploy tooling cannot pre-warm it.
+    // Two warm-up stages, each entered by the first request after the previous one ended.
     if (now >= warmup.until - slack && warmup.stage < 2)
       warmup = {
         stage: (warmup.stage + 1) as 1 | 2,
@@ -1232,8 +1097,8 @@ export const routes = (given?: Options): ReadonlyArray<Route> => {
   const overrides = ["PUT", "PATCH", "DELETE"];
 
   /**
-   * The API gateway and edge in front of the service, in the order the infrastructure applies
-   * them: merged slashes, the method allowlist (with PURGE passed to the edge), and the tunnel.
+   * The API gateway in front of the service, in the order the infrastructure applies it: merged
+   * slashes, the method allowlist (with PURGE passed to the edge), and the tunnel.
    */
   const front = (
     request: Received,
@@ -1241,7 +1106,7 @@ export const routes = (given?: Options): ReadonlyArray<Route> => {
   ): Reply | Promise<Reply> => {
     const query = request.target.indexOf("?");
     const rawPath = query < 0 ? request.target : request.target.slice(0, query);
-    // nginx `merge_slashes on`, the default the gateway was deployed with in 2016.
+    // nginx `merge_slashes on`.
     const path = rawPath.replace(/\/{2,}/g, "/");
     const target = query < 0 ? path : `${path}${request.target.slice(query)}`;
     const toEdge = path === catalogPath && request.method === "PURGE";
@@ -1255,8 +1120,6 @@ export const routes = (given?: Options): ReadonlyArray<Route> => {
         ],
         body: JSON.stringify({ message: "Method Not Allowed" }),
       };
-    // The tunnel dates from the gateway's introduction: it could not be taught PUT or DELETE, so
-    // the service learned to read the override header instead.
     const override = header(request.lines, "x-http-method-override");
     let method = request.method;
     if (override !== undefined && request.method === "POST") {

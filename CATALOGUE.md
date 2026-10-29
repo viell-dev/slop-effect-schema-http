@@ -15,13 +15,15 @@ Each entry's status is one of:
 - **defect**: a reproduced library mismatch, with a link to its issue.
 
 Backends are owned by area. Each area keeps the status of its entries up to date in its own
-section.
+section. Each service's behaviour is documented on its page under [services/](./services/), which
+is where consumer code and its tests take it from.
 
 ## Identity provider (`identity`)
 
 Scenarios are in `src/scenarios/identity.test.ts` and run in both lanes (Node and Chromium) unless
 marked node-only, in which case they are in `identity.node.test.ts`. Round trips are in
-`src/values/identity.test.ts` and `src/clients/identity/schemas.test.ts`.
+`src/values/identity.test.ts` and `src/clients/identity/schemas.test.ts`. The service is documented
+in [services/identity.md](./services/identity.md).
 
 - **AUTH-3** Three casings of the token type from three code paths: normalize known spellings,
   refuse an unknown scheme. Status: tested.
@@ -102,8 +104,8 @@ Scenarios are in `src/scenarios/soap-store.test.ts` and run in both lanes (Node 
 tests marked "(provider)" run once per provider of the lane (`fetch` in both, `lines` in Node).
 Node-only scenarios are in `soap-store.node.test.ts` and browser-only ones in
 `soap-store.browser.test.ts`. Round trips are in `src/values/soap-store.test.ts`, and the consumer's
-XML helper tests in `src/formats/xml.test.ts`. The backend is `src/backends/soap-store/`; its quirks are
-documented in `soap.ts`, `dav.ts` and `files.ts`.
+XML helper tests in `src/formats/xml.test.ts`. The service is documented in
+[services/soap-store.md](./services/soap-store.md).
 
 - **ERR-1a** A SOAP fault code where zero means success, inside HTTP 200: body-level
   discrimination. Status: tested.
@@ -244,7 +246,8 @@ validators together`
 Scenarios are in `src/scenarios/business-envelopes.test.ts` and run in both lanes (Node and
 Chromium); a title ending in `(lines)` or `(fetch)` runs once per provider the lane offers. The
 raw-socket check is in `business-envelopes.node.test.ts`. Round trips for the dialect schemas are in
-`src/clients/business/envelopes-dialects.test.ts`.
+`src/clients/business/envelopes-dialects.test.ts`. The service is documented in
+[services/business.md](./services/business.md), whose `/v1/` half is this part.
 
 - **ERR-1d** "Not found" answered as 200. Status: tested.
   - `[ERR-1d] decodes a found customer and a not-found 200 into one union` (and moves the
@@ -350,8 +353,8 @@ exact id refuses a value the platform parser already rounded`.
 Scenarios are in `src/scenarios/business-operations.test.ts` and run in both lanes (Node and
 Chromium); tests over `lane.clients` run once per provider in the lane. Node-only scenarios, about
 the line-preserving provider, are in `business-operations.node.test.ts`. Round trips are in
-`src/values/business.test.ts`. The backend's conventions, options and endpoints are documented at
-the top of `src/backends/business/operations.ts`.
+`src/values/business.test.ts`. The service's conventions, endpoints and test options are documented
+in [services/business.md](./services/business.md), whose `/v2/` half is this part.
 
 - **STAT-8** An unregistered 420 with `Retry-After`: not transient by default, with a classifier
   that adds it without losing the built-in cases. Status: tested.
@@ -449,8 +452,8 @@ the top of `src/backends/business/operations.ts`.
 Scenarios are in `src/scenarios/gateway.test.ts` and run in both lanes (Node and Chromium); the two
 that need the line-preserving provider are in `gateway.node.test.ts`. Round trips are in
 `src/values/gateway.test.ts` and in the CSV, fixed-width and XML-RPC helper tests under
-`src/formats`. The backend's endpoints and its month-end extract and token options for the flows
-are documented at the top of `src/backends/gateway/index.ts`.
+`src/formats`. The service's endpoints, its month-end extract and the token option the flows use
+are documented in [services/gateway.md](./services/gateway.md).
 
 - **AUTH-2** A session obtained by GET with the password in the query string, then carried as a
   query parameter: declared as is. Status: tested.
@@ -590,6 +593,8 @@ are refused`
 
 ## Notification service (`notifications`)
 
+The service is documented in [services/notifications.md](./services/notifications.md).
+
 - **AUTH-5** Double-submit CSRF: the token arrives as a cookie and in the body and must be echoed in
   a header; Node sends no cookies, so the cookie-reading endpoint needs `Cookie` set by hand.
   Status: tested, in both lanes unless marked Node.
@@ -662,10 +667,11 @@ AUTH-1 test runs once per provider in the lane. Round trips and compile-time che
 `src/clients/flows/`: one credential source and its three placements (`credentials.ts`), the search
 box (`search.ts`), the saga (`saga.ts`), the translations (`translate.ts`), the portal facade's
 contract (`portal.ts`) and the flows' own operations against the other services (`services.ts`).
-The saga's JSON-to-SOAP proxy is a sixth backend, `src/backends/soap-proxy.ts` (the 2012 WCF
-"portal facade"), whose quirks are documented at its top: a wrapped body with PascalCase members,
-bytes as an array of numbers, the ASP.NET AJAX `d` wrapper, `jsonerror: true` 500s that relay store
-faults, WCF's HTML "Request Error" page for unreadable bodies, and a `portal.` name prefix.
+The saga's JSON-to-SOAP proxy is a sixth backend, `soap-proxy` (the 2012 WCF "portal facade"),
+documented in [services/soap-proxy.md](./services/soap-proxy.md): a wrapped body with PascalCase
+members, bytes as an array of numbers, the ASP.NET AJAX `d` wrapper, `jsonerror: true` 500s that
+relay store faults, WCF's HTML "Request Error" page for unreadable bodies, and a `portal.` name
+prefix.
 
 - **AUTH-1** One opaque token as a Bearer header to one service, under a custom `Token` scheme to
   another, and as a query parameter to a third: per-service late-bound credentials resolved at send

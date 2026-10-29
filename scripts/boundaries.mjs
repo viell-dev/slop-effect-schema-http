@@ -1,5 +1,6 @@
-// Check the import boundaries between backends and the consumer side by resolving every import
-// (static, type-only, re-export, dynamic and `require`) with the TypeScript parser. Runs in
+// Check the boundaries between backends and the consumer side: the imports, by resolving every
+// import (static, type-only, re-export, dynamic and `require`) with the TypeScript parser, and the
+// service pages, which the consumer side is written from instead of the backends' source. Runs in
 // `npm run check`; Oxlint's no-restricted-imports rules flag the common cases in an editor, but
 // match specifier text only, so this script is the enforced allowlist.
 // `scripts/boundaries.test.mjs` runs it against generated fixture trees.
@@ -12,6 +13,10 @@
 //   not import a backend or a Node-side harness module: of the harness, only `src/harness/lane.ts`
 //   and the `#lane` alias are theirs. Outside `*.node.test.ts` files they may not import Node
 //   built-ins either, because they also run in a browser.
+// - Every backend entry point (`src/backends/<name>.ts` or `src/backends/<name>/index.ts`, the
+//   files the harness loads by name) carries a `Service documentation: services/<page>.md` line,
+//   except the harness's own `echo` helper. Every such line in a backend names an existing page,
+//   with its exact spelling, so a link that works on Windows does not break on Linux.
 //
 // Each specifier is resolved before it is classified, in this order:
 //
@@ -311,8 +316,52 @@ for (const file of consumerFiles) {
   });
 }
 
+// The service pages. A backend file may link several; an entry point must link at least one.
+const SERVICE_LINK = /Service documentation: services\/([^\s/`'"]+\.md)/g;
+const HARNESS_BACKENDS = new Set(["echo"]);
+const servicesDirectory = join(root, "services");
+const pages = new Set(
+  existsSync(servicesDirectory)
+    ? readdirSync(servicesDirectory, { withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => entry.name)
+    : [],
+);
+const entryPoints = readdirSync(backends, { withFileTypes: true }).flatMap(
+  (entry) => {
+    if (entry.isDirectory()) {
+      const index = join(backends, entry.name, "index.ts");
+      return existsSync(index) && !HARNESS_BACKENDS.has(entry.name)
+        ? [realpathSync.native(index)]
+        : [];
+    }
+    const name = entry.name.replace(/\.ts$/, "");
+    return entry.name.endsWith(".ts") && !HARNESS_BACKENDS.has(name)
+      ? [realpathSync.native(join(backends, entry.name))]
+      : [];
+  },
+);
+let linked = 0;
+for (const file of backendFiles) {
+  const links = [...readFileSync(file, "utf8").matchAll(SERVICE_LINK)].map(
+    (match) => match[1],
+  );
+  for (const page of links)
+    if (!pages.has(page))
+      problems.push(
+        `${show(file)}: links services/${page}, which does not exist`,
+      );
+  if (entryPoints.includes(realpathSync.native(file))) {
+    if (links.length === 0)
+      problems.push(
+        `${show(file)}: links no service page; add a "Service documentation: services/<page>.md" line`,
+      );
+    else linked++;
+  }
+}
+
 console.log(
-  `boundaries: ${checked} imports in ${backendFiles.length} backend and ${consumerFiles.length} consumer files`,
+  `boundaries: ${checked} imports in ${backendFiles.length} backend and ${consumerFiles.length} consumer files; ${linked} of ${entryPoints.length} backends link a service page`,
 );
 if (problems.length > 0) {
   for (const problem of problems) console.error(problem);

@@ -12,36 +12,11 @@ import { schemaPart, serviceDescription } from "./wsdl.js";
 import * as Xml from "./xml.js";
 
 /**
- * The SOAP side of DocVault, a document store first written in 2003 for an in-house platform and
- * ported to a servlet container in 2009. Its quirks, oldest first:
+ * The SOAP side of DocVault: the front controller's framing checks (`frame`), the reply writer for
+ * both SOAP versions (`render`, `respond`), the four actions, the metadata handler and the download
+ * servlet, which reuses the front controller's framing.
  *
- * - **Fault codes inside 200 (2003).** The original platform had no SOAP fault support, so its
- *   authors copied the fault vocabulary into every result: `<FaultCode>` and `<FaultString>`,
- *   where `0` means success. Every action answers HTTP 200, whatever happened. Three generations
- *   of clients branch on `FaultCode`, so it stays.
- * - **Latin-1 under charset-less `text/xml` (2003).** The platform wrote ISO-8859-1 and said so
- *   only in the XML declaration; characters above U+00FF become numeric character references.
- *   The port kept the writer byte for byte to avoid re-certifying the archive interface.
- * - **One list, three shapes (2005).** Results hold `<Count>` and, for one or more items,
- *   `<Documents>`. An empty list omits `<Documents>`. A single item is wrapped in `<Item>`, added
- *   in 2005 so a Perl reporting client stopped collapsing one-element lists into scalars. Many
- *   items are listed directly. The Perl client still runs.
- * - **The front controller (2009).** The port put a servlet in front of the SOAP stack. It
- *   enforces WS-I Basic Profile R2744: SOAP 1.1 requests need exactly one `SOAPAction` header,
- *   quoted, naming the body element as `<namespace>#<element>`. The body element must be in the
- *   service's namespace, whatever prefix binds it, before anything dispatches on its local name. It
- *   answers framing errors with plain-text 400 and unknown media types with 415, because it
- *   predates the stack's fault writer.
- * - **SOAP 1.2 on the same URL (2009).** `application/soap+xml` selects SOAP 1.2, whose action
- *   travels as the `action` parameter of the content type; a `SOAPAction` header is ignored there.
- *   1.2 replies are UTF-8 and say so.
- * - **The one correct action (2011).** `LockDocument` was written by a contractor who read the
- *   SOAP 1.1 specification: it reports errors as real SOAP faults with HTTP 500 and has no
- *   `FaultCode`. Its fault writer answers 500 for SOAP 1.2 too, where the 1.2 binding would send
- *   400 for sender faults. Nobody else adopted it.
- * - **Downloads by GET with a body (2003).** The download servlet reads a `DownloadDocument`
- *   envelope from the body of a GET and answers the bytes. Its `doPost` was never written, so POST
- *   gets 405. The vendor manual still documents it, and the archive robot depends on it.
+ * Service documentation: services/soap-store.md
  */
 
 export const NAMESPACE = "urn:docvault:store:2003";
@@ -59,7 +34,7 @@ interface Call {
   readonly payload: Xml.Node;
 }
 
-/** The JSON switches the tests and the cross-service flows configure; see `index.ts`. */
+/** The test options that act on the SOAP routes; see `index.ts`. */
 export interface Hooks {
   readonly failStore?:
     | {
@@ -447,8 +422,7 @@ const metadata = (request: Received, context: Context): Reply => {
   } catch {
     return plain(400, "Malformed query string");
   }
-  // The metadata handler copies the WCF convention: a bare `wsdl` key asks for the description and
-  // `wsdl=<name>` for one of its parts, so an empty value names a part called "".
+  // A bare key has a null value; an empty value names a part called "".
   const entry = query.find(([key]) => key.toLowerCase() === "wsdl");
   if (entry === undefined)
     return plain(404, "Append ?wsdl for the service description");

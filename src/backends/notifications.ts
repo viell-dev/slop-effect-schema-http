@@ -1,58 +1,10 @@
 /**
- * The notification service ("Notify"), built between 2014 and 2016 while the company moved its web
- * front end to a single-page app. Each layer was added by a different team for a different
- * client, and every one of them still has a caller somebody is afraid to break.
+ * The notification service. The handler applies the layers in the order they were stacked: CORS
+ * preflights and decoration around the application router, then within each route the CSRF check,
+ * the Token check and, for announcements, the signature check. Every call to {@link handler}
+ * creates fresh state.
  *
- * ## Contract for the cross-service flows
- *
- * Start it with `lane.backend("notifications", options)`; every start has fresh state. Options are
- * plain JSON (see `Options`). The fixture values `acceptedToken`, `signingSecret` and
- * `allowedOrigins` are required and come from the test. In the browser lane the page is on another
- * site than the backend, so pass `csrfCookieSameSite: "None"` for the XSRF cookie to come back, and
- * include the page's origin (`location.origin`) in `allowedOrigins` when the backend answers CORS
- * itself. Every hostile CORS behaviour is on by default and can be switched off under `cors`.
- *
- * - **Token scheme.** Every route except the CSRF bootstrap requires
- *   `Authorization: Token token="<opaque>"` (Rails' token form, scheme name case-sensitive, value
- *   quoted) whose value equals `acceptedToken`. Anything else answers 401 with
- *   `WWW-Authenticate: Token realm="Application"` and the text body `HTTP Token: Access denied.`.
- * - **CSRF.** Every POST requires the double-submit pair: the `XSRF-TOKEN` cookie and the same
- *   token in `X-XSRF-TOKEN`. `GET /v2/session/csrf` issues a token: in the JSON body as
- *   `csrfToken`, and as a cookie whose value is percent-encoded (`Set-Cookie: XSRF-TOKEN=...%3D%3D`).
- *   The header carries the decoded token. Only issued tokens are accepted. A failure answers 403
- *   with an HTML page whose `Reason:` line names the failed check.
- * - **Announce:** `POST /v2/announcements`, the month-end saga's announcement step. JSON body
- *   `{ "channel": string, "subject": string, "body": string }`, Token and CSRF as above, and an HMAC
- *   signature:
- *   - `X-Notify-Timestamp`: epoch milliseconds, within `windowMs` of the server clock;
- *   - `X-Notify-Signature`: `v1=` and the lowercase hex HMAC-SHA256, keyed with `signingSecret`,
- *     over `METHOD \n path \n timestamp \n` followed by the exact body bytes. The path is the raw
- *     request target without its query.
- *   - A signature is spent once verified, even when the announcement then fails, so an attempt
- *     must be signed again.
- *   - Success is 202 with `{ id, channel, subject, body, receivedAt }` and a `Location`.
- *   - Signature failures are 401 JSON `{ "error": { "code": ... } }` with the codes
- *     `signature_missing`, `timestamp_out_of_window` (plus `serverTime` and `windowMs`),
- *     `signature_mismatch` and `signature_replayed`, checked in that order.
- *   - A blank or missing field is 422 `invalid_announcement` with its `field`.
- *   - The failure point is `options.announce`: `unavailable` answers 503 `fanout_busy` for the
- *     first `times` verified announcements, with `Retry-After` when given; `fail: "error"` answers
- *     500 with an HTML page; `fail: "frozen"` answers 409 `channel_frozen`; `holdMs` holds each
- *     verified announcement before answering, and an abort during the hold records nothing.
- * - `GET /v2/announcements` lists the recorded announcements as `{ "announcements": [...] }`.
- * - Also served: `POST /v2/subscriptions` (CSRF and Token; `{ channel, address }`, 201), and the
- *   legacy `GET /v1/subscriptions` and `GET /v1/channels` with their retirement headers.
- * - **CORS.** For an allowed `Origin`, every application response carries
- *   `Access-Control-Allow-Origin` with credentials allowed. Preflights: `/v2/announcements` refuses
- *   any requested header outside its list with 403 (so `b3` and `traceparent` fail);
- *   `/v2/subscriptions` omits `Content-Type` from its list; other `/v2/` paths list
- *   `Authorization, Content-Type, X-XSRF-TOKEN, X-Requested-With` without checking; v1 `OPTIONS`
- *   gets the servlet container's `Allow` answer with no CORS headers, and v1 responses expose only
- *   `Warning`.
- *
- * Checks run in the order the layers were stacked: the CORS filter, the framework's CSRF
- * middleware, the Token authentication of the API layer, then the HMAC check of the announce
- * route.
+ * Service documentation: services/notifications.md
  */
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { json, router, textReply } from "../harness/route.js";
@@ -65,55 +17,35 @@ import {
   type Reply,
 } from "../harness/server.js";
 
+/** The `announce` test option. */
 export interface AnnounceFailurePoint {
-  /** Answer the first `times` verified announcements with 503, after spending their signatures. */
   readonly unavailable?:
     | {
         readonly times: number;
-        /** The `Retry-After` value to send, verbatim; omitted when undefined. */
         readonly retryAfter?: string | undefined;
       }
     | undefined;
-  /** Fail every verified announcement: 500 with the platform's error page, or 409 frozen. */
   readonly fail?: "error" | "frozen" | undefined;
-  /** Hold each verified announcement this long before answering. */
   readonly holdMs?: number | undefined;
 }
 
-/**
- * The hostile CORS behaviours, each on by default. The browser lane switches one off to reach an
- * endpoint without the same-origin proxy.
- */
+/** The `cors` test option: each hostile CORS behaviour, on unless set to `false`. */
 export interface CorsQuirks {
-  /** `/v2/subscriptions` preflights omit `Content-Type` from the allowed headers. */
   readonly subscriptionsOmitContentType?: boolean | undefined;
-  /** `/v2/announcements` preflights refuse any requested header outside the list, with 403. */
   readonly strictAnnouncements?: boolean | undefined;
-  /** v1 `OPTIONS` is answered by the servlet container, without any application header. */
   readonly v1ContainerOptions?: boolean | undefined;
-  /** v1 responses expose only `Warning` to browser scripts, not `Deprecation`, `Sunset` or `Link`. */
   readonly v1ExposeWarningOnly?: boolean | undefined;
 }
 
-/** Plain JSON data, so a browser test can pass it across a process boundary. */
+/** The test options, documented under "Test options" in the service page. */
 export interface Options {
-  /** The opaque token accepted under the `Token` scheme. */
   readonly acceptedToken: string;
-  /** The shared HMAC-SHA256 key for announcement signatures. */
   readonly signingSecret: string;
-  /** Browser origins the CORS filter answers for, with credentials allowed. */
   readonly allowedOrigins: ReadonlyArray<string>;
-  /** Allowed distance between a signature's timestamp and the server clock. Default 5 minutes. */
   readonly windowMs?: number | undefined;
-  /** Added to the real clock to form the server clock, to simulate clock skew. Default 0. */
   readonly clockOffsetMs?: number | undefined;
   readonly announce?: AnnounceFailurePoint | undefined;
   readonly cors?: CorsQuirks | undefined;
-  /**
-   * The XSRF cookie's `SameSite` attribute. Default `Lax`, set by the 2019 framework upgrade, so a
-   * cross-site page never gets the cookie back. `None` (sent with `Secure`) is the setting of the
-   * embedded-widget deployment, where the page and the API are on different sites.
-   */
   readonly csrfCookieSameSite?: "Lax" | "None" | undefined;
 }
 
@@ -133,18 +65,16 @@ interface Announcement {
 
 type Lines = ReadonlyArray<readonly [string, string]>;
 
+/** The CSRF middleware's own HTML page. */
 const csrfPage = (reason: string): Reply =>
-  // 2014: the CSRF check is the web framework's middleware, which predates the JSON API layer and
-  // renders its own HTML page. The SPA's error interceptor matches on the status, so the page was
-  // never replaced.
   textReply(
     403,
     `<!DOCTYPE html>\n<html><head><title>403 Forbidden</title></head><body>\n<h1>Forbidden (403)</h1>\n<p>CSRF verification failed. Request aborted.</p>\n<p>Reason: ${reason}</p>\n</body></html>\n`,
     "text/html; charset=utf-8",
   );
 
+/** The Token layer's refusal. */
 const tokenChallenge = (): Reply =>
-  // 2015: the API layer reused Rails-style token authentication, realm and message included.
   textReply(401, "HTTP Token: Access denied.\n", "text/plain; charset=utf-8", [
     ["WWW-Authenticate", 'Token realm="Application"'],
   ]);
@@ -163,7 +93,6 @@ const cookies = (request: Received): ReadonlyMap<string, string> => {
     const separator = pair.indexOf("=");
     if (separator < 0) continue;
     const name = pair.slice(0, separator).trim();
-    // The first occurrence wins, as in the cookie parser the framework ships with.
     if (!jar.has(name)) jar.set(name, pair.slice(separator + 1).trim());
   }
   return jar;
@@ -213,21 +142,14 @@ const blankField = (
   );
 };
 
-/** The legacy v1 retirement announcements, each added by a different team. */
+/** The legacy v1 retirement headers. */
 const retirement = (deprecation: string): Lines => [
-  // 2025: API governance added RFC 9745's `Deprecation` to the routes it knew about. The 2019
-  // gateway rule on `/v1/channels` still sends the draft-era `true`, and nobody owns that rule.
   ["Deprecation", deprecation],
-  // 2019: the platform team added RFC 8594's `Sunset` when the retirement date was agreed.
   ["Sunset", "Sun, 31 Jan 2027 23:59:59 GMT"],
-  // 2015: the original team announced the retirement in `Warning`, because the 2015 Android SDK
-  // shows any 299 text as a banner. The text still has the first planned date; changing it needs
-  // an SDK release nobody will ship.
   [
     "Warning",
     '299 - "Deprecated API: \\"/v1\\" retires 2026-06-30; use /v2" "Wed, 31 Dec 2025 23:59:59 GMT"',
   ],
-  // 2021: the API gateway adds its own warning line for metered legacy traffic.
   [
     "Warning",
     '299 notify-gw.example.test:8443 "v1 traffic is metered, billed per call"',
@@ -312,7 +234,6 @@ export const handler = (given?: Options): Handler => {
   };
 
   const verify = (request: Received): Reply | undefined => {
-    // 2016: signed announcements, after a leaked token was used to page every on-call engineer.
     const timestamp = header(request.lines, "x-notify-timestamp");
     const signature = header(request.lines, "x-notify-signature");
     if (timestamp === undefined || signature === undefined)
@@ -333,7 +254,7 @@ export const handler = (given?: Options): Handler => {
     for (const [seen, expires] of spent)
       if (expires < current) spent.delete(seen);
     if (spent.has(expected)) return signatureFailure("signature_replayed");
-    // The signature is spent as soon as it verifies, before the fan-out is even asked.
+    // Remembered until its timestamp leaves the window, after which a replay fails that check.
     spent.set(expected, stamped + windowMs);
     return undefined;
   };
@@ -345,8 +266,6 @@ export const handler = (given?: Options): Handler => {
       handle: () => {
         const token = randomBytes(16).toString("base64");
         issued.add(token);
-        // 2014: the framework's cookie helper percent-encodes values; the SPA's HTTP library
-        // decodes the cookie before echoing it, so the header carries the decoded token.
         return json(200, { csrfToken: token }, [
           [
             "Set-Cookie",
@@ -476,9 +395,7 @@ export const handler = (given?: Options): Handler => {
     const target = path(request);
     const origin = allowedOrigin(request);
     if (target.startsWith("/v1/") && quirks.v1ContainerOptions)
-      // The v1 routes still run in the 2013 servlet container, which answers OPTIONS itself from
-      // the methods the servlet implements. The application, and with it the CORS filter and every
-      // header the application adds, never sees the request.
+      // The servlet container's answer, written before the application or its filter runs.
       return {
         status: 200,
         lines: [
@@ -487,8 +404,6 @@ export const handler = (given?: Options): Handler => {
         ],
       };
     if (target === "/v2/announcements" && quirks.strictAnnouncements) {
-      // 2016: the security review of signed announcements demanded a strict filter that refuses
-      // any header outside its list. Tracing arrived in 2021; the filter has not been re-reviewed.
       if (origin === undefined)
         return textReply(403, "CORS origin not allowed\n", "text/plain");
       const requested = (
@@ -516,8 +431,6 @@ export const handler = (given?: Options): Handler => {
         origin,
         "Authorization, Content-Type, X-XSRF-TOKEN, X-Notify-Timestamp, X-Notify-Signature, traceparent, b3",
       );
-    // 2015: the v2 subscription endpoint copied its allowlist from the v1 form endpoint, whose
-    // form-encoded bodies never needed Content-Type listed. Other routes list it.
     return filterAnswer(
       origin,
       target === "/v2/subscriptions" && quirks.subscriptionsOmitContentType
@@ -531,8 +444,7 @@ export const handler = (given?: Options): Handler => {
     const reply = await app(request, context);
     const origin = allowedOrigin(request);
     if (origin === undefined) return reply;
-    // The hand-rolled CORS filter decorates every application response for allowed origins. The
-    // v1 routes expose only `Warning`, which the 2015 web banner read.
+    // The CORS filter decorates every application response for allowed origins.
     const exposed = !path(request).startsWith("/v1/")
       ? []
       : quirks.v1ExposeWarningOnly

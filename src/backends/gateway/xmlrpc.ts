@@ -1,22 +1,9 @@
 /**
- * `/RPC2`, the XML-RPC endpoint the desktop reporting client has called since 1999 (Frontier::RPC,
- * later XMLRPC::Lite). Like every XML-RPC server of its age it answers HTTP 200 for every call that
- * reached the dispatcher, faults included; only a request that is not `text/xml` at all is refused
- * by the HTTP layer with 400. The fault codes follow the 2001 interoperability list for protocol
- * errors, and HTTP-like numbers for application errors because the 2003 maintainers liked them.
+ * The XML-RPC reader and writer of `/RPC2`: just enough XML to read a `methodCall` the way expat
+ * would, and a writer for the value types the Perl handlers wrote. Its XML rules, value formats and
+ * fault codes are in the service page.
  *
- * Values are written the way Perl wrote them: `<i4>`, doubles with exactly two decimals,
- * `<boolean>` as `1` or `0`, `dateTime.iso8601` without separators in the date or a zone,
- * `00000000T00:00:00` for "no date", untyped `<value>` strings where the original handlers forgot
- * the type, and base64 wrapped by MIME::Base64 at 76 columns with a newline after every line.
- *
- * Both servers parsed with expat, so a call is read as expat reads it: line ends are normalized to
- * LF first, and a character outside XML 1.0's `Char` production, raw or as a character reference,
- * or an `&` that starts no reference, makes the document malformed. A malformed call is answered
- * with the -32700 parse-error fault before the session or the method is looked at. The writer
- * escapes text, writes a carriage return as `&#13;` so a reader's line-end handling keeps it, and
- * never writes a character outside `Char`: a value that holds one, which only fixture data can
- * supply, turns the reply into the -32603 internal-error fault.
+ * Service documentation: services/gateway.md
  */
 import type { Reply } from "../../harness/server.js";
 import { units } from "./cgi.js";
@@ -94,7 +81,7 @@ const unescape = (text: string): string => {
 
 /** Just enough XML to read a methodCall: elements, text, entities, a declaration and comments. */
 const parseXml = (input: string): Node => {
-  // Expat hands on CRLF and a lone CR as LF before anything else reads the text (XML 1.0 §2.11).
+  // CRLF and a lone CR become LF before anything else reads the text (XML 1.0 §2.11).
   const source = input.replace(/\r\n?/g, "\n");
   const invalid = firstNonChar(source);
   if (invalid !== undefined)
@@ -120,8 +107,7 @@ const parseXml = (input: string): Node => {
     if (open === null) throw new Error(`expected an element at ${index}`);
     index += open[0].length;
     const name = open[1]!;
-    // XML-RPC defines no attributes, so their values are ignored, but a malformed one still makes
-    // the document malformed: each must be quoted, hold no '<', and use only valid references.
+    // Attribute values are checked, then ignored.
     const attributes = open[2] ?? "";
     const attribute = /\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"([^"]*)"|'([^']*)')/y;
     let at = 0;
@@ -219,7 +205,7 @@ const escape = (text: string): string =>
 /** A value written the way the Perl handlers write it. */
 export type Out =
   | { readonly i4: number }
-  /** Money in cents, written as a `<double>` in units with two decimals, as sprintf("%.2f") did. */
+  /** Money in cents, written as a `<double>` in units. */
   | { readonly cents: number }
   | { readonly boolean: boolean }
   | { readonly string: string }
@@ -272,7 +258,7 @@ const faultBody = (code: number, message: string): string =>
     ],
   })}\n</fault>\n`;
 
-/** What the library answered when a handler's value could not be serialized. */
+/** The fault that replaces a reply holding a character outside `Char`. */
 const internalError = document(
   faultBody(-32603, "server error. internal xml-rpc error"),
 );

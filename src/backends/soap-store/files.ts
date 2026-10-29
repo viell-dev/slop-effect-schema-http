@@ -4,18 +4,10 @@ import { dateTime, guessType, type Store, validName } from "./store.js";
 import { mediaType, plain, rawQuery } from "./wire.js";
 
 /**
- * The file endpoints that grew around the SOAP store:
+ * The file endpoints: the raw upload, the multipart upload (parsed with the platform's
+ * `Response.formData`) and the bundle, written by hand.
  *
- * - **The scanner gateway (2007).** Network scanners could not build multipart bodies, so
- *   `POST /upload/raw?name=<file name>` takes the raw bytes as `application/octet-stream` and
- *   answers a one-line plain-text receipt, `STORED <id> <size> <etag>` and CRLF, which the scanner
- *   firmware prints. The content type is guessed from the name's extension.
- * - **The browser uploader (2015).** `POST /upload` takes `multipart/form-data` with a `label`
- *   field and a `file` part, and answers JSON: the web team never adopted the SOAP vocabulary.
- * - **Bundles (2015).** `GET /bundle/<id>` returns the document and its metadata together. The
- *   same web team reused the browser's upload format for the download, so the bundle is
- *   `multipart/form-data` with a `metadata` part (`application/json`, as a file) and a `content`
- *   part holding the bytes.
+ * Service documentation: services/soap-store.md
  */
 
 const created = (store: Store, name: string): string | undefined =>
@@ -130,7 +122,6 @@ export const routes = (store: Store): ReadonlyArray<Route> => [
         etag: document.etag,
         modified: dateTime(document.modified),
       });
-      // Browsers write the file name as raw UTF-8 with quotes escaped as %22; so does the bundler.
       const fileName = document.name.replace(/"/g, "%22");
       return {
         status: 200,
