@@ -20,9 +20,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
-      - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm check
-      - run: pnpm lint
-      - run: pnpm build
-      - run: pnpm test
+      - run: npm ci
+      - run: npm run check
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test

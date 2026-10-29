@@ -56,7 +56,14 @@
   },
   "main": "./dist/main.js",
   "types": "./dist/main.d.ts",
-  "packageManager": "pnpm@12.16.1",
+  "packageManager": "npm@11.19.0",
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "^11.19.0",
+      "onFail": "error"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "run-p check:*",
