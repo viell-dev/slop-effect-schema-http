@@ -65,7 +65,11 @@ behaviour, without opening `src/backends/`. Code written before this rule was wr
 per area; it is checked against recordings of real software and independent parsers instead
 ([#32](https://github.com/viell-dev/slop-effect-schema-http/issues/32),
 [#33](https://github.com/viell-dev/slop-effect-schema-http/issues/33)). `scripts/boundaries.mjs`
-checks that every backend links its page; [AGENTS.md](./AGENTS.md) states the full rule.
+checks that every backend links its page; [AGENTS.md](./AGENTS.md) states the full rule. The
+independent parsers are [saxes](https://github.com/lddubeau/saxes) in Node, Chromium's `DOMParser`
+and each platform's `Response.formData()`; `src/scenarios/parsers.test.ts` compares the consumer's
+and the backends' XML, XML-RPC and multipart readers with them over the edge-case corpora in
+`src/formats/corpus/` (catalogue entries EXT-3 to EXT-5).
 
 Every scenario runs in two lanes. The Node lane runs the consumer in Node. The browser lane runs
 the same tests in headless Chromium through Vitest browser mode, to show that the library works in

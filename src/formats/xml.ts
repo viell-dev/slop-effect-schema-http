@@ -5,6 +5,11 @@
  * of names; DTDs are refused. Malformed input throws, so a schema transformation can surface it as
  * a decoding failure.
  *
+ * Names follow XML 1.0's `Name` production, white space is only space, tab, CR and LF, the XML
+ * declaration is checked and allowed only at the start, a processing instruction's target is never
+ * `xml`, and a comment never holds `--`. EXT-3 and EXT-4 compare this reader with independent
+ * parsers over a corpus of edge cases (`corpus/`).
+ *
  * Characters outside XML 1.0's `Char` production (https://www.w3.org/TR/xml/#charsets) are refused,
  * raw or as character references, and the writer refuses to emit them. Line breaks are normalized
  * to LF before parsing (https://www.w3.org/TR/xml/#sec-line-ends) and attribute values as CDATA
@@ -61,11 +66,29 @@ const decodeEntities = (text: string): string =>
       return String.fromCodePoint(code);
     }
     const value = entities[entity];
-    if (value === undefined) throw new Error(`unknown entity ${whole}`);
+    if (value === undefined) throw new Error(`XML: unknown entity ${whole}`);
     return value;
   });
 
-const nameChar = /[\w:.-]/;
+/** XML 1.0 `NameStartChar` and `NameChar` (https://www.w3.org/TR/xml/#NT-Name). */
+const nameStart =
+  "A-Z_a-z:\\u{C0}-\\u{D6}\\u{D8}-\\u{F6}\\u{F8}-\\u{2FF}\\u{370}-\\u{37D}\\u{37F}-\\u{1FFF}" +
+  "\\u{200C}-\\u{200D}\\u{2070}-\\u{218F}\\u{2C00}-\\u{2FEF}\\u{3001}-\\u{D7FF}\\u{F900}-\\u{FDCF}" +
+  "\\u{FDF0}-\\u{FFFD}\\u{10000}-\\u{EFFFF}";
+const nameRest = `${nameStart}\\-.0-9\\u{B7}\\u{300}-\\u{36F}\\u{203F}-\\u{2040}`;
+const namePattern = new RegExp(`[${nameStart}][${nameRest}]*`, "uy");
+
+/**
+ * The XML declaration (https://www.w3.org/TR/xml/#NT-XMLDecl): a version, then optionally the
+ * encoding and `standalone`, in that order. White space is only space, tab and line feed here,
+ * because carriage returns are normalized away before parsing.
+ */
+const declarationPattern =
+  /<\?xml[ \t\n]+version[ \t\n]*=[ \t\n]*(?:"1\.[0-9]+"|'1\.[0-9]+')(?:[ \t\n]+encoding[ \t\n]*=[ \t\n]*(?:"[A-Za-z][\w.-]*"|'[A-Za-z][\w.-]*'))?(?:[ \t\n]+standalone[ \t\n]*=[ \t\n]*(?:"(?:yes|no)"|'(?:yes|no)'))?[ \t\n]*\?>/y;
+
+/** XML's white space, `S`: unlike `\s`, no other Unicode space counts. */
+const isSpace = (character: string | undefined): boolean =>
+  character === " " || character === "\t" || character === "\n";
 
 /** Parse a document and return its root element. */
 export const parse = (input: string): Element => {
@@ -80,29 +103,46 @@ export const parse = (input: string): Element => {
     index = invalid.index;
     fail(`character ${codePoint(invalid[0])} is not allowed in XML`);
   }
-  const skipSpace = () => {
-    while (index < source.length && /\s/.test(source[index]!)) index++;
+  /** Skip white space; whether there was any. */
+  const skipSpace = (): boolean => {
+    const start = index;
+    while (isSpace(source[index])) index++;
+    return index > start;
   };
   const readName = (): string => {
-    const start = index;
-    while (index < source.length && nameChar.test(source[index]!)) index++;
-    if (start === index) fail("expected a name");
-    return source.slice(start, index);
+    namePattern.lastIndex = index;
+    const name = namePattern.exec(source)?.[0];
+    if (name === undefined) return fail("expected a name");
+    index += name.length;
+    return name;
+  };
+  /** A comment, which may not hold `--` (https://www.w3.org/TR/xml/#NT-Comment). */
+  const skipComment = () => {
+    const end = source.indexOf("--", index + 4);
+    if (end < 0) fail("unterminated comment");
+    if (source[end + 2] !== ">") fail("'--' inside a comment");
+    index = end + 3;
+  };
+  /** A processing instruction, whose target is a name other than `xml` in any case. */
+  const skipInstruction = () => {
+    index += 2;
+    const target = readName();
+    if (target.toLowerCase() === "xml")
+      fail("an XML declaration is allowed only at the start");
+    if (!source.startsWith("?>", index) && !isSpace(source[index]))
+      fail("expected white space after a processing instruction's target");
+    const end = source.indexOf("?>", index);
+    if (end < 0) fail("unterminated processing instruction");
+    index = end + 2;
   };
   const skipMisc = () => {
     for (;;) {
       skipSpace();
-      if (source.startsWith("<?", index)) {
-        const end = source.indexOf("?>", index);
-        if (end < 0) fail("unterminated processing instruction");
-        index = end + 2;
-      } else if (source.startsWith("<!--", index)) {
-        const end = source.indexOf("-->", index);
-        if (end < 0) fail("unterminated comment");
-        index = end + 3;
-      } else if (source.startsWith("<!DOCTYPE", index)) {
+      if (source.startsWith("<?", index)) skipInstruction();
+      else if (source.startsWith("<!--", index)) skipComment();
+      else if (source.startsWith("<!DOCTYPE", index))
         fail("DTDs are not supported");
-      } else return;
+      else return;
     }
   };
   const readElement = (): Element => {
@@ -111,7 +151,7 @@ export const parse = (input: string): Element => {
     const name = readName();
     const attributes: Record<string, string> = {};
     for (;;) {
-      skipSpace();
+      const spaced = skipSpace();
       if (source.startsWith("/>", index)) {
         index += 2;
         return { name, attributes, children: [] };
@@ -120,6 +160,7 @@ export const parse = (input: string): Element => {
         index++;
         break;
       }
+      if (!spaced) fail("expected white space before an attribute");
       const attribute = readName();
       skipSpace();
       if (source[index] !== "=") fail("expected '='");
@@ -129,11 +170,18 @@ export const parse = (input: string): Element => {
       if (quote !== '"' && quote !== "'") fail("expected a quoted value");
       const end = source.indexOf(quote!, index + 1);
       if (end < 0) fail("unterminated attribute value");
-      if (attribute in attributes) fail(`duplicate attribute ${attribute}`);
+      // Own properties only: a name such as `constructor` is not already present.
+      if (Object.hasOwn(attributes, attribute))
+        fail(`duplicate attribute ${attribute}`);
       const raw = source.slice(index + 1, end);
       if (raw.includes("<")) fail("'<' in an attribute value");
       // Literal white space becomes a space; white space written as a reference is kept.
-      attributes[attribute] = decodeEntities(raw.replace(/[\t\n]/g, " "));
+      Object.defineProperty(attributes, attribute, {
+        value: decodeEntities(raw.replace(/[\t\n]/g, " ")),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
       index = end + 1;
     }
     const children: Array<Node> = [];
@@ -154,13 +202,9 @@ export const parse = (input: string): Element => {
         children.push(source.slice(index + 9, end));
         index = end + 3;
       } else if (source.startsWith("<!--", index)) {
-        const end = source.indexOf("-->", index);
-        if (end < 0) fail("unterminated comment");
-        index = end + 3;
+        skipComment();
       } else if (source.startsWith("<?", index)) {
-        const end = source.indexOf("?>", index);
-        if (end < 0) fail("unterminated processing instruction");
-        index = end + 2;
+        skipInstruction();
       } else if (source[index] === "<") {
         children.push(readElement());
       } else {
@@ -173,6 +217,15 @@ export const parse = (input: string): Element => {
       }
     }
   };
+  // A leading U+FEFF is the byte-order mark a decoder kept, not content
+  // (https://www.w3.org/TR/xml/#sec-guessing); anywhere else it is a character.
+  if (source.startsWith("\u{FEFF}")) index = 1;
+  // `<?xml` followed by white space or `?>` opens the declaration, which only the start may hold.
+  if (/^<\?xml(?:[ \t\n]|\?>)/.test(source.slice(index, index + 7))) {
+    declarationPattern.lastIndex = index;
+    if (!declarationPattern.test(source)) fail("malformed XML declaration");
+    index = declarationPattern.lastIndex;
+  }
   skipMisc();
   const root = readElement();
   skipMisc();

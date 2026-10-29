@@ -860,7 +860,9 @@ call is cross-origin and cross-site.
 
 Scenarios a hostile suite should show that the issue's catalogue does not name, added from the
 [review of PR #23](https://github.com/viell-dev/slop-effect-schema-http/pull/23#issuecomment-6509333821)
-(section 3.2). They are checked like the other entries.
+(section 3.2; EXT-3 to EXT-5 from sections 4.3 and 4.4, tracked in
+[#33](https://github.com/viell-dev/slop-effect-schema-http/issues/33)). They are checked like the
+other entries.
 
 - **EXT-1** One tag for two statuses: a tunnelled write answers `200` with the task or `204` with no
   body, and the contract decodes both as `Changed`, the task as an `Option`. Tags belong to
@@ -877,6 +879,108 @@ under the same tag is never consulted` (a decode error, after the service applie
   - `[EXT-2] one operation replaces the layer's client through transformClient, and the operations
 around it keep the layer's` (provider; in the Node lane's `lines` run, the replacement is the
     Fetch provider)
+- **EXT-3** The suite's XML readers against an independent parser, over a corpus of edge cases:
+  characters XML forbids, raw and as references; malformed and valid references; CDATA; CRLF and
+  lone CR; attribute quoting, white space and names; a DTD; comments, processing instructions and
+  the XML declaration before the root; and content after it. Each of the 92 documents
+  (`src/formats/corpus/xml.ts`, 40 well-formed) is a SOAP `StoreDocument` call with XML 1.0's
+  verdict, read by the independent parser (saxes in Node, Chromium's `DOMParser` in the browser),
+  by the consumer's reader and, over HTTP, by the SOAP store. Every reader is compared with the
+  independent parser, not with another reader: on acceptance, and on the decoded tree (the
+  consumer) or the title stored, read back from the bundle's JSON (the store). A recorded
+  disagreement that stops holding fails too. In `src/scenarios/parsers.test.ts`, both lanes.
+  Status: tested.
+  - `[EXT-3] ${parser} gives XML 1.0's verdict on every document of the XML corpus, except its recorded disagreements`
+  - `[EXT-3] the consumer's XML reader agrees with ${parser} on every document: acceptance, and the decoded tree when accepted`
+  - `[EXT-3] the store's XML reader agrees with ${parser} on every document, judged over HTTP: a "Malformed XML" 400, or the title it stored`
+    (the ledger holds exactly the corpus bytes)
+  - The independent parsers: both give XML 1.0's verdict on every document, except that saxes
+    refuses an entity declared in the internal DTD subset (`doctype-internal-entity`). saxes reads
+    no declarations from a DTD, a limitation its README documents, though XML 1.0 section 4.1 (WFC:
+    Entity Declared) is met; the readers are compared with XML 1.0's verdict there. saxes was
+    chosen for the Node lane because it aims to report every well-formedness error of XML 1.0
+    fifth edition, is jsdom's XML parser, is pure JavaScript with one dependency and no install
+    script, and is a different implementation from Chromium's libxml2.
+  - The consumer's reader, fixed against the corpus: it accepted two attributes without white space
+    between them (`attr-no-separator`), U+00A0, U+3000 and U+FEFF as white space
+    (`attr-nbsp-separator`, `attr-ideographic-space`, `prolog-nbsp`, `prolog-zero-width-space`),
+    names starting with a digit or `-`
+    (`attr-name-digit`, `attr-name-hyphen`), a misplaced or malformed XML declaration
+    (`prolog-declaration-*`), `xml` in any case or nothing as a processing instruction's target
+    (`prolog-pi-reserved`, `prolog-pi-no-target`), and `--` inside comments, ending `<!--->` at its
+    own opening hyphens (`comment-double-hyphen`, `comment-hyphen-end`, `comment-overlap`); and it
+    refused non-ASCII names (`attr-name-non-ascii`) and attribute names such as `constructor` and
+    `__proto__`, which it took for duplicates (`attr-object-names`).
+  - Recorded, by design: the consumer and the store refuse every DTD (`doctype-bare`,
+    `doctype-internal-entity`). SOAP 1.1 section 3 and SOAP 1.2 part 1 section 5 forbid a
+    document type declaration in a message, and neither reader expands entities.
+  - Recorded, backend defects seen over HTTP, for the store's side to fix: the store takes U+00A0,
+    U+3000 and U+FEFF for white space (`attr-nbsp-separator`, `attr-ideographic-space`,
+    `prolog-nbsp`, `prolog-zero-width-space`); refuses non-ASCII names as "unexpected markup"
+    (`attr-name-non-ascii`); checks neither the XML declaration's place nor its content
+    (`prolog-declaration-late`, `-after-space`, `-no-version`, `-order`, `-standalone`); does not
+    check a processing instruction's target (`prolog-pi-reserved`, `prolog-pi-no-target`); and
+    accepts `--` inside a comment (`comment-double-hyphen`, `comment-hyphen-end`,
+    `comment-double-hyphen-in-text`). Its service page says it reads XML 1.0 strictly.
+- **EXT-4** The suite's XML-RPC readers against an independent XML parser, over a corpus of 61
+  calls (33 well-formed) and 31 replies (25 well-formed) in `src/formats/corpus/xmlrpc.ts`: the
+  same XML edge cases inside XML-RPC documents, and value-type edge cases (untyped values, white
+  space inside and around type elements, `<int>`, signs, exponents, CRLF in base64, empty values,
+  member names written with references or named `__proto__`, duplicate members, `<nil/>`, mixed
+  content). The consumer's reader must agree with the independent parser on acceptance and, read
+  through the same XML-RPC mapping over the parser's tree, on the value, which must also be the one
+  the specification gives where a case names it. The gateway reads every call over HTTP: the
+  -32700 fault is its parse error, and the decoded text comes back in the 404 fault for an unknown
+  account, the -32601 fault for an unknown method, or the known account's title. In
+  `src/scenarios/parsers.test.ts`, both lanes. Status: tested.
+  - `[EXT-4] ${parser} gives XML 1.0's verdict on every call and reply of the XML-RPC corpus, except its recorded disagreements`
+  - `[EXT-4] the consumer's XML-RPC reader agrees with ${parser} on every call and reply, and reads the values the specification gives`
+  - `[EXT-4] the gateway's XML-RPC reader agrees with ${parser} on every call, judged over HTTP: the parse-error fault, or the decoded text it answers with`
+    (the ledger holds exactly the corpus bytes)
+  - The independent parsers: as for EXT-3, saxes alone refuses the entity from the internal DTD
+    subset (`call-doctype-internal-entity`).
+  - The consumer: before the EXT-3 fixes to the shared XML reader, it disagreed on
+    `call-attr-no-separator`, `call-attr-object-names`, `call-attr-nbsp-separator`,
+    `call-prolog-declaration-late`, `-after-space`, `-no-version`, `call-prolog-nbsp`,
+    `call-comment-double-hyphen`, `reply-attr-no-separator` and `reply-attr-object-names`. Its
+    XML-RPC layer, fixed here, took U+00A0 beside a type element for white space, as `trim` does
+    (`reply-nbsp-beside-type`). `XmlRpc.callOf` and `XmlRpc.responseOf` read a tree from any
+    parser. Recorded, by design: it refuses every DTD (`call-doctype-*`, `reply-doctype`), because
+    it expands no entities and no service the suite reads sends one.
+  - Recorded, backend defects seen over HTTP, for the gateway's side to fix: it answers any DTD
+    with the parse-error fault (`call-doctype-bare`, `call-doctype-internal-entity`), though its
+    service page says calls are read as expat reads them, and expat reads a DTD and expands its
+    internal entities; it refuses a comment inside a string (`call-comment-in-string`); it takes
+    U+00A0 for white space (`call-attr-nbsp-separator`, `call-prolog-nbsp`); it checks neither the
+    XML declaration's place nor its content (`call-prolog-declaration-late`, `-after-space`,
+    `-no-version`); it accepts `--` in a comment before the root, though not inside it
+    (`call-comment-double-hyphen`), `]]>` in text (`call-cdata-end-in-text`), and an attribute
+    given twice (`call-attr-duplicate`).
+- **EXT-5** The store's multipart reader and writer against the platform's `Response.formData()`
+  (undici in Node, Chromium's in the browser), over 10 uploads and 7 bundles in
+  `src/formats/corpus/multipart.ts`. Each upload the consumer sends, as the ledger recorded it, is
+  read by `formData()` and compared with what the store stored (its answer, and the document's type
+  and bytes from WebDAV) or refused; each bundle is read by `formData()` and compared with the
+  document the store started with, and the consumer's bundle operation must read it as `formData()`
+  does through every provider. In `src/scenarios/parsers.test.ts`, both lanes. Status: tested.
+  - `[EXT-5] ${formParser} reads the upload bodies the consumer sends through ${provider}, from the ledger, as the store read them: label, file name, type and bytes`
+    (provider)
+  - `[EXT-5] ${formParser} reads the store's bundles as the store's own record has them, and the consumer's bundle operation reads them as ${formParser} does`
+  - Recorded, a backend defect for the store's side to fix: a bundle's boundary is
+    `DocVaultBundle-<id>-1` whatever the content holds, so content holding that delimiter line
+    (`delimiter-in-content`) makes a body no parser can split, which RFC 2046 section 5.1.1
+    forbids. Both `formData()` parsers refuse it, and the consumer's bundle operation fails with a
+    `DecodeError`.
+  - A limit of the platforms: the HTML standard's multipart/form-data encoding writes `"`, CR and LF
+    in a file name as `%22`, `%0D` and `%0A`, and gives no rule for reading them back. undici and the
+    store decode them; Chromium's `formData()` keeps them (`quote-name`, `line-feed-name`). Neither
+    escapes `%`, so a name holding a literal `%22` reads as a quote to undici and the store
+    (`percent-name`). Chromium also reads `\` in a quoted file name as a MIME quoted-pair and drops
+    it (`backslash-name`), where undici and the store keep it. A bundle's file name is therefore not
+    a reliable copy of the document's name in either lane; the name in its JSON metadata is.
+  - As observed in both lanes and every provider: a label's LF and lone CR travel as CRLF, as the
+    multipart encoding normalizes them, and the store stores CRLF (`label-line-breaks`); a `Blob`
+    without a type travels and is stored as `application/octet-stream` (`untyped`).
 - **EXT-7a** Mount and navigation in a built single-page app: a route starts an interaction, and
   navigating away within the page disposes it, which aborts its request on the wire. In
   `src/scenarios/spa.app.test.ts`, which drives the app in `src/app` with Playwright's Chromium
