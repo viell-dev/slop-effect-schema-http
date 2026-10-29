@@ -34,6 +34,8 @@ const files = {
   "src/scenarios/store.test.ts":
     'import { lane } from "#lane";\nimport { header } from "../harness/lane.js";\n',
   "src/scenarios/store.node.test.ts": 'import { connect } from "node:net";\n',
+  "src/app/main.ts":
+    'import { Effect } from "effect";\nimport { parse } from "../formats/xml.js";\n',
 };
 
 let fixtures = 0;
@@ -200,6 +202,30 @@ describe("boundaries.mjs", () => {
         status: 1,
         problems: [
           "src/clients/review.ts: imports #net (node:net): a Node built-in, but this code also runs in a browser",
+        ],
+      },
+    );
+  });
+
+  it("checks the single-page app as consumer code: no backend, Node-side harness or built-in", () => {
+    assert.deepEqual(
+      run({
+        extra: {
+          "src/app/review.ts": [
+            'import { parse } from "../backends/store/xml.js";',
+            'import { control } from "../harness/control.js";',
+            'import { readFile } from "node:fs";',
+            'import { header } from "../harness/lane.js";',
+            "",
+          ].join("\n"),
+        },
+      }),
+      {
+        status: 1,
+        problems: [
+          `src/app/review.ts: imports ../backends/store/xml.js (src/backends/store/xml.ts): ${OVER_HTTP}`,
+          "src/app/review.ts: imports ../harness/control.js (src/harness/control.ts): consumer code may use only src/harness/lane.ts and #lane of the harness",
+          "src/app/review.ts: imports node:fs: a Node built-in, but this code also runs in a browser",
         ],
       },
     );

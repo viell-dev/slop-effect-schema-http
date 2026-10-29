@@ -14,6 +14,9 @@ Each entry's status is one of:
   described;
 - **defect**: a reproduced library mismatch, with a link to its issue.
 
+An entry whose tests run only in a dedicated lane names it, such as `Lane: app` for the built
+single-page app; only that lane's run checks it, and the other lanes' runs leave it out.
+
 Backends are owned by area. Each area keeps the status of its entries up to date in its own
 section. Each service's behaviour is documented on its page under [services/](./services/), which
 is where consumer code and its tests take it from.
@@ -874,3 +877,29 @@ under the same tag is never consulted` (a decode error, after the service applie
   - `[EXT-2] one operation replaces the layer's client through transformClient, and the operations
 around it keep the layer's` (provider; in the Node lane's `lines` run, the replacement is the
     Fetch provider)
+- **EXT-7a** Mount and navigation in a built single-page app: a route starts an interaction, and
+  navigating away within the page disposes it, which aborts its request on the wire. In
+  `src/scenarios/spa.app.test.ts`, which drives the app in `src/app` with Playwright's Chromium
+  from Node; the app is built by Vite in production mode against the packed library and served as
+  static files with the same-origin proxy. Lane: app. Status: tested.
+  - `[EXT-7a] a route mounts the search, which starts its interaction; navigating away disposes it, and the service records the abort`
+    (a link to `/search?q=ledger` mounts the search page and sends the search, held by
+    `searchLatency`; an in-app link, then the browser's back and forward buttons, each close the
+    view's scope. The page stays one document throughout, so no unload aborts anything in the
+    app's place. Both aborts are on the ledger and in `GET /v2/ops/abandoned`. The search went to
+    the page's own origin, `Sec-Fetch-Site: same-origin`, with the bearer token and the service's
+    `Host` from the proxy.)
+- **EXT-7b** Supersession under latency in the built app: a second search from the user while the
+  first is in flight aborts the first on the wire, and the page shows only the second result. In
+  `src/scenarios/spa.app.test.ts`. Lane: app. Status: tested.
+  - `[EXT-7b] a second search while the first is in flight aborts the first on the wire, and only the second result is shown`
+    (the page's every state is recorded from before its script runs: the superseded search never
+    rendered a result)
+- **EXT-7c** Reload: a full page load starts clean, with no request of the earlier page left open
+  and nothing of its state shown or reused. In `src/scenarios/spa.app.test.ts`. Lane: app.
+  Status: tested. Observed in Chromium: the browser closes the earlier page's request as the page
+  unloads, without any app or library code running, so this entry shows what a reload leaves
+  behind, not the app's disposal, which EXT-7a covers.
+  - `[EXT-7c] a reload starts clean: the earlier page's search in flight is closed, and the new page asks again for its own`
+    (the new document shows only its own states, and sends its link's search again although the
+    earlier page held a result for it)
