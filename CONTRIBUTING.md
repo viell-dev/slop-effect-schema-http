@@ -9,16 +9,35 @@ maintenance cost; a filed request is not a commitment to implement it.
 Use `.nvmrc` and the package manager pinned in `package.json`. Install with
 `corepack pnpm install --frozen-lockfile`. Existing commands are:
 
-- `corepack pnpm check`: TypeScript and formatting checks.
+- `corepack pnpm check`: TypeScript and formatting checks, including the type-level assertions in
+  tests.
 - `corepack pnpm lint`: Oxlint, ESLint, and Markdown linting.
 - `corepack pnpm build`: JavaScript and declaration output in `dist/`.
-- `corepack pnpm test`: Vitest behavior tests; currently fails because no tests exist.
+- `corepack pnpm test`: Vitest behavior tests.
 - `corepack pnpm format`: apply the configured formatters.
 
-CI currently requires the first three commands on Linux. Runtime behavior and packaged consumer
-installation remain unverified. Adding a regression suite and making it a required CI gate is
-follow-up work, not a passing or skipped test result. For code changes, reproduce the reported
+CI requires all four verification commands on Linux. For code changes, reproduce the reported
 behavior first and add a meaningful test at the layer that exposes it.
+
+### Behavior tests
+
+Tests sit beside their module as `src/**/*.test.ts` and use `@effect/vitest`. Shared fixtures live
+in `test/support.ts`. Its synthetic provider builds an `HttpClient` with `HttpClient.make`, records
+each dispatch (request, composed URL, header lines, abort signal), and answers with Web `Response`
+objects. Tests therefore run through Effect's real client wrapper without a network. Use `it.effect`
+with `TestClock` for retry delays and timeouts. Use deferreds or explicit start signals, not sleeps,
+to order concurrent work.
+
+A confirmed defect gets an issue and a test of the intended behavior marked `it.effect.fails`, with
+a comment linking the issue. The marker keeps CI green while the defect is open and fails once the
+behavior is fixed, so the fix must remove it. Pin a type-level limitation with `@ts-expect-error`
+and a linked issue in the same way. Do not weaken an assertion to make a test pass.
+
+The suite does not exercise Fetch, browsers, real servers, packaged installation, or
+transport-specific behavior such as header joining, redirects, cookies, and CORS. Server-backed
+integration tests are tracked in [issue
+#4](https://github.com/viell-dev/slop-effect-schema-http/issues/4). Runtime behavior outside these
+tests remains unverified.
 
 Create a task branch from `main` and submit a pull request. Main requires pull requests, passing CI,
 and resolved review conversations, including for administrators. Keep dependencies locked and follow
