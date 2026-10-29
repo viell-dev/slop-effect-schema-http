@@ -7,7 +7,7 @@ import {
   SchemaIssue,
   SchemaTransformation,
 } from "effect";
-import type { HttpClient } from "effect/http";
+import { type HttpClient, HttpBody } from "effect/http";
 import { lane } from "#lane";
 import {
   Body,
@@ -121,6 +121,34 @@ const idOf = (origin: string, name: string, client: Client) =>
         return found!.id;
       }),
     );
+
+/**
+ * A hand-written SOAP 1.1 request: the text goes out as UTF-8 `text/xml` with the given `SOAPAction`
+ * value, bypassing the consumer's XML writer, so the store's own reader is what decides. A 200 is
+ * read as bytes and the front controller's plain-text 400 as its reason.
+ */
+const rawSoap11 = (origin: string, soapAction: string) =>
+  Operation.make(
+    Request.post("soap").pipe(
+      Request.baseUrl(origin),
+      Request.setHeader("SOAPAction", soapAction),
+      Request.body(
+        Body.encoder((text: string) =>
+          Effect.succeed(HttpBody.text(text, "text/xml; charset=utf-8")),
+        ),
+      ),
+    ),
+    Response.status(200, Response.tag("Answered", Body.bytes)).pipe(
+      Response.orElse(Response.status(400, Response.tag("Refused", Body.text))),
+    ),
+  );
+
+/** A StoreDocument envelope around a title written exactly as given. */
+const storeEnvelope = (name: string, title: string) =>
+  `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="${SOAP11}"><soap:Body>` +
+  `<StoreDocument xmlns="${NS}"><Name>${name}</Name><Title>${title}</Title>` +
+  `<ContentType>text/plain</ContentType><Content>eA==</Content></StoreDocument>` +
+  `</soap:Body></soap:Envelope>`;
 
 describe(`soap-store (${lane.name})`, () => {
   describe("fault codes inside HTTP 200", () => {
@@ -705,6 +733,117 @@ describe(`soap-store (${lane.name})`, () => {
             "text/xml; charset=utf-8",
           );
           expect(latin1(recorded!.body)).toContain("<Prefix>PrÃ¼f</Prefix>");
+        }),
+    );
+
+    it.live(
+      "[PAY-4a] the store refuses characters XML does not allow, raw or as references, with plain-text 400",
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          const titles = ["A\u0000B", "A&#0;B", "A&#x1F;B", "A&#xFFFE;B"];
+          for (const [index, title] of titles.entries()) {
+            const refused = as(
+              yield* rawSoap11(backend.origin, `"${NS}#StoreDocument"`)
+                .execute({ body: storeEnvelope(`bad-${index}.txt`, title) })
+                .pipe(Effect.provide(lane.fetchClient)),
+              "Refused",
+            );
+            expect(refused.value).toMatch(/^Malformed XML: /);
+          }
+          // The raw NUL really went out, and nothing was stored.
+          const ledger = yield* backend.ledger;
+          expect(ledger).toHaveLength(titles.length);
+          expect(ledger[0]!.body).toContain(0);
+          const listed = as(
+            yield* Actions.operations(backend.origin)
+              .listDocuments.execute({ body: { prefix: "bad-" } })
+              .pipe(Effect.provide(lane.fetchClient)),
+            "Listed",
+          );
+          expect(listed.documents).toEqual([]);
+        }),
+    );
+
+    it.live(
+      "[PAY-4a] a title XML cannot carry is refused by the consumer before dispatch",
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          for (const title of ["A\u0000B", "A\u{FFFE}B", "A\uD800B"]) {
+            const error = yield* Actions.operations(backend.origin)
+              .storeDocument.execute({
+                body: {
+                  name: "nul.txt",
+                  title,
+                  contentType: "text/plain",
+                  content: encoder.encode("x"),
+                },
+              })
+              .pipe(Effect.provide(lane.fetchClient), Effect.flip);
+            expect(error._tag).toBe("SchemaError");
+            expect(String(error)).toContain("cannot be written in XML");
+          }
+          expect(yield* backend.ledger).toEqual([]);
+        }),
+    );
+
+    it.live(
+      "[PAY-4a] the store reads a title's line ends as LF, and a carriage return written as a reference survives the round trip",
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          const soap = Actions.operations(backend.origin);
+          const stored = as(
+            yield* rawSoap11(backend.origin, `"${NS}#StoreDocument"`)
+              .execute({
+                body: storeEnvelope("lines.txt", "Zeile 1\r\nZeile 2\rZeile 3"),
+              })
+              .pipe(Effect.provide(lane.fetchClient)),
+            "Answered",
+          );
+          expect(latin1(stored.value)).toContain("<FaultCode>0</FaultCode>");
+          const id = yield* idOf(backend.origin, "lines.txt", lane.fetchClient);
+          const fetched = as(
+            yield* soap.fetchDocument
+              .execute({ body: { id } })
+              .pipe(Effect.provide(lane.fetchClient)),
+            "Fetched",
+          );
+          expect(fetched.document.title).toBe("Zeile 1\nZeile 2\nZeile 3");
+
+          // Through the consumer, a CR is written as a reference, stored, and sent back as one.
+          const kept = as(
+            yield* soap.storeDocument
+              .execute({
+                body: {
+                  name: "cr.txt",
+                  title: "A\r\nB",
+                  contentType: "text/plain",
+                  content: encoder.encode("x"),
+                },
+              })
+              .pipe(Effect.provide(lane.fetchClient)),
+            "Stored",
+          );
+          const raw = yield* Operation.make(
+            Soap.Soap11.request(Actions.FetchDocument).pipe(
+              Request.baseUrl(backend.origin),
+            ),
+            Response.status(200, Body.bytes),
+          )
+            .execute({ body: { id: kept.id } })
+            .pipe(Effect.provide(lane.fetchClient));
+          expect(latin1(raw)).toContain("<Title>A&#xD;\nB</Title>");
+          const back = as(
+            yield* soap.fetchDocument
+              .execute({ body: { id: kept.id } })
+              .pipe(Effect.provide(lane.fetchClient)),
+            "Fetched",
+          );
+          expect(back.document.title).toBe("A\r\nB");
+          const ledger = yield* backend.ledger;
+          expect(bodyText(ledger[3]!)).toContain("<Title>A&#13;\nB</Title>");
         }),
     );
 

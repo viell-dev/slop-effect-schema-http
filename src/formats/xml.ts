@@ -4,6 +4,12 @@
  * five predefined entities, and numeric character references. Namespace prefixes are kept as part
  * of names; DTDs are refused. Malformed input throws, so a schema transformation can surface it as
  * a decoding failure.
+ *
+ * Characters outside XML 1.0's `Char` production (https://www.w3.org/TR/xml/#charsets) are refused,
+ * raw or as character references, and the writer refuses to emit them. Line breaks are normalized
+ * to LF before parsing (https://www.w3.org/TR/xml/#sec-line-ends) and attribute values as CDATA
+ * attributes are (https://www.w3.org/TR/xml/#AVNormalize), so the writer emits a carriage return,
+ * and a tab or line feed inside an attribute value, as a character reference.
  */
 
 export interface Element {
@@ -22,25 +28,58 @@ const entities: Record<string, string> = {
   apos: "'",
 };
 
+/** XML 1.0 `Char`: tab, LF, CR and U+0020 upwards, without surrogates, U+FFFE and U+FFFF. */
+const isChar = (code: number): boolean =>
+  code === 0x9 ||
+  code === 0xa ||
+  code === 0xd ||
+  (code >= 0x20 && code <= 0xd7ff) ||
+  (code >= 0xe000 && code <= 0xfffd) ||
+  (code >= 0x10000 && code <= 0x10ffff);
+
+/** A character outside `Char`. With the `u` flag, a lone surrogate is one such character. */
+const notChar =
+  /[^\t\n\r\u{20}-\u{D7FF}\u{E000}-\u{FFFD}\u{10000}-\u{10ffff}]/u;
+
+const codePoint = (character: string): string =>
+  `U+${character.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`;
+
 const decodeEntities = (text: string): string =>
-  text.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (_, entity: string) => {
-    if (entity.startsWith("#x") || entity.startsWith("#X"))
-      return String.fromCodePoint(Number.parseInt(entity.slice(2), 16));
-    if (entity.startsWith("#"))
-      return String.fromCodePoint(Number.parseInt(entity.slice(1), 10));
+  text.replace(/&([^;&<]*)(;?)/g, (whole, entity: string, end: string) => {
+    if (end !== ";")
+      throw new Error(`XML: bare '&' before ${JSON.stringify(entity)}`);
+    const numeric = /^#(?:x([0-9a-fA-F]+)|([0-9]+))$/.exec(entity);
+    if (numeric !== null) {
+      const code =
+        numeric[1] !== undefined
+          ? Number.parseInt(numeric[1], 16)
+          : Number.parseInt(numeric[2]!, 10);
+      if (!isChar(code))
+        throw new Error(
+          `XML: ${whole} refers to a character XML does not allow`,
+        );
+      return String.fromCodePoint(code);
+    }
     const value = entities[entity];
-    if (value === undefined) throw new Error(`unknown entity &${entity};`);
+    if (value === undefined) throw new Error(`unknown entity ${whole}`);
     return value;
   });
 
 const nameChar = /[\w:.-]/;
 
 /** Parse a document and return its root element. */
-export const parse = (source: string): Element => {
+export const parse = (input: string): Element => {
+  // Line ends are normalized before parsing, so offsets refer to the normalized text.
+  const source = input.replace(/\r\n?/g, "\n");
   let index = 0;
   const fail = (message: string): never => {
     throw new Error(`XML: ${message} at offset ${index}`);
   };
+  const invalid = notChar.exec(source);
+  if (invalid !== null) {
+    index = invalid.index;
+    fail(`character ${codePoint(invalid[0])} is not allowed in XML`);
+  }
   const skipSpace = () => {
     while (index < source.length && /\s/.test(source[index]!)) index++;
   };
@@ -91,7 +130,10 @@ export const parse = (source: string): Element => {
       const end = source.indexOf(quote!, index + 1);
       if (end < 0) fail("unterminated attribute value");
       if (attribute in attributes) fail(`duplicate attribute ${attribute}`);
-      attributes[attribute] = decodeEntities(source.slice(index + 1, end));
+      const raw = source.slice(index + 1, end);
+      if (raw.includes("<")) fail("'<' in an attribute value");
+      // Literal white space becomes a space; white space written as a reference is kept.
+      attributes[attribute] = decodeEntities(raw.replace(/[\t\n]/g, " "));
       index = end + 1;
     }
     const children: Array<Node> = [];
@@ -124,7 +166,9 @@ export const parse = (source: string): Element => {
       } else {
         const end = source.indexOf("<", index);
         if (end < 0) fail(`unterminated element <${name}>`);
-        children.push(decodeEntities(source.slice(index, end)));
+        const raw = source.slice(index, end);
+        if (raw.includes("]]>")) fail("']]>' in character data");
+        children.push(decodeEntities(raw));
         index = end;
       }
     }
@@ -165,12 +209,28 @@ export const child = (element: Element, local: string): Element => {
 export const textOf = (element: Element): string =>
   element.children.filter((node) => typeof node === "string").join("");
 
+/** Refuse what no XML document can carry, rather than write a document no parser accepts. */
+const writable = (text: string): string => {
+  const invalid = notChar.exec(text);
+  if (invalid !== null)
+    throw new Error(
+      `XML: character ${codePoint(invalid[0])} cannot be written in XML`,
+    );
+  return text;
+};
+
+/** Escape text; a carriage return is referenced so that line-end normalization keeps it. */
 const escape = (text: string): string =>
-  text
+  writable(text)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/\r/g, "&#13;");
+
+/** Escape an attribute value; tabs and line feeds are referenced so normalization keeps them. */
+const escapeAttribute = (text: string): string =>
+  escape(text).replace(/\t/g, "&#9;").replace(/\n/g, "&#10;");
 
 /** Build an element. */
 export const element = (
@@ -183,7 +243,7 @@ export const element = (
 export const serialize = (node: Node): string => {
   if (typeof node === "string") return escape(node);
   const attributes = Object.entries(node.attributes)
-    .map(([key, value]) => ` ${key}="${escape(value)}"`)
+    .map(([key, value]) => ` ${key}="${escapeAttribute(value)}"`)
     .join("");
   return node.children.length === 0
     ? `<${node.name}${attributes}/>`
