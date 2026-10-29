@@ -1,11 +1,8 @@
 /**
- * `/admin` sits behind Apache 1.3's original mod_digest, which implements RFC 2069 (1997): no `qop`,
- * no `nc`, no `cnonce`, and `response = MD5(MD5(user:realm:password):nonce:MD5(method:uri))`. The
- * auditors' 1999 audit tool only speaks that form, and the security team, unable to replace the
- * tool, made every nonce single-use instead of turning the module off. So each nonce authorizes one
- * request: reusing it is answered with a fresh challenge carrying `stale=true`, and every audit
- * call costs two round trips. A nonce is spent as soon as a request arrives with it, before the
- * reply is written, so a request the client abandons has still spent its nonce.
+ * The audit endpoint's RFC 2069 Digest check. Each instance keeps its issued nonces and marks one
+ * spent when a request presents it, before the response is checked.
+ *
+ * Service documentation: services/gateway.md
  */
 import { createHash, randomBytes } from "node:crypto";
 import { header, type Received, type Reply } from "../../harness/server.js";
@@ -63,10 +60,8 @@ export const digest = (options: DigestOptions) => {
   const challenge = (stale: boolean): Verdict => {
     const nonce = randomBytes(18).toString("base64");
     nonces.set(nonce, "fresh");
-    // The realm is written between quotes as configured, without escaping, as Apache 1.3's
-    // mod_digest wrote its AuthName. A realm containing `"` or `\` would therefore produce a
-    // malformed challenge. The fixtures use plain realms, so this limitation is not exercised; the
-    // nonce (base64) and opaque (hex) never contain either character.
+    // The realm is interpolated unescaped, as the service page documents; the fixtures use plain
+    // realms, so a malformed challenge is never exercised.
     return {
       _tag: "Refused",
       reply: apachePage(
@@ -104,7 +99,6 @@ export const digest = (options: DigestOptions) => {
       response === undefined
     )
       return badRequest("Digest: missing directive");
-    // mod_digest compares the uri directive with the request line, byte for byte.
     if (uri !== request.target) return badRequest("Digest: uri mismatch");
     if (realm !== options.realm || fields.get("opaque") !== opaque)
       return challenge(false);

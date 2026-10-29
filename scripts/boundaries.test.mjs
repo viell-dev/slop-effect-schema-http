@@ -12,12 +12,17 @@ const script = fileURLToPath(new URL("boundaries.mjs", import.meta.url));
 const workspace = mkdtempSync(join(tmpdir(), "boundaries-"));
 after(() => rmSync(workspace, { recursive: true, force: true }));
 
-/** A tree that passes: each file imports what its side may. */
+/** The store backend's entry point, without its service page link. */
+const STORE =
+  'import { createServer } from "node:http";\nimport { serve } from "../../harness/server.js";\nimport { parse } from "./xml.js";\n';
+
+/** A tree that passes: each file imports what its side may, and the backend links its page. */
 const files = {
   "library/main.ts": "export const library = 1;\n",
+  "services/store.md": "# The store\n",
+  "src/backends/echo.ts": "export const handler = 1;\n",
   "src/backends/store/xml.ts": "export const parse = (text: string) => text;\n",
-  "src/backends/store/index.ts":
-    'import { createServer } from "node:http";\nimport { serve } from "../../harness/server.js";\nimport { parse } from "./xml.js";\n',
+  "src/backends/store/index.ts": `/**\n * Service documentation: services/store.md\n */\n${STORE}`,
   "src/harness/server.ts": "export const serve = 1;\n",
   "src/harness/control.ts": "export const control = 1;\n",
   "src/harness/lane.ts": "export const header = 1;\n",
@@ -222,5 +227,43 @@ describe("boundaries.mjs", () => {
       status: 0,
       problems: [],
     });
+  });
+
+  it("refuses a backend entry point whose service page link was removed", () => {
+    assert.deepEqual(
+      run({
+        extra: {
+          "src/backends/store/index.ts": STORE,
+          "src/backends/clock.ts": "export const handler = 1;\n",
+        },
+      }),
+      {
+        status: 1,
+        problems: [
+          'src/backends/clock.ts: links no service page; add a "Service documentation: services/<page>.md" line',
+          'src/backends/store/index.ts: links no service page; add a "Service documentation: services/<page>.md" line',
+        ],
+      },
+    );
+  });
+
+  it("refuses a link to a missing page, or to a page spelt with other letter cases", () => {
+    assert.deepEqual(
+      run({
+        extra: {
+          "src/backends/clock.ts":
+            "// Service documentation: services/clock.md\nexport const handler = 1;\n",
+          "src/backends/store/xml.ts":
+            "// Service documentation: services/Store.md\nexport const parse = (text: string) => text;\n",
+        },
+      }),
+      {
+        status: 1,
+        problems: [
+          "src/backends/clock.ts: links services/clock.md, which does not exist",
+          "src/backends/store/xml.ts: links services/Store.md, which does not exist",
+        ],
+      },
+    );
   });
 });

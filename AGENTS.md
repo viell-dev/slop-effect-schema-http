@@ -10,8 +10,12 @@ the scenarios. The library's own design, which these tests are judged against, i
   lanes behind `#lane` (`lane.node.ts`, `lane.browser.ts` with its control server), and the browser
   lane's same-origin proxy (`proxy.ts`). Change these only when a scenario needs it, and keep them
   backend-neutral.
-- `src/backends/<area>`: the synthetic servers. Each documents its deliberately incompatible
-  conventions in comments that say who introduced each quirk and why nobody can remove it.
+- `services/`: one page per hostile service, as its owners would publish it for integrators:
+  endpoints, formats, value conventions, errors, and the history of each quirk (who introduced it,
+  when, and why nobody can remove it), with the JSON options a test can set in a separate "Test
+  options" section.
+- `src/backends/<area>`: the synthetic servers. Their comments are notes about the implementation;
+  each entry point links its service page, which documents the behaviour.
 - `src/clients/<area>`: the consumer's contracts and schemas for that backend, written only against
   the library's public API (`viell-effect-schema-http`), Effect, and `src/formats`.
 - `src/formats/`: consumer-side format helpers (XML, CSV and the like). The library offers no
@@ -34,6 +38,18 @@ the scenarios. The library's own design, which these tests are judged against, i
     undeclared package, fails the check. `scripts/boundaries.test.mjs` tests the script in
     `npm run check`; extend it when the resolution changes. `npm run lint` flags common cases too,
     by specifier text only.
+- **Separate authorship.** The import rule keeps the code apart; this rule keeps the authors'
+  knowledge apart, so that one misreading of a format cannot end up on both sides and cancel out.
+  - A backend is written from the catalogue and its service page.
+  - Consumer code, consumer-side format helpers and their tests are written from the service page,
+    the catalogue and observed HTTP behaviour.
+  - Each side is written in a separate agent context; the consumer side's author does not open
+    `src/backends/`.
+  - A change to observable behaviour updates the service page in the same pull request.
+  - Pull requests record which context wrote which side.
+  - The rule applies to new work; code written before it is not rewritten under it.
+  - `scripts/boundaries.mjs` also checks that every backend entry point links an existing page in
+    `services/` with a `Service documentation: services/<page>.md` line.
 - **Two lanes.** Every scenario runs in Node and in Chromium (Vitest browser mode), to show that the
   library works in a static single-page app as well as in Node.
   - Tests import `lane` from `#lane` and start backends by name with `lane.backend(name, options)`.

@@ -1,13 +1,11 @@
 /**
  * The document store's own XML handling: a small reader for request envelopes and PROPFIND bodies,
  * string templates for replies, and the Latin-1 writer of the 2003 platform. It shares nothing with
- * the consumer's XML helper; the store was never written with a client library in mind.
+ * the consumer's XML helper; the store was never written with a client library in mind. The reader
+ * and the writer follow the XML rules in the service page; the writer throws where the reader
+ * would refuse.
  *
- * The reader follows XML 1.0 where it is strict: a character outside the `Char` production
- * (https://www.w3.org/TR/xml/#charsets) is an error, raw or referenced; CRLF and lone CR become LF
- * before parsing (https://www.w3.org/TR/xml/#sec-line-ends); and literal white space in an
- * attribute value becomes a space (https://www.w3.org/TR/xml/#AVNormalize). The writer refuses
- * such characters too and references the white space those rules would otherwise change.
+ * Service documentation: services/soap-store.md
  */
 
 export class XmlError extends Error {}
@@ -217,8 +215,8 @@ export const leaf = (element: string, value: string): string =>
   `<${element}>${escape(value)}</${element}>`;
 
 /**
- * Encode as ISO-8859-1 the way the 2003 platform's writer does: every character above U+00FF
- * becomes a numeric character reference, which is legal in the element content it writes.
+ * Encode as ISO-8859-1, with every character above U+00FF as a numeric character reference, which
+ * is legal in the element content it writes.
  */
 export const latin1 = (document: string): Uint8Array => {
   let output = "";

@@ -3,7 +3,7 @@ import type { Handler } from "../../harness/server.js";
 import * as Envelopes from "./envelopes.js";
 import * as Operations from "./operations.js";
 
-/** Plain JSON options, as a browser test can send them. */
+/** The test options, documented under "Test options" in the service page. */
 type Options = Parameters<typeof Envelopes.routes>[0] extends infer E
   ? Parameters<typeof Operations.routes>[0] extends infer O
     ? { readonly envelopes?: E; readonly operations?: O }
@@ -11,10 +11,11 @@ type Options = Parameters<typeof Envelopes.routes>[0] extends infer E
   : never;
 
 /**
- * The JSON business API: one service that grew by accretion, so its envelope conventions
- * (`envelopes.ts`, under `/v1/`) and its operational behaviour (`operations.ts`, under `/v2/`) come
- * from different eras and teams. Each call creates fresh state. Options are plain JSON, split by
- * part.
+ * The JSON business API: the `/v1/` routes of `envelopes.ts` and the `/v2/` routes of
+ * `operations.ts` on one router, each configured by its own member of the options. Each call
+ * creates fresh state.
+ *
+ * Service documentation: services/business.md
  */
 export const handler = (options?: Options): Handler =>
   router([

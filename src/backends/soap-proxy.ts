@@ -1,67 +1,16 @@
 /**
- * # The portal facade (`soap-proxy`)
+ * The portal facade. It shares no code with the SOAP store: it writes its own SOAP request with
+ * `node:http`, reads the reply with a few regular expressions, and reaches the store only through
+ * `soapOrigin`. It keeps no state.
  *
- * A JSON front for the DocVault SOAP store. The intranet portal team wrote it in 2012 as a WCF
- * service on `webHttpBinding` with the `enableWebScript` behaviour, so the portal's jQuery code
- * could publish documents without speaking SOAP. It forwards each call to the store's SOAP 1.1
- * endpoint over HTTP, with its own SOAP code, and reshapes the answer. The portal team was
- * disbanded in 2016; the facade still serves the month-end job and two portal widgets, and nobody
- * has the build machine that compiled it.
- *
- * This backend is a black box: it imports only Node built-ins and the harness. It shares no code
- * with the SOAP store and reaches it only through `soapOrigin`.
- *
- * ## Configuration
- *
- * `lane.backend("soap-proxy", { soapOrigin })`, where `soapOrigin` is the SOAP store's origin
- * (required). Every handler has fresh state; the facade keeps none of its own beyond a call count.
- *
- * ## Endpoint
- *
- * `POST /DocumentService.svc/Publish` publishes one document. Everything else answers 404, or 405
- * with `Allow` for another method on that path.
- *
- * ## Quirks, oldest first
- *
- * - **The wrapped request body (2012).** `enableWebScript` only supports the wrapped body style,
- *   so the JSON body is an object whose single key is the operation's parameter name:
- *   `{"document":{"Name":…,"Title":…,"ContentType":…,"Content":[…]}}`. Member names are the
- *   PascalCase names of the .NET data contract. Unknown members are ignored, as
- *   `DataContractJsonSerializer` does; a missing `Name`, `ContentType` or `Content` is a
- *   deserialization failure.
- * - **Bytes as an array of numbers (2012).** The data contract declares `Content` as `byte[]`,
- *   which `DataContractJsonSerializer` reads and writes as a JSON array of integers from 0 to 255,
- *   not as base64. The portal's JavaScript built that array from a `FileReader`, so it stays.
- * - **Deserialization failures as an HTML page (2012).** A body the serializer cannot read
- *   (malformed JSON, a wrong member type, a byte outside 0–255, a missing required member)
- *   answers `400` with WCF's own `text/html` "Request Error" page, because the formatter fails
- *   before the operation runs and `enableWebScript` has no JSON error writer for that stage. A
- *   content type other than `application/json` answers `415` with the same page.
- * - **The `d` wrapper (2012).** Success is `200` with the result under `d`, ASP.NET AJAX's
- *   anti-hijacking wrapper, including the serializer's type hint:
- *   `{"d":{"__type":"PublishResult:#DocVault.Portal","DocumentId":…,"ETag":…,"Name":…}}`.
- * - **Errors as `jsonerror` 500s (2012).** Once the operation runs, every failure is `500` with
- *   the header `jsonerror: true` and the body
- *   `{"ExceptionDetail":null,"ExceptionType":…,"Message":…,"StackTrace":null}`. A nonzero store
- *   `FaultCode` becomes `ExceptionType` `DocVault.Portal.StoreFaultException` with the message
- *   `DocVault <code>: <FaultString>`; the team turned on exception details for that one type so
- *   the portal could show the store's reason. An unreachable store is
- *   `System.ServiceModel.EndpointNotFoundException`, and an unreadable store reply
- *   `System.ServiceModel.ProtocolException`.
- * - **The `portal.` prefix (2013).** The portal's front-page job lists the store by name prefix,
- *   so the facade stores every published document as `portal.<Name>` and answers with that name.
- *   The prefix keeps a published copy from colliding with an archive copy of the same file.
- * - **Disconnects cancel the store call (2014).** After hung store calls exhausted the IIS worker
- *   pool, the facade started passing the client-disconnected token to its outbound call, so a
- *   client that goes away also aborts the forwarded SOAP request.
+ * Service documentation: services/soap-proxy.md
  */
 import { request as httpRequest } from "node:http";
 import { router } from "../harness/route.js";
 import type { Context, Handler, Received, Reply } from "../harness/server.js";
 
-/** Plain JSON options. */
+/** The test options, documented under "Test options" in the service page. */
 export interface Options {
-  /** The SOAP store's origin, such as `http://127.0.0.1:1234`, without a trailing slash. */
   readonly soapOrigin: string;
 }
 
@@ -230,7 +179,7 @@ interface StoreAnswer {
   readonly body: Uint8Array;
 }
 
-/** The outbound call, aborted when the portal disconnects (the 2014 change). */
+/** The outbound call, aborted through the request's signal when the client disconnects. */
 const callStore = (
   origin: string,
   body: string,
