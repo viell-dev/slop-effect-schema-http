@@ -1320,21 +1320,46 @@ describe("business API: envelopes", () => {
         }).pipe(Effect.provide(lane.fetchClient)),
     );
 
-    it.live("[APP-4] an explicit fallback can discard an unmodelled body", () =>
-      Effect.gen(function* () {
-        const { backend, api } = yield* start;
-        const discarding = Operation.make(
-          api.requests.listCustomers,
-          api.responses.listCustomers.pipe(
-            Response.orElse(Envelopes.discardUnmodelled),
-          ),
-        );
-        const outcome = yield* discarding.execute({
-          query: { page: 1, perPage: 2, name: "<b>bold</b>" },
-        });
-        expect(outcome).toEqual({ _tag: "Discarded", status: 403 });
-        expect(yield* backend.ledger).toHaveLength(1);
-      }).pipe(Effect.provide(lane.fetchClient)),
+    it.live(
+      "[APP-4] an explicit fallback can discard an unmodelled body, draining it before the operation returns",
+      () =>
+        Effect.gen(function* () {
+          const { backend, api } = yield* start;
+          const input = { query: { page: 1, perPage: 2, name: "<b>bold</b>" } };
+          const events: Array<string> = [];
+          const outcome = yield* Operation.make(
+            api.requests.listCustomers,
+            api.responses.listCustomers.pipe(
+              Response.orElse(Envelopes.discardUnmodelled),
+            ),
+            { transformClient: watching(events) },
+          ).execute(input);
+          events.push("returned");
+          expect(outcome).toEqual({ _tag: "Discarded", status: 403 });
+          // The fallback read the firewall page to its end, then the operation returned.
+          expect(events[0]).toBe("response 403");
+          expect(events).toContain("body bytes");
+          expect(events.slice(-2)).toEqual(["body end", "returned"]);
+
+          // Control: a fallback that ignores the body leaves it unread, so nothing else drains it.
+          const ignored: Array<string> = [];
+          const status = yield* Operation.make(
+            api.requests.listCustomers,
+            api.responses.listCustomers.pipe(
+              Response.orElse(
+                Response.when(
+                  () => true,
+                  Body.decoder((response) => Effect.succeed(response.status)),
+                ),
+              ),
+            ),
+            { transformClient: watching(ignored) },
+          ).execute(input);
+          ignored.push("returned");
+          expect(status).toBe(403);
+          expect(ignored).toEqual(["response 403", "returned"]);
+          expect(yield* backend.ledger).toHaveLength(2);
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live("[APP-5] refuses an empty customer name before any network", () =>
