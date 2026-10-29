@@ -1,0 +1,4 @@
+.library/
+artifacts/
+coverage/
+pnpm-lock.yaml

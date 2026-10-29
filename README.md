@@ -18,3 +18,31 @@ the suite fetches from this repository.
 The scenario catalogue and acceptance criteria are tracked in
 [issue #4](https://github.com/viell-dev/slop-effect-schema-http/issues/4). Changes to the suite
 arrive through pull requests into this branch.
+
+## Running the suite
+
+Use the Node.js version in `.nvmrc` and the pnpm version in `package.json`. Corepack can run the
+pinned pnpm.
+
+```sh
+corepack pnpm install --frozen-lockfile
+corepack pnpm library   # fetch the library source at the commit in library-ref
+corepack pnpm check
+corepack pnpm lint
+corepack pnpm test
+```
+
+`library-ref` names the library commit under test. `pnpm library` writes that commit's `src` tree
+into `.library/` using Git alone, and the suite imports the library from that source. To test a
+different commit, branch or tag, set `LIBRARY_REF` for both `pnpm library` and `pnpm test`. A run
+refuses to start if `.library/` holds a different ref, and it prints the commit it tests.
+
+The backends are `node:http` servers on ephemeral loopback ports, started inside each test. They
+need no accounts, network access beyond loopback, secrets or private data. Two client providers
+are exercised:
+
+- Effect's Fetch provider, over Node's global `fetch`;
+- a custom `node:http` provider in `src/harness/providers.ts`, which sends the library's original
+  header lines and reports observed response lines.
+
+[CATALOGUE.md](./CATALOGUE.md) maps each scenario to its tests or to a recorded limit.

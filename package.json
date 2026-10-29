@@ -1,0 +1,29 @@
+{
+  "name": "viell-effect-schema-http-hostile-suite",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Server-backed hostile-API integration suite for viell-effect-schema-http.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@12.16.1",
+  "scripts": {
+    "library": "node scripts/library.mjs",
+    "check": "run-p check:*",
+    "check:tsc": "tsc --noEmit",
+    "check:prettier": "prettier --check .",
+    "lint": "oxlint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.7",
+    "@types/node": "^26.6.6",
+    "effect": "4.0.7",
+    "npm-run-all2": "^9.0.4",
+    "oxlint": "^1.90.0",
+    "prettier": "^3.9.10",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.5"
+  }
+}
