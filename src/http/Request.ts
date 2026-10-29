@@ -301,7 +301,11 @@ export const query = <
     );
 };
 
-/** Require `{ path }` input. `render` receives the schema-encoded value and the current path encoder. */
+/**
+ * Require `{ path }` input. `render` receives the schema-encoded value and the current path encoder. A
+ * value the encoder cannot encode fails with `InvalidRequest`. Any other exception thrown by `render`
+ * fails the same way, as an exception from a replaced `UrlEncoding` service does.
+ */
 export const path = <S extends Schema.Constraint>(
   contract: S,
   render: (value: S["Encoded"], encode: UrlEncoding.Service["path"]) => string,
@@ -311,7 +315,7 @@ export const path = <S extends Schema.Constraint>(
     self: Request<I, E, R, H, Q>,
   ): Request<
     I & { readonly path: S["Type"] },
-    E | Schema.SchemaError,
+    E | Schema.SchemaError | InvalidRequest,
     R | S["EncodingServices"],
     H,
     Q
@@ -325,12 +329,17 @@ export const path = <S extends Schema.Constraint>(
         const encoded = yield* encode(input.path);
         const encoding = yield* UrlEncoding.UrlEncoding;
         const prepared = yield* self.prepare(input, draft);
+        const url = yield* Effect.try({
+          try: () => render(encoded, encoding.path),
+          catch: (cause) =>
+            new InvalidRequest({
+              message: "Failed to render the request path",
+              cause,
+            }),
+        });
         return {
           ...prepared,
-          request: HttpClientRequest.setUrl(
-            prepared.request,
-            render(encoded, encoding.path),
-          ),
+          request: HttpClientRequest.setUrl(prepared.request, url),
         };
       }),
     );
