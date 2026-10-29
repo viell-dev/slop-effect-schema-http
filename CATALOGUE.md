@@ -18,27 +18,82 @@ section.
 
 ## Identity provider (`identity`)
 
+Scenarios are in `src/scenarios/identity.test.ts` and run in both lanes (Node and Chromium) unless
+marked node-only, in which case they are in `identity.node.test.ts`. Round trips are in
+`src/values/identity.test.ts` and `src/clients/identity/schemas.test.ts`.
+
 - **AUTH-3** Three casings of the token type from three code paths: normalize known spellings,
-  refuse an unknown scheme. Status: pending.
+  refuse an unknown scheme. Status: tested.
+  - `[AUTH-3] normalizes the three token-type spellings of the three grant paths`
+  - `[AUTH-3] refuses an unknown token scheme as a decode error instead of guessing`
+  - `[AUTH-3] the resource filter refuses the login's own spelling echoed verbatim`
+  - Round trips: `[AUTH-3] normalizes the three known spellings and encodes the RFC 6750 one`,
+    `[AUTH-3] refuses unknown schemes and unknown casings rather than guessing`, and the two
+    `[AUTH-3]` contract tests. Normalization is canonicalizing: the original spelling is the
+    stated loss, and the domain value round-trips.
 - **AUTH-4** Opaque access tokens next to JWT refresh tokens; the client never inspects either.
-  Status: pending.
+  Status: tested.
+  - `[AUTH-4] returns a JWT-shaped refresh token byte for byte without reading its stale claims`
+  - `[AUTH-4] a rotated refresh token is refused by the server, not judged by the client`
+  - `[AUTH-4] client credentials issue the pinned opaque token, which the directory accepts`
+  - `[AUTH-4] keeps tokens opaque, redacted, and not interchangeable` (type-level)
 - **AUTH-8** A rate limiter keyed on a trusted `X-Forwarded-For`; the test exploits it for a
-  private bucket. Status: pending.
+  private bucket. Status: tested.
+  - `[AUTH-8] a shared bucket spent by other traffic refuses an honest request with a bare message`
+  - `[AUTH-8] a forged X-Forwarded-For claims a private bucket of the test's own`
 - **ERR-4** A missing user answered as 200 with an active flag of `N` and blank fields: nulls in the
-  domain type and a boolean nobody can ignore. Status: pending.
+  domain type and a boolean nobody can ignore. Status: tested.
+  - `[ERR-4] a missing user arrives as 200 with ACTIVE N and blank fields, and decodes to nulls`
+  - `[ERR-4] an inactive user keeps its values, and none reads as present until active is checked`
+    (type-level: attributes are `string | null` until `active` narrows them)
+  - Round trips: `[ERR-4]` tests for `YesNo`, `blankAsNull` and directory entries.
 - **ERR-5** Four error shapes from one organisation (OAuth error object, bare message object, nested
   code and message for 4xx, flat string for 5xx): per-status rules and a client-chosen
-  discriminant attached on decode and stripped on encode. Status: pending.
+  discriminant attached on decode and stripped on encode. Status: tested.
+  - `[ERR-5] the token servlet's 400 decodes as a tagged OAuth error`
+  - `[ERR-5] the resource filter's 401 decodes as a tagged bare message`
+  - `[ERR-5] the JSON API's 401 decodes as a tagged, flattened code and message`
+  - `[ERR-5] a 5xx flat string decodes as a tagged server fault`
+  - `[ERR-5] a stalled directory surfaces as a timeout, not as a fifth error shape`
+  - Round trips: `[ERR-5] attaches the tag on decode and strips it on encode`,
+    `[ERR-5] refuses one organisation's shape under another's schema`
 - **STAT-1** Register answers 201 with the user, login answers 200 with only tokens: fetch the
-  profile separately. Status: pending.
+  profile separately. Status: tested.
+  - `[STAT-1] register answers 201 with the entry, login only tokens, and the profile takes a third
+request`
+  - `[STAT-1] refuses an invalid uid before dispatch`
+  - `[STAT-1] the provider refuses a short password the client let through, and a taken uid`
 - **HDR-1** Repeated header lines: one scope per request line with comma-joined values rejected,
   and four scope lines in the response. Fetch joins the lines and is rejected; the custom provider
   succeeds; response metadata says whether original lines exist; `Set-Cookie` is parsed separately.
-  Status: pending.
+  Status: tested.
+  - `[HDR-1] Fetch joins the scope lines, and the provider rejects the comma-joined value`
+  - `[HDR-1] through Fetch the response metadata says no original lines exist` (the session
+    cookie is visible in Node and absent in Chromium, asserted per lane)
+  - `[HDR-1] refuses a scope containing a comma before dispatch`
+  - Node-only: `[HDR-1] the line-preserving provider sends one scope per line and reads four
+granted lines`, `[HDR-1] parses each Set-Cookie line separately in Node, through both
+providers`. Observed: Effect's normalized `headers["set-cookie"]` keeps only the last line,
+    while `cookies` holds both.
 - **PAY-9** A form-encoded grant beside a JSON grant, 415 when the wrong one is sent, and every
-  response value a string, including the expiry. Status: pending.
-- **VAL-1a** LDAP generalized time, strict and reversible. Status: pending.
-- **VAL-5a** Upper-case attribute names and an issuer with a trailing slash. Status: pending.
+  response value a string, including the expiry. Status: tested.
+  - `[PAY-9] sends grants form-encoded and decodes string values, including the expiry`
+  - `[PAY-9] sends the JSON grant as JSON and decodes a numeric expiry into the same domain type`
+  - `[PAY-9] the form endpoint answers JSON with 415 and an OAuth error`
+  - `[PAY-9] the JSON endpoint answers a form with 415 and a coded error`
+  - Round trips: the `[PAY-9]` tests for `IntegerString`, form grants and scope lists.
+- **VAL-1a** LDAP generalized time, strict and reversible. Status: tested.
+  - `[VAL-1a] decodes the directory's LDAP times to instants`
+  - `[VAL-1a] refuses an imported entry's fractional time as a final decode error`
+  - Round trips: four `[VAL-1a]` tests for `LdapTime`, including calendar-impossible values and
+    an encode that refuses to drop milliseconds.
+- **VAL-5a** Upper-case attribute names and an issuer with a trailing slash. Status: tested.
+  - `[VAL-5a] reads upper-case attribute names into the domain's own field names`
+  - `[VAL-5a] discovers from an issuer with a trailing slash without doubling it`
+  - `[VAL-5a] refuses a discovery document whose issuer differs by the trailing slash`
+  - `[VAL-5a] string concatenation doubles the slash and meets an unexpected 404`
+  - Round trips: the `[VAL-5a]` tests for `Issuer` and directory entries (the unmodelled `DN` is
+    the stated loss).
 
 ## SOAP document store (`soap-store`)
 
