@@ -614,26 +614,122 @@ are refused`
 
 ## Cross-service flows (`flows`)
 
+Scenarios are in `src/scenarios/flows.test.ts` and run in both lanes (Node and Chromium); the first
+AUTH-1 test runs once per provider in the lane. Round trips and compile-time checks are in
+`src/clients/flows/translate.test.ts` and `src/clients/flows/portal.test.ts`. The consumer is
+`src/clients/flows/`: one credential source and its three placements (`credentials.ts`), the search
+box (`search.ts`), the saga (`saga.ts`), the translations (`translate.ts`), the portal facade's
+contract (`portal.ts`) and the flows' own operations against the other services (`services.ts`).
+The saga's JSON-to-SOAP proxy is a sixth backend, `src/backends/soap-proxy.ts` (the 2012 WCF
+"portal facade"), whose quirks are documented at its top: a wrapped body with PascalCase members,
+bytes as an array of numbers, the ASP.NET AJAX `d` wrapper, `jsonerror: true` 500s that relay store
+faults, WCF's HTML "Request Error" page for unreadable bodies, and a `portal.` name prefix.
+
 - **AUTH-1** One opaque token as a Bearer header to one service, under a custom `Token` scheme to
   another, and as a query parameter to a third: per-service late-bound credentials resolved at send
   time, an explicit opt-out for endpoints that must not carry one, and omission rather than the
-  string `"undefined"` when absent. Status: pending.
+  string `"undefined"` when absent. Status: tested.
+  - `[AUTH-1] the identity grant's token travels as Bearer, as Token and as the session parameter (<provider>)`
+    (identity's `client_credentials` grant issues the token; the business API gets `Bearer`, the
+    notification service `Token token="…"`, the gateway `session=` percent-encoded after the
+    request's own query, and the token endpoint gets no credential)
+  - `[AUTH-1] credentials resolve at send time from the one source, and an absent token is omitted, never "undefined"`
+    (operations built once read the source zero times at construction and once per evaluation;
+    signed-out, signed-in and revoked rounds on all three ledgers, with each service's own refusal
+    decoded; the template-literal control sends `Bearer undefined`)
+  - `[AUTH-1] endpoints that must not carry the token opt out explicitly, and the source is not even read`
+    (`Request.removeHeader("authorization")` after the shared business transform removes the
+    computed credential without evaluating it; the area contract's own `abandonedRequests`, which
+    does not opt out, is the control; the notification CSRF bootstrap is anonymous by contract)
+  - Placements: the business contracts' computed header field (`Connection.credential`), the
+    notification contracts' once-per-evaluation token effect, and a `Request.mapEffect` that
+    appends `session` to the native request. Identity's directory owns its header group with a
+    schema, so the saga's lookup reads the source when evaluated and fails as `SignedOut` without a
+    token.
 - **APP-1** Interaction gates: new input interrupts in-flight work, observed as an aborted request
   under injected latency; equal input joins or reuses the retained success; force re-executes;
   navigation disposes; empty input supersedes through the same gate; updating a credential does not
-  unmount the interaction. Status: pending.
+  unmount the interaction. Status: tested. Aborts are observed twice: on the request ledger and in
+  the service's own `GET /v2/ops/abandoned` record.
+  - `[APP-1] new input interrupts the search in flight, and the service records the abandoned request`
+    (the superseded caller ends interrupted)
+  - `[APP-1] equal input joins the active search: two callers, one request, one value`
+  - `[APP-1] equal input reuses the one retained success without a request; other input replaces it`
+  - `[APP-1] force re-executes, yields the new value, and supersedes an equal search in flight`
+  - `[APP-1] navigation disposes: close aborts the search in flight and waits for its finalizers`
+    (a 150 ms finalizer has run when `close` returns; later runs fail with `InteractionClosed`)
+  - `[APP-1] navigation disposes: closing the acquiring scope aborts the search and waits for finalizers`
+  - `[APP-1] empty input supersedes through the same gate without a request; the service would refuse it`
+    (fixture fact: a blank `q` that reaches the service is `400 query_required`)
+  - `[APP-1] updating the credential does not unmount the search box: later runs use the new token`
+    (`retain` keeps only hit lists: a mapped 401 is a success in Effect's terms and would otherwise
+    be replayed after the token changed)
+  - `[APP-1] a credential provided around run does not reach the interaction: services were captured at acquisition`
+    (the documented capture, and the reason the credential is a source read at send time)
 - **APP-2** The month-end saga: read the gateway extract, translate, write tasks, store the
   re-encoded bytes over SOAP, push them through a JSON-to-SOAP proxy, announce with a signed request,
   and confirm through search. Compensation deletes the created tasks, tunnelled, after both failure
-  and interruption. Status: pending.
+  and interruption. Status: tested. Compensation runs uninterruptibly and drains the list it deletes
+  from, so it happens once whichever way the saga ends; stored documents are kept as the archive.
+  - `[APP-2] the saga extracts, translates, writes, archives, publishes, announces and confirms across six services`
+    (every ledger; the archived, published and forwarded bytes equal the gateway's download byte
+    for byte; every search hit decodes back to the item it was written from)
+  - `[APP-2] a store fault at the archive step compensates the created tasks exactly once`
+    (soap-store `failStore`)
+  - `[APP-2] a store fault relayed by the portal facade at the publish step compensates exactly once`
+  - `[APP-2] an error page at the announce step is an unexpected response, and compensation runs exactly once`
+    (notifications `announce.fail: "error"`)
+  - `[APP-2] interrupting the saga mid-archive aborts the store call and compensates exactly once`
+    (soap-store `hold`; the store sees the abort, and the proxy and notification ledgers stay empty)
+  - `[APP-2] the portal facade's rejections: a duplicate as a jsonerror fault, base64 content as its HTML page, an absent store`
+  - Each compensated failure asserts three task creations, exactly one tunnelled
+    `POST /v2/tasks/<id>` with `X-HTTP-Method-Override: DELETE` per task, newest first, no raw
+    `DELETE`, and an empty task list afterwards.
+  - Round trips: `[APP-2] bytes travel as an array of numbers from 0 to 255, and nothing looser`,
+    `[APP-2] the wrapped body uses the data contract's member names`,
+    `[APP-2] the d wrapper and its type hint are checked, not ignored`,
+    `[APP-2] a jsonerror body is a relayed store fault or another service fault`,
+    `[APP-2] the Request Error page is read one way, for its exception message`,
+    `[APP-2] the download's file facts round-trip through its header schema`.
 - **APP-3** Translation between services: id spaces as a visible reference, a lossy money-to-priority
   mapping made reversible through a text field, an active flag recovered from status, an honest
   one-way transform whose reverse fails with a reason, inactive directory entries refused as
   assignees, and a file-to-upload mapping that drops size and keeps the timestamp in the name.
   Round trips prove non-lossiness, and encoding into the target's schema makes drift a compile
-  error. Status: pending.
+  error. Status: tested. The gateway account becomes a `[00012345]` title prefix and the directory
+  uid an `idp:<uid>` assignee reference; the notes carry `Month-end <period>: <$amount> <status>`
+  in the business's own dollar format; the announcement renders the saga's summary one way; the
+  upload name is `ME<period>-<YYYYMMDD>T<HHMMSS>Z.DAT`.
+  - `[APP-3] inactive and missing directory entries are refused as assignees through identity, before any task is written`
+  - `[APP-3] a task written from an extract item reads back through the service to the same item`
+  - Round trips: `[APP-3] an assignment round-trips through the business write model and its JSON wire form`,
+    `[APP-3] ids from other services stay visible references and never become business ids`,
+    `[APP-3] the money-to-priority mapping is lossy, and the figure in the notes makes it reversible`,
+    `[APP-3] the active flag is recovered from status, and the notes keep paid apart from cancelled`,
+    `[APP-3] a due date is a calendar date: a time of day or a fixed offset is refused rather than shifted`,
+    `[APP-3] the announcement is one-way: a summary renders, and reading one back fails with the reason`,
+    `[APP-3] the upload keeps the file's time in its name and visibly drops the size`.
+  - Compile-time: `[APP-3] encoding into the target's own schema makes drift a compile error`
+    (`@ts-expect-error` for a renamed, a retyped and an added business field, a store input that
+    requires a size, an announcement with a new required field, and an inactive-capable directory
+    entry passed as an assignee; branded accounts, task ids and cents refuse each other).
 - **APP-6** Narrowing: a mapped 401 is a member of the same union as success, so reading a body
-  without narrowing is a type error. Status: pending.
+  without narrowing is a type error. Status: tested.
+  - `[APP-6] a mapped 401 is a member of each service's success union, so no body is readable before narrowing`
+    (cross-service: the business `Unauthorized` and notification `TokenRejected` 401s and the
+    gateway's 403 `Refused`, each decoded from a real refusal, with `expectTypeOf` on each union and
+    `@ts-expect-error` on each unnarrowed body and on a value read across the three)
+  - `[APP-6] the saga's failure keeps each step's own union: its reason is unknown until narrowed`
+  - Related type tests in other areas:
+    `[ERR-1a] a body-level refusal shares the success union, so reading a document needs narrowing`
+    (soap-store), `[ERR-1b] an XML-RPC fault inside 200 is a member of the result union` and
+    `[AUTH-7] the 401 challenge is a declared response, and the same cold request runs again with one added header`
+    (gateway),
+    `[ERR-4] an inactive user keeps its values, and none reads as present until active is checked`
+    (identity),
+    `[AUTH-6] a tampered body, a stale timestamp and a missing CSRF token are three distinct typed responses`
+    (notifications), and `[ERR-7] rules see transport metadata only; the type offers no body`
+    (business envelopes).
 
 ## Transport and browser lane (`browser`)
 
