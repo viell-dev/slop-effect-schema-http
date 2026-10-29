@@ -1131,8 +1131,8 @@ describe("Request.mapEffect", () => {
   );
 });
 
-/** A method-override tunnel for gateways that strip PUT and DELETE, created without a request. */
-const standaloneTunnel = Request.mapEffect((request) =>
+/** A method-override tunnel for gateways that strip PUT and DELETE, created once. */
+const tunnel = Request.mapEffect((request) =>
   Effect.succeed(
     request.pipe(
       HttpClientRequest.setHeader("x-http-method-override", request.method),
@@ -1141,63 +1141,74 @@ const standaloneTunnel = Request.mapEffect((request) =>
   ),
 );
 
-/** The same tunnel as a generic function, reusable after any input bindings. */
-const tunnel = <I, E, R, H extends boolean, Q extends boolean>(
-  self: Request.Request<I, E, R, H, Q>,
-) =>
-  self.pipe(
-    Request.mapEffect((request) =>
-      Effect.succeed(
-        request.pipe(
-          HttpClientRequest.setHeader("x-http-method-override", request.method),
-          HttpClientRequest.setMethod("POST"),
-        ),
-      ),
+/** A transform that reads a string body, created once. */
+const bodySize = Request.mapEffect(
+  (request, input: { readonly body: string }) =>
+    Effect.succeed(
+      HttpClientRequest.setHeader(request, "x-size", `${input.body.length}`),
     ),
-  );
+);
 
+/** The tunnel inside a generic function, a form that must keep compiling. */
+const wrapped = <I, E, R, H extends boolean, Q extends boolean>(
+  self: Request.Request<I, E, R, H, Q>,
+) => self.pipe(tunnel);
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/9
 describe("reusable request transforms", () => {
-  it.effect("applies a reusable transform through a generic wrapper", () =>
-    Effect.gen(function* () {
-      const rollback = yield* compile(
-        Request.del("https://api.test/items").pipe(
-          Request.body(Body.text),
-          tunnel,
-        ),
-        { body: "id=7" },
-      );
-      expect(rollback.request.method).toBe("POST");
-      expect(rollback.request.headers["x-http-method-override"]).toBe("DELETE");
-      expect(bodyText(rollback.request)).toBe("id=7");
-      const plain = yield* compile(
-        Request.put("https://api.test/items/7").pipe(tunnel),
-        undefined,
-      );
-      expect(plain.request.headers["x-http-method-override"]).toBe("PUT");
-    }),
+  it.effect(
+    "applies one input-free transform to requests with and without input",
+    () =>
+      Effect.gen(function* () {
+        const rollback = yield* compile(
+          Request.del("https://api.test/items").pipe(
+            Request.body(Body.text),
+            tunnel,
+          ),
+          { body: "id=7" },
+        );
+        expect(rollback.request.method).toBe("POST");
+        expect(rollback.request.headers["x-http-method-override"]).toBe(
+          "DELETE",
+        );
+        expect(bodyText(rollback.request)).toBe("id=7");
+        const plain = yield* compile(
+          Request.put("https://api.test/items/7").pipe(tunnel),
+          undefined,
+        );
+        expect(plain.request.headers["x-http-method-override"]).toBe("PUT");
+        const viaWrapper = yield* compile(
+          Request.del("https://api.test/items").pipe(
+            Request.body(Body.text),
+            wrapped,
+          ),
+          { body: "id=7" },
+        );
+        expect(viaWrapper.request.method).toBe("POST");
+      }),
   );
 
-  it.effect("applies a standalone transform before the input bindings", () =>
-    Effect.gen(function* () {
-      const rollback = yield* compile(
-        Request.del("https://api.test/items").pipe(
-          standaloneTunnel,
-          Request.body(Body.text),
-        ),
-        { body: "id=7" },
-      );
-      expect(rollback.request.method).toBe("POST");
-      expect(rollback.request.headers["x-http-method-override"]).toBe("DELETE");
-      expect(bodyText(rollback.request)).toBe("id=7");
-    }),
-  );
-
-  // Documented: the input type is fixed when a transform is created. A signature that also accepted
-  // this would stop `pipe` from inferring `input` for inline transforms, as the next test requires.
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/9
-  it("types a standalone transform for requests without input", () => {
-    // @ts-expect-error: the transform was created for `Request<unknown>`
-    Request.del("/").pipe(Request.body(Body.text), standaloneTunnel);
+  it("keeps the request's input, errors, services and binding flags", () => {
+    const afterBody = Request.del("/").pipe(Request.body(Body.text), tunnel);
+    expectTypeOf(afterBody).toEqualTypeOf<
+      Request.Request<{ readonly body: string }>
+    >();
+    expectTypeOf(Request.get("/").pipe(tunnel)).toEqualTypeOf<
+      Request.Request<unknown>
+    >();
+    const bound = Request.get("/").pipe(
+      Request.headers(Schema.Struct({ a: Schema.String })),
+      Request.mapEffect(() => Effect.fail("refused" as const)),
+    );
+    expectTypeOf(bound).toEqualTypeOf<
+      Request.Request<
+        { readonly headers: { readonly a: string } },
+        Schema.SchemaError | "refused",
+        never,
+        true,
+        false
+      >
+    >();
   });
 
   it("infers an inline transform's input from the request", () => {
@@ -1215,6 +1226,32 @@ describe("reusable request transforms", () => {
       }),
     );
   });
+
+  it.effect(
+    "applies a transform to requests whose input includes what it reads",
+    () =>
+      Effect.gen(function* () {
+        const request = Request.post("").pipe(
+          Request.path(Schema.String, (id) => `https://api.test/items/${id}`),
+          Request.body(Body.text),
+          bodySize,
+        );
+        expectTypeOf<Parameters<typeof request.prepare>[0]>().toEqualTypeOf<
+          { readonly path: string } & { readonly body: string }
+        >();
+        const compiled = yield* compile(request, { path: "7", body: "abc" });
+        expect(compiled.request.headers["x-size"]).toBe("3");
+        // A request without input gains the requirement the transform reads.
+        expectTypeOf(Request.get("/").pipe(bodySize)).toEqualTypeOf<
+          Request.Request<{ readonly body: string }>
+        >();
+        Request.post("/").pipe(
+          Request.body(Body.json.pipe(Body.encodeSchema(Schema.Number))),
+          // @ts-expect-error: the transform reads a string body, not a number
+          bodySize,
+        );
+      }),
+  );
 });
 
 describe("Request.compile", () => {
