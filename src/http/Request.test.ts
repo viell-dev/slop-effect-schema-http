@@ -1131,7 +1131,17 @@ describe("Request.mapEffect", () => {
   );
 });
 
-/** A method-override tunnel for gateways that strip PUT and DELETE. */
+/** A method-override tunnel for gateways that strip PUT and DELETE, created without a request. */
+const standaloneTunnel = Request.mapEffect((request) =>
+  Effect.succeed(
+    request.pipe(
+      HttpClientRequest.setHeader("x-http-method-override", request.method),
+      HttpClientRequest.setMethod("POST"),
+    ),
+  ),
+);
+
+/** The same tunnel as a generic function, reusable after any input bindings. */
 const tunnel = <I, E, R, H extends boolean, Q extends boolean>(
   self: Request.Request<I, E, R, H, Q>,
 ) =>
@@ -1167,15 +1177,43 @@ describe("reusable request transforms", () => {
     }),
   );
 
-  it("does not yet accept an input-independent mapEffect on requests with input", () => {
-    const direct = Request.mapEffect((request) =>
-      Effect.succeed(HttpClientRequest.setMethod(request, "POST")),
+  it.effect("applies a standalone transform before the input bindings", () =>
+    Effect.gen(function* () {
+      const rollback = yield* compile(
+        Request.del("https://api.test/items").pipe(
+          standaloneTunnel,
+          Request.body(Body.text),
+        ),
+        { body: "id=7" },
+      );
+      expect(rollback.request.method).toBe("POST");
+      expect(rollback.request.headers["x-http-method-override"]).toBe("DELETE");
+      expect(bodyText(rollback.request)).toBe("id=7");
+    }),
+  );
+
+  // Documented: the input type is fixed when a transform is created. A signature that also accepted
+  // this would stop `pipe` from inferring `input` for inline transforms, as the next test requires.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/9
+  it("types a standalone transform for requests without input", () => {
+    // @ts-expect-error: the transform was created for `Request<unknown>`
+    Request.del("/").pipe(Request.body(Body.text), standaloneTunnel);
+  });
+
+  it("infers an inline transform's input from the request", () => {
+    Request.post("/").pipe(
+      Request.body(Body.text),
+      Request.mapEffect((request, input) => {
+        expectTypeOf(input).toEqualTypeOf<{ readonly body: string }>();
+        return Effect.succeed(
+          HttpClientRequest.setHeader(
+            request,
+            "x-size",
+            `${input.body.length}`,
+          ),
+        );
+      }),
     );
-    // Known limitation. When it is fixed, this directive becomes unused and the type check fails;
-    // replace it with an ordinary assertion.
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/9
-    // @ts-expect-error: the transform's input type was fixed to `unknown` when it was created
-    Request.del("/").pipe(Request.body(Body.text), direct);
   });
 });
 

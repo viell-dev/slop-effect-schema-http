@@ -376,7 +376,13 @@ export const mapInput =
       Effect.suspend(() => self.prepare(f(input), draft)),
     );
 
-/** Effectful preparation of the native request, such as signing. Runs once per evaluation, before any attempt. */
+/**
+ * Effectful preparation of the native request, such as signing. Runs once per evaluation, before any attempt.
+ *
+ * The input type is fixed when the transform is created, which lets `pipe` infer `input` for an inline
+ * transform. A transform created on its own that ignores its input therefore targets `Request<unknown>`:
+ * apply it before the input bindings, or reuse it after them through a generic function.
+ */
 export const mapEffect =
   <I, E2, R2>(
     f: (
