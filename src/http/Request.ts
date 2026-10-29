@@ -379,9 +379,8 @@ export const mapInput =
 /**
  * Effectful preparation of the native request, such as signing. Runs once per evaluation, before any attempt.
  *
- * The input type is fixed when the transform is created, which lets `pipe` infer `input` for an inline
- * transform. A transform created on its own that ignores its input therefore targets `Request<unknown>`:
- * apply it before the input bindings, or reuse it after them through a generic function.
+ * The transform applies to any request whose input includes what `f` reads. One that ignores its input can be
+ * created once and reused on every request; an inline transform in `pipe` has `input` inferred from the request.
  */
 export const mapEffect =
   <I, E2, R2>(
@@ -390,10 +389,10 @@ export const mapEffect =
       input: I,
     ) => Effect.Effect<HttpClientRequest.HttpClientRequest, E2, R2>,
   ) =>
-  <E, R, H extends boolean, Q extends boolean>(
-    self: Request<I, E, R, H, Q>,
-  ): Request<I, E | E2, R | R2, H, Q> =>
-    construct(self.declaration, (input, draft) =>
+  <E, R, H extends boolean, Q extends boolean, I2 extends I = I>(
+    self: Request<I, E, R, H, Q> | Request<I2, E, R, H, Q>,
+  ): Request<I2, E | E2, R | R2, H, Q> =>
+    construct(self.declaration, (input: I2, draft) =>
       Effect.flatMap(self.prepare(input, draft), (prepared) =>
         Effect.map(f(prepared.request, input), (request) => ({
           ...prepared,
