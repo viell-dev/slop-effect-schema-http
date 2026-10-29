@@ -464,6 +464,10 @@ one added header` (type-level: the report is unreachable until the challenge is 
   - `[AUTH-7] a response computed over another URI is refused by the server's uri check`
   - Node-only: `[AUTH-7] through the line-preserving provider, the authorized request is the cold
 request's lines plus one`
+  - Round trips (`src/clients/gateway/digest.test.ts`): `[AUTH-7] ChallengeFromHeader round-trips quotes and backslashes in realm, nonce and opaque`,
+    `[AUTH-7] ChallengeFromHeader reads other parameter orders and spellings, and writes one form`
+    (parameter order, letter case, quoting style and an absent `algorithm` are not kept), and
+    `[AUTH-7] ChallengeFromHeader refuses malformed and unanswerable challenges`.
   - MD5 is a pure TypeScript implementation (`src/formats/md5.ts`, RFC 1321 vectors), because
     Web Crypto has none. Chromium returns the 401 to the page without an authentication prompt.
 - **ERR-1b** XML-RPC faults inside 200. Status: tested.
