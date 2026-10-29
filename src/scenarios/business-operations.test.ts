@@ -1,8 +1,23 @@
-import { describe, expect, it } from "@effect/vitest";
-import { Cause, DateTime, Effect, Fiber, Schedule, Schema } from "effect";
-import { FetchHttpClient } from "effect/http";
+import { describe, expect, expectTypeOf, it } from "@effect/vitest";
+import {
+  Cause,
+  DateTime,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Schedule,
+  Schema,
+} from "effect";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { lane } from "#lane";
-import { Policy, Response } from "viell-effect-schema-http";
+import {
+  Body,
+  Operation,
+  Policy,
+  Request,
+  Response,
+} from "viell-effect-schema-http";
 import * as Ops from "../clients/business/operations.js";
 import { bodyText, header, queryOf, type Recorded } from "../harness/lane.js";
 import * as Values from "../values/business.js";
@@ -375,6 +390,184 @@ describe(`business operations: method override (STAT-11, ${lane.name})`, () => {
         ]);
       }).pipe(Effect.provide(lane.fetchClient)),
   );
+});
+
+// ---------------------------------------------------------------------------------------------
+// EXT-1: one tag for two statuses
+// ---------------------------------------------------------------------------------------------
+
+describe(`business operations: one tag for two statuses (EXT-1, ${lane.name})`, () => {
+  const replacement: Ops.TaskReplacement = {
+    title: "Reconcile the October ledger (revised)",
+    assigneeId: "u-ada",
+    priority: 1,
+    done: true,
+  };
+
+  it.live(
+    "[EXT-1] a 200 with the task and a 204 without a body are both Changed; the status picks the decoder",
+    () =>
+      Effect.gen(function* () {
+        const backend = yield* start();
+        const connection = connect(backend);
+        const id = taskId("T-1001");
+        const replaced = yield* Ops.replaceTaskChanged(connection).execute({
+          path: id,
+          body: replacement,
+        });
+        const deleted = yield* Ops.deleteTaskChanged(connection).execute({
+          path: id,
+        });
+        // One case type for both statuses: the tag does not say which rule matched.
+        expectTypeOf<
+          Extract<typeof replaced, { readonly _tag: "Changed" }>
+        >().toEqualTypeOf<
+          Response.Tagged<"Changed", Option.Option<Ops.Task>>
+        >();
+        expect([replaced._tag, deleted._tag]).toEqual(["Changed", "Changed"]);
+        if (replaced._tag === "Changed") {
+          expect(replaced.metadata.status).toBe(200);
+          expect(Option.getOrUndefined(replaced.value)?.title).toBe(
+            "Reconcile the October ledger (revised)",
+          );
+        }
+        if (deleted._tag === "Changed") {
+          expect(deleted.metadata.status).toBe(204);
+          expect(Option.isNone(deleted.value)).toBe(true);
+        }
+        const ledger = yield* backend.ledger;
+        expect(
+          ledger.map((request) => [
+            request.method,
+            request.target,
+            override(request),
+          ]),
+        ).toEqual([
+          ["POST", "/v2/tasks/T-1001", "PUT"],
+          ["POST", "/v2/tasks/T-1001", "DELETE"],
+        ]);
+        expect(ledger[1]!.body).toHaveLength(0);
+      }).pipe(Effect.provide(lane.fetchClient)),
+  );
+
+  it.live(
+    "[EXT-1] control: a first rule that also matches 204 takes it, and the empty case behind it under the same tag is never consulted",
+    () =>
+      Effect.gen(function* () {
+        const backend = yield* start();
+        const connection = connect(backend);
+        const id = taskId("T-1002");
+        const greedy = Response.when(
+          ({ status }) => status === 200 || status === 204,
+          Response.tag(
+            "Changed",
+            Body.jsonSchema(Ops.Task).pipe(
+              Body.map((task) => Option.some(task)),
+            ),
+          ),
+        ).pipe(Response.orElse(Ops.changed));
+        const remove = Operation.make(
+          Request.del("tasks").pipe(
+            Ops.at(connection),
+            Request.path(
+              Ops.TaskId,
+              (task: string, encode) => `tasks/${encode(task)}`,
+            ),
+            Ops.tunnel,
+          ),
+          greedy,
+        );
+        const failure = yield* Effect.flip(remove.execute({ path: id }));
+        expect(failure._tag).toBe("DecodeError");
+        if (failure._tag === "DecodeError")
+          expect(failure.metadata.status).toBe(204);
+        // The service applied the delete; only the decoding failed.
+        const gone = yield* Ops.readTask(connection).execute({ path: id });
+        expect(gone._tag).toBe("NotFound");
+        expect(
+          (yield* backend.ledger).map((request) => [
+            request.method,
+            request.target,
+            override(request),
+          ]),
+        ).toEqual([
+          ["POST", "/v2/tasks/T-1002", "DELETE"],
+          ["GET", "/v2/tasks/T-1002", undefined],
+        ]);
+      }).pipe(Effect.provide(lane.fetchClient)),
+  );
+});
+
+// ---------------------------------------------------------------------------------------------
+// EXT-2: a provider chosen for one operation
+// ---------------------------------------------------------------------------------------------
+
+/** Marks every request a client sends with the name of that client. */
+const marked = (name: string) =>
+  HttpClient.mapRequest(HttpClientRequest.setHeader("x-provider", name));
+
+describe(`business operations: a provider for one operation (EXT-2, ${lane.name})`, () => {
+  for (const [provider, layer] of lane.clients)
+    it.live(
+      `[EXT-2] one operation replaces the layer's client through transformClient, and the operations around it keep the layer's (${provider})`,
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          const connection = connect(backend);
+          let ownRequests = 0;
+          // A client built outside the operations' layer: Effect's Fetch provider, marked and
+          // counted. In the Node lane's line-provider run, it is a different provider altogether.
+          const own = yield* Effect.map(HttpClient.HttpClient, (client) =>
+            client.pipe(
+              marked("own"),
+              HttpClient.tapRequest(() =>
+                Effect.sync(() => {
+                  ownRequests++;
+                }),
+              ),
+            ),
+          ).pipe(Effect.provide(lane.fetchClient));
+          const listOpen = Operation.make(
+            Request.get("tasks").pipe(
+              Ops.at(connection),
+              Request.query(Ops.TaskFilter),
+            ),
+            Response.status(200, Body.jsonSchema(Ops.TaskList)),
+            // The client the library hands over is ignored, not decorated.
+            { transformClient: () => own },
+          );
+          const before = yield* Ops.readTask(connection).execute({
+            path: taskId("T-1001"),
+          });
+          const openTasks = yield* listOpen.execute({
+            query: { status: ["open"] },
+          });
+          const after = yield* Ops.readTask(connection).execute({
+            path: taskId("T-1002"),
+          });
+          expect([before._tag, after._tag]).toEqual(["Task", "Task"]);
+          expect(openTasks.items.map((task) => task.id)).toEqual(["T-1001"]);
+          expect(ownRequests).toBe(1);
+          const ledger = yield* backend.ledger;
+          expect(
+            ledger.map((request) => [
+              request.target,
+              header(request.lines, "x-provider"),
+            ]),
+          ).toEqual([
+            ["/v2/tasks/T-1001", "layer"],
+            ["/v2/tasks?status=open", "own"],
+            ["/v2/tasks/T-1002", "layer"],
+          ]);
+        }).pipe(
+          Effect.provide(
+            Layer.effect(
+              HttpClient.HttpClient,
+              Effect.map(HttpClient.HttpClient, marked("layer")),
+            ).pipe(Layer.provide(layer)),
+          ),
+        ),
+    );
 });
 
 // ---------------------------------------------------------------------------------------------

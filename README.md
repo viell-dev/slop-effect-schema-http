@@ -58,12 +58,21 @@ script's own tests, `scripts/boundaries.test.mjs`, on generated fixture trees.
 
 Every scenario runs in two lanes. The Node lane runs the consumer in Node. The browser lane runs
 the same tests in headless Chromium through Vitest browser mode, to show that the library works in
-a static single-page app; there, a Node-side control server starts the backends, and the browser
-enforces CORS, forbidden headers, cookies and redirects itself. Tests that need Node, such as the
-line-preserving provider, live in `*.node.test.ts` files; tests about the browser itself, such as
-a page's CORS, live in `*.browser.test.ts` files. The test page's server also hosts a same-origin
-proxy (`src/harness/proxy.ts`), so a page can reach a backend without CORS, as a deployed
-single-page app does through its own server. The client providers are:
+a browser page; there, a Node-side control server starts the backends, and the browser enforces
+CORS, forbidden headers, cookies and redirects itself. The tests run as test code in the page, not
+as a built application; a bundled single-page app is tracked in
+[#35](https://github.com/viell-dev/slop-effect-schema-http/issues/35).
+
+By default the control server, not the backend, answers each backend's CORS preflights and exposes
+every response header, so a browser-lane scenario runs under permissive CORS. Only a test that
+starts a backend with the start option `{ cors: "backend" }` meets the backend's own CORS, as the
+notification service's HDR-7 tests do.
+
+Tests that need Node, such as the line-preserving provider, live in `*.node.test.ts` files; tests
+about the browser itself, such as a page's CORS, live in `*.browser.test.ts` files. The test
+page's server also hosts a same-origin proxy (`src/harness/proxy.ts`), so a page can reach a
+backend without CORS, as a deployed single-page app does through its own server. The client
+providers are:
 
 - Effect's Fetch provider, over Node's global `fetch` or the browser's;
 - in the Node lane, a custom `node:http` provider in `src/harness/providers.ts`, which sends the
