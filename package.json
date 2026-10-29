@@ -6,11 +6,11 @@
   "license": "",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/viell-dev/effect-schema-http.git"
+    "url": "git+https://github.com/viell-dev/slop-effect-schema-http.git"
   },
-  "homepage": "https://github.com/viell-dev/effect-schema-http#readme",
+  "homepage": "https://github.com/viell-dev/slop-effect-schema-http#readme",
   "bugs": {
-    "url": "https://github.com/viell-dev/effect-schema-http/issues"
+    "url": "https://github.com/viell-dev/slop-effect-schema-http/issues"
   },
   "author": "viell",
   "type": "module",
