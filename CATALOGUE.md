@@ -262,36 +262,129 @@ exact id refuses a value the platform parser already rounded`.
 
 ## CGI reporting gateway (`gateway`)
 
+Scenarios are in `src/scenarios/gateway.test.ts` and run in both lanes (Node and Chromium); the two
+that need the line-preserving provider are in `gateway.node.test.ts`. Round trips are in
+`src/values/gateway.test.ts` and in the CSV, fixed-width and XML-RPC helper tests under
+`src/formats`. The backend's endpoints and its month-end extract and token options for the flows
+are documented at the top of `src/backends/gateway/index.ts`.
+
 - **AUTH-2** A session obtained by GET with the password in the query string, then carried as a
-  query parameter: declared as is. Status: pending.
+  query parameter: declared as is. Status: tested.
+  - `[AUTH-2] logs in by GET with the password in the query string, then carries the session as a
+query parameter` (the password `p+ss w&rd;1` arrives percent-encoded, so CGI.pm's `+` and `;`
+    handling cannot alter it)
+  - `[AUTH-2] a wrong password and an unknown session are ERROR lines inside 200`
+  - `[AUTH-2] a blank user or a malformed account is refused before dispatch`
+  - `[AUTH-2] the configured SSO token is accepted wherever a session is`
 - **AUTH-7** HTTP Digest in the 1997 form without `qop`: a 401 challenge as a declared response, an
   MD5 response, a single-use nonce, and `stale=true` on replay; the same cold request executed again
-  with one added header. Status: pending.
-- **ERR-1b** XML-RPC faults inside 200. Status: pending.
-- **ERR-1c** Pipe-delimited `ERROR` lines inside 200. Status: pending.
+  with one added header. Status: tested.
+  - `[AUTH-7] the 401 challenge is a declared response, and the same cold request runs again with
+one added header` (type-level: the report is unreachable until the challenge is ruled out)
+  - `[AUTH-7] a replayed Authorization is answered with stale=true and a fresh nonce`
+  - `[AUTH-7] wrong credentials end the loop with a typed rejection after two requests`
+  - `[AUTH-7] a response computed over another URI is refused by the server's uri check`
+  - Node-only: `[AUTH-7] through the line-preserving provider, the authorized request is the cold
+request's lines plus one`
+  - MD5 is a pure TypeScript implementation (`src/formats/md5.ts`, RFC 1321 vectors), because
+    Web Crypto has none. Chromium returns the 401 to the page without an authentication prompt.
+- **ERR-1b** XML-RPC faults inside 200. Status: tested.
+  - `[ERR-1b] an XML-RPC fault inside 200 is a member of the result union` (type-level as well)
+  - `[ERR-1b] a fault can be moved into the failure channel by the consumer`
+  - Schema: `[ERR-1b] an outcome is a result or a fault, both members of one union`
+- **ERR-1c** Pipe-delimited `ERROR` lines inside 200. Status: tested.
+  - `[ERR-1c] an ERROR line inside 200 decodes as a gateway error beside the OK line`
+  - `[ERR-1c] a reply that is neither an OK nor an ERROR line is a decode error`
 - **STAT-6** A HEAD probe whose facts live only in headers: an ordinary schema over the header map.
-  Status: pending.
+  Status: tested.
+  - `[STAT-6] a HEAD probe reads the extract's facts from its headers with an ordinary schema`
+  - `[STAT-6] a probe of a missing period is a mapped 404, and a malformed one is never sent`
+  - Observed: Node's server drops a HEAD body and keeps the explicit `Content-Length`.
 - **STAT-10** A 301 kept alive for an old compiled-in path: unreachable through a redirect-following
-  transport; a per-request transport option is the only escape. Status: pending.
-- **STAT-11** A gateway that strips PUT and DELETE, with the service refusing raw ones too: a
-  reusable transform that rewrites the method to POST and sets an override header. Status: pending.
-- **HDR-5d** CSV served as `application/octet-stream`. Status: pending.
+  transport; a per-request transport option is the only escape. Status: tested.
+  - `[STAT-10] Fetch follows the 301, so the declared 301 case is unreachable` (both lanes: two
+    requests, the declared 301 never matches)
+  - `[STAT-10] Fetch with redirect: "manual", a per-request transport option outside the library`
+    (per lane: Node's fetch hands the 301 and its absolute `Location` to the declared case;
+    Chromium returns an opaque redirect with status 0 and no headers, so the operation fails with
+    `UnexpectedResponse` and the 301 stays unreachable)
+  - Node-only: `[STAT-10] the line-preserving provider observes the 301 itself`
+- **HDR-5d** CSV served as `application/octet-stream`. Status: tested.
+  - `[HDR-5d] CSV served as application/octet-stream decodes by status and body, never by content
+type`
+  - `[HDR-5d] a rule keyed on the advertised CSV content type never matches`
+  - `[HDR-5d] a refused export is an ERROR line in 200 that the same body schema recognises`
 - **PAY-3b** XML-RPC with `i4`, `double`, `boolean`, `dateTime.iso8601`, `base64`, `struct`, `array`,
-  and bare scalar responses. Status: pending.
-- **PAY-4b** A UTF-8 BOM that would poison the first CSV column name. Status: pending.
+  and bare scalar responses. Status: tested.
+  - `[PAY-3b] an invoice struct carries i4, double, boolean, dateTime.iso8601 and an array of
+structs`
+  - `[PAY-3b] bare scalar responses: an i4 count, an untyped string and an array of strings`
+  - `[PAY-3b] a header declaration cannot relabel a text body, so the gateway refuses the call`
+    (both lanes send `text/plain`: the body codec owns the content type)
+  - Helper: `[PAY-3b] parses every type into a lossless tree, ignoring whitespace between
+elements`, `[PAY-3b] round-trips calls and faults`, `[PAY-3b] refuses malformed responses instead
+of guessing`, `[PAY-3b] scalar schemas read the type element and refuse other types or
+spellings`
+- **PAY-4b** A UTF-8 BOM that would poison the first CSV column name. Status: tested.
+  - `[PAY-4b] a BOM-preserving decode poisons the first column name; the byte codec does not`
+  - `[PAY-4b] Fetch's text decoding drops the BOM silently, so a text codec cannot write it back`
+  - Helper: `[PAY-4b] a BOM kept by the text decoder poisons the first column name`
+  - Fixture fact: the poisoning is real only for BOM-preserving decoders (`TextDecoder` with
+    `ignoreBOM`, Node's `Buffer.toString`). `Body.text` uses the WHATWG UTF-8 decode, which strips
+    the BOM in both lanes and both providers, so it cannot poison the name, and it loses the BOM.
 - **PAY-4c** Fixed-width records with no delimiters, Latin-1 titles, implied decimals, zero padding,
-  and a trailer whose record count and control total the decode verifies. Status: pending.
+  and a trailer whose record count and control total the decode verifies. Status: tested.
+  - `[PAY-4c] the extract decodes from Latin-1 bytes with implied decimals and a verified trailer,
+and re-encodes to the same bytes`
+  - `[PAY-4c] read as UTF-8 text, the same bytes corrupt every accented title without an error`
+  - `[PAY-4c] a trailer patched by hand fails the decode with the mismatch it found`
+  - `[PAY-4c] refusals are mapped statuses with ERROR lines, and a malformed period never leaves
+the client`
+  - Helper: five `[PAY-4c]` tests of strict ISO-8859-1, record splitting, field slicing, padded
+    text and zero-padded counts. WHATWG's `latin1` label is windows-1252, so the codec maps bytes
+    itself and refuses the C0 and C1 ranges.
 - **PAY-5** CSV for a German spreadsheet with BOM, CRLF, semicolons, and a decimal comma,
-  round-tripped with the BOM written back on encode. Status: pending.
+  round-tripped with the BOM written back on encode. Status: tested.
+  - `[PAY-5] the German sheet round-trips byte for byte, BOM included, and the import accepts it`
+  - `[PAY-5] an edited sheet uploads and reads back with the new amount and title`
+  - `[PAY-5] the importer refuses sheets German Excel would not write, as ERROR lines inside 200`
+  - Helper: `[PAY-5] round-trips a German sheet byte for byte: BOM, CRLF, semicolons, quoting`,
+    `[PAY-5] refuses what Excel would not write: a missing BOM, bare LF, needless quotes, stray
+quotes`
 - **PAY-8** Base64 of Latin-1 bytes inside XML-RPC, decoded by the same fixed-width schema that reads
-  the HTTP endpoint. Status: pending.
+  the HTTP endpoint. Status: tested.
+  - `[PAY-8] base64 inside XML-RPC decodes through the same fixed-width schema as the download`
+  - Helper: `[PAY-8] base64 decodes Perl's 76-column MIME layout and nothing looser`
 - **VAL-1c** XML-RPC's separator-free date, bare `YYYYMMDD`, and a zero date meaning null. Status:
-  pending.
+  tested.
+  - `[VAL-1c] zero dates decode to none and others to UTC instants across XML-RPC, pipe and fixed
+width`
+  - `[VAL-1c] a migrated invoice dated 31 February is a decode error, not a shifted date`
+  - Round trips: `[VAL-1c] XML-RPC's separator-free date-time round-trips as UTC`, `[VAL-1c] the
+date-time refuses separators, zones, compact times and impossible dates`, `[VAL-1c] a bare
+YYYYMMDD round-trips as midnight UTC and refuses a time of day on encode` (the stated loss of
+    a bare date: encoding a time of day fails with that reason), `[VAL-1c] the zero date means none
+in both forms, and only the exact zero spelling`
 - **VAL-2b** Money as XML-RPC doubles in units, integer cents with implied decimals, and a decimal
-  comma. Status: pending.
-- **VAL-3b** XML-RPC booleans `1` and `0`. Status: pending.
+  comma. Status: tested.
+  - `[VAL-2b] one amount from five endpoints in four spellings decodes to the same cents`
+  - Round trips: `[VAL-2b] XML-RPC doubles in units round-trip to integer cents without floating
+point`, `[VAL-2b] units refuse unformatted and looser spellings`, `[VAL-2b] the decimal comma
+round-trips and refuses a dot or thousands separators`, `[VAL-2b] implied decimals round-trip
+zero padded and refuse signs, spaces and overflow`, `[VAL-2b] unpadded implied decimals in pipe
+replies refuse padding and units`, `[VAL-2b] the same amount in every spelling is the same
+branded value`
+- **VAL-3b** XML-RPC booleans `1` and `0`. Status: tested.
+  - `[VAL-3b] the paid flags travel as <boolean>1</boolean> and <boolean>0</boolean>`
+  - Round trips: `[VAL-3b] XML-RPC booleans 1 and 0 round-trip`, `[VAL-3b] other spellings of truth
+are refused`
 - **RET-4** A Digest nonce spent by one request, so every call costs two round trips. Status:
-  pending.
+  tested.
+  - `[RET-4] every Digest call costs two round trips: three calls, six requests`
+  - `[RET-4] sending the previous nonce pre-emptively saves nothing, because it is spent`
+  - `[RET-4] a timed-out authenticated request has still spent its nonce` (a whole-operation
+    timeout surfaces as `TimeoutError`, and the server observes the abort)
+  - `[RET-4] a retry policy replays the encoded request, so its retry meets stale=true`
 
 ## Notification service (`notifications`)
 
