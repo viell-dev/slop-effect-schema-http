@@ -2,6 +2,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { Option, Schema } from "effect";
 import * as XmlRpc from "./xmlrpc.js";
 
+const wrap = (inner: string) =>
+  `<methodResponse><params><param>${inner}</param></params></methodResponse>`;
+
 describe("xml-rpc helper", () => {
   it("[PAY-3b] parses every type into a lossless tree, ignoring whitespace between elements", () => {
     const text = `<?xml version="1.0"?>
@@ -62,8 +65,6 @@ describe("xml-rpc helper", () => {
   });
 
   it("[PAY-3b] refuses malformed responses instead of guessing", () => {
-    const wrap = (inner: string) =>
-      `<methodResponse><params><param>${inner}</param></params></methodResponse>`;
     expect(() => XmlRpc.parseResponse("<methodResponse/>")).toThrow(
       /exactly one/,
     );

@@ -45,6 +45,16 @@ export type Verdict =
   | { readonly _tag: "Authorized"; readonly user: string }
   | { readonly _tag: "Refused"; readonly reply: Reply };
 
+/** mod_digest's refusal of a malformed or mismatched Authorization. */
+const badRequest = (reason: string): Verdict => ({
+  _tag: "Refused",
+  reply: apachePage(
+    400,
+    "Bad Request",
+    `Your browser sent a request that this server could not understand.<P>\n${reason}`,
+  ),
+});
+
 /** Per-instance Digest state: the nonces issued and whether each has been used. */
 export const digest = (options: DigestOptions) => {
   const nonces = new Map<string, "fresh" | "spent">();
@@ -69,15 +79,6 @@ export const digest = (options: DigestOptions) => {
       ),
     };
   };
-
-  const badRequest = (reason: string): Verdict => ({
-    _tag: "Refused",
-    reply: apachePage(
-      400,
-      "Bad Request",
-      `Your browser sent a request that this server could not understand.<P>\n${reason}`,
-    ),
-  });
 
   return (request: Received): Verdict => {
     const authorization = header(request.lines, "authorization");
