@@ -730,41 +730,105 @@ describe("Request.body", () => {
       }),
   );
 
-  const relabelled = Request.post("https://api.test/items").pipe(
-    Request.body(Body.json),
-    Request.headers(Schema.Struct({ "Content-Type": Schema.String })),
-  );
-  const relabelledInput = {
-    body: { name: "x" },
-    headers: { "Content-Type": "text/plain" },
-  };
+  const ContentType = Schema.Struct({
+    "Content-Type": Schema.String,
+    "X-Trace": Schema.String,
+  });
 
-  // Known defect: a header schema applied after the body overrides the codec's Content-Type. This
-  // pins the current outcome; remove it when the issue is fixed.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/6
-  it.effect("currently lets a header schema after the body relabel it", () =>
-    Effect.gen(function* () {
-      const compiled = yield* compile(relabelled, relabelledInput);
-      expect(compiled.request.headers["content-type"]).toBe("text/plain");
-      expect(bodyText(compiled.request)).toBe('{"name":"x"}');
-      expect(compiled.headerLines).toContainEqual([
-        "Content-Type",
-        "text/plain",
-      ]);
-    }),
-  );
-
-  // Known defect: the intended outcome keeps the codec's Content-Type. Remove `.fails` when the
-  // issue is fixed. https://github.com/viell-dev/slop-effect-schema-http/issues/6
-  it.effect.fails(
+  it.effect(
     "keeps the codec's Content-Type when a header schema follows the body",
     () =>
       Effect.gen(function* () {
-        const compiled = yield* compile(relabelled, relabelledInput);
+        const compiled = yield* compile(
+          Request.post("https://api.test/items").pipe(
+            Request.body(Body.json),
+            Request.headers(ContentType),
+          ),
+          {
+            body: { name: "x" },
+            headers: { "Content-Type": "text/plain", "X-Trace": "t1" },
+          },
+        );
         expect(compiled.request.headers["content-type"]).toBe(
           "application/json",
         );
+        expect(compiled.request.headers["content-length"]).toBe("12");
+        expect(compiled.request.headers["x-trace"]).toBe("t1");
+        expect(bodyText(compiled.request)).toBe('{"name":"x"}');
+        expect(compiled.headerLines).toEqual([
+          ["X-Trace", "t1"],
+          ["content-type", "application/json"],
+          ["content-length", "12"],
+        ]);
       }),
+  );
+
+  it.effect(
+    "leaves a multipart Content-Type to the transport when a header schema follows the body",
+    () =>
+      Effect.gen(function* () {
+        const form = new FormData();
+        form.append("file", "x");
+        const compiled = yield* compile(
+          Request.post("https://api.test/upload").pipe(
+            Request.body(Body.formData),
+            Request.headers(ContentType),
+          ),
+          {
+            body: form,
+            headers: { "Content-Type": "multipart/form-data", "X-Trace": "t1" },
+          },
+        );
+        expect(compiled.request.body._tag).toBe("FormData");
+        expect(compiled.request.headers["content-type"]).toBeUndefined();
+        expect(compiled.headerLines).toEqual([["X-Trace", "t1"]]);
+      }),
+  );
+
+  it.effect(
+    "keeps a header schema's Content-Type on a request without a body",
+    () =>
+      Effect.gen(function* () {
+        const compiled = yield* compile(
+          Request.del("https://api.test/items/1").pipe(
+            Request.headers(ContentType),
+          ),
+          {
+            headers: { "Content-Type": "application/json", "X-Trace": "t1" },
+          },
+        );
+        expect(compiled.request.headers["content-type"]).toBe(
+          "application/json",
+        );
+        expect(compiled.headerLines).toEqual([
+          ["Content-Type", "application/json"],
+          ["X-Trace", "t1"],
+        ]);
+      }),
+  );
+
+  it.effect("lets Request.mapEffect relabel the body deliberately", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compile(
+        Request.post("https://api.test/items").pipe(
+          Request.body(Body.json),
+          Request.mapEffect((request) =>
+            Effect.succeed(
+              HttpClientRequest.setHeader(
+                request,
+                "content-type",
+                "application/merge-patch+json",
+              ),
+            ),
+          ),
+        ),
+        { body: { name: "x" } },
+      );
+      expect(compiled.request.headers["content-type"]).toBe(
+        "application/merge-patch+json",
+      );
+    }),
   );
 
   it.effect("encodes once per compilation", () =>
