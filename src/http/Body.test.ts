@@ -433,6 +433,73 @@ describe("Body.jsonSchema", () => {
   });
 });
 
+const latin1 = new TextDecoder("iso-8859-1");
+
+const bigEndianUint64 = (bytes: Uint8Array): bigint =>
+  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(
+    0,
+  );
+
+describe("non-text payloads through Body.bytes and a schema", () => {
+  it.effect("reads Latin-1 text that UTF-8 text decoding would garble", () =>
+    Effect.gen(function* () {
+      const city = Body.bytes.pipe(
+        Body.map((bytes) => latin1.decode(bytes)),
+        Body.schema(Schema.NonEmptyString),
+      );
+      // "Köln" in ISO-8859-1; 0xf6 alone is not valid UTF-8.
+      const encoded = new Uint8Array([0x4b, 0xf6, 0x6c, 0x6e]);
+      expect(
+        yield* city.decode(reply(encoded, "text/plain; charset=iso-8859-1")),
+      ).toBe("Köln");
+      expect(yield* Body.text.decode(reply(encoded))).toBe("K\uFFFDln");
+    }),
+  );
+
+  it.effect("reads 64-bit integers without losing precision", () =>
+    Effect.gen(function* () {
+      const exceedsDouble = 9007199254740993n;
+      const binary = new Uint8Array(8);
+      new DataView(binary.buffer).setBigUint64(0, exceedsDouble);
+      const counter = Body.bytes.pipe(
+        Body.map(bigEndianUint64),
+        Body.schema(Schema.BigInt),
+      );
+      expect(yield* counter.decode(reply(binary))).toBe(exceedsDouble);
+
+      const textual = Body.text.pipe(Body.schema(Schema.BigIntFromString));
+      expect(yield* textual.decode(reply(String(exceedsDouble)))).toBe(
+        exceedsDouble,
+      );
+    }),
+  );
+
+  it.effect("reads HEAD facts from headers after draining the body", () =>
+    Effect.gen(function* () {
+      const facts = Body.decoder((res) =>
+        Effect.as(Body.empty.decode(res), res.headers),
+      ).pipe(
+        Body.schema(
+          Schema.Struct({
+            "content-length": Schema.NumberFromString,
+            etag: Schema.String,
+          }),
+        ),
+      );
+      const head = response(
+        new globalThis.Response(null, {
+          status: 200,
+          headers: { "content-length": "1048576", etag: '"v7"' },
+        }),
+      );
+      expect(yield* facts.decode(head)).toEqual({
+        "content-length": 1048576,
+        etag: '"v7"',
+      });
+    }),
+  );
+});
+
 describe("Body.text and Body.bytes", () => {
   // The BOM stripping comes from the platform's Response.text(), not from this library.
   it.effect(

@@ -245,6 +245,57 @@ describe("Response.decode", () => {
     }),
   );
 
+  it.effect(
+    "decodes payload variants under identical metadata through a schema union",
+    () =>
+      Effect.gen(function* () {
+        const Outcome = Schema.Union([
+          Schema.TaggedStruct("Accepted", { id: Schema.String }),
+          Schema.TaggedStruct("Queued", { position: Schema.Number }),
+        ]);
+        let fallbacks = 0;
+        const contract = Response.status(
+          202,
+          Body.json.pipe(Body.schema(Outcome)),
+        ).pipe(
+          Response.orElse(
+            Response.when(
+              () => true,
+              Body.json.pipe(
+                Body.map((value) => {
+                  fallbacks++;
+                  return value;
+                }),
+              ),
+            ),
+          ),
+        );
+        expect(
+          yield* Response.decode(
+            contract,
+            response(json(202, { _tag: "Accepted", id: "a1" })),
+          ),
+        ).toEqual({ _tag: "Accepted", id: "a1" });
+        expect(
+          yield* Response.decode(
+            contract,
+            response(json(202, { _tag: "Queued", position: 3 })),
+          ),
+        ).toEqual({ _tag: "Queued", position: 3 });
+        const error = yield* Effect.flip(
+          Response.decode(
+            contract,
+            response(json(202, { _tag: "Rejected", reason: "quota" })),
+          ),
+        );
+        expect(error._tag).toBe("DecodeError");
+        if (error._tag !== "DecodeError") return;
+        expect(error.metadata.status).toBe(202);
+        expect(Schema.isSchemaError(error.cause)).toBe(true);
+        expect(fallbacks).toBe(0);
+      }),
+  );
+
   it.effect("decodes an honestly empty 204 and a zero-length 200", () =>
     Effect.gen(function* () {
       const contract = Response.status(204, Body.empty).pipe(
@@ -255,6 +306,27 @@ describe("Response.decode", () => {
         contract,
         response(text(200, "", { "content-type": "application/json" })),
       );
+    }),
+  );
+
+  it.effect("selects an empty 304 by status despite a JSON content type", () =>
+    Effect.gen(function* () {
+      const contract = Response.status(
+        200,
+        Response.tag("Fresh", Body.json),
+      ).pipe(
+        Response.orElse(
+          Response.status(304, Response.tag("NotModified", Body.empty)),
+        ),
+      );
+      const result = yield* Response.decode(
+        contract,
+        response(
+          empty(304, { "content-type": "application/json", etag: '"v7"' }),
+        ),
+      );
+      expect(result._tag).toBe("NotModified");
+      expect(result.metadata.headers.etag).toBe('"v7"');
     }),
   );
 
