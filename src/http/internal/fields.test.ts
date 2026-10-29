@@ -24,6 +24,7 @@ describe("Fields.set", () => {
     ]);
   });
 
+  // Header combinators lowercase names before calling this; query keys are case-sensitive.
   it("compares names exactly", () => {
     expect(Fields.set([["A", "1"]], "a", "2")).toEqual([
       ["A", "1"],

@@ -28,13 +28,20 @@ objects. Tests therefore run through Effect's real client wrapper without a netw
 with `TestClock` for retry delays and timeouts. Use deferreds or explicit start signals, not sleeps,
 to order concurrent work.
 
+Write tests against documented intent: the doc comments in the source and the design documentation.
+Behavior the code happens to have is not a promise. A test that records it without design backing is
+titled "currently …" and links an issue where the behavior is decided.
+
 A confirmed defect gets an issue and two tests, each with a comment linking the issue. An ordinary
 test pins the exact current outcome, and a test of the intended behavior is marked
 `it.effect.fails`. The marker keeps CI green while the defect is open, but `.fails` accepts any
 failure, so the ordinary test proves the expected failure comes from the defect rather than an
-unrelated error. Fixing the defect fails both tests: delete the pin and remove the marker. Pin a
-type-level limitation with `@ts-expect-error` and a linked issue. Do not weaken an assertion to make
-a test pass.
+unrelated error. Fixing the defect fails both tests: delete the pin and remove the marker.
+
+Use an expected-failure test only when the intended behavior is documented or the owner decided it.
+If the intended behavior is a design question, write only the "currently …" pin and open a
+discussion issue. Do not encode the answer as a test. Pin a type-level limitation with
+`@ts-expect-error` and a linked issue. Do not weaken an assertion to make a test pass.
 
 The suite does not exercise Fetch, browsers, real servers, or packaged installation. It checks the
 library's own header-line normalization and Effect's parsing of synthetic responses, but not how a

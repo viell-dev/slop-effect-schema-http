@@ -6,7 +6,6 @@ import {
   Effect,
   Exit,
   Fiber,
-  Ref,
   Schema,
   Scope,
 } from "effect";
@@ -19,41 +18,44 @@ import * as Response from "../http/Response.js";
 import * as Interaction from "./Interaction.js";
 
 /** An execution whose calls start, wait for release, and record interruption and finalization. */
-const controlled = Effect.fnUntraced(function* <I>() {
-  const calls: Array<I> = [];
-  const interrupted: Array<I> = [];
-  const finalized: Array<I> = [];
-  const gates = new Map<number, Deferred.Deferred<void>>();
-  const started = yield* Ref.make(0);
-  const execute = (input: I) =>
-    Effect.gen(function* () {
-      const index = calls.length;
-      calls.push(input);
-      const gate = yield* Deferred.make<void>();
-      gates.set(index, gate);
-      yield* Ref.update(started, (n) => n + 1);
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => finalized.push(input)),
-      );
-      yield* Deferred.await(gate).pipe(
-        Effect.onInterrupt(() => Effect.sync(() => interrupted.push(input))),
-      );
-      return `${String(input)}#${index}`;
-    });
-  /** Wait until `count` executions have started. */
-  const awaitStarted = (count: number) =>
-    Effect.gen(function* () {
-      while ((yield* Ref.get(started)) < count) yield* Effect.yieldNow;
-    });
-  const release = (index: number) =>
-    Effect.suspend(() => {
-      const gate = gates.get(index);
-      if (gate === undefined)
-        return Effect.die(`execution ${index} not started`);
-      return Deferred.succeed(gate, undefined);
-    });
-  return { execute, calls, interrupted, finalized, awaitStarted, release };
-});
+const controlled = <I>() =>
+  Effect.sync(() => {
+    const calls: Array<I> = [];
+    const interrupted: Array<I> = [];
+    const finalized: Array<I> = [];
+    const gates = new Map<number, Deferred.Deferred<void>>();
+    const starts: Array<Deferred.Deferred<void>> = [];
+    const startOf = (index: number) =>
+      (starts[index] ??= Deferred.makeUnsafe<void>());
+    const execute = (input: I) =>
+      Effect.gen(function* () {
+        const index = calls.length;
+        calls.push(input);
+        const gate = yield* Deferred.make<void>();
+        gates.set(index, gate);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => finalized.push(input)),
+        );
+        // Signal inside the interruption handler, so an interruption right after the signal is
+        // still recorded.
+        yield* Deferred.succeed(startOf(index), undefined).pipe(
+          Effect.andThen(Deferred.await(gate)),
+          Effect.onInterrupt(() => Effect.sync(() => interrupted.push(input))),
+        );
+        return `${String(input)}#${index}`;
+      });
+    /** Wait until `count` executions have started. Executions are numbered in start order. */
+    const awaitStarted = (count: number) =>
+      Effect.suspend(() => Deferred.await(startOf(count - 1)));
+    const release = (index: number) =>
+      Effect.suspend(() => {
+        const gate = gates.get(index);
+        if (gate === undefined)
+          return Effect.die(`execution ${index} not started`);
+        return Deferred.succeed(gate, undefined);
+      });
+    return { execute, calls, interrupted, finalized, awaitStarted, release };
+  });
 
 const isInterrupted = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause);
@@ -71,11 +73,15 @@ describe("Interaction.run", () => {
   it.effect("joins active work for equal input", () =>
     Effect.gen(function* () {
       const work = yield* controlled<string>();
-      const interaction = yield* Interaction.make(work.execute);
+      // Without retention, only joining can return the first execution's value to both callers.
+      const interaction = yield* Interaction.make(work.execute, {
+        retain: () => false,
+      });
       const first = yield* Effect.forkChild(interaction.run("a"));
       yield* work.awaitStarted(1);
-      const second = yield* Effect.forkChild(interaction.run("a"));
-      yield* Effect.yieldNow;
+      const second = yield* Effect.forkChild(interaction.run("a"), {
+        startImmediately: true,
+      });
       yield* work.release(0);
       expect(yield* Fiber.join(first)).toBe("a#0");
       expect(yield* Fiber.join(second)).toBe("a#0");
@@ -288,8 +294,9 @@ describe("Interaction.run", () => {
       const interaction = yield* Interaction.make(work.execute);
       const first = yield* Effect.forkChild(interaction.run("a"));
       yield* work.awaitStarted(1);
-      const second = yield* Effect.forkChild(interaction.run("a"));
-      yield* Effect.yieldNow;
+      const second = yield* Effect.forkChild(interaction.run("a"), {
+        startImmediately: true,
+      });
       yield* Fiber.interrupt(first);
       expect(work.interrupted).toEqual([]);
       yield* work.release(0);
@@ -344,9 +351,13 @@ describe("Interaction.run", () => {
 
   it.effect("aborts a superseded HTTP operation under injected latency", () =>
     Effect.gen(function* () {
+      const arrived = yield* Deferred.make<void>();
       const server = synthetic((exchange) =>
         exchange.url.endsWith("q=slow")
-          ? Effect.as(Effect.sleep("10 seconds"), json(200, ["slow"]))
+          ? Deferred.succeed(arrived, undefined).pipe(
+              Effect.andThen(Effect.sleep("10 seconds")),
+              Effect.as(json(200, ["slow"])),
+            )
           : json(200, ["fast"]),
       );
       const search = Operation.make(
@@ -360,7 +371,7 @@ describe("Interaction.run", () => {
         Effect.provide(server.layer),
       );
       const slow = yield* Effect.forkChild(interaction.run("slow"));
-      while (server.exchanges.length < 1) yield* Effect.yieldNow;
+      yield* Deferred.await(arrived);
       expect(yield* interaction.run("fast")).toEqual(["fast"]);
       expect(isInterrupted(yield* Fiber.await(slow))).toBe(true);
       expect(server.exchanges[0]?.signal.aborted).toBe(true);
@@ -401,34 +412,40 @@ describe("Interaction.close", () => {
     "makes every caller wait for slow finalizers, including superseded work",
     () =>
       Effect.gen(function* () {
-        const started: Array<string> = [];
         const finished: Array<string> = [];
         const gate = yield* Deferred.make<void>();
-        const execute = (input: string) =>
+        const started = {
+          a: yield* Deferred.make<void>(),
+          b: yield* Deferred.make<void>(),
+        };
+        const execute = (input: "a" | "b") =>
           Effect.gen(function* () {
             yield* Effect.addFinalizer(() =>
               Deferred.await(gate).pipe(
                 Effect.andThen(Effect.sync(() => finished.push(input))),
               ),
             );
-            started.push(input);
+            yield* Deferred.succeed(started[input], undefined);
             return yield* Effect.never;
           });
         const interaction = yield* Interaction.make(execute);
         yield* Effect.forkChild(interaction.run("a"));
-        while (started.length < 1) yield* Effect.yieldNow;
+        yield* Deferred.await(started.a);
         yield* Effect.forkChild(interaction.run("b"));
-        while (started.length < 2) yield* Effect.yieldNow;
-        const entered: Array<number> = [];
-        const closer = (id: number) =>
-          Effect.forkChild(
-            Effect.sync(() => entered.push(id)).pipe(
+        yield* Deferred.await(started.b);
+        const closer = Effect.fnUntraced(function* () {
+          const entered = yield* Deferred.make<void>();
+          const fiber = yield* Effect.forkChild(
+            Deferred.succeed(entered, undefined).pipe(
               Effect.andThen(interaction.close),
             ),
           );
-        const first = yield* closer(1);
-        const second = yield* closer(2);
-        while (entered.length < 2) yield* Effect.yieldNow;
+          yield* Deferred.await(entered);
+          return fiber;
+        });
+        const first = yield* closer();
+        const second = yield* closer();
+        // Proving that both callers wait needs them to have had every chance to return early.
         for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
         expect(first.pollUnsafe()).toBeUndefined();
         expect(second.pollUnsafe()).toBeUndefined();

@@ -26,7 +26,8 @@ Effect's `HttpClient` with an in-memory provider. No test exercises Fetch, brows
 or packaged installation. Confirmed defects are tracked as [bug
 issues](https://github.com/viell-dev/slop-effect-schema-http/issues?q=is%3Aissue+is%3Aopen+label%3A%22Type%3A+Bug%22).
 Their tests pin the current behavior and mark the intended behavior as an expected failure until the
-defect is fixed.
+defect is fixed. Tests titled "currently …" record present behavior without promising it, either a
+defect's current outcome or behavior whose design is still open, and link their issue.
 
 ## Development
 
