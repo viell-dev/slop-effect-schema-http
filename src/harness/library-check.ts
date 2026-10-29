@@ -8,7 +8,9 @@ export default function setup(): void {
   const root = new URL("../../", import.meta.url);
   const fetched = new URL(".library/REF", root);
   if (!existsSync(fetched))
-    throw new Error("The library source is missing. Run `pnpm library` first.");
+    throw new Error(
+      "The library source is missing. Run `npm run library` first.",
+    );
   const requested = (
     process.env["LIBRARY_REF"] ??
     readFileSync(new URL("library-ref", root), "utf8")
@@ -18,7 +20,7 @@ export default function setup(): void {
   );
   if (fetchedFor !== requested)
     throw new Error(
-      `.library holds ${fetchedFor} (${commit}), but ${requested} is requested. Run \`pnpm library\` again.`,
+      `.library holds ${fetchedFor} (${commit}), but ${requested} is requested. Run \`npm run library\` again.`,
     );
   console.log(`Testing viell-effect-schema-http at ${commit}`);
 }

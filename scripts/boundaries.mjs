@@ -1,8 +1,8 @@
 // Check the import boundaries between backends and the consumer side by resolving every import
 // (static, type-only, re-export, dynamic and `require`) with the TypeScript parser. Runs in
-// `pnpm check`; Oxlint's no-restricted-imports rules flag the common cases in an editor, but match
-// specifier text only, so this script is the enforced allowlist. `scripts/boundaries.test.mjs`
-// runs it against generated fixture trees.
+// `npm run check`; Oxlint's no-restricted-imports rules flag the common cases in an editor, but
+// match specifier text only, so this script is the enforced allowlist.
+// `scripts/boundaries.test.mjs` runs it against generated fixture trees.
 //
 // - A backend (`src/backends/**`) may import only Node built-ins, modules inside `src/backends/`,
 //   and `src/harness/server.ts` or `src/harness/route.ts`. Packages, the library, `#lane`, other
