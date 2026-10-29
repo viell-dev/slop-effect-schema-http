@@ -58,11 +58,14 @@ script's own tests, `scripts/boundaries.test.mjs`, on generated fixture trees.
 
 Each service is documented the way its owners would publish it for integrators, on a page under
 [services/](./services/): endpoints, formats, conventions, errors and the history of each quirk,
-with the options a test can set. The two sides are written by separate agents, so that one
-misreading of a format cannot hide on both: a backend from the [catalogue](./CATALOGUE.md) and its
-service page, and the consumer side from the service page, the catalogue and observed HTTP
-behaviour, without opening `src/backends/`. `scripts/boundaries.mjs` checks that every backend links
-its page; [AGENTS.md](./AGENTS.md) states the full rule.
+with the options a test can set. New work writes the two sides in separate agent contexts, so that
+one misreading of a format cannot hide on both: a backend from the [catalogue](./CATALOGUE.md) and
+its service page, and the consumer side from the service page, the catalogue and observed HTTP
+behaviour, without opening `src/backends/`. Code written before this rule was written by one agent
+per area; it is checked against recordings of real software and independent parsers instead
+([#32](https://github.com/viell-dev/slop-effect-schema-http/issues/32),
+[#33](https://github.com/viell-dev/slop-effect-schema-http/issues/33)). `scripts/boundaries.mjs`
+checks that every backend links its page; [AGENTS.md](./AGENTS.md) states the full rule.
 
 Every scenario runs in two lanes. The Node lane runs the consumer in Node. The browser lane runs
 the same tests in headless Chromium through Vitest browser mode, to show that the library works in
