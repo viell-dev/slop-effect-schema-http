@@ -11,6 +11,7 @@
     "check": "run-p check:*",
     "check:tsc": "tsc --noEmit",
     "check:prettier": "prettier --check .",
+    "check:catalogue": "node scripts/catalogue.mjs",
     "lint": "oxlint",
     "test": "vitest run",
     "test:watch": "vitest",

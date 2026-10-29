@@ -55,4 +55,5 @@ single-page app does through its own server. The client providers are:
 - in the Node lane, a custom `node:http` provider in `src/harness/providers.ts`, which sends the
   library's original header lines and reports observed response lines.
 
-[CATALOGUE.md](./CATALOGUE.md) maps each scenario to its tests or to a recorded limit.
+[CATALOGUE.md](./CATALOGUE.md) maps each scenario to its tests or to a recorded limit. `pnpm check` verifies
+it: every entry has a status, and every entry marked tested has a test whose title carries its ID.
