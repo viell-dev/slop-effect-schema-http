@@ -1,7 +1,6 @@
 // lane: node-only. This file verifies what the business backend really writes to its socket, which
 // needs a raw TCP connection; a browser cannot open one, and every HTTP client, Fetch included,
 // discards any bytes after a 204 by protocol.
-// oxlint-disable-next-line no-restricted-imports -- a raw socket is the only way to observe the bytes
 import { connect } from "node:net";
 import { lane } from "#lane";
 import { describe, expect, it } from "@effect/vitest";

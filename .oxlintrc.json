@@ -64,6 +64,31 @@
           }
         ]
       }
+    },
+    {
+      "files": ["src/scenarios/**/*.node.test.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/backends/**",
+                  "**/harness/server*",
+                  "**/harness/route*",
+                  "**/harness/control*",
+                  "**/harness/registry*",
+                  "**/harness/providers*",
+                  "**/harness/lane.node*",
+                  "**/harness/lane.browser*"
+                ],
+                "message": "Node-only scenarios may use Node built-ins, but still reach backends only over HTTP through #lane."
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }
