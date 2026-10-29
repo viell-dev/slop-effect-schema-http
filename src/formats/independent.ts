@@ -11,7 +11,7 @@
  * qualified names as written, decoded attribute values, and text and CDATA joined into one string
  * between elements, with comments and processing instructions left out.
  */
-import { SaxesParser } from "saxes";
+import { SaxesParser } from "./saxes.js";
 import type * as Xml from "./xml.js";
 
 /** A parser's reading of one document: its root element, or the error that refused it. */

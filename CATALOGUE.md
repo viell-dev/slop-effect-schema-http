@@ -900,7 +900,10 @@ around it keep the layer's` (provider; in the Node lane's `lines` run, the repla
     Entity Declared) is met; the readers are compared with XML 1.0's verdict there. saxes was
     chosen for the Node lane because it aims to report every well-formedness error of XML 1.0
     fifth edition, is jsdom's XML parser, is pure JavaScript with one dependency and no install
-    script, and is a different implementation from Chromium's libxml2.
+    script, and is a different implementation from Chromium's libxml2. Its last release, 6.0.0, is
+    from 2021, and its declarations do not type-check without `skipLibCheck` (TS2344, TS2430), so
+    the suite imports it through `src/formats/saxes.js` with its own `saxes.d.ts`, and the packed
+    lane's type-check stays strict.
   - The consumer's reader, fixed against the corpus: it accepted two attributes without white space
     between them (`attr-no-separator`), U+00A0, U+3000 and U+FEFF as white space
     (`attr-nbsp-separator`, `attr-ideographic-space`, `prolog-nbsp`, `prolog-zero-width-space`),

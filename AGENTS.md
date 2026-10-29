@@ -21,10 +21,11 @@ the scenarios. The library's own design, which these tests are judged against, i
   the library's public API (`viell-effect-schema-http`), Effect, and `src/formats`.
 - `src/formats/`: consumer-side format helpers (XML, CSV and the like). The library offers no
   format-specific support, and the suite must not need any. `independent.ts` wraps the independent
-  XML parsers (saxes, Chromium's `DOMParser`), and `corpus/` holds the edge-case documents the
-  readers are compared with them on (EXT-3 to EXT-5). When a reader disagrees with an independent
-  parser, fix the consumer's reader and keep the case in the corpus, or record the disagreement and
-  its reason in the case and the catalogue; never fix a backend from the consumer side.
+  XML parsers (saxes, imported only through `saxes.js`, whose `saxes.d.ts` says why; Chromium's
+  `DOMParser`), and `corpus/` holds the edge-case documents the readers are compared with them on
+  (EXT-3 to EXT-5). When a reader disagrees with an independent parser, fix the consumer's reader
+  and keep the case in the corpus, or record the disagreement and its reason in the case and the
+  catalogue; never fix a backend from the consumer side.
 - `src/values/`: value-convention schemas shared across areas, with round-trip tests.
 - `src/scenarios/`: server-backed tests, one file per area.
 - `src/app/`: the single-page app of the app lane (EXT-7), consumer code in plain DOM.
