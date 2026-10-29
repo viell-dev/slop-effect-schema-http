@@ -28,9 +28,12 @@ the scenarios. The library's own design, which these tests are judged against, i
     cancel itself out across both.
   - Tests configure a backend only through its JSON options.
   - `pnpm check` enforces both directions with `scripts/boundaries.mjs`, which resolves every
-    import: a backend's against that allowlist, and consumer code's and scenarios' against any
-    backend and any harness module except `lane.ts` and `#lane`. `pnpm lint` flags common cases
-    too.
+    import, through `package.json` `imports` and `tsconfig.json` `paths` aliases too: a backend's
+    against that allowlist, and consumer code's and scenarios' against any backend and any harness
+    module except `lane.ts` and `#lane`. A `#…` specifier that resolves to nothing, or an
+    undeclared package, fails the check. `scripts/boundaries.test.mjs` tests the script in
+    `pnpm check`; extend it when the resolution changes. `pnpm lint` flags common cases too, by
+    specifier text only.
 - **Two lanes.** Every scenario runs in Node and in Chromium (Vitest browser mode), to show that the
   library works in a static single-page app as well as in Node.
   - Tests import `lane` from `#lane` and start backends by name with `lane.backend(name, options)`.
