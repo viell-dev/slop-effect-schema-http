@@ -95,7 +95,10 @@ const included = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     }),
   );
 
-/** Fetch with its default credentials (`same-origin`), as a same-origin call through the proxy. */
+/**
+ * Fetch with its default credentials (`same-origin`): no cookies across origins, and the page's own
+ * cookies on a same-origin call through the proxy.
+ */
 const fetched = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(lane.fetchClient));
 
@@ -611,6 +614,9 @@ describe(`a page calling the services across origins (${lane.name})`, () => {
           });
           yield* Effect.promise(() =>
             context.annotate(JSON.stringify(settings), "transport"),
+          );
+          expect(settings.credentials).toBe(
+            "unset: Fetch's default, same-origin",
           );
           expect(document.cookie).not.toContain("XSRF-TOKEN=");
           // The service's default, Lax, which never travels on a cross-site fetch.
