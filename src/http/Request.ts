@@ -190,7 +190,8 @@ const replaceQuery = (draft: Draft, entries: UrlEncoding.Query): Draft => {
 
 /**
  * Require `{ headers }` input, encoded by a schema into ordered lines. The schema replaces the raw header
- * declarations and owns the group.
+ * declarations and owns the group. The body codec keeps ownership of Content-Type and Content-Length in
+ * either combinator order; a schema's Content-Type applies only to a request without a body.
  */
 export const headers = <
   S extends Schema.ConstraintCodec<
@@ -221,12 +222,17 @@ export const headers = <
         const encoded = yield* encode(input.headers);
         const prepared = yield* self.prepare(input, draft);
         const headerLines = Transport.entries(encoded);
+        const merged = HttpClientRequest.setHeaders(
+          prepared.request,
+          Transport.toHeaders(headerLines),
+        );
+        // Re-applying the body restores its headers; compilation then drops the replaced lines.
         return {
           ...prepared,
-          request: HttpClientRequest.setHeaders(
-            prepared.request,
-            Transport.toHeaders(headerLines),
-          ),
+          request:
+            merged.body._tag === "Empty"
+              ? merged
+              : HttpClientRequest.setBody(merged, merged.body),
           headerLines,
         };
       }),
