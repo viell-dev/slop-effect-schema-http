@@ -97,6 +97,28 @@ const fixture = {
       ],
       trailer: { count: 2, cents: 5000 },
     },
+    "202603": {
+      runDate: "20260401",
+      lastModified: "2026-04-01T02:15:00Z",
+      records: [
+        {
+          account: "00012345",
+          title: "Café Müller",
+          cents: 5000,
+          due: "20260415",
+          status: "O",
+        },
+        {
+          account: "00012346",
+          title: "Bäckerei Groß",
+          cents: 2500,
+          due: "00000000",
+          status: "O",
+        },
+      ],
+      // The right count, and a total patched one cent short.
+      trailer: { count: 2, cents: 7499 },
+    },
   },
   invoices: [
     {
@@ -947,6 +969,34 @@ describe(`gateway (${lane.name})`, () => {
           const decodeError = narrow(error, "DecodeError");
           expect(String(decodeError.cause)).toContain(
             "the trailer counts 2 records, but the file has 1",
+          );
+        }),
+    );
+
+    it.live(
+      "[PAY-4c] a trailer with the right count and a patched control total fails the decode with both totals",
+      () =>
+        Effect.gen(function* () {
+          const gateway = yield* start();
+          // The fixture as sent: two details and a trailer counting two, one cent short.
+          const bytes = yield* viaFetch(
+            rawBytes(
+              `${gateway.origin}/cgi-bin/extract.cgi?session=${TOKEN}&period=202603`,
+            ),
+          );
+          expect(bytes.length).toBe(4 * 64);
+          expect(
+            String.fromCharCode(...bytes.subarray(3 * 64, 3 * 64 + 20)),
+          ).toBe("T0000020000000007499");
+          const error = yield* viaFetch(
+            Extract.extract(gateway.origin)
+              .execute({ session: TOKEN, period: "202603" })
+              .pipe(Effect.flip),
+          );
+          const decodeError = narrow(error, "DecodeError");
+          expect(decodeError.metadata.status).toBe(200);
+          expect(String(decodeError.cause)).toContain(
+            "the trailer's control total 7499 differs from the records' 7500",
           );
         }),
     );

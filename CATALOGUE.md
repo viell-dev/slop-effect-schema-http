@@ -513,7 +513,9 @@ spellings`
   - `[PAY-4c] the extract decodes from Latin-1 bytes with implied decimals and a verified trailer,
 and re-encodes to the same bytes`
   - `[PAY-4c] read as UTF-8 text, the same bytes corrupt every accented title without an error`
-  - `[PAY-4c] a trailer patched by hand fails the decode with the mismatch it found`
+  - `[PAY-4c] a trailer patched by hand fails the decode with the mismatch it found` (the record
+    count)
+  - `[PAY-4c] a trailer with the right count and a patched control total fails the decode with both totals`
   - `[PAY-4c] refusals are mapped statuses with ERROR lines, and a malformed period never leaves
 the client`
   - Helper: five `[PAY-4c]` tests of strict ISO-8859-1, record splitting, field slicing, padded
