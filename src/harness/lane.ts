@@ -29,7 +29,10 @@ export interface Recorded {
 }
 
 export interface Backend {
-  /** `http://127.0.0.1:<port>`, without a trailing slash. */
+  /**
+   * `http://127.0.0.<n>:<port>`, without a trailing slash. The browser lane gives each backend its
+   * own loopback address, so backends never share a browser cookie jar.
+   */
   readonly origin: string;
   /**
    * The requests received so far, in arrival order. In the browser lane, CORS preflights answered
