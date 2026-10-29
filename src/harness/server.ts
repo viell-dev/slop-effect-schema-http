@@ -15,6 +15,10 @@ export interface Received {
   /** The request target as sent: path and query, not decoded. */
   readonly target: string;
   readonly lines: Lines;
+  /**
+   * The body bytes received so far. A handler always sees the complete body; a request whose
+   * client disconnected mid-body keeps the bytes that arrived.
+   */
   readonly body: Uint8Array;
   /** Whether the client closed the connection before the server finished its reply. */
   readonly aborted: () => boolean;
@@ -44,10 +48,16 @@ export type Handler = (
 export interface Server {
   /** `http://127.0.0.1:<port>`, without a trailing slash. */
   readonly origin: string;
-  /** Every request in arrival order. Recorded before the handler runs. */
+  /**
+   * Every request in arrival order, recorded as soon as its head arrives: before its body is
+   * complete and before the handler runs, so an upload cut off mid-body is recorded too.
+   */
   readonly ledger: ReadonlyArray<Received>;
-  /** Resolves once at least `count` requests have arrived. */
-  readonly arrived: (count: number) => Promise<void>;
+  /** Resolves once at least `count` requests, of those `include` accepts, have arrived. */
+  readonly arrived: (
+    count: number,
+    include?: (received: Received) => boolean,
+  ) => Promise<void>;
 }
 
 /** Look up the first value of a header in received lines, case-insensitively. */
@@ -84,9 +94,12 @@ const pairs = (raw: ReadonlyArray<string>): Lines => {
   return lines;
 };
 
-const collect = (request: IncomingMessage): Promise<Uint8Array> =>
+/** Read the body into `chunks` as it arrives; rejects when the request fails before its end. */
+const collect = (
+  request: IncomingMessage,
+  chunks: Array<Buffer>,
+): Promise<Uint8Array> =>
   new Promise((resolve, reject) => {
-    const chunks: Array<Buffer> = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => resolve(new Uint8Array(Buffer.concat(chunks))));
     request.on("error", reject);
@@ -114,26 +127,46 @@ export const serve = (
         new Promise<Server & { readonly close: () => Promise<void> }>(
           (resolve) => {
             const ledger: Array<Received> = [];
-            const waiting: Array<{ count: number; resolve: () => void }> = [];
+            const waiting: Array<{
+              readonly count: number;
+              readonly include: (received: Received) => boolean;
+              readonly resolve: () => void;
+            }> = [];
+            const reached = (
+              count: number,
+              include: (received: Received) => boolean,
+            ) => ledger.filter(include).length >= count;
             let origin = "";
             const server = createServer((request, response) => {
-              void (async () => {
-                const controller = new AbortController();
-                response.on("close", () => {
-                  if (!response.writableFinished) controller.abort();
-                });
-                const body = await collect(request);
-                const received: Received = {
-                  method: request.method ?? "",
-                  target: request.url ?? "",
-                  lines: pairs(request.rawHeaders),
-                  body,
-                  aborted: () => controller.signal.aborted,
-                };
-                ledger.push(received);
-                for (const waiter of waiting.splice(0))
-                  if (ledger.length >= waiter.count) waiter.resolve();
-                  else waiting.push(waiter);
+              const controller = new AbortController();
+              response.on("close", () => {
+                if (!response.writableFinished) controller.abort();
+              });
+              // Recorded at arrival; the body getter shows the bytes received so far.
+              const chunks: Array<Buffer> = [];
+              let complete: Uint8Array | undefined;
+              const received: Received = {
+                method: request.method ?? "",
+                target: request.url ?? "",
+                lines: pairs(request.rawHeaders),
+                get body() {
+                  return complete ?? new Uint8Array(Buffer.concat(chunks));
+                },
+                aborted: () => controller.signal.aborted,
+              };
+              ledger.push(received);
+              for (const waiter of waiting.splice(0))
+                if (reached(waiter.count, waiter.include)) waiter.resolve();
+                else waiting.push(waiter);
+              const exchange = async () => {
+                try {
+                  complete = await collect(request, chunks);
+                } catch {
+                  // The client went away mid-body: the entry keeps what arrived and reads as
+                  // aborted, and no handler sees a partial request.
+                  controller.abort();
+                  return;
+                }
                 try {
                   const reply = await handler(received, {
                     signal: controller.signal,
@@ -149,7 +182,10 @@ export const serve = (
                       body: `fixture handler threw: ${String(cause)}`,
                     });
                 }
-              })();
+              };
+              // Whatever still fails, such as a second write after a partial one, ends the
+              // connection rather than escaping as an unhandled rejection.
+              exchange().catch(() => response.destroy());
             });
             server.listen(0, host, () => {
               const { port } = server.address() as AddressInfo;
@@ -157,11 +193,11 @@ export const serve = (
               resolve({
                 origin,
                 ledger,
-                arrived: (count) =>
-                  ledger.length >= count
+                arrived: (count, include = () => true) =>
+                  reached(count, include)
                     ? Promise.resolve()
                     : new Promise((done) =>
-                        waiting.push({ count, resolve: done }),
+                        waiting.push({ count, include, resolve: done }),
                       ),
                 close: () =>
                   new Promise((done) => {

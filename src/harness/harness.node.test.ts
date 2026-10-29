@@ -1,5 +1,6 @@
+import { connect } from "node:net";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber } from "effect";
+import { Effect, Fiber, Schedule } from "effect";
 import {
   Body,
   Operation,
@@ -7,8 +8,65 @@ import {
   Response,
   Transport,
 } from "viell-effect-schema-http";
+import { startControl } from "./control.js";
 import { fetchClient, linesLayer } from "./providers.js";
 import { header, headerValues, serve } from "./server.js";
+
+/** Ten distinct bytes, a hundred times: the part of an upload that arrives before the cut. */
+const partial = "0123456789".repeat(100);
+
+/**
+ * Open a raw connection and start a POST that declares 100,000 bytes but sends only `partial`. The
+ * socket is destroyed when the test's scope closes, if the test has not cut it off by then.
+ */
+const startUpload = (origin: string) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      const { hostname, port, host } = new URL(origin);
+      const socket = connect(Number(port), hostname);
+      // The server may reset the connection once it is cut; that is the point, not a failure.
+      socket.on("error", () => undefined);
+      socket.write(
+        [
+          "POST /upload HTTP/1.1",
+          `Host: ${host}`,
+          "Content-Type: application/octet-stream",
+          "Content-Length: 100000",
+          "",
+          partial,
+        ].join("\r\n"),
+      );
+      return socket;
+    }),
+    (socket) => Effect.sync(() => socket.destroy()),
+  );
+
+/** Re-check `condition` every 10 ms until it holds, failing after two seconds. */
+const eventually = (condition: () => boolean | Promise<boolean>) =>
+  Effect.promise(async () => condition()).pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("10 millis"),
+      until: (held) => held,
+      times: 200,
+    }),
+    Effect.flatMap((held) =>
+      held ? Effect.void : Effect.die(new Error("condition never held")),
+    ),
+  );
+
+/** Collect unhandled rejections for the rest of the test. */
+const watchRejections = Effect.acquireRelease(
+  Effect.sync(() => {
+    const seen: Array<unknown> = [];
+    const listener = (reason: unknown) => {
+      seen.push(reason);
+    };
+    process.on("unhandledRejection", listener);
+    return { seen, listener };
+  }),
+  ({ listener }) =>
+    Effect.sync(() => process.off("unhandledRejection", listener)),
+);
 
 /** Scope lines sent one per physical line, the way a strict server requires them. */
 const scoped = (origin: string) =>
@@ -122,6 +180,91 @@ describe("harness", () => {
         if (error._tag !== "HttpClientError") return;
         expect(error.reason._tag).toBe("TransportError");
         expect(String(error.reason.cause)).toMatch(/RangeError/);
+      }),
+  );
+
+  it.live(
+    "records an upload at arrival, and one cut off mid-body as aborted with the bytes received, without an unhandled rejection",
+    () =>
+      Effect.gen(function* () {
+        // Needs raw sockets, which only Node has: a client library always finishes its upload.
+        const rejections = yield* watchRejections;
+        let handled = 0;
+        const server = yield* serve(() => {
+          handled++;
+          return { status: 200 };
+        });
+        const socket = yield* startUpload(server.origin);
+        yield* Effect.promise(() => server.arrived(1));
+        // Recorded before the body is complete; the entry shows the bytes so far.
+        yield* eventually(
+          () => server.ledger[0]!.body.length === partial.length,
+        );
+        expect(server.ledger[0]!.aborted()).toBe(false);
+        socket.destroy();
+        yield* eventually(() => server.ledger[0]!.aborted());
+        // Give the disconnect's remaining events, and any rejection they raise, time to surface.
+        yield* Effect.sleep("50 millis");
+        const [entry, ...rest] = server.ledger;
+        expect(rest).toEqual([]);
+        expect(entry!.method).toBe("POST");
+        expect(entry!.target).toBe("/upload");
+        expect(header(entry!.lines, "content-length")).toBe("100000");
+        expect(new TextDecoder().decode(entry!.body)).toBe(partial);
+        expect(entry!.aborted()).toBe(true);
+        expect(handled).toBe(0);
+        expect(rejections.seen).toEqual([]);
+      }),
+  );
+
+  it.live(
+    "the control server reports a cut-off upload from the same ledger entry",
+    () =>
+      Effect.gen(function* () {
+        const rejections = yield* watchRejections;
+        const control = yield* Effect.acquireRelease(
+          Effect.promise(() => startControl()),
+          (started) => Effect.promise(() => started.close()),
+        );
+        const call = (path: string, init?: RequestInit) =>
+          Effect.promise(async () => {
+            const response = await fetch(`${control.url}${path}`, init);
+            expect(response.ok).toBe(true);
+            return response.status === 204 ? undefined : response.json();
+          });
+        const { id, origin } = (yield* call("/backends", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "echo" }),
+        })) as { readonly id: string; readonly origin: string };
+        const socket = yield* startUpload(origin);
+        yield* call(`/backends/${id}/arrived?count=1`);
+        type Entry = { readonly body: string; readonly aborted: boolean };
+        const ledger = () =>
+          fetch(`${control.url}/backends/${id}/ledger`).then(
+            (response) => response.json() as Promise<ReadonlyArray<Entry>>,
+          );
+        yield* eventually(
+          async () => atob((await ledger())[0]!.body).length === partial.length,
+        );
+        socket.destroy();
+        yield* eventually(async () => (await ledger())[0]!.aborted);
+        yield* Effect.sleep("50 millis");
+        const entries = yield* Effect.promise(ledger);
+        expect(entries).toEqual([
+          {
+            method: "POST",
+            target: "/upload",
+            lines: [
+              ["Host", new URL(origin).host],
+              ["Content-Type", "application/octet-stream"],
+              ["Content-Length", "100000"],
+            ],
+            body: btoa(partial),
+            aborted: true,
+          },
+        ]);
+        expect(rejections.seen).toEqual([]);
       }),
   );
 
