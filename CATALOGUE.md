@@ -331,7 +331,9 @@ exact id refuses a value the platform parser already rounded`.
   response is the stock HTML page of a web application firewall.
   - `[APP-4] drains an unmodelled firewall page and fails with UnexpectedResponse`
   - `[APP-4] an explicit fallback reads an unmodelled body as text inside the operation`
-  - `[APP-4] an explicit fallback can discard an unmodelled body`
+  - `[APP-4] an explicit fallback can discard an unmodelled body, draining it before the operation returns`
+    (a pull-observing body shows the page read to its end before the operation returns; a control
+    fallback that ignores the body shows that nothing else reads it)
 - **APP-5** Validation on both sides: the client refuses an empty string before any network; the
   server refuses a blank string the client accepted. Status: tested.
   - `[APP-5] refuses an empty customer name before any network`
