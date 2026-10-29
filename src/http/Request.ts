@@ -1,5 +1,10 @@
 import { Data, Effect, Pipeable, Redacted, Schema } from "effect";
-import { HttpClientRequest, type HttpMethod, UrlParams } from "effect/http";
+import {
+  Headers,
+  HttpClientRequest,
+  type HttpMethod,
+  UrlParams,
+} from "effect/http";
 import type * as Body from "./Body.js";
 import * as Fields from "./internal/fields.js";
 import * as Transport from "./Transport.js";
@@ -188,10 +193,28 @@ const replaceQuery = (draft: Draft, entries: UrlEncoding.Query): Draft => {
   };
 };
 
+/** Fields that describe the body itself rather than the request. */
+const bodyFields = ["content-type", "content-length"] as const;
+
+/** Give the body fields their values from `before`, removing those it lacks. */
+const keepBodyFields = (
+  headers: Headers.Headers,
+  before: Headers.Headers,
+): Headers.Headers =>
+  bodyFields.reduce((result, name) => {
+    const value = before[name];
+    return value === undefined
+      ? Headers.remove(result, name)
+      : Headers.set(result, name, value);
+  }, headers);
+
 /**
  * Require `{ headers }` input, encoded by a schema into ordered lines. The schema replaces the raw header
- * declarations and owns the group. The body codec keeps ownership of Content-Type and Content-Length in
- * either combinator order; a schema's Content-Type applies only to a request without a body.
+ * declarations and owns the group.
+ *
+ * When the request has a body, Content-Type and Content-Length keep the values that the body codec, or a
+ * native edit, gave them, whichever order the combinators are applied in. Without a body, the schema's
+ * values apply; a `Request.body` applied after this, including `Body.empty`, replaces them as its codec does.
  */
 export const headers = <
   S extends Schema.ConstraintCodec<
@@ -226,13 +249,15 @@ export const headers = <
           prepared.request,
           Transport.toHeaders(headerLines),
         );
-        // Re-applying the body restores its headers; compilation then drops the replaced lines.
+        // Compilation then drops the schema's lines for any body field whose value was kept.
         return {
           ...prepared,
           request:
-            merged.body._tag === "Empty"
+            prepared.request.body._tag === "Empty"
               ? merged
-              : HttpClientRequest.setBody(merged, merged.body),
+              : HttpClientRequest.updateHeaders(merged, (fields) =>
+                  keepBodyFields(fields, prepared.request.headers),
+                ),
           headerLines,
         };
       }),
