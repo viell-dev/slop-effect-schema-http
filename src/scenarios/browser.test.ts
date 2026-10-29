@@ -136,7 +136,8 @@ describe(`transport and credentials (${lane.name})`, () => {
             expect(expectTag(refused, "CsrfRejected").value).toBe(
               "cookie-missing",
             );
-            const [bootstrap, post] = yield* backend.ledger;
+            const [bootstrap, post, ...rest] = yield* backend.ledger;
+            expect(rest).toEqual([]);
             expect(headerValues(bootstrap!.lines, "cookie")).toEqual([]);
             expect(headerValues(post!.lines, "cookie")).toEqual([]);
             if (lane.name === "node") {
@@ -153,8 +154,8 @@ describe(`transport and credentials (${lane.name})`, () => {
                   Effect.provideService(FetchHttpClient.RequestInit, include),
                 );
               expectTag(later, "CsrfRejected");
-              const [, , retried, ...rest] = yield* backend.ledger;
-              expect(rest).toEqual([]);
+              const [, , retried, ...more] = yield* backend.ledger;
+              expect(more).toEqual([]);
               expect(cookiePairs(retried!)).not.toContain(xsrf(session.token));
             }
           }).pipe(Effect.provide(layer)),
@@ -185,8 +186,9 @@ describe(`transport and credentials (${lane.name})`, () => {
             headers: granted.value.tokens,
           });
           expect(entry).toMatchObject({ _tag: "Entry", uid: "alovelace" });
-          const [, post] = yield* backend.ledger;
-          const [, me] = yield* identity.ledger;
+          const [, post, ...late] = yield* backend.ledger;
+          const [, me, ...later] = yield* identity.ledger;
+          expect([late, later]).toEqual([[], []]);
           const { cookies } = granted.metadata;
           if (lane.name === "node") {
             // Node's fetch accepts the option and has no cookie store to apply it to.
@@ -259,8 +261,9 @@ describe(`transport and credentials (${lane.name})`, () => {
               "Entry",
             );
             const kept = yield* Ref.get(jar);
-            const [grant, me] = yield* identity.ledger;
-            const [bootstrap, post] = yield* backend.ledger;
+            const [grant, me, ...late] = yield* identity.ledger;
+            const [bootstrap, post, ...later] = yield* backend.ledger;
+            expect([late, later]).toEqual([[], []]);
             expect(headerValues(grant!.lines, "cookie")).toEqual([]);
             if (lane.name === "node") {
               expect(Object.keys(kept.cookies)).toEqual([
