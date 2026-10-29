@@ -1,10 +1,10 @@
 // Check CATALOGUE.md against the tests: every entry has a known status, and every entry marked
 // "tested" has evidence.
 //
-// - `node scripts/catalogue.mjs` (in `pnpm check`) reads the test sources: an entry marked
+// - `node scripts/catalogue.mjs` (in `npm run check`) reads the test sources: an entry marked
 //   "tested" needs a test whose title carries its ID, such as `[AUTH-3]`. It is fast, and it runs
 //   nothing.
-// - `node scripts/catalogue.mjs --results <junit.xml>...` (in `pnpm test` and CI, after the lanes)
+// - `node scripts/catalogue.mjs --results <junit.xml>...` (in `npm test` and CI, after the lanes)
 //   reads the JUnit reports of the runs instead. Each report needs at least one passed test, and an
 //   entry marked "tested" needs a passed, not skipped, test carrying its ID in at least one lane.
 import { existsSync, readdirSync, readFileSync } from "node:fs";

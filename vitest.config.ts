@@ -5,7 +5,7 @@ import { sameOriginProxy } from "./src/harness/proxy.js";
 
 const at = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
-// The library source at the commit in `library-ref`, fetched by `pnpm library`. Its imports of
+// The library source at the commit in `library-ref`, fetched by `npm run library`. Its imports of
 // `effect` resolve to this suite's copy, so both share one installed version.
 const library = at("./.library/src/main.ts");
 const timeouts = { testTimeout: 20_000, hookTimeout: 20_000 };

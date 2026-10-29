@@ -396,7 +396,7 @@ describe("flows translation (APP-3)", () => {
       MODIFYTIMESTAMP: "20121231235959Z",
     });
 
-    // Never called: each line is a compile-time check that `pnpm check` verifies.
+    // Never called: each line is a compile-time check that `npm run check` verifies.
     const drifted = () => [
       // @ts-expect-error The business renamed assigneeId to assignee.
       Schema.encodeSync(Renamed)(task),
