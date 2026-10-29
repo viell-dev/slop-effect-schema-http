@@ -75,6 +75,11 @@ const transportError = (
     reason: new HttpClientError.TransportError({ request, cause }),
   });
 
+/** The Fetch standard's null body statuses: a `Response` with one of them must have no body. */
+const nullBodyStatuses: ReadonlySet<number> = new Set([
+  101, 103, 204, 205, 304,
+]);
+
 /**
  * A custom provider over `node:http` that sends the operation's original header lines
  * (`Transport.headerLines`) unjoined, and attaches the response's raw lines to the response with
@@ -125,25 +130,29 @@ export const linesClient: HttpClient.HttpClient = HttpClient.make(
                 responseLines.push([raw[index]!, raw[index + 1]!]);
               const status = incoming.statusCode ?? 0;
               const empty =
-                status === 204 || status === 304 || request.method === "HEAD";
-              const web = new Response(
-                empty ? null : new Uint8Array(Buffer.concat(chunks)),
-                {
-                  status,
-                  statusText: incoming.statusMessage ?? "",
-                  headers: responseLines.map(
-                    ([name, value]): [string, string] => [name, value],
-                  ),
-                },
-              );
-              resume(
-                Effect.succeed(
-                  Transport.withResponseHeaders(
-                    HttpClientResponse.fromWeb(request, web),
-                    responseLines,
-                  ),
-                ),
-              );
+                nullBodyStatuses.has(status) || request.method === "HEAD";
+              let response: HttpClientResponse.HttpClientResponse;
+              try {
+                const web = new Response(
+                  empty ? null : new Uint8Array(Buffer.concat(chunks)),
+                  {
+                    status,
+                    statusText: incoming.statusMessage ?? "",
+                    headers: responseLines.map(
+                      ([name, value]): [string, string] => [name, value],
+                    ),
+                  },
+                );
+                response = Transport.withResponseHeaders(
+                  HttpClientResponse.fromWeb(request, web),
+                  responseLines,
+                );
+              } catch (cause) {
+                // A response the Fetch API cannot represent, such as a status outside 200–599,
+                // fails the request as a transport error instead of throwing in this callback.
+                return resume(Effect.fail(transportError(request, cause)));
+              }
+              resume(Effect.succeed(response));
             });
           },
         );

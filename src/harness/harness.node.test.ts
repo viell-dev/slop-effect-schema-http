@@ -83,6 +83,48 @@ describe("harness", () => {
     }),
   );
 
+  for (const [name, client] of [
+    ["lines", linesLayer],
+    ["fetch", fetchClient],
+  ] as const)
+    it.live(`returns a bodyless 205 Reset Content as a success (${name})`, () =>
+      Effect.gen(function* () {
+        const server = yield* serve(() => ({ status: 205 }));
+        const outcome = yield* Operation.make(
+          Request.post(`${server.origin}/form`),
+          Response.status(205, Response.tag("Reset", Body.empty)),
+        )
+          .execute(undefined)
+          .pipe(Effect.provide(client), Effect.timeout("2 seconds"));
+        expect(outcome._tag).toBe("Reset");
+        expect(outcome.metadata.status).toBe(205);
+        expect(server.ledger).toHaveLength(1);
+      }),
+    );
+
+  it.live(
+    "the line-preserving provider fails a response Fetch cannot represent as a transport error",
+    () =>
+      Effect.gen(function* () {
+        // Node's server writes any three-digit status; a Fetch Response allows only 200 to 599.
+        const server = yield* serve(() => ({ status: 600, body: "beyond" }));
+        const error = yield* Operation.make(
+          Request.get(`${server.origin}/odd`),
+          Response.status(600, Body.text),
+        )
+          .execute(undefined)
+          .pipe(
+            Effect.provide(linesLayer),
+            Effect.timeout("2 seconds"),
+            Effect.flip,
+          );
+        expect(error._tag).toBe("HttpClientError");
+        if (error._tag !== "HttpClientError") return;
+        expect(error.reason._tag).toBe("TransportError");
+        expect(String(error.reason.cause)).toMatch(/RangeError/);
+      }),
+  );
+
   it.live(
     "aborts a held-open request on interruption, observed by the server",
     () =>
