@@ -97,32 +97,125 @@ providers`. Observed: Effect's normalized `headers["set-cookie"]` keeps only the
 
 ## SOAP document store (`soap-store`)
 
+Scenarios are in `src/scenarios/soap-store.test.ts` and run in both lanes (Node and Chromium);
+tests marked "(provider)" run once per provider of the lane (`fetch` in both, `lines` in Node).
+Node-only scenarios are in `soap-store.node.test.ts`. Round trips are in
+`src/values/soap-store.test.ts`. The backend is `src/backends/soap-store/`; its quirks are
+documented in `soap.ts`, `dav.ts` and `files.ts`.
+
 - **ERR-1a** A SOAP fault code where zero means success, inside HTTP 200: body-level
-  discrimination. Status: pending.
-- **ERR-6** One action that returns a real SOAP fault with HTTP 500: one more rule. Status:
-  pending.
+  discrimination. Status: tested.
+  - `[ERR-1a] stores and fetches a document, reading FaultCode 0 as success` (provider)
+  - `[ERR-1a] a missing document and a duplicate name arrive as HTTP 200 with nonzero fault codes`
+  - `[ERR-1a] the failStore switch refuses chosen names and calls with fault code 5003, storing
+nothing`
+  - `[ERR-1a] refusedAsFailure moves a nonzero fault code into the failure channel`
+  - `[ERR-1a] a held store fails as the caller's timeout, not as a fault code, and the store sees
+the abort`
+  - `[ERR-1a] a body-level refusal shares the success union, so reading a document needs
+narrowing` (type-level)
+  - Round trip: `[ERR-1a] action results round-trip success and refusal, and refuse a refusal
+carrying success fields`. A success's `FaultString` is informational and not kept; encoding
+    writes `OK`.
+- **ERR-6** One action that returns a real SOAP fault with HTTP 500: one more rule. Status: tested.
+  - `[ERR-6] LockDocument answers a conflict with a SOAP fault under HTTP 500, read by its one
+extra rule` (provider)
+  - `[ERR-6] the default classifier retries the mapped 500 fault; a classifier for the special
+case sends once`. Observed, and as designed: `Policy.transient` classifies status 500 as
+    transient even when a rule mapped it, so the default policy sends a lock conflict three
+    times; a `while` classifier limited to failures sends it once.
+  - `[ERR-6] only LockDocument's union holds SOAP faults: one more rule` (type-level)
+  - Round trip: `[ERR-6] SOAP faults round-trip in both versions, with Client and Server read as
+Sender and Receiver`
 - **STAT-7** PROPFIND answered with 207, plus 412, 428, 415, and 405 with `Allow`: methods as
-  strings, statuses as numbers. Status: pending.
+  strings, statuses as numbers. Status: tested.
+  - `[STAT-7] PROPFIND travels as a method string with Depth: 1 and its 207 multistatus decodes`
+    (provider)
+  - `[STAT-7] 428, 412 and 415 are ordinary declared statuses of a WebDAV write`
+  - `[STAT-7] MKCOL on an existing collection answers 405 with an Allow list read through a header
+schema`
+  - Round trip: `[STAT-7] AllowList round-trips method tokens case-sensitively and refuses
+non-tokens`. Separators and empty list elements are not kept; encoding joins with `", "`.
 - **STAT-12** A GET carrying a SOAP body for downloads: rejected client-side before dispatch as a
-  typed error. Status: pending.
-- **HDR-5e** Latin-1 bytes under a charset-less `text/xml`. Status: pending.
+  typed error. Status: tested.
+  - `[STAT-12] the documented GET download with a SOAP body is refused before dispatch` (provider;
+    `InvalidRequest`, empty ledger)
+  - `[STAT-12] POST does not reach the download servlet either: 405 with Allow: GET`
+  - Node-only: `[STAT-12] the fixture really serves a GET with a SOAP body, reachable only by
+rewriting the method in client middleware`. Client middleware runs after the library's check,
+    so the line-preserving provider sends the GET with its body and the servlet answers; Node's
+    `fetch` refuses the same request as a transport error.
+- **HDR-5e** Latin-1 bytes under a charset-less `text/xml`. Status: tested.
+  - `[HDR-5e] SOAP 1.1 replies are Latin-1 bytes under a charset-less text/xml; UTF-8 text
+decoding corrupts them silently`. Verified in both lanes: `Body.text` decodes the reply as
+    UTF-8 without failing and turns every Latin-1 letter into U+FFFD, while the character
+    references above U+00FF survive; a strict UTF-8 decoder fails as `DecodeError`.
 - **HDR-5f** SOAP 1.2 carrying the action inside the content type: a protocol version change is a
-  codec change, not a header change. Status: pending.
+  codec change, not a header change. Status: tested.
+  - `[HDR-5f] SOAP 1.2 carries the action in the codec's content type and sends no SOAPAction`
+    (provider)
+  - `[HDR-5f] a Content-Type declaration does not relabel a SOAP 1.1 body as SOAP 1.2` (provider;
+    the codec's `text/xml` goes out as the only content-type line)
 - **HDR-6** `SOAPAction` required, quoted, and matching the body action: one declared header per
-  action. Status: pending.
+  action. Status: tested.
+  - `[HDR-6] every action declares one quoted SOAPAction naming its body element` (provider)
+  - `[HDR-6] the front controller refuses a missing, unquoted or mismatched SOAPAction with
+plain-text 400` (`UnexpectedResponse`, then the reason through a declared 400)
+  - `[HDR-6] fetch joins two SOAPAction lines into one value, which the controller refuses as
+unquoted`
+  - Node-only: `[HDR-6] two SOAPAction lines are refused as repeated through the line-preserving
+provider`
 - **PAY-3a** SOAP 1.1 and 1.2 under a custom namespace; three list shapes for zero, one, and many
   items, with the single item wrapped in an extra element; WebDAV multistatus with collections
-  skipped; a WSDL. Status: pending.
-- **PAY-4a** Latin-1 XML whose encoding must be read from its own declaration. Status: pending.
+  skipped; a WSDL. Status: tested.
+  - `[PAY-3a] ListDocuments decodes zero, one wrapped and many items` (the three shapes are also
+    observed as sent)
+  - `[PAY-3a] a depth-1 multistatus lists the collection and its subcollections, which the listing
+skips`
+  - `[PAY-3a] the WSDL names every client action's URI in both bindings`
+  - SOAP 1.2 through the store: the `[HDR-5f]` tests.
+  - Round trips: `[PAY-3a] ListDocuments results round-trip all three list shapes and refuse the
+others`, `[PAY-3a] SOAP 1.1 and 1.2 documents round-trip a payload and refuse the other
+version's envelope`, and `[PAY-3a] the WSDL summary and the WebDAV listing are decode-only, and
+their reverse says why` (each drops what it skips, so its encoder fails with that reason).
+- **PAY-4a** Latin-1 XML whose encoding must be read from its own declaration. Status: tested.
+  - `[PAY-4a] reads ISO-8859-1 from the reply's own declaration, character references included`
+  - Round trips: `[PAY-4a] XmlTextFromBytes reads the encoding from the declaration and writes the
+same bytes back`, `[PAY-4a] XmlTextFromBytes refuses bytes invalid in the declared encoding,
+other encodings, and characters ISO-8859-1 lacks`. ISO-8859-1 is decoded byte by byte,
+    because the WHATWG `TextDecoder` label `iso-8859-1` means windows-1252.
 - **PAY-6** Multipart in both directions: a `FormData` upload with a `Blob` and a label, and a
   response bundle with a JSON metadata part and a bytes part, read asynchronously inside the schema.
-  Status: pending.
+  Status: tested.
+  - `[PAY-6] uploads a FormData with a Blob and a label` (provider; Node's `fetch`, Chromium and
+    the line-preserving provider all send the non-ASCII file name as raw UTF-8)
+  - `[PAY-6] a blank label is refused by the input schema before dispatch` (`SchemaError`, empty
+    ledger)
+  - `[PAY-6] reads a multipart bundle whose parts are awaited inside the schema` (provider)
+  - Round trips: `[PAY-6] the upload form round-trips through FormData and refuses other parts`,
+    `[PAY-6] the bundle round-trips through FormData, awaiting both parts inside the schema`. The
+    metadata part's own file name is not kept.
 - **PAY-7** A raw bytes upload with the file name in the query string and a one-line text receipt.
-  Status: pending.
+  Status: tested.
+  - `[PAY-7] uploads raw bytes with the file name in the query and decodes the one-line receipt`
+    (provider)
+  - Round trip: `[PAY-7] UploadReceipt round-trips one CRLF-terminated line and refuses looser
+receipts`
 - **QRY-1** A bare key and an empty value are different requests (`?wsdl` versus `?wsdl=`). Status:
-  pending.
+  tested.
+  - `[QRY-1] ?wsdl and ?wsdl= are different requests` (provider; through a query schema and
+    through a URL string, both lanes keep the bare key)
+  - `[QRY-1] ?wsdl=types names the schema part, which the WSDL contract refuses as a decode error`
 - **RET-3** ETag with `If-None-Match` yielding 304 and no body, `If-Match` yielding 412, and 428
-  when the validator is missing. Status: pending.
+  when the validator is missing. Status: tested.
+  - `[RET-3] If-None-Match with the current ETag yields 304 and no body` (provider; Chromium
+    passes the manually set validator through and hands the 304 to the page)
+  - `[RET-3] validators guard writes: 201 to create, 204 to replace, 412 for a replaced or weak
+tag, 428 without one`
+  - `[RET-3] the ETag StoreDocument returns guards the same document's WebDAV write`
+  - Round trips: `[RET-3] EntityTag round-trips strong and weak tags and refuses looser
+spellings`, `[RET-3] ConditionHeaders round-trips the three write conditions and refuses both
+validators together`
 
 ## JSON business API: envelopes (`business/envelopes`)
 
