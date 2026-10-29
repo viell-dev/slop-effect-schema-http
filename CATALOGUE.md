@@ -323,35 +323,102 @@ exact id refuses a value the platform parser already rounded`.
 
 ## JSON business API: operations (`business/operations`)
 
+Scenarios are in `src/scenarios/business-operations.test.ts` and run in both lanes (Node and
+Chromium); tests over `lane.clients` run once per provider in the lane. Node-only scenarios, about
+the line-preserving provider, are in `business-operations.node.test.ts`. Round trips are in
+`src/values/business.test.ts`. The backend's conventions, options and endpoints are documented at
+the top of `src/backends/business/operations.ts`.
+
 - **STAT-8** An unregistered 420 with `Retry-After`: not transient by default, with a classifier
-  that adds it without losing the built-in cases. Status: pending.
+  that adds it without losing the built-in cases. Status: tested.
+  - `[STAT-8] the unregistered 420 is not transient by default`
+  - `[STAT-8] a classifier adds 420 and keeps the built-in 503, honouring Retry-After`
+  - `[STAT-8] a classifier that replaces the built-in cases loses the 503 that follows`
 - **STAT-9** 429 and 503 with `Retry-After` as an HTTP date: both forms honoured unaided. Status:
-  pending.
+  tested. The fixture refuses an early return with the same answer, so a fixed retry budget
+  succeeds only when every wait was honoured.
+  - `[STAT-9] Retry-After in seconds and as an HTTP-date are both honoured unaided`
+  - `[STAT-9] a 429 with an HTTP-date Retry-After is honoured`
+  - `[STAT-9] ignoring Retry-After meets the same refusal until the budget runs out`
+- **STAT-11** A gateway that strips PUT and DELETE, with the service refusing raw ones too: a
+  reusable transform that rewrites the method to POST and sets an override header, used even for
+  rollback. Also listed under the gateway; this business API is the service behind such a gateway.
+  Status: tested.
+  - `[STAT-11] the gateway refuses a raw PUT and DELETE (<provider>)`
+  - `[STAT-11] the tunnel sends PUT and DELETE as POST with an override (<provider>)`
+  - `[STAT-11] a rollback deletes the created tasks through the tunnel after a failure`
+  - Node only:
+    `[STAT-11] the tunnel needs nothing from the provider; node:http sends the body-less POST chunked`.
+    Fixture fact: `node:http` frames a body-less POST as chunked with no `Content-Length`, where
+    Fetch sends `content-length: 0`.
 - **HDR-8** An edge cache that ignores request `Cache-Control` and honours only a cache-key
   parameter: the cache header, a computed cache-busting query, and the transport cache mode travel
-  together as one transform; the test purges first. Status: pending.
+  together as one transform; the test purges first. Status: tested.
+  - `[HDR-8] the edge ignores Cache-Control and the cache mode, and honours only the cache key`
+  - `[HDR-8] purging the edge leaves the platform cache, which the transform's cache mode skips`
+  - Node only:
+    `[HDR-8] the line-preserving provider carries the header and the cache key, without a cache mode`
+  - Observed: Fetch acts on the `no-store` mode in both lanes by adding `Cache-Control: no-cache`
+    and `Pragma: no-cache` request headers. In Chromium the platform cache is a second layer: it
+    keeps the edge's `max-age` response, a PURGE does not invalidate it (a POST does), and a plain
+    read after the purge is answered without a request. Node's Fetch keeps no HTTP cache.
 - **VAL-1b** Dates: epoch milliseconds, the ASP.NET `/Date(…)/` form with a decorative offset, US
   month-first local time with no zone, and HTTP-date; strict reversible transforms that refuse
-  looser input. Status: pending.
+  looser input. Status: tested.
+  - `[VAL-1b] invoice dates decode from epoch, ASP.NET, US local and HTTP-date forms`
+  - Round trips: `[VAL-1b] round-trips epoch milliseconds and refuses strings and fractions`,
+    `[VAL-1b] keeps the decorative ASP.NET offset without shifting the instant`,
+    `[VAL-1b] reads US local time as a wall clock, never as an instant` (with the permissive
+    `Date.parse` control, whose instant moves with the reader's offset), and
+    `[VAL-1b] round-trips IMF-fixdate HTTP-dates and refuses the obsolete forms`.
 - **VAL-2a** Money as a formatted dollar string; branded integer cents in both directions, refusing
-  unformatted input. Status: pending.
-- **VAL-3a** Booleans as `Y` and `N`, with `y`, `1`, and `true` refused. Status: pending.
+  unformatted input. Status: tested.
+  - `[VAL-2a] amounts decode to branded cents from the service's dollar strings`
+  - `[VAL-2a] the service refuses unformatted money and loose spellings from an untyped body`
+  - Round trip: `[VAL-2a] round-trips formatted dollars as branded integer cents`
+- **VAL-3a** Booleans as `Y` and `N`, with `y`, `1`, and `true` refused. Status: tested.
+  - `[VAL-3a] Y and N flags decode to booleans`
+  - Round trip: `[VAL-3a] accepts only Y and N`
 - **VAL-4** Absence: `null`, empty string, the string `"null"`, a missing key, a blank string, and
   `-1` for unlimited next to `0` for a real limit; collapse into an optional and keep unlimited
-  distinct from zero. Status: pending.
+  distinct from zero. Status: tested. The collapse is the stated loss: every absence encodes as
+  the missing key, and a present value the wire would read as absent is refused before dispatch.
+  - `[VAL-4] five spellings of absence collapse, and unlimited stays distinct from zero`
+  - `[VAL-4] re-encoding writes the canonical absence, which the service stores and serves`
+    (Chromium reuses the earlier list by heuristic freshness from `Last-Modified`; the test asserts
+    each lane's behaviour and reads past the platform cache for the service's state)
+  - Round trips: `[VAL-4] collapses five spellings of absence into one missing key`,
+    `[VAL-4] keeps unlimited distinct from a limit of zero`
 - **VAL-5b** A reference that is an expanded object in some rows and a bare id in others, and
-  space-delimited lists where the spec says arrays. Status: pending.
+  space-delimited lists where the spec says arrays. Status: tested.
+  - `[VAL-5b] customers arrive expanded once, then as bare ids, and tags as words`
+  - Round trips: `[VAL-5b] tags an expanded customer and a bare id, and restores each shape`,
+    `[VAL-5b] reads space-delimited lists as arrays`
 - **QRY-2** Repeated parameters where the server keeps only the last: the client can append; the
-  collapse is the server's, verified against the fixture. Status: pending.
+  collapse is the server's, verified against the fixture. Status: tested.
+  - `[QRY-2] repeated parameters reach the server, which keeps the last (<provider>)`
+  - Fixture fact: keeping the last is this fixture's deliberate PHP-era rule, confirmed by the
+    filter it echoes; `URLSearchParams.get` keeps the first. Both providers send both entries.
 - **QRY-3** An empty path segment left to the application contract, and a base URL replaceable per
-  operation. Status: pending.
+  operation. Status: tested.
+  - `[QRY-3] an empty id leaves an empty segment, and merged slashes answer another resource`
+  - `[QRY-3] the application contract refuses an empty id before dispatch`
+  - `[QRY-3] one operation replaces the shared base URL and keeps the credential`
 - **RET-1** A strictly increasing nonce in front of two 503 warm-ups with HTTP-date `Retry-After`,
   the replay check before the warm-up check. A retry that replays the encoded request turns a
   transient failure permanent (pinned), then a caller-driven loop and per-attempt client middleware
   advance the nonce while keeping the budget and `Retry-After`. Credentials resolve once per
-  evaluation. Status: pending.
+  evaluation. Status: tested.
+  - `[RET-1] a policy that replays the encoded request turns the warm-up into a permanent replay`
+  - `[RET-1] a caller-driven loop takes a new nonce per execution and honours Retry-After`
+  - `[RET-1] the caller-driven loop stops at its own budget`
+  - `[RET-1] per-attempt middleware advances the nonce while the credential resolves once`
+  - `[RET-1] the policy's budget still bounds per-attempt retries`
 - **RET-2** A long poll held open: a whole-operation timeout surfaces as a timeout failure, not a
-  mapped response. Status: pending.
+  mapped response. Status: tested.
+  - `[RET-2] a whole-operation timeout fails as a timeout, and the server sees the abort`
+  - `[RET-2] a per-attempt timeout is transient and retried, then surfaces as a timeout`
+  - `[RET-2] a poll the server ends, or an event releases, decodes as the mapped answer`
 
 ## CGI reporting gateway (`gateway`)
 
