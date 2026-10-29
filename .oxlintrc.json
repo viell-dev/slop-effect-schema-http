@@ -25,9 +25,12 @@
                   "viell-effect-schema-http",
                   "effect",
                   "effect/*",
-                  "#lane"
+                  "#lane",
+                  "**/harness/*",
+                  "!**/harness/server.js",
+                  "!**/harness/route.js"
                 ],
-                "message": "Backends are black boxes: they may import only Node built-ins and src/harness/server.ts or route.ts."
+                "message": "Backends are black boxes: they may import only Node built-ins, src/backends/, and src/harness/server.ts or route.ts. scripts/boundaries.mjs enforces the full allowlist."
               }
             ]
           }

@@ -22,11 +22,15 @@ the scenarios. The library's own design, which these tests are judged against, i
 ## Rules
 
 - **Black-box backends.** A backend is reachable only through its HTTP interface.
-  - Backend code imports only Node built-ins and `src/harness/server.ts` or `route.ts`. It
-    implements its own formats, conversions and checks, never sharing a schema, codec, helper or
-    constant table with the consumer side, so a bug cannot cancel itself out across both.
+  - Backend code imports only Node built-ins, modules inside `src/backends/`, and
+    `src/harness/server.ts` or `route.ts`. It implements its own formats, conversions and checks,
+    never sharing a schema, codec, helper or constant table with the consumer side, so a bug cannot
+    cancel itself out across both.
   - Tests configure a backend only through its JSON options.
-  - `pnpm lint` enforces both directions.
+  - `pnpm check` enforces both directions with `scripts/boundaries.mjs`, which resolves every
+    import: a backend's against that allowlist, and consumer code's and scenarios' against any
+    backend and any harness module except `lane.ts` and `#lane`. `pnpm lint` flags common cases
+    too.
 - **Two lanes.** Every scenario runs in Node and in Chromium (Vitest browser mode), to show that the
   library works in a static single-page app as well as in Node.
   - Tests import `lane` from `#lane` and start backends by name with `lane.backend(name, options)`.
@@ -79,7 +83,7 @@ fnm use                      # or nvm use; Node.js version from .nvmrc
 corepack pnpm install --frozen-lockfile
 corepack pnpm library        # fetch the library source at the commit in library-ref
 corepack pnpm exec playwright install chromium   # once, for the browser lane
-corepack pnpm check          # TypeScript (including type-level tests) and Prettier
+corepack pnpm check          # TypeScript (incl. type-level tests), Prettier, catalogue, boundaries
 corepack pnpm lint           # Oxlint
 corepack pnpm test           # each lane as its own run, then the catalogue against their results
 ```
