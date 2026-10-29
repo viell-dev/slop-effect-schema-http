@@ -4,7 +4,7 @@
     "*.ts": "${capture}.test.ts",
     "*.js": "${capture}.js.map, ${capture}.min.js, ${capture}.d.ts, ${capture}.d.ts.map",
     "tsconfig.json": "tsconfig.*.json",
-    "package.json": "pnpm-lock.yaml",
+    "package.json": "package-lock.json, .npmrc",
     "eslint.config.js": ".oxlintrc.json, .prettierignore, prettier.config.js, mdrefine.config.jsonc"
   },
   "editor.defaultFormatter": "esbenp.prettier-vscode",

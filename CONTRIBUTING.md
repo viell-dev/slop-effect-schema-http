@@ -6,18 +6,24 @@ maintenance cost; a filed request is not a commitment to implement it.
 
 ## Development and verification
 
-Use `.nvmrc` and the package manager pinned in `package.json`. Install with
-`corepack pnpm install --frozen-lockfile`. Existing commands are:
+Use the Node.js version in `.nvmrc` with the npm it bundles; `package.json` requires npm 11.19 or
+later. Install with `npm ci`, which installs exactly what `package-lock.json` records. Existing
+commands are:
 
-- `corepack pnpm check`: TypeScript and formatting checks, including the type-level assertions in
-  tests.
-- `corepack pnpm lint`: Oxlint, ESLint, and Markdown linting.
-- `corepack pnpm build`: JavaScript and declaration output in `dist/`.
-- `corepack pnpm test`: Vitest behavior tests.
-- `corepack pnpm format`: apply the configured formatters.
+- `npm run check`: TypeScript and formatting checks, including the type-level assertions in tests.
+- `npm run lint`: Oxlint, ESLint, and Markdown linting.
+- `npm run build`: JavaScript and declaration output in `dist/`.
+- `npm test`: Vitest behavior tests.
+- `npm run format`: apply the configured formatters.
 
 CI requires all four verification commands on Linux. For code changes, reproduce the reported
 behavior first and add a meaningful test at the layer that exposes it.
+
+`.npmrc` sets `ignore-scripts=true`, so no dependency's install script runs. Keep it: none of the
+current dependencies needs one, and a new dependency that does needs a review of what the script
+does before an exception is added. The setting also skips `pre` and `post` scripts, so do not add
+those to `package.json`. Add or update a dependency with `npm install`, commit `package-lock.json`
+with `package.json`, and check that `npm ci` still succeeds from a clean checkout.
 
 ### Behavior tests
 

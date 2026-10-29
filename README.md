@@ -33,21 +33,20 @@ defect's current outcome or behavior whose design is still open, and link their 
 
 ## Development
 
-Use the Node.js version in `.nvmrc` and pnpm version in `package.json`. With fnm, select Node using
-`fnm use` from the checkout. With nvm, use `nvm use` instead. Corepack can run the pinned pnpm
-without a global pnpm installation.
+Use the Node.js version in `.nvmrc` and the npm it bundles. With fnm, select Node using `fnm use`
+from the checkout. With nvm, use `nvm use` instead. `package.json` requires npm 11.19 or later.
 
 ```sh
-corepack pnpm install --frozen-lockfile
-corepack pnpm check
-corepack pnpm lint
-corepack pnpm build
-corepack pnpm test
+npm ci
+npm run check
+npm run lint
+npm run build
+npm test
 ```
 
 The build writes JavaScript and declarations to `dist/`. Generated files and dependencies are
-ignored by Git. Run `corepack pnpm format` to format the repository. CI runs the static checks,
-linters, build, and tests on Linux with the pinned Node.js version.
+ignored by Git. Run `npm run format` to format the repository. CI runs the static checks, linters,
+build, and tests on Linux with the pinned Node.js version.
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the maintenance workflow. Report defects and proposed
 changes in the [issue tracker](https://github.com/viell-dev/slop-effect-schema-http/issues), with
