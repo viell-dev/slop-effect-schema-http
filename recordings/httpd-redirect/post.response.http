@@ -1,0 +1,15 @@
+HTTP/1.1 301 Moved Permanently
+Date: Thu, 29 Oct 2026 23:48:12 GMT
+Server: Apache/2.4.69 (Unix)
+Location: http://gateway.example:8080/cgi-bin/report.cgi?session=sso-7f3a9c41
+Content-Length: 315
+Connection: close
+Content-Type: text/html; charset=iso-8859-1
+
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html><head>
+<title>301 Moved Permanently</title>
+</head><body>
+<h1>Moved Permanently</h1>
+<p>The document has moved <a href="http://gateway.example:8080/cgi-bin/report.cgi?session=sso-7f3a9c41">here</a>.</p>
+</body></html>

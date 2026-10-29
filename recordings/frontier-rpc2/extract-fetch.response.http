@@ -1,0 +1,19 @@
+HTTP/1.1 200 OK
+Date: Thu, 29 Oct 2026 23:24:06 GMT
+Server: libwww-perl-daemon/6.16
+Content-Length: 559
+Content-Type: text/xml
+
+<?xml version="1.0"?>
+<methodResponse>
+<params>
+<param><value><base64>SE1PTlRIRU5EMjAyNjEwMjAyNjExMDEgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg
+ICAgICAgIEQwMDAxMjM0NUNhZukgTfxsbGVyICAgICAgICAgICAgICAgICAgIDAwMDAwMTIzNDUw
+MjAyNjExMTVPICAgICBEMDAwNjc4OTDWbG38aGxlIFJoZWluICAgICAgICAgICAgICAgICAwMDAw
+MDA1MDAwMDAwMDAwMDAwUCAgICAgRDAwMDI0NjgwQuRja2VyZWkgR3Jv3yAmIFP2aG5lICAgICAg
+ICAgMDAwMDAwMDAwMDcyMDI2MTIwMVggICAgIFQwMDAwMDMwMDAwMDAwMTczNDU3ICAgICAgICAg
+ICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA=
+</base64></value>
+</param>
+</params>
+</methodResponse>

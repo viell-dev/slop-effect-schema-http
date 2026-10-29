@@ -1,0 +1,17 @@
+HTTP/1.1 200 OK
+Date: Thu, 29 Oct 2026 23:24:06 GMT
+Server: libwww-perl-daemon/6.16
+Content-Length: 302
+Content-Type: text/xml
+
+<?xml version="1.0"?>
+<methodResponse>
+<fault>
+<value><struct>
+<member><name>faultString</name><value><string>error executing RPC `invoice.get'.
+no such invoice 999
+</string></value></member>
+<member><name>faultCode</name><value><i4>4</i4></value></member>
+</struct></value>
+</fault>
+</methodResponse>

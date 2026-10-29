@@ -1,0 +1,8 @@
+POST /RPC2 HTTP/1.1
+Host: gateway.example
+Content-Type: text/xml
+Content-Length: 143
+Connection: close
+
+<?xml version="1.0"?>
+<methodCall><methodName>invoice.get</methodName><params><param><value><i4>999</i4></value></param></params></methodCall>

@@ -1,0 +1,8 @@
+POST /RPC2 HTTP/1.1
+Host: gateway.example
+Content-Type: text/xml
+Content-Length: 158
+Connection: close
+
+<?xml version="1.0"?>
+<methodCall><methodName>account.title</methodName><params><param><value><string>00012345</string></value></param></params></methodCall>

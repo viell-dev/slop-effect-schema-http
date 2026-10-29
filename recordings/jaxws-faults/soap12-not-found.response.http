@@ -1,0 +1,11 @@
+HTTP/1.1 500 Internal Server Error
+Date: Thu, 29 Oct 2026 23:49:39 GMT
+Transfer-encoding: chunked
+Content-type: application/soap+xml; charset=utf-8
+
+5c
+<?xml version="1.0" ?><S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-envelope"><S:Body>
+14a
+<S:Fault xmlns:ns4="http://schemas.xmlsoap.org/soap/envelope/"><S:Code><S:Value>S:Sender</S:Value></S:Code><S:Reason><S:Text xml:lang="en">No document with id DOC-999999</S:Text></S:Reason><S:Detail><DocumentNotFound xmlns="urn:docvault:store:2003"><Id>DOC-999999</Id></DocumentNotFound></S:Detail></S:Fault></S:Body></S:Envelope>
+0
+

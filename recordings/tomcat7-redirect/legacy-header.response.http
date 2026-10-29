@@ -1,0 +1,9 @@
+HTTP/1.1 200 OK
+Server: Apache-Coyote/1.1
+Location: /v1/customers/1006
+Content-Type: application/json;charset=UTF-8
+Content-Length: 16
+Date: Thu, 29 Oct 2026 23:47:47 GMT
+Connection: close
+
+{"success":true}

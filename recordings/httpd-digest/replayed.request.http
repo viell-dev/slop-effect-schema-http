@@ -1,0 +1,6 @@
+GET /admin/audit.cgi?period=202610 HTTP/1.1
+Host: gateway.example
+Authorization: Digest username="auditor", realm="Reporting Gateway", nonce="u1qQPANfBgA=6296e029f0559fecc13ade3fb4d6a3f64d64b238", uri="/admin/audit.cgi?period=202610", response="a6d91b38fb38c522a176f55a5a0effdf", algorithm=MD5
+User-Agent: curl/8.23.0
+Accept: */*
+

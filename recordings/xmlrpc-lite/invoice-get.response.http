@@ -1,0 +1,8 @@
+HTTP/1.1 200 OK
+Date: Thu, 29 Oct 2026 23:25:33 GMT
+Server: libwww-perl-daemon/6.16
+Content-Length: 1095
+Content-Type: text/xml
+SOAPServer: SOAP::Lite/Perl/1.27
+
+<?xml version="1.0" encoding="UTF-8"?><methodResponse><params><param><value><struct><member><name>lines</name><value><array><data><value><struct><member><name>text</name><value><string>Consulting "Q4" &amp; &lt;travel&gt;</string></value></member><member><name>amount</name><value><double>500.00</double></value></member></struct></value><value><struct><member><name>text</name><value><string>Überstunden</string></value></member><member><name>amount</name><value><double>487.60</double></value></member></struct></value></data></array></value></member><member><name>issued</name><value><dateTime.iso8601>19981102T09:30:00</dateTime.iso8601></value></member><member><name>id</name><value><int>7</int></value></member><member><name>amount</name><value><double>987.60</double></value></member><member><name>paid</name><value><boolean>1</boolean></value></member><member><name>settled</name><value><dateTime.iso8601>19981130T16:45:10</dateTime.iso8601></value></member><member><name>account</name><value><string>00012345</string></value></member></struct></value></param></params></methodResponse>

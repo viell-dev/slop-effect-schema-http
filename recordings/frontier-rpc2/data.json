@@ -1,0 +1,68 @@
+{
+  "accounts": [
+    {
+      "account": "00012345",
+      "title": "Café Müller",
+      "cents": 123450,
+      "due": "20261115"
+    },
+    {
+      "account": "00067890",
+      "title": "Ölmühle Rhein",
+      "cents": 50000,
+      "due": "00000000"
+    }
+  ],
+  "extracts": {
+    "202610": {
+      "runDate": "20261101",
+      "lastModified": "2026-11-01T02:15:00Z",
+      "records": [
+        {
+          "account": "00012345",
+          "title": "Café Müller",
+          "cents": 123450,
+          "due": "20261115",
+          "status": "O"
+        },
+        {
+          "account": "00067890",
+          "title": "Ölmühle Rhein",
+          "cents": 50000,
+          "due": "00000000",
+          "status": "P"
+        },
+        {
+          "account": "00024680",
+          "title": "Bäckerei Groß & Söhne",
+          "cents": 7,
+          "due": "20261201",
+          "status": "X"
+        }
+      ]
+    }
+  },
+  "invoices": [
+    {
+      "id": 7,
+      "account": "00012345",
+      "cents": 98760,
+      "paid": true,
+      "issued": "19981102T09:30:00",
+      "settled": "19981130T16:45:10",
+      "lines": [
+        { "text": "Consulting \"Q4\" & <travel>", "cents": 50000 },
+        { "text": "Überstunden", "cents": 48760 }
+      ]
+    },
+    {
+      "id": 8,
+      "account": "00067890",
+      "cents": 5,
+      "paid": false,
+      "issued": "19980231T00:00:00",
+      "settled": "00000000T00:00:00",
+      "lines": []
+    }
+  ]
+}
