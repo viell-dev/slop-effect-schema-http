@@ -20,12 +20,13 @@ server or replace the HTTP client's transport.
 The public entry point exports `Body`, `Interaction`, `Operation`, `Policy`, `Request`, `Response`,
 `Transport`, and `UrlEncoding`. Their TypeScript source is the current API reference.
 
-Behavior tests cover every module through Effect's `HttpClient` with an in-memory provider: request
-encoding, response selection and decoding, retry policies, timeouts, cancellation, and interactions.
-They do not exercise Fetch, browsers, real servers, or packaged installation. Confirmed defects are
-tracked as [bug
-issues](https://github.com/viell-dev/slop-effect-schema-http/issues?q=is%3Aissue+is%3Aopen+label%3A%22Type%3A+Bug%22),
-and their tests are marked as expected failures until fixed.
+Behavior tests cover every module: request encoding, response selection and decoding, retry
+policies, timeouts, cancellation, and interactions. Operation and interaction tests run through
+Effect's `HttpClient` with an in-memory provider. No test exercises Fetch, browsers, real servers,
+or packaged installation. Confirmed defects are tracked as [bug
+issues](https://github.com/viell-dev/slop-effect-schema-http/issues?q=is%3Aissue+is%3Aopen+label%3A%22Type%3A+Bug%22).
+Their tests pin the current behavior and mark the intended behavior as an expected failure until the
+defect is fixed.
 
 ## Development
 
