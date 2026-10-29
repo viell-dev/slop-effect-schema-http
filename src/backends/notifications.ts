@@ -5,8 +5,12 @@
  *
  * ## Contract for the cross-service flows
  *
- * Start it with `handler(options)`; every call has fresh state. The fixture values (`acceptedToken`,
- * `signingSecret`, `allowedOrigins`) come from the test.
+ * Start it with `lane.backend("notifications", options)`; every start has fresh state. Options are
+ * plain JSON (see `Options`). The fixture values `acceptedToken`, `signingSecret` and
+ * `allowedOrigins` are required and come from the test. In the browser lane the page is on another
+ * site than the backend, so pass `csrfCookieSameSite: "None"` for the XSRF cookie to come back, and
+ * include the page's origin (`location.origin`) in `allowedOrigins` when the backend answers CORS
+ * itself. Every hostile CORS behaviour is on by default and can be switched off under `cors`.
  *
  * - **Token scheme.** Every route except the CSRF bootstrap requires
  *   `Authorization: Token token="<opaque>"` (Rails' token form, scheme name case-sensitive, value
@@ -36,6 +40,15 @@
  *     500 with an HTML page; `fail: "frozen"` answers 409 `channel_frozen`; `holdMs` holds each
  *     verified announcement before answering, and an abort during the hold records nothing.
  * - `GET /v2/announcements` lists the recorded announcements as `{ "announcements": [...] }`.
+ * - Also served: `POST /v2/subscriptions` (CSRF and Token; `{ channel, address }`, 201), and the
+ *   legacy `GET /v1/subscriptions` and `GET /v1/channels` with their retirement headers.
+ * - **CORS.** For an allowed `Origin`, every application response carries
+ *   `Access-Control-Allow-Origin` with credentials allowed. Preflights: `/v2/announcements` refuses
+ *   any requested header outside its list with 403 (so `b3` and `traceparent` fail);
+ *   `/v2/subscriptions` omits `Content-Type` from its list; other `/v2/` paths list
+ *   `Authorization, Content-Type, X-XSRF-TOKEN, X-Requested-With` without checking; v1 `OPTIONS`
+ *   gets the servlet container's `Allow` answer with no CORS headers, and v1 responses expose only
+ *   `Warning`.
  *
  * Checks run in the order the layers were stacked: the CORS filter, the framework's CSRF
  * middleware, the Token authentication of the API layer, then the HMAC check of the announce
@@ -96,6 +109,12 @@ export interface Options {
   readonly clockOffsetMs?: number | undefined;
   readonly announce?: AnnounceFailurePoint | undefined;
   readonly cors?: CorsQuirks | undefined;
+  /**
+   * The XSRF cookie's `SameSite` attribute. Default `Lax`, set by the 2019 framework upgrade, so a
+   * cross-site page never gets the cookie back. `None` (sent with `Secure`) is the setting of the
+   * embedded-widget deployment, where the page and the API are on different sites.
+   */
+  readonly csrfCookieSameSite?: "Lax" | "None" | undefined;
 }
 
 interface Subscription {
@@ -216,8 +235,40 @@ const retirement = (deprecation: string): Lines => [
   ["Link", '</v2/subscriptions>; rel="successor-version"'],
 ];
 
+/** The CORS filter's answer for an allowed origin, credentials included. */
+const corsLines = (origin: string): Lines => [
+  ["Access-Control-Allow-Origin", origin],
+  ["Access-Control-Allow-Credentials", "true"],
+];
+
+/** The hand-rolled filter's preflight answer, listing `headers` and checking nothing else. */
+const filterAnswer = (origin: string | undefined, headers: string): Reply => ({
+  status: 204,
+  lines: [
+    ...(origin === undefined ? [] : corsLines(origin)),
+    ["Access-Control-Allow-Methods", "GET, POST, OPTIONS"],
+    ["Access-Control-Allow-Headers", headers],
+    ["Access-Control-Max-Age", "600"],
+    ["Vary", "Origin"],
+  ],
+});
+
 /** Fresh service state per call. */
-export const handler = (options: Options): Handler => {
+export const handler = (given?: Options): Handler => {
+  if (
+    given === undefined ||
+    typeof given.acceptedToken !== "string" ||
+    typeof given.signingSecret !== "string" ||
+    !Array.isArray(given.allowedOrigins)
+  )
+    throw new Error(
+      "notifications: the test must pass acceptedToken, signingSecret and allowedOrigins",
+    );
+  const options = given;
+  const sameSite =
+    options.csrfCookieSameSite === "None"
+      ? "SameSite=None; Secure"
+      : "SameSite=Lax";
   const windowMs = options.windowMs ?? 300_000;
   const now = () => Date.now() + (options.clockOffsetMs ?? 0);
   const quirks = {
@@ -299,7 +350,7 @@ export const handler = (options: Options): Handler => {
         return json(200, { csrfToken: token }, [
           [
             "Set-Cookie",
-            `XSRF-TOKEN=${encodeURIComponent(token)}; Path=/; SameSite=Lax`,
+            `XSRF-TOKEN=${encodeURIComponent(token)}; Path=/; ${sameSite}`,
           ],
           ["Cache-Control", "no-store"],
         ]);
@@ -412,26 +463,6 @@ export const handler = (options: Options): Handler => {
       ? origin
       : undefined;
   };
-
-  const corsLines = (origin: string): Lines => [
-    ["Access-Control-Allow-Origin", origin],
-    ["Access-Control-Allow-Credentials", "true"],
-  ];
-
-  /** The hand-rolled filter's preflight answer, listing `headers` and checking nothing else. */
-  const filterAnswer = (
-    origin: string | undefined,
-    headers: string,
-  ): Reply => ({
-    status: 204,
-    lines: [
-      ...(origin === undefined ? [] : corsLines(origin)),
-      ["Access-Control-Allow-Methods", "GET, POST, OPTIONS"],
-      ["Access-Control-Allow-Headers", headers],
-      ["Access-Control-Max-Age", "600"],
-      ["Vary", "Origin"],
-    ],
-  });
 
   const announcementHeaders = [
     "authorization",

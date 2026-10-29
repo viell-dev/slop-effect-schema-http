@@ -50,6 +50,10 @@ const encodeRefusal = (
   return Exit.isFailure(exit) ? String(exit.cause) : "";
 };
 
+/** A CSRF failure page in the framework's shape. */
+const page = (reason: string) =>
+  `<html><body><p>CSRF verification failed. Request aborted.</p>\n<p>Reason: ${reason}</p></body></html>`;
+
 describe("notification value conventions", () => {
   it("[HDR-4] HttpDate round-trips IMF-fixdate and refuses the obsolete and malformed forms", () => {
     expect(roundTrip(HttpDate, "Sun, 31 Jan 2027 23:59:59 GMT")).toEqual(
@@ -272,8 +276,6 @@ describe("notification value conventions", () => {
   });
 
   it("[AUTH-5] the CSRF failure page decodes to its reason and refuses the reverse, with the reason", () => {
-    const page = (reason: string) =>
-      `<html><body><p>CSRF verification failed. Request aborted.</p>\n<p>Reason: ${reason}</p></body></html>`;
     const decode = Schema.decodeUnknownSync(CsrfFailurePage);
     expect(decode(page("CSRF cookie not set."))).toBe("cookie-missing");
     expect(decode(page("CSRF token missing."))).toBe("token-missing");
