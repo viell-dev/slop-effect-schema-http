@@ -2,9 +2,36 @@
  * The document store's own XML handling: a small reader for request envelopes and PROPFIND bodies,
  * string templates for replies, and the Latin-1 writer of the 2003 platform. It shares nothing with
  * the consumer's XML helper; the store was never written with a client library in mind.
+ *
+ * The reader follows XML 1.0 where it is strict: a character outside the `Char` production
+ * (https://www.w3.org/TR/xml/#charsets) is an error, raw or referenced; CRLF and lone CR become LF
+ * before parsing (https://www.w3.org/TR/xml/#sec-line-ends); and literal white space in an
+ * attribute value becomes a space (https://www.w3.org/TR/xml/#AVNormalize). The writer refuses
+ * such characters too and references the white space those rules would otherwise change.
  */
 
 export class XmlError extends Error {}
+
+/** Whether a code point is an XML 1.0 `Char`. */
+const legal = (code: number): boolean =>
+  code < 0x20
+    ? code === 0x09 || code === 0x0a || code === 0x0d
+    : code <= 0xd7ff ||
+      (code >= 0xe000 && code <= 0xfffd) ||
+      (code >= 0x10000 && code <= 0x10ffff);
+
+/** Throw at the first code point that is not a `Char`; a lone surrogate is its own code point. */
+const requireLegal = (text: string, doing: string): void => {
+  let offset = 0;
+  for (const character of text) {
+    const code = character.codePointAt(0)!;
+    if (!legal(code))
+      throw new XmlError(
+        `${doing}: U+${code.toString(16).toUpperCase().padStart(4, "0")} at ${offset} is not an XML character`,
+      );
+    offset += character.length;
+  }
+};
 
 /** A parsed element with its in-scope namespace bindings (prefix to URI, `""` for the default). */
 export interface Node {
@@ -26,12 +53,15 @@ const unescape = (text: string): string =>
   text.replace(/&([^;&\s]*);?/g, (whole, entity: string) => {
     if (!whole.endsWith(";")) throw new XmlError(`bare '&' in ${text}`);
     const numeric = /^#(?:x([0-9a-fA-F]+)|([0-9]+))$/.exec(entity);
-    if (numeric !== null)
-      return String.fromCodePoint(
+    if (numeric !== null) {
+      const code =
         numeric[1] !== undefined
           ? Number.parseInt(numeric[1], 16)
-          : Number.parseInt(numeric[2]!, 10),
-      );
+          : Number.parseInt(numeric[2]!, 10);
+      if (!legal(code))
+        throw new XmlError(`${whole} does not reference an XML character`);
+      return String.fromCodePoint(code);
+    }
     const value = predefined[entity];
     if (value === undefined) throw new XmlError(`unknown entity &${entity};`);
     return value;
@@ -61,8 +91,13 @@ interface Open {
   readonly namespaces: Map<string, string>;
 }
 
-/** Parse a whole document; DTDs, stray text and unbalanced tags throw {@link XmlError}. */
-export const parse = (source: string): Node => {
+/**
+ * Parse a whole document; DTDs, stray text, unbalanced tags and characters XML does not allow
+ * throw {@link XmlError}. Offsets refer to the text after line-end normalization.
+ */
+export const parse = (document: string): Node => {
+  const source = document.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+  requireLegal(source, "parse");
   const stack: Array<Open> = [];
   let root: Node | undefined;
   token.lastIndex = 0;
@@ -79,6 +114,8 @@ export const parse = (source: string): Node => {
         if (text !== undefined && text.trim() === "") continue;
         throw new XmlError(`text outside the root element at ${offset}`);
       }
+      if (text?.includes("]]>") === true)
+        throw new XmlError(`']]>' in character data at ${offset}`);
       parent.children.push(cdata ?? unescape(text!));
       continue;
     }
@@ -95,7 +132,10 @@ export const parse = (source: string): Node => {
     const map = new Map<string, string>();
     for (const [, key, double, single] of attributes!.matchAll(attribute)) {
       if (map.has(key!)) throw new XmlError(`duplicate attribute ${key}`);
-      map.set(key!, unescape(double ?? single ?? ""));
+      const literal = (double ?? single ?? "")
+        .replaceAll("\t", " ")
+        .replaceAll("\n", " ");
+      map.set(key!, unescape(literal));
     }
     const namespaces = new Map(parent?.namespaces ?? []);
     for (const [key, value] of map) {
@@ -140,13 +180,23 @@ export const find = (node: Node, name: string): Node | undefined =>
 export const text = (node: Node): string =>
   node.children.filter((child) => typeof child === "string").join("");
 
-/** Escape text for element content or a double-quoted attribute value. */
-export const escape = (value: string): string =>
-  value
+/**
+ * Escape text for element content. A carriage return is written as a reference, which survives
+ * line-end normalization; a character XML does not allow throws {@link XmlError}.
+ */
+export const escape = (value: string): string => {
+  requireLegal(value, "write");
+  return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/\r/g, "&#xD;");
+};
+
+/** Escape a double-quoted attribute value, referencing the white space normalization would change. */
+const escapeAttribute = (value: string): string =>
+  escape(value).replace(/\t/g, "&#x9;").replace(/\n/g, "&#xA;");
 
 /** An element from already-serialized children. */
 export const tag = (
@@ -155,7 +205,7 @@ export const tag = (
   ...children: ReadonlyArray<string>
 ): string => {
   const rendered = Object.entries(attributes)
-    .map(([key, value]) => ` ${key}="${escape(value)}"`)
+    .map(([key, value]) => ` ${key}="${escapeAttribute(value)}"`)
     .join("");
   return children.length === 0
     ? `<${element}${rendered}/>`

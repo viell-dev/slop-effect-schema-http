@@ -99,8 +99,9 @@ providers`. Observed: Effect's normalized `headers["set-cookie"]` keeps only the
 
 Scenarios are in `src/scenarios/soap-store.test.ts` and run in both lanes (Node and Chromium);
 tests marked "(provider)" run once per provider of the lane (`fetch` in both, `lines` in Node).
-Node-only scenarios are in `soap-store.node.test.ts`. Round trips are in
-`src/values/soap-store.test.ts`. The backend is `src/backends/soap-store/`; its quirks are
+Node-only scenarios are in `soap-store.node.test.ts` and browser-only ones in
+`soap-store.browser.test.ts`. Round trips are in `src/values/soap-store.test.ts`, and the consumer's
+XML helper tests in `src/formats/xml.test.ts`. The backend is `src/backends/soap-store/`; its quirks are
 documented in `soap.ts`, `dav.ts` and `files.ts`.
 
 - **ERR-1a** A SOAP fault code where zero means success, inside HTTP 200: body-level
@@ -184,6 +185,18 @@ their reverse says why` (each drops what it skips, so its encoder fails with tha
 same bytes back`, `[PAY-4a] XmlTextFromBytes refuses bytes invalid in the declared encoding,
 other encodings, and characters ISO-8859-1 lacks`. ISO-8859-1 is decoded byte by byte,
     because the WHATWG `TextDecoder` label `iso-8859-1` means windows-1252.
+  - XML's character rules hold on both sides, each in its own reader and writer:
+    `[PAY-4a] the store refuses characters XML does not allow, raw or as references, with plain-text 400`,
+    `[PAY-4a] a title XML cannot carry is refused by the consumer before dispatch` (`SchemaError`,
+    empty ledger) and
+    `[PAY-4a] the store reads a title's line ends as LF, and a carriage return written as a reference survives the round trip`.
+  - Browser-only: `[PAY-4a] Chromium's DOMParser reads the store's replies and the consumer's requests without a parsererror`,
+    an independent parser over SOAP 1.1 and 1.2 replies, a fault, and every request the consumer
+    wrote, with the stored title read back exactly.
+  - Helper: `[PAY-4a] refuses characters outside XML's Char production, raw or as references`,
+    `[PAY-4a] normalizes line ends to LF before parsing, and keeps a referenced carriage return`,
+    `[PAY-4a] refuses a bare ampersand, '<' in an attribute value and ']]>' in text`, and
+    `[PAY-4a] writes carriage returns, tabs and line feeds so they survive parsing, and refuses non-characters`.
 - **PAY-6** Multipart in both directions: a `FormData` upload with a `Blob` and a label, and a
   response bundle with a JSON metadata part and a bytes part, read asynchronously inside the schema.
   Status: tested.
