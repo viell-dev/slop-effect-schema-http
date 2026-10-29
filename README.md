@@ -46,7 +46,10 @@ Every scenario runs in two lanes. The Node lane runs the consumer in Node. The b
 the same tests in headless Chromium through Vitest browser mode, to show that the library works in
 a static single-page app; there, a Node-side control server starts the backends, and the browser
 enforces CORS, forbidden headers, cookies and redirects itself. Tests that need Node, such as the
-line-preserving provider, live in `*.node.test.ts` files. The client providers are:
+line-preserving provider, live in `*.node.test.ts` files; tests about the browser itself, such as
+a page's CORS, live in `*.browser.test.ts` files. The test page's server also hosts a same-origin
+proxy (`src/harness/proxy.ts`), so a page can reach a backend without CORS, as a deployed
+single-page app does through its own server. The client providers are:
 
 - Effect's Fetch provider, over Node's global `fetch` or the browser's;
 - in the Node lane, a custom `node:http` provider in `src/harness/providers.ts`, which sends the

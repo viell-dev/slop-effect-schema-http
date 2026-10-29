@@ -6,9 +6,10 @@ the scenarios. The library's own design, which these tests are judged against, i
 
 ## Layout
 
-- `src/harness/`: the loopback server and router used by backends, the client providers, and the
-  two lanes behind `#lane` (`lane.node.ts`, `lane.browser.ts` with its control server). Change these
-  only when a scenario needs it, and keep them backend-neutral.
+- `src/harness/`: the loopback server and router used by backends, the client providers, the two
+  lanes behind `#lane` (`lane.node.ts`, `lane.browser.ts` with its control server), and the browser
+  lane's same-origin proxy (`proxy.ts`). Change these only when a scenario needs it, and keep them
+  backend-neutral.
 - `src/backends/<area>`: the synthetic servers. Each documents its deliberately incompatible
   conventions in comments that say who introduced each quirk and why nobody can remove it.
 - `src/clients/<area>`: the consumer's contracts and schemas for that backend, written only against
@@ -34,8 +35,13 @@ the scenarios. The library's own design, which these tests are judged against, i
   - Options must be plain JSON.
   - Consumer code (`src/clients`, `src/values`, `src/formats`, `src/scenarios`) uses only
     Web-standard APIs: no `node:*`, `Buffer` or `process`.
-  - A test that needs Node itself goes in a `*.node.test.ts` file, with a comment saying why. Do not
-    extrapolate cookie, redirect or CORS behaviour between the lanes.
+  - A test that needs Node itself goes in a `*.node.test.ts` file, with a comment saying why. A test
+    about the browser itself, such as a page's CORS or the same-origin proxy, goes in a
+    `*.browser.test.ts` file, which runs only in the browser project, with a comment saying why.
+  - Do not extrapolate cookie, redirect or CORS behaviour between the lanes.
+  - In the browser lane, a page reaches a backend without CORS through the same-origin proxy at
+    `<page origin>/__proxy/<host>:<port>/<path>`. `src/clients/browser/proxy.ts` builds those URLs,
+    and `src/harness/proxy.ts` documents what the proxy changes on the wire.
 - **Real sockets only.** Every scenario dispatches over HTTP to a backend started in the test's own
   scope, so each test gets fresh state. Do not replace the transport with an in-memory client.
 - **Assert the wire.** Check what the backend received from `yield* backend.ledger`: method, target, header
