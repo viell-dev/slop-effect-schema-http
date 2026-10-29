@@ -1,3 +1,4 @@
+import { lane } from "#lane";
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import { Duration, Effect, Option, Schedule, Schema } from "effect";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
@@ -9,33 +10,97 @@ import {
   Response,
   Transport,
 } from "viell-effect-schema-http";
-import * as Business from "../backends/business/index.js";
 import * as Dialect from "../clients/business/envelopes-dialects.js";
 import * as Envelopes from "../clients/business/envelopes.js";
-import { fetchClient, linesLayer } from "../harness/providers.js";
-import { header, path, type Received, serve, text } from "../harness/server.js";
+import { bodyText, header, pathOf, type Recorded } from "../harness/lane.js";
 
 /*
  * The `/v1/` envelopes of the JSON business API, driven through the consumer's contracts in
- * `src/clients/business/envelopes.ts`. Provider choice per test:
+ * `src/clients/business/envelopes.ts`. Every test here runs in the Node lane and in Chromium.
  *
- * - `fetchClient` by default: it is what a browser runs, and fetch resolves a response as soon as its
- *   head arrives, so body reads are observable separately from selection.
- * - `linesLayer` where the original response lines matter.
+ * Provider: `lane.fetchClient` unless a test says otherwise. Fetch resolves a response as soon as
+ * its head arrives, so body reads are observable separately from rule selection. In the browser
+ * lane the harness answers CORS and exposes every response header, so the page sees the backend's
+ * own `Location`, `Link`, `Retry-After` and `X-Error-*` conventions.
  *
- * Tests that read a response header a cross-origin browser hides unless the server exposes it
- * (`Location`, `Link`, `Retry-After`, `X-Error-Code`, `X-Served-By`) are marked node-only: this
- * backend sends no `Access-Control-Expose-Headers`, and Node's fetch applies no CORS.
+ * The raw-socket check of the 204 lives in `business-envelopes.node.test.ts`.
  */
 
-/** Start the business API for one test. This file starts servers nowhere else. */
+/** The fixture values these tests assert on, passed to the backend as its JSON options. */
+const fixture = {
+  customers: [
+    { id: 1001, name: "Northwind Traders", tier: "GOLD" },
+    {
+      id: 1002,
+      name: "Contoso Pharmaceuticals",
+      tier: "STANDARD",
+      creditHold: true,
+    },
+    { id: 1003, name: "Fabrikam Fibres", tier: "SILVER" },
+    { id: 1004, name: "Tailspin Toys", tier: "STANDARD" },
+    { id: 1005, name: "Wide World Importers", tier: "PLATINUM" },
+  ],
+  products: [
+    { sku: "WID-100", name: "Widget", priceCents: 1250 },
+    { sku: "GAD-200", name: "Gadget", priceCents: 4999 },
+    { sku: "SPR-300", name: "Sprocket", priceCents: 375, discontinued: true },
+  ],
+  ledger: {
+    account: "4000",
+    entries: [
+      { id: "9007199254740992", amountCents: 125000, memo: "Opening balance" },
+      { id: "9007199254740993", amountCents: -2500, memo: "Refund RMA-77" },
+      { id: "9007199254740995", amountCents: 4999, memo: "Invoice INV-310" },
+    ],
+  },
+  aging: [
+    {
+      customerId: 1001,
+      name: "Northwind Traders",
+      current: 120000,
+      overdue30: 0,
+    },
+    {
+      customerId: 1002,
+      name: "Contoso Pharmaceuticals",
+      current: 4500,
+      overdue30: 98000,
+    },
+    { customerId: 1003, name: "Fabrikam Fibres", current: 0, overdue30: 1500 },
+  ],
+  warehouses: {
+    EU: [
+      { code: "AMS1", city: "Amsterdam" },
+      { code: "FRA2", city: "Frankfurt" },
+    ],
+    APAC: [{ code: "SIN1", city: "Singapore" }],
+    LATAM: [],
+  },
+  regions: [
+    { code: "EU", name: "Europe" },
+    { code: "APAC", name: "Asia Pacific" },
+    { code: "LATAM", name: "Latin America" },
+  ],
+  currencies: [
+    { code: "USD", decimals: 2 },
+    { code: "EUR", decimals: 2 },
+    { code: "JPY", decimals: 0 },
+  ],
+  rates: {
+    base: "USD",
+    rates: { EUR: "0.9150", GBP: "0.7890", JPY: "149.2000" },
+  },
+  pendingPolls: 2,
+} as const;
+
+/** Start the business API for one test. This file starts backends nowhere else. */
 const start = Effect.gen(function* () {
-  const server = yield* serve(Business.handler());
-  return { server, api: Envelopes.make(server.origin) };
+  const backend = yield* lane.backend("business", { envelopes: fixture });
+  return { backend, api: Envelopes.make(backend.origin) };
 });
 
-const body = (received: Received | undefined): string =>
-  received === undefined ? "" : text(received);
+const requestLine = (recorded: Recorded) =>
+  `${recorded.method} ${recorded.target}`;
 
 /** Client middleware recording the metadata of every response an operation receives. */
 const recording = () => {
@@ -109,16 +174,16 @@ const selection = (events: Array<string>) =>
 const firstBodyRead = (events: ReadonlyArray<string>) =>
   events.findIndex((event) => event.startsWith("body"));
 
-/** The original value of a response header line, from a provider that reports lines. */
-const rawLine = (metadata: Response.Metadata | undefined, name: string) =>
-  Option.getOrThrow(metadata!.headerLines).find(
-    ([key]) => key.toLowerCase() === name.toLowerCase(),
-  )?.[1];
-
 const isJsonParseFailure = (cause: unknown) =>
   HttpClientError.isHttpClientError(cause) &&
   cause.reason._tag === "DecodeError" &&
   cause.reason.cause instanceof SyntaxError;
+
+/** Request lines without Effect's per-execution tracing headers. */
+const untraced = (recorded: Recorded | undefined) =>
+  recorded?.lines.filter(
+    ([name]) => !["b3", "traceparent"].includes(name.toLowerCase()),
+  );
 
 const order = (
   customerId: number,
@@ -137,7 +202,7 @@ describe("business API: envelopes", () => {
       "[ERR-1d] decodes a found customer and a not-found 200 into one union",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const found = yield* api.getCustomer.execute({ path: 1001 });
           const missing = yield* api.getCustomer.execute({ path: 999 });
           expect(found).toEqual({
@@ -161,36 +226,31 @@ describe("business API: envelopes", () => {
           expect(required).toMatchObject({
             message: "Customer 999 was not found",
           });
-          expect(
-            server.ledger.map(
-              (request) => `${request.method} ${request.target}`,
-            ),
-          ).toEqual([
+          const ledger = yield* backend.ledger;
+          expect(ledger.map(requestLine)).toEqual([
             "GET /v1/customers/1001",
             "GET /v1/customers/999",
             "GET /v1/customers/999",
           ]);
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
-    // lane: node-only — reads X-Error-Code and X-Error-Message, which a cross-origin browser hides
-    // because the backend exposes no headers.
     it.live(
       "[ERR-2] selects the header error rule ahead of the plain 200 rule",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const record = recording();
           const place = Operation.make(
             api.requests.placeOrder,
             api.responses.placeOrder,
-            {
-              transformClient: record.transformClient,
-            },
+            { transformClient: record.transformClient },
           );
           const held = yield* place.execute({ body: order(1002, "PO-HOLD") });
           const accepted = yield* place.execute({ body: order(1001, "PO-1") });
-          const duplicate = yield* place.execute({ body: order(1001, "PO-1") });
+          const duplicate = yield* place.execute({
+            body: order(1001, "PO-1"),
+          });
           expect(held).toEqual({
             _tag: "Rejected",
             code: "CREDIT_HOLD",
@@ -214,19 +274,19 @@ describe("business API: envelopes", () => {
           expect(record.seen[0]?.headers["content-type"]).toBe(
             "application/json;charset=UTF-8",
           );
-          expect(server.ledger).toHaveLength(3);
-          expect(JSON.parse(body(server.ledger[0]))).toEqual(
+          const ledger = yield* backend.ledger;
+          expect(ledger).toHaveLength(3);
+          expect(JSON.parse(bodyText(ledger[0]!))).toEqual(
             order(1002, "PO-HOLD"),
           );
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
-    // lane: node-only — the error code travels in X-Error-Code, which a cross-origin browser hides.
     it.live(
       "[ERR-2] declared after the plain 200 rule, the header rule is unreachable and the decode failure is final",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const misordered = Operation.make(
             api.requests.placeOrder,
             Envelopes.orderAccepted.pipe(
@@ -242,22 +302,20 @@ describe("business API: envelopes", () => {
           expect(error.metadata.headers["x-error-code"]).toBe("CREDIT_HOLD");
           // The plain rule read the exception text as JSON and failed; nothing fell through.
           expect(isJsonParseFailure(error.cause)).toBe(true);
-          expect(server.ledger).toHaveLength(1);
-        }).pipe(Effect.provide(fetchClient)),
+          expect(yield* backend.ledger).toHaveLength(1);
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[ERR-3] discriminates per-item statuses inside an always-200 batch envelope",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const record = recording();
           const submit = Operation.make(
             api.requests.submitBatch,
             api.responses.submitBatch,
-            {
-              transformClient: record.transformClient,
-            },
+            { transformClient: record.transformClient },
           );
           const batch = yield* submit.execute({
             body: {
@@ -321,30 +379,32 @@ describe("business API: envelopes", () => {
           expect(record.seen.map((metadata) => metadata.status)).toEqual([
             200, 200,
           ]);
-          expect(
-            server.ledger.map(
-              (request) => `${request.method} ${request.target}`,
-            ),
-          ).toEqual(["POST /v1/orders/batch", "POST /v1/orders/batch"]);
-          expect(JSON.parse(body(server.ledger[1]))).toEqual({
+          const ledger = yield* backend.ledger;
+          expect(ledger.map(requestLine)).toEqual([
+            "POST /v1/orders/batch",
+            "POST /v1/orders/batch",
+          ]);
+          expect(JSON.parse(bodyText(ledger[1]!))).toEqual({
             orders: [order(1001, "PO-A")],
           });
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it("[ERR-3] refuses a batch item whose status contradicts its payload", () => {
       const decode = Schema.decodeUnknownResult(Envelopes.BatchItem);
-      const order = { orderId: "SO-1", status: "ACCEPTED", totalCents: 1 };
+      const accepted = { orderId: "SO-1", status: "ACCEPTED", totalCents: 1 };
       const error = { code: "CREDIT_HOLD", message: "held" };
-      expect(decode({ index: 0, status: 201, order })._tag).toBe("Success");
+      expect(decode({ index: 0, status: 201, order: accepted })._tag).toBe(
+        "Success",
+      );
       expect(decode({ index: 0, status: 403, error })._tag).toBe("Success");
       expect(decode({ index: 0, status: 201, error })._tag).toBe("Failure");
-      expect(decode({ index: 0, status: 200, order })._tag).toBe("Failure");
+      expect(decode({ index: 0, status: 200, order: accepted })._tag).toBe(
+        "Failure",
+      );
       expect(decode({ index: 0, status: 302, error })._tag).toBe("Failure");
     });
 
-    // lane: node-only — the selected rule depends on X-Error-Code, which a cross-origin browser
-    // hides.
     it.live(
       "[ERR-7] selects the header rule from metadata alone and never reads its body",
       () =>
@@ -384,7 +444,7 @@ describe("business API: envelopes", () => {
             "body bytes",
           ]);
           expect(plainFirst).toContain("body end");
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
@@ -417,7 +477,7 @@ describe("business API: envelopes", () => {
           expect(unmatched.slice(0, 2)).toEqual(["response 200", "select 200"]);
           expect(firstBodyRead(unmatched)).toBe(2);
           expect(unmatched.at(-1)).toBe("body end");
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it("[ERR-7] rules see transport metadata only; the type offers no body", () => {
@@ -433,13 +493,11 @@ describe("business API: envelopes", () => {
   });
 
   describe("status codes and envelopes", () => {
-    // lane: node-only — reads Location, which a cross-origin browser hides because the backend
-    // exposes no headers.
     it.live(
       "[STAT-2] resolves the relative Location of a 200 creation and follows it",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const record = recording();
           const created = yield* Operation.make(
             api.requests.createCustomer,
@@ -454,7 +512,7 @@ describe("business API: envelopes", () => {
           );
           // Resolved against the request URL, not appended to the base URL.
           expect(created.location.href).toBe(
-            `${server.origin}/v1/customers/1006`,
+            `${backend.origin}/v1/customers/1006`,
           );
           const followed = yield* api.getCustomerAt.execute({
             path: created.location,
@@ -468,100 +526,57 @@ describe("business API: envelopes", () => {
               archived: false,
             },
           });
-          expect(
-            server.ledger.map(
-              (request) => `${request.method} ${request.target}`,
-            ),
-          ).toEqual(["POST /v1/customers", "GET /v1/customers/1006"]);
-          expect(body(server.ledger[0])).toBe(
+          const ledger = yield* backend.ledger;
+          expect(ledger.map(requestLine)).toEqual([
+            "POST /v1/customers",
+            "GET /v1/customers/1006",
+          ]);
+          expect(bodyText(ledger[0]!)).toBe(
             `{"name":"Litware Inc","tier":"SILVER"}`,
           );
-          expect(header(server.ledger[0]!.lines, "content-type")).toBe(
+          expect(header(ledger[0]!.lines, "content-type")).toBe(
             "application/json",
           );
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
-    it.live(
-      "[STAT-3] declares the 204 honestly empty; declaring JSON exposes the debug body as fiction",
-      () =>
-        Effect.gen(function* () {
-          const { server, api } = yield* start;
-          const archived = yield* api.archiveCustomer.execute({ path: 1004 });
-          expect(archived).toEqual({ _tag: "Archived" });
-          const reread = yield* api.requireCustomer.execute({ path: 1004 });
-          expect(reread.archived).toBe(true);
-          // The runbook's "archive receipt" would need a JSON body; there is none to decode.
-          const asDocumented = Operation.make(
-            api.requests.archiveCustomer,
-            Response.status(204, Body.json),
-          );
-          const error = yield* asDocumented
-            .execute({ path: 1005 })
-            .pipe(Effect.flip);
-          expect(error._tag).toBe("DecodeError");
-          if (error._tag !== "DecodeError") return;
-          expect(error.metadata.status).toBe(204);
-          expect(isJsonParseFailure(error.cause)).toBe(true);
-          expect(
-            server.ledger.map(
-              (request) => `${request.method} ${request.target}`,
-            ),
-          ).toEqual([
-            "POST /v1/customers/1004/archive",
-            "GET /v1/customers/1004",
-            "POST /v1/customers/1005/archive",
-          ]);
-          expect(server.ledger[0]?.body).toHaveLength(0);
-        }).pipe(Effect.provide(fetchClient)),
-    );
-
-    // lane: node-only — opens a raw TCP socket to observe the bytes the Node server sends.
-    it.live(
-      "[STAT-3] the fixture's 204 carries no body bytes on the wire",
-      () =>
-        Effect.gen(function* () {
-          const { server } = yield* start;
-          const { connect } = yield* Effect.promise(() => import("node:net"));
-          const { hostname, port } = new URL(server.origin);
-          const raw = yield* Effect.promise(
-            () =>
-              new Promise<string>((resolve, reject) => {
-                const chunks: Array<Uint8Array> = [];
-                const socket = connect(Number(port), hostname, () =>
-                  socket.write(
-                    `POST /v1/customers/1003/archive HTTP/1.1\r\nHost: ${hostname}:${port}\r\n` +
-                      "Content-Length: 0\r\nConnection: close\r\n\r\n",
-                  ),
-                );
-                socket.on("data", (chunk: Uint8Array) => chunks.push(chunk));
-                socket.on("end", () =>
-                  resolve(
-                    chunks
-                      .map((chunk) => new TextDecoder("latin1").decode(chunk))
-                      .join(""),
-                  ),
-                );
-                socket.on("error", reject);
-              }),
-          );
-          const [head, after] = raw.split("\r\n\r\n");
-          expect(head?.split("\r\n")[0]).toBe("HTTP/1.1 204 No Content");
-          expect(head).toContain(
-            "Content-Type: application/json;charset=UTF-8",
-          );
-          expect(head).not.toMatch(/content-length|transfer-encoding/i);
-          // The handler wrote a debug body; Node dropped it.
-          expect(after).toBe("");
-          expect(server.ledger).toHaveLength(1);
-        }),
-    );
+    for (const [provider, client] of lane.clients)
+      it.live(
+        `[STAT-3] declares the 204 honestly empty; declaring JSON exposes the debug body as fiction (${provider})`,
+        () =>
+          Effect.gen(function* () {
+            const { backend, api } = yield* start;
+            const archived = yield* api.archiveCustomer.execute({ path: 1004 });
+            expect(archived).toEqual({ _tag: "Archived" });
+            const reread = yield* api.requireCustomer.execute({ path: 1004 });
+            expect(reread.archived).toBe(true);
+            // The runbook's "archive receipt" would need a JSON body; there is none to decode.
+            const asDocumented = Operation.make(
+              api.requests.archiveCustomer,
+              Response.status(204, Body.json),
+            );
+            const error = yield* asDocumented
+              .execute({ path: 1005 })
+              .pipe(Effect.flip);
+            expect(error._tag).toBe("DecodeError");
+            if (error._tag !== "DecodeError") return;
+            expect(error.metadata.status).toBe(204);
+            expect(isJsonParseFailure(error.cause)).toBe(true);
+            const ledger = yield* backend.ledger;
+            expect(ledger.map(requestLine)).toEqual([
+              "POST /v1/customers/1004/archive",
+              "GET /v1/customers/1004",
+              "POST /v1/customers/1005/archive",
+            ]);
+            expect(ledger[0]?.body).toHaveLength(0);
+          }).pipe(Effect.provide(client)),
+      );
 
     it.live(
       "[STAT-4] an explicit empty declaration accepts a 200 JSON response of zero bytes",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const record = recording();
           const saved = yield* Operation.make(
             api.requests.savePreferences,
@@ -596,33 +611,28 @@ describe("business API: envelopes", () => {
           expect(error._tag).toBe("DecodeError");
           if (error._tag === "DecodeError")
             expect(isJsonParseFailure(error.cause)).toBe(true);
-          expect(
-            server.ledger.map(
-              (request) => `${request.method} ${request.target}`,
-            ),
-          ).toEqual([
+          const ledger = yield* backend.ledger;
+          expect(ledger.map(requestLine)).toEqual([
             "PUT /v1/customers/1001/preferences",
             "GET /v1/customers/1001/preferences",
             "PUT /v1/customers/1001/preferences",
           ]);
-          expect(body(server.ledger[0])).toBe(
+          expect(bodyText(ledger[0]!)).toBe(
             `{"newsletter":true,"invoiceFormat":"PDF"}`,
           );
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
-    // lane: node-only — reads Location and Retry-After, which a cross-origin browser hides because
-    // the backend exposes no headers.
     it.live(
       "[STAT-5] polls a 202 export with the same cold request until it is done",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const accepted = yield* api.startExport.execute({
             body: { report: "aging" },
           });
           expect(accepted.monitor.href).toBe(
-            `${server.origin}/v1/exports/7001`,
+            `${backend.origin}/v1/exports/7001`,
           );
           expect(Duration.toMillis(accepted.retryAfter)).toBe(1000);
           // The server asks for whole seconds; the test waits a tenth of each to stay short.
@@ -637,59 +647,50 @@ describe("business API: envelopes", () => {
             },
           });
           expect(Date.now() - startedAt).toBeGreaterThanOrEqual(290);
-          expect(done.polls).toBe(3);
-          expect(done.rows).toEqual([
-            { customerId: 1001, overdue30: 0 },
-            { customerId: 1002, overdue30: 98000 },
-            { customerId: 1003, overdue30: 1500 },
-          ]);
+          expect(done.polls).toBe(fixture.pendingPolls + 1);
+          expect(done.rows).toEqual(
+            fixture.aging.map(({ customerId, overdue30 }) => ({
+              customerId,
+              overdue30,
+            })),
+          );
           // Every wait honoured the Retry-After of the response before it.
           expect(requested).toEqual([1000, 1000, 1000]);
-          const polls = server.ledger.slice(1);
-          expect(server.ledger[0]?.target).toBe("/v1/exports");
-          expect(
-            polls.map((request) => `${request.method} ${request.target}`),
-          ).toEqual([
+          const ledger = yield* backend.ledger;
+          const polls = ledger.slice(1);
+          expect(ledger[0]?.target).toBe("/v1/exports");
+          expect(polls.map(requestLine)).toEqual([
             "GET /v1/exports/7001",
             "GET /v1/exports/7001",
             "GET /v1/exports/7001",
           ]);
-          // The cold request is re-executed unchanged. Only Effect's tracing headers differ, because
-          // every poll is a new execution with its own span.
-          const untraced = (request: Received | undefined) =>
-            request?.lines.filter(
-              ([name]) => !["b3", "traceparent"].includes(name.toLowerCase()),
-            );
-          expect(polls[0]?.lines.map(([name]) => name)).toContain(
-            "traceparent",
-          );
-          expect(untraced(polls[1])).toEqual(untraced(polls[0]));
-          expect(untraced(polls[2])).toEqual(untraced(polls[0]));
+          // The cold request is re-executed unchanged. Only Effect's tracing headers differ,
+          // because every poll is a new execution with its own span.
+          expect(header(polls[0]!.lines, "traceparent")).toBeDefined();
           expect(header(polls[1]!.lines, "traceparent")).not.toBe(
             header(polls[0]!.lines, "traceparent"),
           );
-        }).pipe(Effect.provide(fetchClient)),
+          expect(untraced(polls[1])).toEqual(untraced(polls[0]));
+          expect(untraced(polls[2])).toEqual(untraced(polls[0]));
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
-    // lane: node-only — reads Location and Retry-After, which a cross-origin browser hides.
     it.live(
       "[STAT-5] a retry policy does not poll: a pending 202 is a success",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const accepted = yield* api.startExport.execute({
             body: { report: "aging" },
           });
           const retried = Operation.make(
             api.requests.exportStatus,
             api.responses.exportStatus,
-            {
-              policy: Policy.make(Schedule.recurs(5)),
-            },
+            { policy: Policy.make(Schedule.recurs(5)) },
           );
           const status = yield* retried.execute({ path: accepted.monitor });
           expect(status).toMatchObject({ _tag: "Pending", state: "QUEUED" });
-          expect(server.ledger.map((request) => request.method)).toEqual([
+          expect((yield* backend.ledger).map((entry) => entry.method)).toEqual([
             "POST",
             "GET",
           ]);
@@ -702,19 +703,19 @@ describe("business API: envelopes", () => {
             .pipe(Effect.flip);
           expect(exhausted).toBeInstanceOf(Envelopes.ExportStillPending);
           expect(exhausted).toMatchObject({ polls: 1, state: "RUNNING" });
-          expect(server.ledger.map((request) => request.method)).toEqual([
+          expect((yield* backend.ledger).map((entry) => entry.method)).toEqual([
             "POST",
             "GET",
             "GET",
           ]);
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[STAT-13] re-reads after PATCH instead of trusting the pre-write state it returns",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const updated = yield* api.updateCustomer.execute({
             path: 1003,
             body: { name: "Fabrikam Fibers Ltd", tier: "GOLD" },
@@ -746,64 +747,59 @@ describe("business API: envelopes", () => {
             customer: { tier: "GOLD" },
           });
           expect(actual.tier).toBe("PLATINUM");
-          expect(
-            server.ledger.map(
-              (request) => `${request.method} ${request.target}`,
-            ),
-          ).toEqual([
+          const ledger = yield* backend.ledger;
+          expect(ledger.map(requestLine)).toEqual([
             "PATCH /v1/customers/1003",
             "GET /v1/customers/1003",
             "PATCH /v1/customers/1003",
             "GET /v1/customers/1003",
           ]);
-          expect(body(server.ledger[0])).toBe(
+          expect(bodyText(ledger[0]!)).toBe(
             `{"name":"Fabrikam Fibers Ltd","tier":"GOLD"}`,
           );
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
   });
 
   describe("headers", () => {
-    // lane: node-only — reads Link, which a cross-origin browser hides because the backend exposes
-    // no headers.
     it.live(
       "[HDR-2] walks Link pagination by converting zero-based offsets to one-based pages",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const seen: Array<number> = [];
-          const pages: Array<Envelopes.Customer["id"]> = [];
-          let page:
+          const ids: Array<number> = [];
+          let next:
             { readonly page: number; readonly perPage: number } | undefined = {
             page: 1,
             perPage: 2,
           };
-          while (page !== undefined) {
+          while (next !== undefined) {
             const current: { readonly page: number; readonly perPage: number } =
-              page;
+              next;
             const listed = yield* api.listCustomers.execute({ query: current });
             seen.push(current.page);
-            pages.push(...listed.customers.map((customer) => customer.id));
+            ids.push(...listed.customers.map((customer) => customer.id));
             expect(listed.links.first).toEqual({ page: 1, perPage: 2 });
             expect(listed.links.last).toEqual({ page: 3, perPage: 2 });
-            page = listed.links.next;
+            next = listed.links.next;
           }
           expect(seen).toEqual([1, 2, 3]);
-          expect(pages).toEqual([1001, 1002, 1003, 1004, 1005]);
-          expect(server.ledger.map((request) => request.target)).toEqual([
+          expect(ids).toEqual(fixture.customers.map((customer) => customer.id));
+          const ledger = yield* backend.ledger;
+          expect(ledger.map((entry) => entry.target)).toEqual([
             "/v1/customers?page=1&per_page=2",
             "/v1/customers?page=2&per_page=2",
             "/v1/customers?page=3&per_page=2",
           ]);
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
-    // lane: node-only — reads Link, which a cross-origin browser hides.
     it.live(
       "[HDR-2] following the Link target literally reads the first page again",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const record = recording();
           const first = yield* Operation.make(
             api.requests.listCustomers,
@@ -825,132 +821,93 @@ describe("business API: envelopes", () => {
                 Schema.Struct({ customers: Schema.Array(Envelopes.Customer) }),
               ),
             ),
-          ).execute({ path: new URL(next!.target, server.origin) });
+          ).execute({ path: new URL(next!.target, backend.origin) });
           expect(literal.customers).toEqual(first.customers);
-          expect(server.ledger[1]?.target).toBe(
-            "/v1/customers?offset=2&limit=2",
-          );
-        }).pipe(Effect.provide(fetchClient)),
+          const ledger = yield* backend.ledger;
+          expect(ledger[1]?.target).toBe("/v1/customers?offset=2&limit=2");
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
-    // lane: node-only — compares the original Location lines through linesLayer, and reads Location
-    // and X-Served-By, which a cross-origin browser hides.
-    it.live(
-      "[HDR-3] resolves either Location form, as each container really sends it",
-      () =>
-        Effect.gen(function* () {
-          const { server, api } = yield* start;
-          const record = recording();
-          const create = Operation.make(
-            api.requests.createCustomer,
-            api.responses.createCustomer,
-            {
-              transformClient: record.transformClient,
-            },
-          );
-          const first = yield* create.execute({
-            body: { name: "Adatum", tier: "STANDARD" },
-          });
-          const second = yield* create.execute({
-            body: { name: "Coho Winery", tier: "GOLD" },
-          });
-          expect(rawLine(record.seen[0], "location")).toBe(
-            "/v1/customers/1006",
-          );
-          expect(rawLine(record.seen[0], "x-served-by")).toBe("app-1");
-          expect(rawLine(record.seen[1], "location")).toBe(
-            `${server.origin}/v1/customers/1007`,
-          );
-          expect(rawLine(record.seen[1], "x-served-by")).toBe("app-legacy-2");
-          const locations = [first, second].map((outcome) =>
-            outcome._tag === "Created" ? outcome.location : undefined,
-          );
-          expect(locations.map((location) => location?.href)).toEqual([
-            `${server.origin}/v1/customers/1006`,
-            `${server.origin}/v1/customers/1007`,
-          ]);
-          for (const [index, location] of locations.entries()) {
-            const found = yield* api.getCustomerAt.execute({ path: location! });
-            expect(found).toMatchObject({
-              result: "OK",
-              customer: { name: index === 0 ? "Adatum" : "Coho Winery" },
-            });
-          }
-          expect(server.ledger.map((request) => path(request))).toEqual([
-            "/v1/customers",
-            "/v1/customers",
-            "/v1/customers/1006",
-            "/v1/customers/1007",
-          ]);
-        }).pipe(Effect.provide(linesLayer)),
-    );
-
-    // lane: node-only — reads Location and X-Served-By, which a cross-origin browser hides.
-    it.live(
-      "[HDR-3] Node's fetch passes either Location form through unresolved",
-      () =>
-        Effect.gen(function* () {
-          const { server, api } = yield* start;
-          const record = recording();
-          const create = Operation.make(
-            api.requests.createCustomer,
-            api.responses.createCustomer,
-            {
-              transformClient: record.transformClient,
-            },
-          );
-          const outcomes = [
-            yield* create.execute({
-              body: { name: "Adatum", tier: "STANDARD" },
-            }),
-            yield* create.execute({
-              body: { name: "Coho Winery", tier: "GOLD" },
-            }),
-          ];
-          expect(record.seen.map((metadata) => metadata.headerLines)).toEqual([
-            Option.none(),
-            Option.none(),
-          ]);
-          expect(
-            record.seen.map((metadata) => metadata.headers["location"]),
-          ).toEqual([
-            "/v1/customers/1006",
-            `${server.origin}/v1/customers/1007`,
-          ]);
-          expect(
-            outcomes.map((outcome) =>
-              outcome._tag === "Created" ? outcome.location.href : "",
-            ),
-          ).toEqual([
-            `${server.origin}/v1/customers/1006`,
-            `${server.origin}/v1/customers/1007`,
-          ]);
-        }).pipe(Effect.provide(fetchClient)),
-    );
+    for (const [provider, client] of lane.clients)
+      it.live(
+        `[HDR-3] resolves either Location form, as each container really sends it (${provider})`,
+        () =>
+          Effect.gen(function* () {
+            const { backend, api } = yield* start;
+            const record = recording();
+            const create = Operation.make(
+              api.requests.createCustomer,
+              api.responses.createCustomer,
+              { transformClient: record.transformClient },
+            );
+            const outcomes = [
+              yield* create.execute({
+                body: { name: "Adatum", tier: "STANDARD" },
+              }),
+              yield* create.execute({
+                body: { name: "Coho Winery", tier: "GOLD" },
+              }),
+            ];
+            // The balancer alternates containers: the Node one sends the handler's relative path,
+            // the legacy one absolutizes it from the request's Host header.
+            const sent = [
+              "/v1/customers/1006",
+              `${backend.origin}/v1/customers/1007`,
+            ];
+            expect(
+              record.seen.map((metadata) => metadata.headers["location"]),
+            ).toEqual(sent);
+            expect(
+              record.seen.map((metadata) => metadata.headers["x-served-by"]),
+            ).toEqual(["app-1", "app-legacy-2"]);
+            // Where the provider reports original lines, they agree: nothing rewrote Location.
+            for (const [index, metadata] of record.seen.entries())
+              Option.match(metadata.headerLines, {
+                onNone: () => expect(provider).not.toBe("lines"),
+                onSome: (lines) =>
+                  expect(
+                    lines.filter(([name]) => name.toLowerCase() === "location"),
+                  ).toEqual([["Location", sent[index]]]),
+              });
+            const locations = outcomes.map((outcome) =>
+              outcome._tag === "Created" ? outcome.location : undefined,
+            );
+            expect(locations.map((location) => location?.href)).toEqual([
+              `${backend.origin}/v1/customers/1006`,
+              `${backend.origin}/v1/customers/1007`,
+            ]);
+            const names: Array<string> = [];
+            for (const location of locations) {
+              const found = yield* api.getCustomerAt.execute({
+                path: location!,
+              });
+              if (found.result === "OK") names.push(found.customer.name);
+            }
+            expect(names).toEqual(["Adatum", "Coho Winery"]);
+            const ledger = yield* backend.ledger;
+            expect(ledger.map(pathOf)).toEqual([
+              "/v1/customers",
+              "/v1/customers",
+              "/v1/customers/1006",
+              "/v1/customers/1007",
+            ]);
+          }).pipe(Effect.provide(client)),
+      );
 
     it.live(
       "[HDR-5a] decodes JSON served as text/html, never dispatching on content type",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const record = recording();
           const regions = yield* Operation.make(
             api.requests.regions,
             api.responses.regions,
-            {
-              transformClient: record.transformClient,
-            },
+            { transformClient: record.transformClient },
           ).execute(undefined);
-          expect(regions.regions.map((region) => region.code)).toEqual([
-            "EU",
-            "APAC",
-            "LATAM",
-          ]);
+          expect(regions).toEqual({ regions: fixture.regions });
           expect(record.seen[0]?.headers["content-type"]).toBe(
             "text/html; charset=UTF-8",
-          );
-          expect(header(server.ledger[0]!.lines, "accept")).toBe(
-            "application/json",
           );
           // A rule that dispatched on the content type would never match this answer.
           const byContentType = Operation.make(
@@ -967,53 +924,50 @@ describe("business API: envelopes", () => {
             .execute(undefined)
             .pipe(Effect.flip);
           expect(error._tag).toBe("UnexpectedResponse");
-          expect(server.ledger).toHaveLength(2);
-        }).pipe(Effect.provide(fetchClient)),
+          const ledger = yield* backend.ledger;
+          expect(ledger).toHaveLength(2);
+          expect(header(ledger[0]!.lines, "accept")).toBe("application/json");
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live("[HDR-5b] decodes JSON served as text/json", () =>
       Effect.gen(function* () {
-        const { server, api } = yield* start;
+        const { backend, api } = yield* start;
         const record = recording();
         const currencies = yield* Operation.make(
           api.requests.currencies,
           api.responses.currencies,
           { transformClient: record.transformClient },
         ).execute(undefined);
-        expect(currencies.currencies).toContainEqual({
-          code: "JPY",
-          decimals: 0,
-        });
+        expect(currencies).toEqual({ currencies: fixture.currencies });
         expect(record.seen[0]?.headers["content-type"]).toBe(
           "text/json; charset=utf-8",
         );
-        expect(server.ledger.map((request) => request.target)).toEqual([
-          "/v1/currencies",
-        ]);
-      }).pipe(Effect.provide(fetchClient)),
+        const ledger = yield* backend.ledger;
+        expect(ledger.map((entry) => entry.target)).toEqual(["/v1/currencies"]);
+      }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[HDR-5c] decodes OData verbose JSON whatever its content-type parameters say",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const record = recording();
           const feed = yield* Operation.make(
             api.requests.products,
             api.responses.products,
-            {
-              transformClient: record.transformClient,
-            },
+            { transformClient: record.transformClient },
           ).execute(undefined);
-          expect(feed.d.results).toHaveLength(3);
+          expect(feed.d.results.map((product) => product.Name)).toEqual(
+            fixture.products.map((product) => product.name),
+          );
           expect(record.seen[0]?.headers["content-type"]).toBe(
             "application/json;odata=verbose;charset=utf-8",
           );
-          expect(header(server.ledger[0]!.lines, "accept")).toBe(
-            "application/json",
-          );
-        }).pipe(Effect.provide(fetchClient)),
+          const ledger = yield* backend.ledger;
+          expect(header(ledger[0]!.lines, "accept")).toBe("application/json");
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
   });
 
@@ -1022,7 +976,7 @@ describe("business API: envelopes", () => {
       "[PAY-1] strips the anti-hijacking prefix before parsing JSON",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const dashboard = yield* api.dashboard.execute(undefined);
           expect(dashboard).toEqual({ openOrders: 0, creditHolds: 1 });
           // Plain JSON parsing cannot read the guarded feed.
@@ -1034,22 +988,19 @@ describe("business API: envelopes", () => {
           expect(error._tag).toBe("DecodeError");
           if (error._tag === "DecodeError")
             expect(isJsonParseFailure(error.cause)).toBe(true);
-          expect(server.ledger).toHaveLength(2);
-        }).pipe(Effect.provide(fetchClient)),
+          expect(yield* backend.ledger).toHaveLength(2);
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[PAY-1] unwraps JSONP for the requested callback and refuses any other name",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const rates = yield* api.rates.execute({
             query: { callback: "showRates" },
           });
-          expect(rates).toEqual({
-            base: "USD",
-            rates: { EUR: "0.9150", GBP: "0.7890", JPY: "149.2000" },
-          });
+          expect(rates).toEqual(fixture.rates);
           // The CDN answers a second caller with the first caller's callback.
           const error = yield* api.rates
             .execute({ query: { callback: "otherWidget" } })
@@ -1060,39 +1011,40 @@ describe("business API: envelopes", () => {
           expect(String(error.cause)).toMatch(
             /calls showRates, not the requested otherWidget/,
           );
-          expect(server.ledger.map((request) => request.target)).toEqual([
+          const ledger = yield* backend.ledger;
+          expect(ledger.map((entry) => entry.target)).toEqual([
             "/v1/rates?callback=showRates",
             "/v1/rates?callback=otherWidget",
           ]);
-          expect(header(server.ledger[0]!.lines, "accept")).toBe(
+          expect(header(ledger[0]!.lines, "accept")).toBe(
             "application/javascript",
           );
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[PAY-1] refuses a JSONP callback that is not an identifier before dispatch",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const error = yield* api.rates
             .execute({ query: { callback: "alert(1)//" } })
             .pipe(Effect.flip);
           expect(Schema.isSchemaError(error)).toBe(true);
-          expect(server.ledger).toHaveLength(0);
-        }).pipe(Effect.provide(fetchClient)),
+          expect(yield* backend.ledger).toHaveLength(0);
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[PAY-1] reads an OData v2 envelope with metadata and a stringified count",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const feed = yield* api.products.execute(undefined);
-          expect(feed.d.__count).toBe(3);
+          expect(feed.d.__count).toBe(fixture.products.length);
           expect(feed.d.results[0]).toEqual({
             __metadata: {
-              uri: `${server.origin}/v1/odata/Products(1)`,
+              uri: `${backend.origin}/v1/odata/Products(1)`,
               type: "Business.Product",
             },
             ProductID: 1,
@@ -1100,29 +1052,26 @@ describe("business API: envelopes", () => {
             UnitPrice: "12.5000",
             Discontinued: false,
           });
+          expect(feed.d.results[2]?.Discontinued).toBe(true);
           // `$` is percent-encoded by the default query encoding; the facade decodes it.
-          expect(server.ledger[0]?.target).toBe(
+          const ledger = yield* backend.ledger;
+          expect(ledger[0]?.target).toBe(
             "/v1/odata/Products?%24inlinecount=allpages",
           );
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[PAY-1] maps a column grid through its verified header in any column order",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const documented = yield* api.agingReport.execute({ query: {} });
           const finance = yield* api.agingReport.execute({
             query: { layout: "finance" },
           });
-          expect(documented).toEqual(finance);
-          expect(documented[1]).toEqual({
-            customerId: 1002,
-            name: "Contoso Pharmaceuticals",
-            current: 4500,
-            overdue30: 98000,
-          });
+          expect(documented).toEqual(fixture.aging);
+          expect(finance).toEqual(fixture.aging);
           // A layout without a documented column is refused rather than half-read.
           const summary = yield* api.agingReport
             .execute({ query: { layout: "summary" } })
@@ -1161,46 +1110,46 @@ describe("business API: envelopes", () => {
           const trusted = yield* positional.execute({
             query: { layout: "finance" },
           });
-          expect(trusted[1]).toMatchObject({ current: 98000, overdue30: 4500 });
-          expect(server.ledger.map((request) => request.target)).toEqual([
+          expect(trusted[1]).toMatchObject({
+            current: fixture.aging[1].overdue30,
+            overdue30: fixture.aging[1].current,
+          });
+          const ledger = yield* backend.ledger;
+          expect(ledger.map((entry) => entry.target)).toEqual([
             "/v1/reports/aging",
             "/v1/reports/aging?layout=finance",
             "/v1/reports/aging?layout=summary",
             "/v1/reports/aging?layout=finance",
           ]);
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[PAY-1] normalizes a single result unwrapped from its array, and none",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const [many, one, none] = yield* Effect.forEach(
             ["EU", "APAC", "LATAM"],
             (region) => api.warehouses.execute({ query: { region } }),
           );
-          expect(many?.warehouses.map((warehouse) => warehouse.code)).toEqual([
-            "AMS1",
-            "FRA2",
-          ]);
-          expect(one?.warehouses).toEqual([
-            { code: "SIN1", city: "Singapore" },
-          ]);
+          expect(many?.warehouses).toEqual(fixture.warehouses.EU);
+          expect(one?.warehouses).toEqual(fixture.warehouses.APAC);
           expect(none?.warehouses).toEqual([]);
-          expect(server.ledger.map((request) => request.target)).toEqual([
+          const ledger = yield* backend.ledger;
+          expect(ledger.map((entry) => entry.target)).toEqual([
             "/v1/warehouses?region=EU",
             "/v1/warehouses?region=APAC",
             "/v1/warehouses?region=LATAM",
           ]);
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[PAY-1] sends a tier as a name and reads it back from an ordinal",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const updated = yield* api.updateCustomer.execute({
             path: 1004,
             body: { tier: "PLATINUM" },
@@ -1214,23 +1163,22 @@ describe("business API: envelopes", () => {
             Response.status(200, Body.json),
           ).execute({ path: 1004 });
           expect(untyped).toMatchObject({ customer: { tier: 3 } });
-          expect(body(server.ledger[0])).toBe(`{"tier":"PLATINUM"}`);
-        }).pipe(Effect.provide(fetchClient)),
+          const ledger = yield* backend.ledger;
+          expect(bodyText(ledger[0]!)).toBe(`{"tier":"PLATINUM"}`);
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[PAY-2] parses 64-bit ledger ids losslessly and fetches the right row by id",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const ledger = yield* api.ledger.execute({
-            query: { account: "4000" },
+            query: { account: fixture.ledger.account },
           });
-          expect(ledger.entries.map((entry) => entry.id)).toEqual([
-            9007199254740992n,
-            9007199254740993n,
-            9007199254740995n,
-          ]);
+          expect(ledger.entries.map((entry) => entry.id)).toEqual(
+            fixture.ledger.entries.map((entry) => BigInt(entry.id)),
+          );
           const refund = yield* api.ledgerEntry.execute({
             path: ledger.entries[1]!.id,
           });
@@ -1239,18 +1187,19 @@ describe("business API: envelopes", () => {
             amountCents: -2500,
             memo: "Refund RMA-77",
           });
-          expect(server.ledger.map((request) => request.target)).toEqual([
+          const received = yield* backend.ledger;
+          expect(received.map((entry) => entry.target)).toEqual([
             "/v1/ledger?account=4000",
             "/v1/ledger/9007199254740993",
           ]);
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[PAY-2] the platform JSON parser rounds an id into the previous row's (lossy control)",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const lossy = Operation.make(
             api.requests.ledger,
             Response.status(
@@ -1265,7 +1214,7 @@ describe("business API: envelopes", () => {
             ),
           );
           const { entries } = yield* lossy.execute({
-            query: { account: "4000" },
+            query: { account: fixture.ledger.account },
           });
           expect(entries[1]?.id).toBe(entries[0]?.id);
           // Following the rounded id fetches a different entry without any error.
@@ -1275,7 +1224,7 @@ describe("business API: envelopes", () => {
                 Schema.Number,
                 (id, encode) => `ledger/${encode(String(id))}`,
               ),
-              Request.baseUrl(`${server.origin}/v1`),
+              Request.baseUrl(`${backend.origin}/v1`),
             ),
             Response.status(200, Body.json),
           );
@@ -1287,17 +1236,18 @@ describe("business API: envelopes", () => {
             Response.status(200, Body.jsonSchema(Envelopes.Ledger)),
           );
           const refused = yield* guarded
-            .execute({ query: { account: "4000" } })
+            .execute({ query: { account: fixture.ledger.account } })
             .pipe(Effect.flip);
           expect(refused._tag).toBe("DecodeError");
           if (refused._tag === "DecodeError")
             expect(Schema.isSchemaError(refused.cause)).toBe(true);
-          expect(server.ledger.map((request) => request.target)).toEqual([
+          const ledger = yield* backend.ledger;
+          expect(ledger.map((entry) => entry.target)).toEqual([
             "/v1/ledger?account=4000",
             "/v1/ledger/9007199254740992",
             "/v1/ledger?account=4000",
           ]);
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
   });
 
@@ -1306,7 +1256,7 @@ describe("business API: envelopes", () => {
       "[APP-4] drains an unmodelled firewall page and fails with UnexpectedResponse",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const events: Array<string> = [];
           const error = yield* Operation.make(
             api.requests.listCustomers,
@@ -1327,17 +1277,18 @@ describe("business API: envelopes", () => {
           expect(events.slice(0, 2)).toEqual(["response 403", "select 403"]);
           expect(events.at(-1)).toBe("body end");
           expect(Object.keys(error)).not.toContain("body");
-          expect(server.ledger[0]?.target).toBe(
+          const ledger = yield* backend.ledger;
+          expect(ledger[0]?.target).toBe(
             "/v1/customers?page=1&per_page=2&name=R%26D%20%3CLabs%3E",
           );
-        }).pipe(Effect.provide(fetchClient)),
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[APP-4] an explicit fallback reads an unmodelled body as text inside the operation",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const withText = Operation.make(
             api.requests.listCustomers,
             api.responses.listCustomers.pipe(
@@ -1365,13 +1316,13 @@ describe("business API: envelopes", () => {
             "customers" in listed &&
               listed.customers.map((customer) => customer.id),
           ).toEqual([1005]);
-          expect(server.ledger).toHaveLength(2);
-        }).pipe(Effect.provide(fetchClient)),
+          expect(yield* backend.ledger).toHaveLength(2);
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live("[APP-4] an explicit fallback can discard an unmodelled body", () =>
       Effect.gen(function* () {
-        const { server, api } = yield* start;
+        const { backend, api } = yield* start;
         const discarding = Operation.make(
           api.requests.listCustomers,
           api.responses.listCustomers.pipe(
@@ -1382,13 +1333,13 @@ describe("business API: envelopes", () => {
           query: { page: 1, perPage: 2, name: "<b>bold</b>" },
         });
         expect(outcome).toEqual({ _tag: "Discarded", status: 403 });
-        expect(server.ledger).toHaveLength(1);
-      }).pipe(Effect.provide(fetchClient)),
+        expect(yield* backend.ledger).toHaveLength(1);
+      }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live("[APP-5] refuses an empty customer name before any network", () =>
       Effect.gen(function* () {
-        const { server, api } = yield* start;
+        const { backend, api } = yield* start;
         const error = yield* api.createCustomer
           .execute({ body: { name: "", tier: "STANDARD" } })
           .pipe(Effect.flip);
@@ -1397,15 +1348,15 @@ describe("business API: envelopes", () => {
           .execute({ path: 1001, body: { name: "" } })
           .pipe(Effect.flip);
         expect(Schema.isSchemaError(patched)).toBe(true);
-        expect(server.ledger).toHaveLength(0);
-      }).pipe(Effect.provide(fetchClient)),
+        expect(yield* backend.ledger).toHaveLength(0);
+      }).pipe(Effect.provide(lane.fetchClient)),
     );
 
     it.live(
       "[APP-5] the server refuses a blank name that the client accepted",
       () =>
         Effect.gen(function* () {
-          const { server, api } = yield* start;
+          const { backend, api } = yield* start;
           const created = yield* api.createCustomer.execute({
             body: { name: "   ", tier: "STANDARD" },
           });
@@ -1426,19 +1377,14 @@ describe("business API: envelopes", () => {
           // Both reached the server; nothing changed.
           const unchanged = yield* api.requireCustomer.execute({ path: 1001 });
           expect(unchanged.name).toBe("Northwind Traders");
-          expect(
-            server.ledger.map(
-              (request) => `${request.method} ${request.target}`,
-            ),
-          ).toEqual([
+          const ledger = yield* backend.ledger;
+          expect(ledger.map(requestLine)).toEqual([
             "POST /v1/customers",
             "PATCH /v1/customers/1001",
             "GET /v1/customers/1001",
           ]);
-          expect(body(server.ledger[0])).toBe(
-            `{"name":"   ","tier":"STANDARD"}`,
-          );
-        }).pipe(Effect.provide(fetchClient)),
+          expect(bodyText(ledger[0]!)).toBe(`{"name":"   ","tier":"STANDARD"}`);
+        }).pipe(Effect.provide(lane.fetchClient)),
     );
   });
 });
