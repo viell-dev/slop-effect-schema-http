@@ -31,6 +31,9 @@
     "packed:test": "vitest run --mode packed --reporter=default --reporter=junit --outputFile.junit=artifacts/junit-packed.xml",
     "packed:catalogue": "node scripts/catalogue.mjs --results artifacts/junit-packed.xml",
     "packed:tsc": "tsc -p tsconfig.packed.json",
+    "app": "run-s app:test app:catalogue",
+    "app:test": "vitest run --mode app --reporter=default --reporter=junit --outputFile.junit=artifacts/junit-app.xml",
+    "app:catalogue": "node scripts/catalogue.mjs --results artifacts/junit-app.xml",
     "test:watch": "vitest",
     "format": "prettier --write ."
   },
@@ -44,6 +47,7 @@
     "playwright": "1.64.1",
     "prettier": "^3.9.10",
     "typescript": "^6.0.3",
+    "vite": "^8.3.5",
     "vitest": "^5.0.5"
   }
 }

@@ -7,6 +7,11 @@
 // - `node scripts/catalogue.mjs --results <junit.xml>...` (in `npm test` and CI, after the lanes)
 //   reads the JUnit reports of the runs instead. Each report needs at least one passed test, and an
 //   entry marked "tested" needs a passed, not skipped, test carrying its ID in at least one lane.
+//
+// An entry whose tests run only in a dedicated lane names it, as `Lane: app.` does for the tests of
+// the built single-page app, which only `npm run app` runs. A results check asks for such an entry
+// only when it reads that lane's report, `junit-<lane>.xml`, and for every other entry only in its
+// other reports, so each run is checked for what it ran.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,19 +19,30 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const catalogue = readFileSync(join(root, "CATALOGUE.md"), "utf8");
 const statuses = new Set(["pending", "tested", "limit", "defect"]);
+const dedicatedLanes = new Set(["app"]);
+/** A report's lane, from its name: `artifacts/junit-node.xml` is the node lane's. */
+const laneOfReport = (report) =>
+  basename(report, ".xml").replace(/^junit-/, "");
 
 const entries = [...catalogue.matchAll(/^- \*\*([A-Z]+-\d+[a-z]?)\*\*/gm)];
 const problems = [];
 const tally = {};
 const tested = [];
+/** The dedicated lane of each entry that names one. */
+const laneOf = new Map();
 entries.forEach((match, index) => {
   const id = match[1];
   const end = entries[index + 1]?.index ?? catalogue.length;
-  const status = /Status:\s+(\w+)/.exec(catalogue.slice(match.index, end))?.[1];
+  const text = catalogue.slice(match.index, end);
+  const status = /Status:\s+(\w+)/.exec(text)?.[1];
   if (status === undefined || !statuses.has(status))
     problems.push(`${id}: missing or unknown status (${status})`);
   else tally[status] = (tally[status] ?? 0) + 1;
   if (status === "tested") tested.push(id);
+  const lane = /\bLane:\s+(\w+)/.exec(text)?.[1];
+  if (lane === undefined) return;
+  if (dedicatedLanes.has(lane)) laneOf.set(id, lane);
+  else problems.push(`${id}: unknown lane (${lane})`);
 });
 
 const ids = entries.map((match) => match[1]);
@@ -75,7 +91,7 @@ if (results < 0) {
   const passedIn = new Map(tested.map((id) => [id, []]));
   const lanes = [];
   for (const report of reports) {
-    const lane = basename(report, ".xml").replace(/^junit-/, "");
+    const lane = laneOfReport(report);
     if (!existsSync(report)) {
       problems.push(`${report}: no such JUnit report`);
       continue;
@@ -102,17 +118,32 @@ if (results < 0) {
     );
     if (passed === 0) problems.push(`${report}: no passed test in this lane`);
   }
-  const both = [...passedIn.values()].filter(
-    (found) => found.length === reports.length,
-  ).length;
-  console.log(
-    `results: ${lanes.join("; ")}; ${both} of ${tested.length} tested entries passed in every lane`,
-  );
-  for (const [id, found] of passedIn)
-    if (found.length === 0)
+  // The reports that run each entry's tests: its dedicated lane's, or every other lane's.
+  const reportsFor = (id) =>
+    reports.filter((report) => {
+      const lane = laneOfReport(report);
+      return laneOf.has(id)
+        ? lane === laneOf.get(id)
+        : !dedicatedLanes.has(lane);
+    });
+  let checked = 0;
+  let everywhere = 0;
+  for (const [id, found] of passedIn) {
+    const expected = reportsFor(id);
+    if (expected.length === 0) continue;
+    checked++;
+    const passed = expected.filter((report) =>
+      found.includes(laneOfReport(report)),
+    );
+    if (passed.length === expected.length) everywhere++;
+    if (passed.length === 0)
       problems.push(
-        `${id}: marked tested, but no passed test carries [${id}] in ${reports.join(", ")}`,
+        `${id}: marked tested, but no passed test carries [${id}] in ${expected.join(", ")}`,
       );
+  }
+  console.log(
+    `results: ${lanes.join("; ")}; ${everywhere} of the ${checked} tested entries these lanes run passed in every one of them (${tested.length - checked} belong to other lanes)`,
+  );
 }
 
 if (problems.length > 0) {

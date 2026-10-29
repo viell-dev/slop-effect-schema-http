@@ -70,10 +70,10 @@ const checkPackage = () => {
 
 /**
  * Vitest global setup: refuse to run against a missing or stale library, so a run never reports
- * results for a different library commit than the one it claims to test. The project named
- * "packed" imports the installed package; the others import the fetched source.
+ * results for a different library commit than the one it claims to test. The projects named
+ * "packed" and "app" import the installed package; the others import the fetched source.
  */
 export default function setup(project: TestProject): void {
-  if (project.name === "packed") checkPackage();
+  if (project.name === "packed" || project.name === "app") checkPackage();
   else checkSource();
 }

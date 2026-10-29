@@ -7,8 +7,9 @@ the scenarios. The library's own design, which these tests are judged against, i
 ## Layout
 
 - `src/harness/`: the loopback server and router used by backends, the client providers, the two
-  lanes behind `#lane` (`lane.node.ts`, `lane.browser.ts` with its control server), and the browser
-  lane's same-origin proxy (`proxy.ts`). Change these only when a scenario needs it, and keep them
+  lanes behind `#lane` (`lane.node.ts`, `lane.browser.ts` with its control server), the browser
+  lane's same-origin proxy (`proxy.ts`), and the app lane's setup, which builds the app and serves
+  it with that proxy (`app-setup.ts`). Change these only when a scenario needs it, and keep them
   backend-neutral.
 - `services/`: one page per hostile service, as its owners would publish it for integrators:
   endpoints, formats, value conventions, errors, and the history of each quirk (who introduced it,
@@ -22,6 +23,8 @@ the scenarios. The library's own design, which these tests are judged against, i
   format-specific support, and the suite must not need any.
 - `src/values/`: value-convention schemas shared across areas, with round-trip tests.
 - `src/scenarios/`: server-backed tests, one file per area.
+- `src/app/`: the single-page app of the app lane (EXT-7), consumer code in plain DOM.
+  `vite.app.config.ts` builds it into `.app/`, which Git ignores.
 
 ## Rules
 
@@ -56,11 +59,16 @@ the scenarios. The library's own design, which these tests are judged against, i
     Backends always run in Node. The browser lane reaches them through a control server, with CORS
     answered by the harness unless the test asks for the backend's own.
   - Options must be plain JSON.
-  - Consumer code (`src/clients`, `src/values`, `src/formats`, `src/scenarios`) uses only
-    Web-standard APIs: no `node:*`, `Buffer` or `process`.
+  - Consumer code (`src/clients`, `src/values`, `src/formats`, `src/scenarios`, `src/app`) uses
+    only Web-standard APIs: no `node:*`, `Buffer` or `process`.
   - A test that needs Node itself goes in a `*.node.test.ts` file, with a comment saying why. A test
     about the browser itself, such as a page's CORS or the same-origin proxy, goes in a
     `*.browser.test.ts` file, which runs only in the browser project, with a comment saying why.
+  - A test of the built app goes in a `*.app.test.ts` file, which runs only in the app lane: Node
+    drives the page with Playwright's Chromium and starts backends with `lane.backend`, and the
+    page reaches them through the proxy on its own origin. Its catalogue entry says `Lane: app`, so
+    only `npm run app` checks it. Synchronize on `backend.arrived(n)` and on page state, such as
+    Playwright's waits for an element or a status text, never on sleeps.
   - Do not extrapolate cookie, redirect or CORS behaviour between the lanes.
   - In the browser lane, a page reaches a backend without CORS through the same-origin proxy at
     `<page origin>/__proxy/<host>:<port>/<path>`. `src/clients/browser/proxy.ts` builds those URLs,
@@ -107,6 +115,7 @@ npm run lint                      # Oxlint
 npm test                          # each lane as its own run, then the catalogue against their results
 npm run library:pack              # build, pack and install the library at library-ref (packed lane)
 npm run packed                    # Node lane, catalogue and tsc against the installed package
+npm run app                       # build src/app against the installed package, drive it, catalogue
 ```
 
 `.npmrc` sets `ignore-scripts=true`; keep it, and review any dependency that needs an install script
@@ -124,5 +133,11 @@ without `skipLibCheck`. README's "The packed lane" says what it covers. Only the
 and type-checks `*.packed.test.ts` files, which may import package subpaths; keep every other
 import of the library to its root, which both lanes resolve. Keep `tsconfig.packed.json`'s aliases
 equal to `tsconfig.json`'s without the library's; `npm run check` enforces it.
+
+The app lane needs the installed package too; CI runs it after the packed lane. Its setup builds
+`src/app` on every run, so a test never drives a stale build, and the build fails unless the library
+comes from the installed package's `dist/`. Give the app no alias for the library, and change
+`src/app` only as an application would use the library. README's "The app lane" says what it
+covers.
 
 Deliver changes through pull requests into `hostile-servers-test`.
