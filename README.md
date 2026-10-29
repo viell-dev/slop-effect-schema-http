@@ -30,8 +30,14 @@ corepack pnpm library   # fetch the library source at the commit in library-ref
 corepack pnpm exec playwright install chromium   # once, for the browser lane
 corepack pnpm check
 corepack pnpm lint
-corepack pnpm test
+corepack pnpm test      # the Node lane, then the browser lane, then the catalogue against both
 ```
+
+`pnpm test` runs each lane as its own Vitest run (`pnpm test:node`, then `pnpm test:browser`), so a
+lane that finds no tests fails instead of passing behind the other. Each run writes a JUnit report
+to `artifacts/junit-node.xml` or `artifacts/junit-browser.xml`, and `pnpm test:catalogue` then reads
+both. To run part of the suite, use `corepack pnpm exec vitest run <file> --project node` (or
+`browser`).
 
 `library-ref` names the library commit under test. `pnpm library` writes that commit's `src` tree
 into `.library/` using Git alone, and the suite imports the library from that source. To test a
@@ -56,4 +62,6 @@ single-page app does through its own server. The client providers are:
   library's original header lines and reports observed response lines.
 
 [CATALOGUE.md](./CATALOGUE.md) maps each scenario to its tests or to a recorded limit. `pnpm check` verifies
-it: every entry has a status, and every entry marked tested has a test whose title carries its ID.
+it against the test sources: every entry has a status, and every entry marked tested has a test
+whose title carries its ID. `pnpm test` verifies it against the executed results: every entry marked
+tested has a passed, not skipped, test carrying its ID in at least one lane.
