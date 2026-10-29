@@ -466,8 +466,11 @@ one added header` (type-level: the report is unreachable until the challenge is 
 request's lines plus one`
   - Round trips (`src/clients/gateway/digest.test.ts`): `[AUTH-7] ChallengeFromHeader round-trips quotes and backslashes in realm, nonce and opaque`,
     `[AUTH-7] ChallengeFromHeader reads other parameter orders and spellings, and writes one form`
-    (parameter order, letter case, quoting style and an absent `algorithm` are not kept), and
-    `[AUTH-7] ChallengeFromHeader refuses malformed and unanswerable challenges`.
+    (parameter order, letter case, quoting style and an absent `algorithm` are not kept),
+    `[AUTH-7] ChallengeFromHeader refuses malformed and unanswerable challenges`, and
+    `[AUTH-7] ChallengeFromHeader reads RFC 7230 tokens unquoted and refuses any other unquoted value or separator`
+    (every token character reads unquoted; any other character in an unquoted value of any
+    parameter, and a separator other than a space or tab, is refused).
   - MD5 is a pure TypeScript implementation (`src/formats/md5.ts`, RFC 1321 vectors), because
     Web Crypto has none. Chromium returns the 401 to the page without an authentication prompt.
 - **ERR-1b** XML-RPC faults inside 200. Status: tested.

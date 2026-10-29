@@ -57,4 +57,53 @@ describe("Digest challenge", () => {
     ] as const)
       expect(() => decode(header)).toThrow(reason);
   });
+
+  it("[AUTH-7] ChallengeFromHeader reads RFC 7230 tokens unquoted and refuses any other unquoted value or separator", () => {
+    // Every token character reads unquoted, and the value is written back quoted.
+    const tchars = "!#$%&'*+-.^_`|~09AZaz";
+    const token = decode(`Digest realm="r", nonce=${tchars}`);
+    expect(token.nonce).toBe(tchars);
+    expect(encode(token)).toBe(
+      `Digest realm="r", nonce="${tchars}", algorithm=MD5`,
+    );
+    expect(decode(encode(token))).toEqual(token);
+    for (const value of [
+      "n\\x",
+      "n/x",
+      "n@x",
+      "n=x",
+      "n;x",
+      "n:x",
+      "n?x",
+      "n(x)",
+      "n[x]",
+      "n{x}",
+      "n x",
+      "ñ",
+    ])
+      expect(() => decode(`Digest realm="r", nonce=${value}`)).toThrow(
+        /malformed parameter/,
+      );
+    // Every parameter is held to the token syntax, not only the nonce.
+    for (const header of [
+      'Digest realm=r\\x, nonce="n"',
+      'Digest realm="r", nonce="n", opaque=o/p',
+      'Digest realm="r", nonce="n", algorithm=MD5@x',
+      'Digest realm="r", nonce="n", stale=true\\',
+    ])
+      expect(() => decode(header)).toThrow(/malformed parameter/);
+    // Only spaces and tabs separate: a no-break space is neither.
+    expect(() => decode('Digest realm="r", nonce="n"')).toThrow(
+      /malformed parameter/,
+    );
+    expect(() => decode('Digest realm="r", nonce="n"')).toThrow(
+      /not a Digest challenge/,
+    );
+    expect(decode('Digest  realm="r"\t,\tnonce = n')).toEqual({
+      realm: "r",
+      nonce: "n",
+      opaque: undefined,
+      stale: false,
+    });
+  });
 });
