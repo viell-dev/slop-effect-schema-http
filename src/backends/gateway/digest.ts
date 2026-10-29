@@ -63,6 +63,10 @@ export const digest = (options: DigestOptions) => {
   const challenge = (stale: boolean): Verdict => {
     const nonce = randomBytes(18).toString("base64");
     nonces.set(nonce, "fresh");
+    // The realm is written between quotes as configured, without escaping, as Apache 1.3's
+    // mod_digest wrote its AuthName. A realm containing `"` or `\` would therefore produce a
+    // malformed challenge. The fixtures use plain realms, so this limitation is not exercised; the
+    // nonce (base64) and opaque (hex) never contain either character.
     return {
       _tag: "Refused",
       reply: apachePage(

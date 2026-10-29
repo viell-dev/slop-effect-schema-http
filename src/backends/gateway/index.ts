@@ -100,7 +100,7 @@ export interface Options {
   readonly users?: Readonly<Record<string, string>>;
   /** An opaque SSO token accepted as a `session` value everywhere. */
   readonly token?: string;
-  /** The Digest realm of `/admin`. */
+  /** The Digest realm of `/admin`, written unescaped (`digest.ts`): keep it free of `"` and `\`. */
   readonly realm?: string;
   /** Digest users of `/admin`: name to password. */
   readonly auditors?: Readonly<Record<string, string>>;
