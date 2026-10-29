@@ -36,9 +36,10 @@ unrelated error. Fixing the defect fails both tests: delete the pin and remove t
 type-level limitation with `@ts-expect-error` and a linked issue. Do not weaken an assertion to make
 a test pass.
 
-The suite does not exercise Fetch, browsers, real servers, packaged installation, or
-transport-specific behavior such as header joining, redirects, cookies, and CORS. Server-backed
-integration tests are tracked in [issue
+The suite does not exercise Fetch, browsers, real servers, or packaged installation. It checks the
+library's own header-line normalization and Effect's parsing of synthetic responses, but not how a
+transport joins repeated request headers, follows redirects, stores and sends cookies, or enforces
+CORS. Server-backed integration tests are tracked in [issue
 #4](https://github.com/viell-dev/slop-effect-schema-http/issues/4). Runtime behavior outside these
 tests remains unverified.
 

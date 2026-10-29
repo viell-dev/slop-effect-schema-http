@@ -407,8 +407,7 @@ describe("Operation failures", () => {
     expectTypeOf<Effect.Success<Found>>().toEqualTypeOf<{
       readonly id: number;
     }>();
-    expectTypeOf<Missing>().toExtend<Effect.Error<Found>>();
-    expectTypeOf<Response.UnexpectedResponse>().toExtend<Effect.Error<Found>>();
+    expectTypeOf<Effect.Error<Found>>().toEqualTypeOf<Failure | Missing>();
   });
 });
 
@@ -1144,6 +1143,30 @@ describe("Operation combinators", () => {
   );
 });
 
+/** Dispatch through a fresh provider and report the exit with every resolved URL. */
+const dispatch = <I, E>(
+  operation: Operation.Operation<I, void, E, HttpClient.HttpClient>,
+  input: I,
+) =>
+  Effect.gen(function* () {
+    const server = synthetic(() => empty(204));
+    const exit = yield* operation
+      .execute(input)
+      .pipe(Effect.provide(server.layer), Effect.exit);
+    return { exit, hrefs: server.exchanges.map((exchange) => exchange.href) };
+  });
+
+const rejectedBeforeDispatch = (outcome: {
+  readonly exit: Exit.Exit<void, unknown>;
+  readonly hrefs: ReadonlyArray<string>;
+}) => {
+  expect(outcome.hrefs).toEqual([]);
+  expect(Exit.isFailure(outcome.exit)).toBe(true);
+  if (!Exit.isFailure(outcome.exit)) return;
+  expect(Cause.hasDies(outcome.exit.cause)).toBe(false);
+  expect(failureOf(outcome.exit)).toBeInstanceOf(Request.InvalidRequest);
+};
+
 describe("Operation URL composition", () => {
   const contract = Response.status(204, Body.empty);
 
@@ -1159,30 +1182,6 @@ describe("Operation URL composition", () => {
     Request.get("users").pipe(Request.baseUrl("https://api.test/v1?key=abc")),
     contract,
   );
-
-  /** Dispatch through a fresh provider and report the exit with every resolved URL. */
-  const dispatch = <I, E>(
-    operation: Operation.Operation<I, void, E, HttpClient.HttpClient>,
-    input: I,
-  ) =>
-    Effect.gen(function* () {
-      const server = synthetic(() => empty(204));
-      const exit = yield* operation
-        .execute(input)
-        .pipe(Effect.provide(server.layer), Effect.exit);
-      return { exit, hrefs: server.exchanges.map((exchange) => exchange.href) };
-    });
-
-  const rejectedBeforeDispatch = (outcome: {
-    readonly exit: Exit.Exit<void, unknown>;
-    readonly hrefs: ReadonlyArray<string>;
-  }) => {
-    expect(outcome.hrefs).toEqual([]);
-    expect(Exit.isFailure(outcome.exit)).toBe(true);
-    if (!Exit.isFailure(outcome.exit)) return;
-    expect(Cause.hasDies(outcome.exit.cause)).toBe(false);
-    expect(failureOf(outcome.exit)).toBeInstanceOf(Request.InvalidRequest);
-  };
 
   // Known defect: the client's URL parser resolves a `..` path value, so the request reaches a
   // parent resource. This pins the current outcome; remove it when the issue is fixed.
