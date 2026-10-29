@@ -46,7 +46,10 @@ refuses to start if `.library/` holds a different ref, and it prints the commit 
 
 The backends are `node:http` servers on ephemeral loopback ports, started for each test. They need
 no accounts, network access beyond loopback, secrets or private data, and they are black boxes:
-the consumer reaches them only over HTTP, and lint forbids imports between the two sides.
+the consumer reaches them only over HTTP. `pnpm check` runs `scripts/boundaries.mjs`, which
+resolves every import: a backend may import only Node built-ins, other backend modules and the
+harness's server and router, and consumer code may import neither a backend nor a Node-side
+harness module.
 
 Every scenario runs in two lanes. The Node lane runs the consumer in Node. The browser lane runs
 the same tests in headless Chromium through Vitest browser mode, to show that the library works in

@@ -12,6 +12,7 @@
     "check:tsc": "tsc --noEmit",
     "check:prettier": "prettier --check .",
     "check:catalogue": "node scripts/catalogue.mjs",
+    "check:boundaries": "node scripts/boundaries.mjs",
     "lint": "oxlint",
     "test": "run-s test:node test:browser test:catalogue",
     "test:node": "vitest run --project node --reporter=default --reporter=junit --outputFile.junit=artifacts/junit-node.xml",
