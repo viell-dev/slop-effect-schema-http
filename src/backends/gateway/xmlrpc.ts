@@ -9,6 +9,14 @@
  * `<boolean>` as `1` or `0`, `dateTime.iso8601` without separators in the date or a zone,
  * `00000000T00:00:00` for "no date", untyped `<value>` strings where the original handlers forgot
  * the type, and base64 wrapped by MIME::Base64 at 76 columns with a newline after every line.
+ *
+ * Both servers parsed with expat, so a call is read as expat reads it: line ends are normalized to
+ * LF first, and a character outside XML 1.0's `Char` production, raw or as a character reference,
+ * or an `&` that starts no reference, makes the document malformed. A malformed call is answered
+ * with the -32700 parse-error fault before the session or the method is looked at. The writer
+ * escapes text, writes a carriage return as `&#13;` so a reader's line-end handling keeps it, and
+ * never writes a character outside `Char`: a value that holds one, which only fixture data can
+ * supply, turns the reply into the -32603 internal-error fault.
  */
 import type { Reply } from "../../harness/server.js";
 import { units } from "./cgi.js";
@@ -19,29 +27,80 @@ interface Node {
   readonly children: ReadonlyArray<Node | string>;
 }
 
-const entity: Record<string, string> = {
-  lt: "<",
-  gt: ">",
-  amp: "&",
-  quot: '"',
-  apos: "'",
+const entity: ReadonlyMap<string, string> = new Map([
+  ["lt", "<"],
+  ["gt", ">"],
+  ["amp", "&"],
+  ["quot", '"'],
+  ["apos", "'"],
+]);
+
+/**
+ * XML 1.0's `Char` (https://www.w3.org/TR/xml/#charsets): tab, LF, CR, and U+0020 to U+10FFFF
+ * without the surrogates, U+FFFE and U+FFFF.
+ */
+const isXmlChar = (code: number): boolean =>
+  code === 0x09 ||
+  code === 0x0a ||
+  code === 0x0d ||
+  (code >= 0x20 && code <= 0xd7ff) ||
+  (code >= 0xe000 && code <= 0xfffd) ||
+  (code >= 0x10000 && code <= 0x10ffff);
+
+/** The offset and code point of the first character outside `Char`; a lone surrogate is one. */
+const firstNonChar = (
+  text: string,
+): { readonly offset: number; readonly code: number } | undefined => {
+  let offset = 0;
+  for (const character of text) {
+    const code = character.codePointAt(0)!;
+    if (!isXmlChar(code)) return { offset, code };
+    offset += character.length;
+  }
+  return undefined;
 };
 
-const unescape = (text: string): string =>
-  text.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (whole, name: string) => {
-    if (name[0] === "#")
-      return String.fromCodePoint(
-        name[1] === "x" || name[1] === "X"
-          ? Number.parseInt(name.slice(2), 16)
-          : Number(name.slice(1)),
-      );
-    const value = entity[name];
-    if (value === undefined) throw new Error(`unknown entity ${whole}`);
-    return value;
-  });
+/** A reference's replacement; throws when it is malformed or names a character XML forbids. */
+const reference = (name: string): string => {
+  // XML spells a hexadecimal reference with a lower-case x only.
+  const numeric = /^#(?:x([0-9A-Fa-f]+)|([0-9]+))$/.exec(name);
+  if (numeric !== null) {
+    const code =
+      numeric[1] === undefined
+        ? Number.parseInt(numeric[2]!, 10)
+        : Number.parseInt(numeric[1], 16);
+    if (!isXmlChar(code))
+      throw new Error(`&${name}; refers to a character XML does not allow`);
+    return String.fromCodePoint(code);
+  }
+  const value = entity.get(name);
+  if (value === undefined) throw new Error(`unknown entity &${name};`);
+  return value;
+};
+
+/** Replace the references in character data; an `&` must start one. */
+const unescape = (text: string): string => {
+  let result = "";
+  let index = 0;
+  for (;;) {
+    const start = text.indexOf("&", index);
+    if (start < 0) return result + text.slice(index);
+    const end = text.indexOf(";", start);
+    if (end < 0) throw new Error(`an '&' at ${start} starts no reference`);
+    result += text.slice(index, start) + reference(text.slice(start + 1, end));
+    index = end + 1;
+  }
+};
 
 /** Just enough XML to read a methodCall: elements, text, entities, a declaration and comments. */
-const parseXml = (source: string): Node => {
+const parseXml = (input: string): Node => {
+  // Expat hands on CRLF and a lone CR as LF before anything else reads the text (XML 1.0 §2.11).
+  const source = input.replace(/\r\n?/g, "\n");
+  const invalid = firstNonChar(source);
+  if (invalid !== undefined)
+    throw new Error(
+      `U+${invalid.code.toString(16).toUpperCase().padStart(4, "0")} at ${invalid.offset} is not an XML character`,
+    );
   let index = 0;
   const skip = () => {
     for (;;) {
@@ -134,8 +193,13 @@ export const readCall = (
   };
 };
 
+/** Escape character data; a carriage return is a reference, so line-end handling keeps it. */
 const escape = (text: string): string =>
-  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\r", "&#13;");
 
 /** A value written the way the Perl handlers write it. */
 export type Out =
@@ -169,7 +233,7 @@ const write = (value: Out): string => {
     return `<value><string>${escape(value.string)}</string></value>`;
   if ("untyped" in value) return `<value>${escape(value.untyped)}</value>`;
   if ("dateTime" in value)
-    return `<value><dateTime.iso8601>${value.dateTime}</dateTime.iso8601></value>`;
+    return `<value><dateTime.iso8601>${escape(value.dateTime)}</dateTime.iso8601></value>`;
   if ("base64" in value)
     return `<value><base64>${mime(value.base64)}</base64></value>`;
   if ("struct" in value)
@@ -182,24 +246,37 @@ const write = (value: Out): string => {
   return `<value><array><data>\n${value.array.map((item) => `${write(item)}\n`).join("")}</data></array></value>`;
 };
 
-const xml = (body: string): Reply => ({
-  status: 200,
-  lines: [
-    ["Content-Type", "text/xml"],
-    ["Server", "Frontier/5.1.2-WinNT"],
-  ],
-  body: `<?xml version="1.0"?>\n<methodResponse>\n${body}</methodResponse>\n`,
-});
+const document = (body: string): string =>
+  `<?xml version="1.0"?>\n<methodResponse>\n${body}</methodResponse>\n`;
+
+const faultBody = (code: number, message: string): string =>
+  `<fault>\n${write({
+    struct: [
+      ["faultCode", { i4: code }],
+      ["faultString", { string: message }],
+    ],
+  })}\n</fault>\n`;
+
+/** What the library answered when a handler's value could not be serialized. */
+const internalError = document(
+  faultBody(-32603, "server error. internal xml-rpc error"),
+);
+
+/** A methodResponse, or the internal-error fault in place of one XML cannot carry. */
+const xml = (body: string): Reply => {
+  const text = document(body);
+  return {
+    status: 200,
+    lines: [
+      ["Content-Type", "text/xml"],
+      ["Server", "Frontier/5.1.2-WinNT"],
+    ],
+    body: firstNonChar(text) === undefined ? text : internalError,
+  };
+};
 
 export const result = (value: Out): Reply =>
   xml(`<params>\n<param>\n${write(value)}\n</param>\n</params>\n`);
 
 export const fault = (code: number, message: string): Reply =>
-  xml(
-    `<fault>\n${write({
-      struct: [
-        ["faultCode", { i4: code }],
-        ["faultString", { string: message }],
-      ],
-    })}\n</fault>\n`,
-  );
+  xml(faultBody(code, message));
