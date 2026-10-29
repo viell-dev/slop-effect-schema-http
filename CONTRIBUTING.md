@@ -28,10 +28,13 @@ objects. Tests therefore run through Effect's real client wrapper without a netw
 with `TestClock` for retry delays and timeouts. Use deferreds or explicit start signals, not sleeps,
 to order concurrent work.
 
-A confirmed defect gets an issue and a test of the intended behavior marked `it.effect.fails`, with
-a comment linking the issue. The marker keeps CI green while the defect is open and fails once the
-behavior is fixed, so the fix must remove it. Pin a type-level limitation with `@ts-expect-error`
-and a linked issue in the same way. Do not weaken an assertion to make a test pass.
+A confirmed defect gets an issue and two tests, each with a comment linking the issue. An ordinary
+test pins the exact current outcome, and a test of the intended behavior is marked
+`it.effect.fails`. The marker keeps CI green while the defect is open, but `.fails` accepts any
+failure, so the ordinary test proves the expected failure comes from the defect rather than an
+unrelated error. Fixing the defect fails both tests: delete the pin and remove the marker. Pin a
+type-level limitation with `@ts-expect-error` and a linked issue. Do not weaken an assertion to make
+a test pass.
 
 The suite does not exercise Fetch, browsers, real servers, packaged installation, or
 transport-specific behavior such as header joining, redirects, cookies, and CORS. Server-backed
