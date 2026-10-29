@@ -27,6 +27,10 @@
     "test:node": "vitest run --project node --reporter=default --reporter=junit --outputFile.junit=artifacts/junit-node.xml",
     "test:browser": "vitest run --project browser --reporter=default --reporter=junit --outputFile.junit=artifacts/junit-browser.xml",
     "test:catalogue": "node scripts/catalogue.mjs --results artifacts/junit-node.xml artifacts/junit-browser.xml",
+    "packed": "run-s packed:test packed:catalogue packed:tsc",
+    "packed:test": "vitest run --mode packed --reporter=default --reporter=junit --outputFile.junit=artifacts/junit-packed.xml",
+    "packed:catalogue": "node scripts/catalogue.mjs --results artifacts/junit-packed.xml",
+    "packed:tsc": "tsc -p tsconfig.packed.json",
     "test:watch": "vitest",
     "format": "prettier --write ."
   },

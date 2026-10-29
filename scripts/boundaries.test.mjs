@@ -38,12 +38,18 @@ const files = {
 
 let fixtures = 0;
 
-/** Write the tree with extra files and aliases, run the check, and return its refusals. */
-const run = ({ extra = {}, imports, paths = {} } = {}) => {
+/**
+ * Write the tree with extra files, aliases and a `tsconfig.packed.json` if given, run the check,
+ * and return its refusals.
+ */
+const run = ({ extra = {}, imports, paths = {}, packed } = {}) => {
   const root = join(workspace, String(fixtures++));
   const tree = {
     ...files,
     ...extra,
+    ...(packed === undefined
+      ? {}
+      : { "tsconfig.packed.json": JSON.stringify(packed) }),
     "package.json": JSON.stringify({
       name: "fixture",
       private: true,
@@ -264,6 +270,46 @@ describe("boundaries.mjs", () => {
           "src/backends/store/xml.ts: links services/Store.md, which does not exist",
         ],
       },
+    );
+  });
+
+  it("accepts a tsconfig.packed.json whose paths, through extends, only drop the library's", () => {
+    assert.deepEqual(
+      run({
+        packed: {
+          extends: "./tsconfig.json",
+          compilerOptions: {
+            paths: { "#lane": ["./src/harness/lane.node.ts"] },
+          },
+        },
+      }),
+      { status: 0, problems: [] },
+    );
+  });
+
+  it("refuses a tsconfig.packed.json that keeps the library's alias or changes another", () => {
+    const refusal = {
+      status: 1,
+      problems: [
+        "tsconfig.packed.json: its paths must be tsconfig.json's without viell-effect-schema-http, from the same base",
+      ],
+    };
+    // Inherited unchanged, the library's alias would type-check the packed lane against source.
+    assert.deepEqual(run({ packed: { extends: "./tsconfig.json" } }), refusal);
+    // An alias only the packed configuration knows would escape this check.
+    assert.deepEqual(
+      run({
+        packed: {
+          extends: "./tsconfig.json",
+          compilerOptions: {
+            paths: {
+              "#lane": ["./src/harness/lane.node.ts"],
+              "@store/*": ["./src/backends/store/*"],
+            },
+          },
+        },
+      }),
+      refusal,
     );
   });
 });
