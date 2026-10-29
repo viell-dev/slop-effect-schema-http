@@ -1,0 +1,4 @@
+# Recorded HTTP exchanges are kept byte for byte, CRLF heads included, so Git never converts them.
+# What builds the recording containers keeps LF, which shells and Perl in the containers need.
+recordings/** text eol=lf
+recordings/**/*.http -text

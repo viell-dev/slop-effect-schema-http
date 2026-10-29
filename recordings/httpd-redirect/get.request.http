@@ -1,0 +1,4 @@
+GET /cgi-bin/rpt.exe?session=sso-7f3a9c41&report=balance&account=00012345 HTTP/1.1
+Host: gateway.example:8080
+Connection: close
+

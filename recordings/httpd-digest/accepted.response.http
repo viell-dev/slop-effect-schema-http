@@ -1,0 +1,12 @@
+HTTP/1.1 200 OK
+Date: Thu, 29 Oct 2026 23:42:45 GMT
+Server: Apache/2.4.68 (Unix)
+Authentication-Info: , nextnonce="v2+QPANfBgA=d2114072a840e24a0717827f132c0b4e94b59907"
+Transfer-Encoding: chunked
+Content-Type: text/plain
+
+13
+OK|202610|3|173457
+
+0
+

@@ -1,0 +1,7 @@
+POST /cgi-bin/rpt.exe?session=sso-7f3a9c41 HTTP/1.1
+Host: gateway.example:8080
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 31
+Connection: close
+
+report=balance&account=00012345

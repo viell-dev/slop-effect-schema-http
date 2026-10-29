@@ -1,0 +1,101 @@
+{
+  "description": "Location as Tomcat 7 writes it for the business API's customer creation, with Tomcat's defaults and with useRelativeRedirects=\"false\": a path set on a 200 by the handler, and the same path through sendRedirect, as given, relative, and followed by setStatus(200).",
+  "host": "business.example:8080",
+  "port": 8080,
+  "probe": {
+    "method": "GET",
+    "target": "/"
+  },
+  "client": "scripts/record.mjs: a raw TCP socket from the host to the published port; each request is written as listed, with Content-Length and Connection: close added.",
+  "substitutions": [
+    "The business API's legacy servlet container (app-legacy-2) is not named; Tomcat 7 is the issue's choice of servlet container from its era. This is 7.0.109, the last Tomcat 7 release, on OpenJDK 8.",
+    "Tomcat 7.0.67 added the context attribute useRelativeRedirects, true by default, which makes sendRedirect write its location as given. The /legacy context sets it to false, which restores the absolute URLs earlier releases built; the root context keeps the default.",
+    "The handler is this set's Customers.java, written for the recording; the Location handling is the container's."
+  ],
+  "versions": {
+    "tomcat": ["/usr/local/tomcat/bin/version.sh"],
+    "java": ["java", "-version"]
+  },
+  "exchanges": [
+    {
+      "name": "header",
+      "description": "The handler sets Location to the path on a 200 and writes the acknowledgement. In the root context, with Tomcat's defaults.",
+      "request": {
+        "method": "POST",
+        "target": "/v1/customers",
+        "headers": [["Content-Type", "application/json"]],
+        "body": "{\"name\":\"Globex Corporation\",\"tier\":\"GOLD\"}"
+      }
+    },
+    {
+      "name": "redirect",
+      "description": "The handler calls sendRedirect with the path. In the root context, with Tomcat's defaults.",
+      "request": {
+        "method": "POST",
+        "target": "/v1/customers?variant=redirect",
+        "headers": [["Content-Type", "application/json"]],
+        "body": "{\"name\":\"Globex Corporation\",\"tier\":\"GOLD\"}"
+      }
+    },
+    {
+      "name": "relative",
+      "description": "The handler calls sendRedirect with customers/1006, relative to the request's path. In the root context, with Tomcat's defaults.",
+      "request": {
+        "method": "POST",
+        "target": "/v1/customers?variant=relative",
+        "headers": [["Content-Type", "application/json"]],
+        "body": "{\"name\":\"Globex Corporation\",\"tier\":\"GOLD\"}"
+      }
+    },
+    {
+      "name": "redirect-then-200",
+      "description": "The handler calls sendRedirect with the path, then sets status 200 and writes the acknowledgement. In the root context, with Tomcat's defaults.",
+      "request": {
+        "method": "POST",
+        "target": "/v1/customers?variant=redirect-then-200",
+        "headers": [["Content-Type", "application/json"]],
+        "body": "{\"name\":\"Globex Corporation\",\"tier\":\"GOLD\"}"
+      }
+    },
+    {
+      "name": "legacy-header",
+      "description": "The handler sets Location to the path on a 200 and writes the acknowledgement. In the /legacy context, with useRelativeRedirects=\"false\".",
+      "request": {
+        "method": "POST",
+        "target": "/legacy/v1/customers",
+        "headers": [["Content-Type", "application/json"]],
+        "body": "{\"name\":\"Globex Corporation\",\"tier\":\"GOLD\"}"
+      }
+    },
+    {
+      "name": "legacy-redirect",
+      "description": "The handler calls sendRedirect with the path. In the /legacy context, with useRelativeRedirects=\"false\".",
+      "request": {
+        "method": "POST",
+        "target": "/legacy/v1/customers?variant=redirect",
+        "headers": [["Content-Type", "application/json"]],
+        "body": "{\"name\":\"Globex Corporation\",\"tier\":\"GOLD\"}"
+      }
+    },
+    {
+      "name": "legacy-relative",
+      "description": "The handler calls sendRedirect with customers/1006, relative to the request's path. In the /legacy context, with useRelativeRedirects=\"false\".",
+      "request": {
+        "method": "POST",
+        "target": "/legacy/v1/customers?variant=relative",
+        "headers": [["Content-Type", "application/json"]],
+        "body": "{\"name\":\"Globex Corporation\",\"tier\":\"GOLD\"}"
+      }
+    },
+    {
+      "name": "legacy-redirect-then-200",
+      "description": "The handler calls sendRedirect with the path, then sets status 200 and writes the acknowledgement. In the /legacy context, with useRelativeRedirects=\"false\".",
+      "request": {
+        "method": "POST",
+        "target": "/legacy/v1/customers?variant=redirect-then-200",
+        "headers": [["Content-Type", "application/json"]],
+        "body": "{\"name\":\"Globex Corporation\",\"tier\":\"GOLD\"}"
+      }
+    }
+  ]
+}

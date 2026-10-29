@@ -1,0 +1,93 @@
+{
+  "set": "httpd-digest",
+  "description": "RFC 2069 Digest from httpd 2.4's mod_auth_digest with AuthDigestQop none, in front of the gateway's audit endpoint: the challenge, curl's authorized request, the same request again at once and after the nonce's lifetime, and a wrong password.",
+  "recorded": "2026-10-29T23:42:39.851Z",
+  "images": [
+    "httpd:2.4.68@sha256:03f858efb82c25cb0f9962946615cdcdaf26927cb971722149b563197cfd0fdd",
+    "curlimages/curl@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93"
+  ],
+  "built": "sha256:918890ae58598824827add317ceac12d48a5f76ae1e2f8237590d38b577f6b9f",
+  "versions": {
+    "httpd": [
+      "Server version: Apache/2.4.68 (Unix)",
+      "Server built:   Sep 19 2026 00:19:44"
+    ],
+    "curl": [
+      "curl 8.23.0 (x86_64-pc-linux-musl) libcurl/8.23.0 OpenSSL/3.5.9 zlib/1.3.2 brotli/1.2.1 zstd/1.5.7 libidn2/2.3.8 libpsl/0.21.5 libssh2/1.11.1 nghttp2/1.70.0 mit-krb5/1.22.2",
+      "Release-Date: 2026-10-14",
+      "Protocols: dict file ftp ftps gopher gophers http https imap imaps ipfs ipns mqtt mqtts pop3 pop3s rtsp scp sftp smtp smtps telnet tftp ws wss",
+      "Features: alt-svc AsynchDNS brotli GSS-API HSTS HTTP2 HTTPS-proxy IDN IPv6 Kerberos Largefile libz PSL SPNEGO SSL threadsafe UnixSockets zstd"
+    ]
+  },
+  "substitutions": [
+    "The gateway's audit endpoint is documented behind Apache 1.3's mod_digest (RFC 2069). No maintained Apache 1.3 image exists; this is httpd 2.4.68's mod_auth_digest with AuthDigestQop none, which answers without qop, nc or cnonce the way RFC 2069 does. httpd 2.4.69 refuses AuthDigestQop none at startup, so 2.4.68 is the last 2.4 release that can stand in.",
+    "AuthDigestNonceLifetime is 3 seconds instead of the default 300, so the recording shows a stale nonce after a short wait.",
+    "The audit endpoint is this set's audit.cgi, a shell CGI that prints the gateway's pipe line for its one period."
+  ],
+  "client": "curl in its own container on the server's network, computing Authorization itself (--digest), read from its --trace output; repeated requests are curl's exact bytes, sent again by scripts/record.mjs over a raw TCP socket from the host.",
+  "commands": [
+    "docker build -t hostile-recording-httpd-digest recordings/httpd-digest",
+    "docker run -d --name hostile-recording-httpd-digest -p 127.0.0.1::80 hostile-recording-httpd-digest",
+    "docker port hostile-recording-httpd-digest 80/tcp",
+    "docker exec hostile-recording-httpd-digest httpd -v",
+    "docker run --rm curlimages/curl@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93 --version",
+    "docker run --rm --name hostile-recording-httpd-digest-curl --add-host host.docker.internal:host-gateway curlimages/curl@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93 --silent --show-error --output /dev/null --connect-to gateway.example:80:host.docker.internal:61663 --digest --user auditor:Secr3t! http://gateway.example/admin/audit.cgi?period=202610",
+    "docker run --rm --name hostile-recording-httpd-digest-curl --add-host host.docker.internal:host-gateway curlimages/curl@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93 --silent --show-error --output /dev/null --connect-to gateway.example:80:host.docker.internal:61670 --digest --user auditor:wrong http://gateway.example/admin/audit.cgi?period=202610"
+  ],
+  "exchanges": [
+    {
+      "name": "challenge",
+      "description": "curl's first request, without credentials: the 401 challenge.",
+      "method": "GET",
+      "target": "/admin/audit.cgi?period=202610",
+      "status": "HTTP/1.1 401 Unauthorized",
+      "request": "challenge.request.http",
+      "response": "challenge.response.http"
+    },
+    {
+      "name": "accepted",
+      "description": "curl's second request, with the Authorization it computed from the challenge: the CGI's reply.",
+      "method": "GET",
+      "target": "/admin/audit.cgi?period=202610",
+      "status": "HTTP/1.1 200 OK",
+      "request": "accepted.request.http",
+      "response": "accepted.response.http"
+    },
+    {
+      "name": "replayed",
+      "description": "curl's authorized request sent again at once, inside the nonce's lifetime.",
+      "method": "GET",
+      "target": "/admin/audit.cgi?period=202610",
+      "status": "HTTP/1.1 200 OK",
+      "request": "replayed.request.http",
+      "response": "replayed.response.http"
+    },
+    {
+      "name": "stale",
+      "description": "curl's authorized request sent again after the nonce's three-second lifetime.",
+      "method": "GET",
+      "target": "/admin/audit.cgi?period=202610",
+      "status": "HTTP/1.1 401 Unauthorized",
+      "request": "stale.request.http",
+      "response": "stale.response.http"
+    },
+    {
+      "name": "wrong-challenge",
+      "description": "curl's first request with a wrong password: the challenge again.",
+      "method": "GET",
+      "target": "/admin/audit.cgi?period=202610",
+      "status": "HTTP/1.1 401 Unauthorized",
+      "request": "wrong-challenge.request.http",
+      "response": "wrong-challenge.response.http"
+    },
+    {
+      "name": "wrong-password",
+      "description": "curl's response computed from a wrong password.",
+      "method": "GET",
+      "target": "/admin/audit.cgi?period=202610",
+      "status": "HTTP/1.1 401 Unauthorized",
+      "request": "wrong-password.request.http",
+      "response": "wrong-password.response.http"
+    }
+  ]
+}

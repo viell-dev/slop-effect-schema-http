@@ -1,0 +1,123 @@
+{
+  "set": "frontier-rpc2",
+  "description": "XML-RPC replies from Frontier::RPC2 0.07b4 under Frontier::Daemon, serving the gateway's five methods over data.json.",
+  "recorded": "2026-10-29T23:24:01.141Z",
+  "images": [
+    "debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3"
+  ],
+  "built": "sha256:74ded736dd8d784e4715d0c84758a31dd180beec56625182594b4fed0fdb6427",
+  "versions": {
+    "perl": ["v5.36.0"],
+    "packages": [
+      "libfrontier-rpc-perl\t0.07b4-7.1",
+      "libhttp-daemon-perl\t6.16-1+deb13u1~deb12u1",
+      "libxml-parser-perl\t2.46-4+deb12u1",
+      "perl\t5.36.0-7+deb12u4"
+    ]
+  },
+  "substitutions": [
+    "The gateway's XML-RPC endpoint is documented as Frontier::RPC behind Apache 1.3 since 1999. This is the module's last release, 0.07b4 (2002), as Debian 12 packages it, served by its own Frontier::Daemon instead of Apache, so the HTTP head is HTTP::Daemon's.",
+    "The handlers are this set's frontier.pl, written for the recording; the encoder, the dispatcher and the HTTP server are the module's."
+  ],
+  "client": "scripts/record.mjs: a raw TCP socket from the host to the published port; each request is written as listed, with Content-Length and Connection: close added.",
+  "commands": [
+    "docker build -t hostile-recording-frontier-rpc2 recordings/frontier-rpc2",
+    "docker network create hostile-recording-frontier-rpc2",
+    "docker run -d --name hostile-recording-frontier-rpc2 --network hostile-recording-frontier-rpc2 --network-alias gateway.example -p 127.0.0.1::8080 hostile-recording-frontier-rpc2",
+    "docker port hostile-recording-frontier-rpc2 8080/tcp",
+    "docker exec hostile-recording-frontier-rpc2 perl -e print qq{$^V\\n}",
+    "docker exec hostile-recording-frontier-rpc2 dpkg-query --show libfrontier-rpc-perl libhttp-daemon-perl libxml-parser-perl perl"
+  ],
+  "exchanges": [
+    {
+      "name": "list-methods",
+      "description": "system.listMethods: an array of strings.",
+      "method": "POST",
+      "target": "/RPC2",
+      "status": "HTTP/1.1 200 OK",
+      "request": "list-methods.request.http",
+      "response": "list-methods.response.http"
+    },
+    {
+      "name": "report-count",
+      "description": "report.count(\"202610\"): an integer.",
+      "method": "POST",
+      "target": "/RPC2",
+      "status": "HTTP/1.1 200 OK",
+      "request": "report-count.request.http",
+      "response": "report-count.response.http"
+    },
+    {
+      "name": "account-title",
+      "description": "account.title(\"00012345\"): a title with letters outside ASCII, returned as a plain scalar.",
+      "method": "POST",
+      "target": "/RPC2",
+      "status": "HTTP/1.1 200 OK",
+      "request": "account-title.request.http",
+      "response": "account-title.response.http"
+    },
+    {
+      "name": "invoice-get",
+      "description": "invoice.get(7): a struct of an integer, an all-digit string, a double, a boolean, two dates and an array of structs whose text needs escaping.",
+      "method": "POST",
+      "target": "/RPC2",
+      "status": "HTTP/1.1 200 OK",
+      "request": "invoice-get.request.http",
+      "response": "invoice-get.response.http"
+    },
+    {
+      "name": "invoice-unpaid",
+      "description": "invoice.get(8): false, the zero date, a migrated impossible date and an empty array.",
+      "method": "POST",
+      "target": "/RPC2",
+      "status": "HTTP/1.1 200 OK",
+      "request": "invoice-unpaid.request.http",
+      "response": "invoice-unpaid.response.http"
+    },
+    {
+      "name": "extract-fetch",
+      "description": "extract.fetch(\"202610\"): 320 bytes of ISO-8859-1 as base64, encoded by MIME::Base64's encode_base64 with its default line ends.",
+      "method": "POST",
+      "target": "/RPC2",
+      "status": "HTTP/1.1 200 OK",
+      "request": "extract-fetch.request.http",
+      "response": "extract-fetch.response.http"
+    },
+    {
+      "name": "fault-not-found",
+      "description": "invoice.get(999): the handler dies, which is the only error a Frontier::Daemon handler can report.",
+      "method": "POST",
+      "target": "/RPC2",
+      "status": "HTTP/1.1 200 OK",
+      "request": "fault-not-found.request.http",
+      "response": "fault-not-found.response.http"
+    },
+    {
+      "name": "fault-unknown-method",
+      "description": "An unknown method.",
+      "method": "POST",
+      "target": "/RPC2",
+      "status": "HTTP/1.1 200 OK",
+      "request": "fault-unknown-method.request.http",
+      "response": "fault-unknown-method.response.http"
+    },
+    {
+      "name": "fault-malformed",
+      "description": "A call that is not well-formed XML: a bare ampersand.",
+      "method": "POST",
+      "target": "/RPC2",
+      "status": "HTTP/1.1 200 OK",
+      "request": "fault-malformed.request.http",
+      "response": "fault-malformed.response.http"
+    },
+    {
+      "name": "not-xml",
+      "description": "A well-formed call sent as text/plain.",
+      "method": "POST",
+      "target": "/RPC2",
+      "status": "HTTP/1.1 200 OK",
+      "request": "not-xml.request.http",
+      "response": "not-xml.response.http"
+    }
+  ]
+}

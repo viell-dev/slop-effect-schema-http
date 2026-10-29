@@ -16,6 +16,7 @@
   "scripts": {
     "library": "node scripts/library.mjs",
     "library:pack": "node scripts/library.mjs --pack",
+    "record": "node scripts/record.mjs",
     "check": "run-p check:*",
     "check:tsc": "tsc --noEmit",
     "check:prettier": "prettier --check .",

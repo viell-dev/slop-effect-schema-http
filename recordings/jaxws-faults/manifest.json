@@ -1,0 +1,83 @@
+{
+  "set": "jaxws-faults",
+  "description": "SOAP 1.1 and 1.2 faults from the JAX-WS reference implementation in JDK 8, for the three ways DocVault's LockDocument refuses a call.",
+  "recorded": "2026-10-29T23:49:32.534Z",
+  "images": [
+    "eclipse-temurin:8-jdk@sha256:e9255b50040337b0dec91027868dca1952ef5441bf0c8f878c5f790eaedbfea2"
+  ],
+  "built": "sha256:51fa83adf72389075dd14971210c6b5726bd8347089101d659139a51fac3df31",
+  "versions": {
+    "java": [
+      "openjdk version \"1.8.0_504\"",
+      "OpenJDK Runtime Environment (Temurin)(build 1.8.0_504-b01)",
+      "OpenJDK 64-Bit Server VM (Temurin)(build 25.504-b01, mixed mode)"
+    ]
+  },
+  "substitutions": [
+    "DocVault's LockDocument is documented as a contractor's SOAP 1.1 fault writer on a servlet container (2011). This is the JAX-WS reference implementation bundled with JDK 8, publishing Provider endpoints on the JDK's own HTTP server with Endpoint.publish, for SOAP 1.1 at /soap and SOAP 1.2, with the SOAP 1.2 HTTP binding, at /soap12.",
+    "The endpoints are this set's Store.java, Soap11.java and Soap12.java, written for the recording: they throw SOAPFaultException with faults built by SAAJ, which the runtime serializes and sends with its own status and headers."
+  ],
+  "client": "scripts/record.mjs: a raw TCP socket from the host to the published port; each request is written as listed, with Content-Length and Connection: close added.",
+  "commands": [
+    "docker build -t hostile-recording-jaxws-faults recordings/jaxws-faults",
+    "docker run -d --name hostile-recording-jaxws-faults -p 127.0.0.1::8080 hostile-recording-jaxws-faults",
+    "docker port hostile-recording-jaxws-faults 8080/tcp",
+    "docker exec hostile-recording-jaxws-faults java -version"
+  ],
+  "exchanges": [
+    {
+      "name": "soap11-missing-owner",
+      "description": "SOAP 1.1, a call without Owner: a sender fault with an empty detail.",
+      "method": "POST",
+      "target": "/soap",
+      "status": "HTTP/1.1 500 Internal Server Error",
+      "request": "soap11-missing-owner.request.http",
+      "response": "soap11-missing-owner.response.http"
+    },
+    {
+      "name": "soap11-not-found",
+      "description": "SOAP 1.1, an unknown id: a sender fault with DocumentNotFound in its detail.",
+      "method": "POST",
+      "target": "/soap",
+      "status": "HTTP/1.1 500 Internal Server Error",
+      "request": "soap11-not-found.request.http",
+      "response": "soap11-not-found.response.http"
+    },
+    {
+      "name": "soap11-conflict",
+      "description": "SOAP 1.1, a document another owner has locked: a receiver fault with LockConflict in its detail.",
+      "method": "POST",
+      "target": "/soap",
+      "status": "HTTP/1.1 500 Internal Server Error",
+      "request": "soap11-conflict.request.http",
+      "response": "soap11-conflict.response.http"
+    },
+    {
+      "name": "soap12-missing-owner",
+      "description": "SOAP 1.2, a call without Owner: a sender fault with an empty detail.",
+      "method": "POST",
+      "target": "/soap12",
+      "status": "HTTP/1.1 500 Internal Server Error",
+      "request": "soap12-missing-owner.request.http",
+      "response": "soap12-missing-owner.response.http"
+    },
+    {
+      "name": "soap12-not-found",
+      "description": "SOAP 1.2, an unknown id: a sender fault with DocumentNotFound in its detail.",
+      "method": "POST",
+      "target": "/soap12",
+      "status": "HTTP/1.1 500 Internal Server Error",
+      "request": "soap12-not-found.request.http",
+      "response": "soap12-not-found.response.http"
+    },
+    {
+      "name": "soap12-conflict",
+      "description": "SOAP 1.2, a document another owner has locked: a receiver fault with LockConflict in its detail.",
+      "method": "POST",
+      "target": "/soap12",
+      "status": "HTTP/1.1 500 Internal Server Error",
+      "request": "soap12-conflict.request.http",
+      "response": "soap12-conflict.response.http"
+    }
+  ]
+}

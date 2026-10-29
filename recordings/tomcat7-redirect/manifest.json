@@ -1,0 +1,113 @@
+{
+  "set": "tomcat7-redirect",
+  "description": "Location as Tomcat 7 writes it for the business API's customer creation, with Tomcat's defaults and with useRelativeRedirects=\"false\": a path set on a 200 by the handler, and the same path through sendRedirect, as given, relative, and followed by setStatus(200).",
+  "recorded": "2026-10-29T23:47:29.714Z",
+  "images": [
+    "tomcat:7.0.109-jdk8-openjdk@sha256:f7d37d248d0eacec1e5995736234c9c22155626fcb27ea3ead13b9db24e698f7"
+  ],
+  "built": "sha256:f7274e816cb9414ee7eb7a5182c15052aa65377c27c0c87e26d28c2ce1301386",
+  "versions": {
+    "tomcat": [
+      "Server version: Apache Tomcat/7.0.109",
+      "Server built:   Apr 22 2021 18:43:38 UTC",
+      "Server number:  7.0.109.0",
+      "OS Name:        Linux",
+      "OS Version:     6.18.54.1-microsoft-standard-WSL2",
+      "Architecture:   amd64",
+      "JVM Version:    1.8.0_292-b10",
+      "JVM Vendor:     Oracle Corporation"
+    ],
+    "java": [
+      "openjdk version \"1.8.0_292\"",
+      "OpenJDK Runtime Environment (build 1.8.0_292-b10)",
+      "OpenJDK 64-Bit Server VM (build 25.292-b10, mixed mode)"
+    ]
+  },
+  "substitutions": [
+    "The business API's legacy servlet container (app-legacy-2) is not named; Tomcat 7 is the issue's choice of servlet container from its era. This is 7.0.109, the last Tomcat 7 release, on OpenJDK 8.",
+    "Tomcat 7.0.67 added the context attribute useRelativeRedirects, true by default, which makes sendRedirect write its location as given. The /legacy context sets it to false, which restores the absolute URLs earlier releases built; the root context keeps the default.",
+    "The handler is this set's Customers.java, written for the recording; the Location handling is the container's."
+  ],
+  "client": "scripts/record.mjs: a raw TCP socket from the host to the published port; each request is written as listed, with Content-Length and Connection: close added.",
+  "commands": [
+    "docker build -t hostile-recording-tomcat7-redirect recordings/tomcat7-redirect",
+    "docker run -d --name hostile-recording-tomcat7-redirect -p 127.0.0.1::8080 hostile-recording-tomcat7-redirect",
+    "docker port hostile-recording-tomcat7-redirect 8080/tcp",
+    "docker exec hostile-recording-tomcat7-redirect /usr/local/tomcat/bin/version.sh",
+    "docker exec hostile-recording-tomcat7-redirect java -version"
+  ],
+  "exchanges": [
+    {
+      "name": "header",
+      "description": "The handler sets Location to the path on a 200 and writes the acknowledgement. In the root context, with Tomcat's defaults.",
+      "method": "POST",
+      "target": "/v1/customers",
+      "status": "HTTP/1.1 200 OK",
+      "request": "header.request.http",
+      "response": "header.response.http"
+    },
+    {
+      "name": "redirect",
+      "description": "The handler calls sendRedirect with the path. In the root context, with Tomcat's defaults.",
+      "method": "POST",
+      "target": "/v1/customers?variant=redirect",
+      "status": "HTTP/1.1 302 Found",
+      "request": "redirect.request.http",
+      "response": "redirect.response.http"
+    },
+    {
+      "name": "relative",
+      "description": "The handler calls sendRedirect with customers/1006, relative to the request's path. In the root context, with Tomcat's defaults.",
+      "method": "POST",
+      "target": "/v1/customers?variant=relative",
+      "status": "HTTP/1.1 302 Found",
+      "request": "relative.request.http",
+      "response": "relative.response.http"
+    },
+    {
+      "name": "redirect-then-200",
+      "description": "The handler calls sendRedirect with the path, then sets status 200 and writes the acknowledgement. In the root context, with Tomcat's defaults.",
+      "method": "POST",
+      "target": "/v1/customers?variant=redirect-then-200",
+      "status": "HTTP/1.1 302 Found",
+      "request": "redirect-then-200.request.http",
+      "response": "redirect-then-200.response.http"
+    },
+    {
+      "name": "legacy-header",
+      "description": "The handler sets Location to the path on a 200 and writes the acknowledgement. In the /legacy context, with useRelativeRedirects=\"false\".",
+      "method": "POST",
+      "target": "/legacy/v1/customers",
+      "status": "HTTP/1.1 200 OK",
+      "request": "legacy-header.request.http",
+      "response": "legacy-header.response.http"
+    },
+    {
+      "name": "legacy-redirect",
+      "description": "The handler calls sendRedirect with the path. In the /legacy context, with useRelativeRedirects=\"false\".",
+      "method": "POST",
+      "target": "/legacy/v1/customers?variant=redirect",
+      "status": "HTTP/1.1 302 Found",
+      "request": "legacy-redirect.request.http",
+      "response": "legacy-redirect.response.http"
+    },
+    {
+      "name": "legacy-relative",
+      "description": "The handler calls sendRedirect with customers/1006, relative to the request's path. In the /legacy context, with useRelativeRedirects=\"false\".",
+      "method": "POST",
+      "target": "/legacy/v1/customers?variant=relative",
+      "status": "HTTP/1.1 302 Found",
+      "request": "legacy-relative.request.http",
+      "response": "legacy-relative.response.http"
+    },
+    {
+      "name": "legacy-redirect-then-200",
+      "description": "The handler calls sendRedirect with the path, then sets status 200 and writes the acknowledgement. In the /legacy context, with useRelativeRedirects=\"false\".",
+      "method": "POST",
+      "target": "/legacy/v1/customers?variant=redirect-then-200",
+      "status": "HTTP/1.1 302 Found",
+      "request": "legacy-redirect-then-200.request.http",
+      "response": "legacy-redirect-then-200.response.http"
+    }
+  ]
+}

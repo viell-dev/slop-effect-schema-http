@@ -1,0 +1,8 @@
+POST /soap12 HTTP/1.1
+Host: soap-store.example
+Content-Type: application/soap+xml; charset=utf-8; action="urn:docvault:store:2003#LockDocument"
+Content-Length: 243
+Connection: close
+
+<?xml version="1.0" encoding="utf-8"?>
+<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><LockDocument xmlns="urn:docvault:store:2003"><Id>DOC-999999</Id><Owner>clerk-7</Owner></LockDocument></env:Body></env:Envelope>

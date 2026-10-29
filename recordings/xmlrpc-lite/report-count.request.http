@@ -1,0 +1,8 @@
+POST /RPC2 HTTP/1.1
+Host: gateway.example
+Content-Type: text/xml
+Content-Length: 155
+Connection: close
+
+<?xml version="1.0"?>
+<methodCall><methodName>report.count</methodName><params><param><value><string>202610</string></value></param></params></methodCall>
