@@ -117,20 +117,17 @@ for a value that `JSON.stringify` omits, such as `undefined` or a function: it e
 `application/json` body. `Body.jsonSchema` is the validated path; it encodes through the schema's
 canonical JSON codec (`Schema.toCodecJson`), and a struct schema never produces `undefined`.
 
-The body codec owns the request's `Content-Type`. Multipart form data leaves `Content-Type` to the
-transport, so it can add the boundary. A header declaration describes a header; it does not relabel
-an encoded body. A protocol that needs a parameterized content type gets it from a custom codec.
-`Request.mapEffect` remains available to edit the native request deliberately.
+The body codec owns the request's `Content-Type` and `Content-Length`. Multipart form data leaves
+both to the transport, so it can add the boundary. A header declaration describes a header; it does
+not relabel an encoded body. A protocol that needs a parameterized content type gets it from a
+custom codec. `Request.mapEffect` remains available to edit the native request deliberately.
 
 A GET or HEAD request with a body fails with `Request.InvalidRequest` before dispatch.
 
 ### Request transforms
 
 `Request.mapInput` adapts the invocation argument. `Request.mapEffect` edits the native request
-effectfully, for example to sign it, once per evaluation before any attempt. Its input type is fixed
-when the transform is created, which lets `pipe` infer `input` for an inline transform. A transform
-created on its own that ignores its input targets `Request<unknown>`; apply it before the input
-bindings, or reuse it through a generic function as in the example above.
+effectfully, for example to sign it, once per evaluation before any attempt.
 
 ## Responses
 
@@ -142,10 +139,14 @@ optional provider lines. Selection happens before any body byte is read.
 - A selected decoder's failure is final. It fails with `Response.DecodeError`, which carries the
   metadata and the decoder's typed cause, and never falls through to a later case. Payloads that
   vary under identical metadata are a `Schema.Union` inside one case.
-- An unmatched response is drained and fails with `Response.UnexpectedResponse`, which carries the
-  metadata only. A consumer that needs the payload of other responses declares a final case that
-  reads it.
-- A live response never crosses a failure boundary: errors hold metadata, not response bodies.
+- An unmatched response is drained, then fails with `Response.UnexpectedResponse`, which carries the
+  metadata only. If draining itself fails, the result is a `Response.DecodeError`. A consumer that
+  needs the payload of other responses declares a final case that reads it.
+- No live response crosses a failure boundary: the attempt's scope closes, releasing the response's
+  transport resources, before the outcome is returned or classified. Errors are not stripped,
+  though. A `DecodeError` keeps the decoder's cause, and an Effect client error there, or one from
+  middleware that rejected the response, includes the response object with any body it already read.
+  Treat such errors as possibly containing response content.
 
 The media types of the declared decoders form the operation's automatic `Accept` header, unless the
 request declares one.
