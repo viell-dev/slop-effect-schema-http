@@ -207,8 +207,8 @@ export const table = (columns: ReadonlyArray<string>) =>
         ReadonlyArray<Readonly<Record<string, string>>>,
         ReadonlyArray<ReadonlyArray<string>>
       >({
-        decode: (table, options) => {
-          const [header, ...body] = table;
+        decode: (grid, options) => {
+          const [header, ...body] = grid;
           if (
             header === undefined ||
             header.length !== columns.length ||
@@ -217,7 +217,7 @@ export const table = (columns: ReadonlyArray<string>) =>
             return Effect.fail(
               issue(
                 `expected the header ${JSON.stringify(columns)}, got ${JSON.stringify(header ?? null)}`,
-                table,
+                grid,
                 options,
               ),
             );
@@ -226,7 +226,7 @@ export const table = (columns: ReadonlyArray<string>) =>
             return Effect.fail(
               issue(
                 `row ${wrong + 1} has ${body[wrong]!.length} fields, not ${columns.length}`,
-                table,
+                grid,
                 options,
               ),
             );

@@ -84,11 +84,15 @@ export interface Invoice {
   readonly lines: ReadonlyArray<InvoiceLine>;
 }
 
-/** A reply hold for requests to `path`, optionally only those that do or do not carry `Authorization`. */
+/**
+ * A reply hold for requests to `path`, optionally only those that do or do not carry
+ * `Authorization`, and only for the first `times` matching requests.
+ */
 export interface Delay {
   readonly path: string;
   readonly milliseconds: number;
   readonly authorized?: boolean;
+  readonly times?: number;
 }
 
 export interface Options {
@@ -118,6 +122,24 @@ const METHODS = [
   "invoice.get",
   "extract.fetch",
 ];
+
+/** extract.cgi, written by the mainframe team in 2001, refuses with real statuses and an ERROR line. */
+const refuse = (status: number, code: string, message: string): Reply => ({
+  ...pipeError(code, message),
+  status,
+});
+
+/** Apache's `Redirect permanent` for the 1998 client's compiled-in path, with an absolute Location. */
+const legacy = (request: Received, origin: string): Reply => {
+  const query = request.target.indexOf("?");
+  const location = `${origin}/cgi-bin/report.cgi${query < 0 ? "" : request.target.slice(query)}`;
+  return apachePage(
+    301,
+    "Moved Permanently",
+    `The document has moved <A HREF="${location}">here</A>.`,
+    [["Location", location]],
+  );
+};
 
 export const handler = (options: Options = {}): Handler => {
   const sessions = new Set<string>(
@@ -188,10 +210,6 @@ export const handler = (options: Options = {}): Handler => {
   };
 
   const extract = (request: Received): Reply => {
-    const refuse = (status: number, code: string, message: string): Reply => ({
-      ...pipeError(code, message),
-      status,
-    });
     if (!session(request))
       return refuse(403, "E_SESSION", "session expired or unknown");
     const period = parseQuery(request.target).get("period") ?? "";
@@ -326,17 +344,6 @@ export const handler = (options: Options = {}): Handler => {
     return pipe("OK", period, trailer.count, trailer.cents);
   };
 
-  const legacy = (request: Received, origin: string): Reply => {
-    const query = request.target.indexOf("?");
-    const location = `${origin}/cgi-bin/report.cgi${query < 0 ? "" : request.target.slice(query)}`;
-    return apachePage(
-      301,
-      "Moved Permanently",
-      `The document has moved <A HREF="${location}">here</A>.`,
-      [["Location", location]],
-    );
-  };
-
   const routes = router([
     { method: "GET", path: "/cgi-bin/login.cgi", handle: login },
     { method: "GET", path: "/cgi-bin/report.cgi", handle: report },
@@ -352,15 +359,25 @@ export const handler = (options: Options = {}): Handler => {
     { method: "GET", path: "/admin/audit.cgi", handle: audit },
   ]);
 
+  const delays = (options.delays ?? []).map((delay) => ({
+    delay,
+    remaining: delay.times ?? Number.POSITIVE_INFINITY,
+  }));
+
   return async (request, context) => {
+    // The reply is computed first, so state changes such as a spent nonce happen on arrival.
     const reply = await routes(request, context);
     const authorized = header(request.lines, "authorization") !== undefined;
-    const delay = (options.delays ?? []).find(
-      (entry) =>
-        entry.path === path(request) &&
-        (entry.authorized === undefined || entry.authorized === authorized),
+    const matched = delays.find(
+      ({ delay, remaining }) =>
+        remaining > 0 &&
+        delay.path === path(request) &&
+        (delay.authorized === undefined || delay.authorized === authorized),
     );
-    if (delay !== undefined) await hold(delay.milliseconds, context.signal);
+    if (matched !== undefined) {
+      matched.remaining--;
+      await hold(matched.delay.milliseconds, context.signal);
+    }
     return reply;
   };
 };

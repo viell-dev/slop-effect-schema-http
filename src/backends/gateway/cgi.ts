@@ -10,6 +10,14 @@ import type { Reply } from "../../harness/server.js";
  * and percent-decoding the rest. A raw `+` or `;` in a value therefore changes it; only a client
  * that percent-encodes them gets its value through intact. The first value of a repeated name wins.
  */
+const decodeForm = (text: string): string => {
+  try {
+    return decodeURIComponent(text.replaceAll("+", " "));
+  } catch {
+    return text;
+  }
+};
+
 export const parseQuery = (target: string): ReadonlyMap<string, string> => {
   const start = target.indexOf("?");
   const result = new Map<string, string>();
@@ -17,15 +25,8 @@ export const parseQuery = (target: string): ReadonlyMap<string, string> => {
   for (const pair of target.slice(start + 1).split(/[&;]/)) {
     if (pair === "") continue;
     const equals = pair.indexOf("=");
-    const decode = (text: string) => {
-      try {
-        return decodeURIComponent(text.replaceAll("+", " "));
-      } catch {
-        return text;
-      }
-    };
-    const name = decode(equals < 0 ? pair : pair.slice(0, equals));
-    const value = equals < 0 ? "" : decode(pair.slice(equals + 1));
+    const name = decodeForm(equals < 0 ? pair : pair.slice(0, equals));
+    const value = equals < 0 ? "" : decodeForm(pair.slice(equals + 1));
     if (!result.has(name)) result.set(name, value);
   }
   return result;

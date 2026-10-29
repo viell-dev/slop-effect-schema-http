@@ -43,7 +43,7 @@ export const digest = (bytes: Uint8Array): Uint8Array => {
   let b0 = 0xefcdab89;
   let c0 = 0x98badcfe;
   let d0 = 0x10325476;
-  const words = new Array<number>(16);
+  const words = new Uint32Array(16);
   for (let chunk = 0; chunk < padded.length; chunk += 64) {
     for (let index = 0; index < 16; index++)
       words[index] = view.getUint32(chunk + index * 4, true);
