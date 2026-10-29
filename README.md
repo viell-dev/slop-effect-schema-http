@@ -56,6 +56,14 @@ and consumer code may import neither a backend nor a Node-side harness module. A
 that resolves to nothing and an undeclared package are refused. `npm run check` also runs the
 script's own tests, `scripts/boundaries.test.mjs`, on generated fixture trees.
 
+Each service is documented the way its owners would publish it for integrators, on a page under
+[services/](./services/): endpoints, formats, conventions, errors and the history of each quirk,
+with the options a test can set. The two sides are written by separate agents, so that one
+misreading of a format cannot hide on both: a backend from the [catalogue](./CATALOGUE.md) and its
+service page, and the consumer side from the service page, the catalogue and observed HTTP
+behaviour, without opening `src/backends/`. `scripts/boundaries.mjs` checks that every backend links
+its page; [AGENTS.md](./AGENTS.md) states the full rule.
+
 Every scenario runs in two lanes. The Node lane runs the consumer in Node. The browser lane runs
 the same tests in headless Chromium through Vitest browser mode, to show that the library works in
 a browser page; there, a Node-side control server starts the backends, and the browser enforces

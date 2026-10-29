@@ -27,7 +27,7 @@ export const mediaType = (value: string | undefined): MediaType => {
   };
 };
 
-/** A plain-text reply, the only error format the 2009 front controller knows. */
+/** A plain-text reply, the front controller's error format. */
 export const plain = (
   status: number,
   message: string,

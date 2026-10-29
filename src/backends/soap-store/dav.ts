@@ -10,22 +10,10 @@ import { mediaType, plain } from "./wire.js";
 import * as Xml from "./xml.js";
 
 /**
- * The WebDAV view, added in 2009 so desktop clients could mount the store. It lives under
- * `/dav/documents/`; `archive/` and the other configured subcollections belong to the nightly
- * archive job. Its quirks:
+ * The WebDAV view: one route for everything under `/dav/documents/`, which resolves the path to a
+ * collection, a document or an unmapped name, then dispatches on the method.
  *
- * - **Finite depth only.** PROPFIND without `Depth`, which RFC 4918 treats as infinity, is refused
- *   with 403 and `propfind-finite-depth`: an infinite walk once took the server down.
- * - **Multistatus lists collections.** A depth-1 listing includes the collection itself and its
- *   subcollections next to the documents, with a 404 propstat for the properties collections lack.
- *   The content type is `text/xml; charset="utf-8"`, quoted charset and all, as mod_dav wrote it.
- * - **Validators are mandatory (2016).** After two archive robots overwrote each other's
- *   corrections, writes without `If-Match` (replace) or `If-None-Match: *` (create) get 428.
- *   A stale or weak `If-Match` gets 412; `If-Match` compares strongly.
- * - **A MIME allowlist.** PUT bodies outside the allowlist get 415, as does a PROPFIND body that is
- *   not XML.
- * - **Fixed layout.** MKCOL on an existing resource gets 405 with `Allow`; elsewhere 403. Methods
- *   a resource does not support get 405 with its `Allow` list.
+ * Service documentation: services/soap-store.md
  */
 
 const ROOT = "/dav/documents/";

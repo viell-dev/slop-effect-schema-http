@@ -1,45 +1,29 @@
 /**
- * The gateway's file formats, written and read with the gateway's own code.
+ * The gateway's file formats, written and read with the gateway's own code: the month-end extract,
+ * the accounts export in both variants, and the German import's validator.
  *
- * - The month-end extract is a byte copy of the mainframe's RECFM=FB, LRECL=64 file: ISO-8859-1,
- *   no field delimiters and no record separators, amounts as unsigned zero-padded cents with two
- *   implied decimals, dates as `YYYYMMDD` with `00000000` for none. A header record opens it and a
- *   trailer carrying the record count and control total closes it. The mainframe team (2001) own
- *   the layout, and the general ledger reconciles against it, so it cannot change.
- * - The accounts export was added in 2012 for spreadsheet users. Both variants start with a UTF-8
- *   byte-order mark because Excel otherwise reads UTF-8 as windows-1252. The default variant uses
- *   commas, LF and dot decimals; `locale=de_DE`, added for the Frankfurt office, uses semicolons,
- *   CRLF and a decimal comma, because that is what German Excel writes and reads back.
- * - The Frankfurt office uploads the German variant to `import.cgi`, whose validator refuses
- *   anything German Excel would not have produced.
+ * Service documentation: services/gateway.md
  */
 import { units } from "./cgi.js";
 
+/** An account of the `accounts` test option and of the accounts table. */
 export interface Account {
-  /** Eight digits. */
   readonly account: string;
   readonly title: string;
-  /** Balance in cents. */
   readonly cents: number;
-  /** `YYYYMMDD`, or `00000000` for none. */
   readonly due: string;
 }
 
+/** A detail record of an extract. */
 export interface ExtractRecord extends Account {
-  /** `O` open, `P` paid, `X` cancelled. */
   readonly status: "O" | "P" | "X";
 }
 
+/** An extract of the `extracts` test option. */
 export interface Extract {
-  /** `YYYYMMDD`. */
   readonly runDate: string;
-  /** ISO 8601 instant of the file's last change, served as `Last-Modified`. */
   readonly lastModified: string;
   readonly records: ReadonlyArray<ExtractRecord>;
-  /**
-   * The trailer as printed, when it differs from the records: a re-run whose trailer was patched by
-   * hand. Defaults to the true count and total.
-   */
   readonly trailer?: { readonly count: number; readonly cents: number };
 }
 

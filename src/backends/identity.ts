@@ -1,44 +1,8 @@
 /**
- * # The identity provider
+ * The identity provider: one handler with a code path per era, each with its own reply writer
+ * below. Every call to {@link handler} creates fresh state.
  *
- * An OAuth-ish identity provider that three teams grew over fifteen years. Each era left a code
- * path that nobody can retire, because some client still depends on its exact behaviour:
- *
- * - **The directory gateway (2004).** `GET /directory/users/{uid}` fronts the corporate LDAP
- *   directory. It returns attributes under their upper-case LDAP names with LDAP generalized
- *   times, and renders an unknown uid as a blank entry with `ACTIVE: "N"` and status 200.
- * - **The OAuth token servlet (2012).** `POST /oauth/token` takes form-encoded grants
- *   (`password`, `client_credentials`, `refresh_token`) and answers with every value as a string,
- *   `token_type: "bearer"`, and OAuth error objects.
- * - **The mobile JSON API (2016).** `POST /api/v2/token` (JSON grant, requested scopes as
- *   repeated header lines, `token_type: "Bearer"`), `POST /api/v2/login` (ported from the 2009
- *   SSO gateway, `token_type: "BEARER"`), `POST /api/v2/users` (register, 201 with the entry)
- *   and `GET /api/v2/me` (the caller's directory entry). Errors are nested code-and-message
- *   objects, and 5xx answers are a bare JSON string.
- *
- * A 2012 servlet filter guards the directory and `/api/v2/me` and answers 401 with a bare message
- * object. A 2019 rate limiter in front of the three credential endpoints trusts
- * `X-Forwarded-For`. `GET /.well-known/openid-configuration` publishes an issuer with a trailing
- * slash.
- *
- * ## For cross-service flows
- *
- * - **Token issuance.** `POST /oauth/token` with the form
- *   `grant_type=client_credentials&client_id=<id>&client_secret=<secret>&scope=directory:read`
- *   answers 200 with one opaque `access_token` (and `token_type: "bearer"`). Register the client
- *   with `handler({ clients: [{ id, secret }] })`. With `handler({ token })`, that grant issues
- *   exactly `token`, so a test can configure other services with the same value.
- * - **Directory.** `GET /directory/users/{uid}` with `Authorization: Bearer <token>`. Seeded uids:
- *   `alovelace` and `ghopper` (active), `cbabbage` (inactive, `ACTIVE: "N"` with values),
- *   `kzuse` (active, imported from Active Directory with a fractional `CREATETIMESTAMP`, which a
- *   strict reader refuses). Any other uid answers 200 with the blank entry. Entries carry `UID`,
- *   `CN`, `MAIL`, `ACTIVE` (`Y` or `N`), `CREATETIMESTAMP` and `MODIFYTIMESTAMP`.
- * - **Token check.** The directory and `/api/v2/me` accept `Authorization: Bearer <token>` for
- *   `handler({ token })` without any grant, as well as for every token issued by this instance.
- *   The scheme is compared case-sensitively.
- *
- * Every call to {@link handler} creates fresh state: tokens, refresh families, registered users
- * and rate-limit buckets. Options are plain JSON data.
+ * Service documentation: services/identity.md
  */
 import { createHash, randomBytes } from "node:crypto";
 import { router } from "../harness/route.js";
@@ -48,37 +12,18 @@ import type { Context, Handler, Received, Reply } from "../harness/server.js";
 export interface Client {
   readonly id: string;
   readonly secret: string;
-  /**
-   * `mac` reproduces the 2013 pilot of draft-ietf-oauth-v2-http-mac: the servlet answers
-   * `token_type: "mac"` with a MAC key. Defaults to `bearer`.
-   */
   readonly tokenType?: "bearer" | "mac";
 }
 
+/** The test options, documented under "Test options" in the service page. */
 export interface Options {
-  /**
-   * A pre-provisioned opaque access token. The token check accepts it without any grant, and the
-   * first registered client's `client_credentials` grant issues exactly this value.
-   */
   readonly token?: string;
-  /** OAuth clients for `client_credentials`. Defaults to none. */
   readonly clients?: ReadonlyArray<Client>;
-  /**
-   * A fixed clock in epoch milliseconds for timestamps of registered users and rate-limit windows.
-   * Defaults to the real time.
-   */
   readonly now?: number;
-  /**
-   * The LDAP directory behind the gateway. `down` answers 503 with a bare JSON string; `stalled`
-   * holds every directory-backed request open until the client gives up.
-   */
   readonly ldap?: "up" | "down" | "stalled";
   readonly rateLimit?: {
-    /** Requests per bucket per 60-second window. Defaults to 10. */
     readonly limit?: number;
-    /** The address the server sees as its socket peer: the load balancer. Defaults to `10.20.0.5`. */
     readonly peer?: string;
-    /** Buckets that other traffic has already spent for the current window. */
     readonly exhausted?: ReadonlyArray<string>;
   };
 }
@@ -93,11 +38,7 @@ interface User {
   readonly password: string;
 }
 
-/**
- * The seeded directory. Times are stored as the gateway writes them. `kzuse` was imported from
- * Active Directory in 2009, which wrote a fractional second (`.0Z`); the import job copied the
- * string as is, and the LDAP schema's GeneralizedTime syntax accepts it.
- */
+/** The seeded directory. Times are stored as strings, exactly as the gateway serves them. */
 const seed: ReadonlyArray<User> = [
   {
     uid: "alovelace",
@@ -181,12 +122,7 @@ const reply = (
   lines: ReadonlyArray<readonly [string, string]>,
 ): Reply => ({ status, lines, body });
 
-/**
- * The 2012 servlet answered through Spring's message converter, which always added the charset,
- * and RFC 6749 section 5.1 requires the no-store headers. Every value went through a
- * `Map<String, String>`, so numbers are strings too; the Android SDK of 2013 parses
- * `expires_in` with `Integer.parseInt` and breaks on a number, so it stays a string.
- */
+/** The 2012 token servlet's writer; its value type keeps every member a string. */
 const servlet = (
   status: number,
   value: Readonly<Record<string, string>>,
@@ -217,35 +153,22 @@ const api = (
     ...lines,
   ]);
 
-/**
- * The 2016 API's 4xx shape. The mobile team nested the code so they could add fields later; they
- * never did.
- */
+/** The 2016 API's 4xx shape. */
 const coded = (status: number, code: string, message: string) =>
   api(status, { error: { code, message } });
 
-/**
- * The 2016 API's 5xx shape: its exception mapper wrote `JSON.stringify(exception.getMessage())`,
- * a bare JSON string. The iOS client's error banner shows that string verbatim, so it stays.
- */
+/** The 2016 API's 5xx shape, which every directory-backed path shares. */
 const fault = (status: number, message: string) =>
   api(status, message, [["Retry-After", "30"]]);
 
-/**
- * The 2012 filter's 401. Spring Security's default entry point wrote a bare message object, and
- * forty internal services match on its text.
- */
+/** The 2012 filter's 401. */
 const unauthorized = (message: string) =>
   api(401, { message }, [["WWW-Authenticate", 'Bearer realm="directory"']]);
 
 const segment = (value: unknown) =>
   Buffer.from(JSON.stringify(value)).toString("base64url");
 
-/**
- * The gateway's JSP template renders whatever entry the LDAP search returned. For no entry it
- * renders the same template with nothing filled in, and `ACTIVE` defaults to `N`. Nightly
- * reports count rows, so a 404 was never added.
- */
+/** The gateway's template for an entry, rendered blank for no user. */
 const entry = (user: User | undefined) =>
   user === undefined
     ? {
@@ -286,11 +209,7 @@ const isReply = (value: unknown): value is Reply =>
   "status" in value &&
   "lines" in value;
 
-/**
- * The issuer was configured in 2015 as the site root with its slash. Relying parties compare it
- * exactly and refresh tokens carry it, so dropping the slash would log everybody out. The
- * Jetty rewrite rules match the literal path, so `//.well-known/...` is a 404.
- */
+/** The discovery document. The router matches the literal path, so `//.well-known/...` is a 404. */
 const discovery = (_: Received, context: Context): Reply =>
   api(200, {
     issuer: `${context.origin}/`,
@@ -340,8 +259,8 @@ export const handler = (options: Options = {}): Handler => {
       resetAt: now().getTime() + windowMillis,
     });
 
-  // Opaque access tokens: 24 random bytes in standard Base64, so `+` and `/` are common. The
-  // resource servers look them up; nothing parses them.
+  // The first client's `client_credentials` grant issues `options.token`; every other grant draws
+  // a random token.
   const issueAccess = (subject: string | null, client: string | null) => {
     const token =
       subject === null &&
@@ -353,10 +272,8 @@ export const handler = (options: Options = {}): Handler => {
     return token;
   };
 
-  // The 2014 "stateless refresh" project made refresh tokens JWT-shaped. Revocation still needed
-  // the family table, so the server ignores the claims and checks the table. Its `exp` claim is
-  // copied from the account's first-ever session (a bug in the rollout), so it is always in the
-  // past; mobile apps that checked it broke in 2014 and stopped checking, and nobody fixed it.
+  // JWT-shaped refresh tokens with fixed, stale claims. Nothing reads the claims back: the family
+  // table decides whether a token is current.
   const issueRefresh = (
     origin: string,
     subject: string,
@@ -386,13 +303,7 @@ export const handler = (options: Options = {}): Handler => {
     return token;
   };
 
-  /**
-   * Added in 2019 against credential stuffing. Ops put it behind the load balancer, which appends
-   * the client address to `X-Forwarded-For`; the limiter keys on the first entry, which the client
-   * controls. Without the header, every request comes from the balancer's address and shares one
-   * bucket. Fixing it would need the balancer team to overwrite the header, which breaks two
-   * partners who send their own.
-   */
+  /** The 2019 limiter, keyed on the first `X-Forwarded-For` entry or else the configured peer. */
   const rateLimited = (request: Received): Reply | undefined => {
     const forwarded = first(request, "x-forwarded-for")?.split(",")[0]?.trim();
     const key = forwarded === undefined || forwarded === "" ? peer : forwarded;
@@ -418,7 +329,7 @@ export const handler = (options: Options = {}): Handler => {
         "Directory unavailable: LDAP connection pool exhausted",
       );
     if (ldap === "stalled") {
-      // The 2004 gateway has no read timeout towards LDAP; it waits until the caller hangs up.
+      // Wait for the client to hang up; nothing is written after that.
       await new Promise<void>((resolve) => {
         if (context.signal.aborted) resolve();
         else context.signal.addEventListener("abort", () => resolve());
@@ -428,11 +339,7 @@ export const handler = (options: Options = {}): Handler => {
     return "up";
   };
 
-  /**
-   * The 2012 filter. It compares the scheme case-sensitively with `startsWith("Bearer ")`, against
-   * RFC 9110; the filter is a shared library jar in forty services, and changing it needs all of
-   * them redeployed.
-   */
+  /** The 2012 filter's case-sensitive scheme check, then the token lookup. */
   const authenticated = (request: Received) => {
     const authorization = first(request, "authorization");
     if (authorization === undefined || !authorization.startsWith("Bearer "))
@@ -451,7 +358,6 @@ export const handler = (options: Options = {}): Handler => {
   ): Promise<Reply> => {
     const limited = rateLimited(request);
     if (limited !== undefined) return limited;
-    // The servlet's MediaType check predates the JSON API and was never widened.
     if (mediaType(request) !== "application/x-www-form-urlencoded")
       return oauthError(
         415,
@@ -561,13 +467,7 @@ export const handler = (options: Options = {}): Handler => {
     }
   };
 
-  /**
-   * The 2016 mobile grant. The API gateway's scope plugin maps each `X-OAuth-Scope` line to one
-   * requested scope. In 2017 a comma-joined line was granted as one scope literally named
-   * `profile, admin`; the fix refuses any line containing a comma. Granted scopes come back the
-   * same way, one line each, because the plugin cannot write a body. The web SSO also sets its
-   * session cookie and the balancer's affinity cookie here.
-   */
+  /** The 2016 mobile grant, which reads every `X-OAuth-Scope` line separately. */
   const jsonToken = async (
     request: Received,
     context: Context,
@@ -627,12 +527,7 @@ export const handler = (options: Options = {}): Handler => {
     );
   };
 
-  /**
-   * The web login, ported in 2016 from the 2009 SSO gateway. That gateway upper-cased every
-   * response value for a mainframe terminal client, and the port kept `BEARER` because the
-   * terminal emulator still logs in through it. It answers with tokens only; the profile is a
-   * separate request.
-   */
+  /** The 2016 web login. */
   const login = async (request: Received, context: Context): Promise<Reply> => {
     const limited = rateLimited(request);
     if (limited !== undefined) return limited;
@@ -655,7 +550,7 @@ export const handler = (options: Options = {}): Handler => {
     });
   };
 
-  /** Self-registration writes the LDAP entry and answers 201 with it, as the gateway renders it. */
+  /** Self-registration. */
   const register = async (
     request: Received,
     context: Context,

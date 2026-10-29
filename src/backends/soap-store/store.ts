@@ -13,16 +13,13 @@ export interface Document {
   modified: Date;
 }
 
-/** A document present when the handler starts, as plain JSON: its content as text or base64. */
+/** A document of the `documents` test option. */
 export interface SeedDocument {
   readonly name: string;
   readonly title: string;
   readonly contentType: string;
-  /** UTF-8 text content. */
   readonly text?: string | undefined;
-  /** Binary content in base64; used when `text` is absent. */
   readonly base64?: string | undefined;
-  /** ISO 8601 modification time; defaults to the clock. */
   readonly modified?: string | undefined;
 }
 
@@ -32,10 +29,7 @@ export interface Lock {
   readonly expires: Date;
 }
 
-/**
- * Document names are file names. The 2003 schema allowed anything but a slash; the 2009 WebDAV view
- * added the ban on control characters because they broke its hrefs.
- */
+/** The document name rule, shared by every view. */
 export const validName = (name: string): boolean =>
   name.length > 0 &&
   name.length <= 120 &&
@@ -75,7 +69,7 @@ export class Store {
       });
   }
 
-  /** Every document, ordered by name the way the 2003 index returned them. */
+  /** Every document, ordered by name. */
   all(): ReadonlyArray<Document> {
     return [...this.documents.values()].toSorted((a, b) =>
       a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
@@ -151,7 +145,7 @@ export class Store {
   }
 }
 
-/** Strong tags change with every write: a digest over the id, the version and the bytes. */
+/** A strong tag: a digest over the id, the version and the bytes, so every write changes it. */
 const tagFor = (document: Document): string =>
   `"${createHash("sha1")
     .update(document.id)
@@ -160,7 +154,7 @@ const tagFor = (document: Document): string =>
     .digest("hex")
     .slice(0, 16)}"`;
 
-/** The extension table the raw upload servlet uses, because raw uploads carry no content type. */
+/** The raw upload's content type, guessed from the name's extension. */
 export const guessType = (name: string): string => {
   const extension = /\.([A-Za-z0-9]+)$/.exec(name)?.[1]?.toLowerCase();
   switch (extension) {
@@ -175,6 +169,6 @@ export const guessType = (name: string): string => {
   }
 };
 
-/** xsd:dateTime in UTC without fractional seconds, as the 2003 serializer wrote it. */
+/** The 2003 serializer's `xsd:dateTime`. */
 export const dateTime = (date: Date): string =>
   date.toISOString().replace(/\.\d{3}Z$/, "Z");

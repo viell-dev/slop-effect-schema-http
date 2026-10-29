@@ -1,7 +1,7 @@
 /**
- * The service description, regenerated in 2009 from the port's annotations. It covers the four
- * actions of the SOAP endpoint; the download servlet was never described, only documented in the
- * vendor manual. The types live in a separate part, fetched with `?wsdl=types`.
+ * The service description and its schema part, as fixed text.
+ *
+ * Service documentation: services/soap-store.md
  */
 
 const namespace = "urn:docvault:store:2003";
@@ -69,7 +69,7 @@ const info = [
   `<xsd:element name="Modified" type="xsd:dateTime"/>`,
 ].join("");
 
-/** The schema part. Results start with the 2003 fault fields, except LockDocument's. */
+/** The schema part. */
 export const schemaPart = (): string =>
   [
     `<?xml version="1.0" encoding="utf-8"?>`,
