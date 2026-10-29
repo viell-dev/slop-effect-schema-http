@@ -49,6 +49,15 @@ jobs:
         run: npm run packed:catalogue
       - if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
         run: npm run packed:tsc
+      # The app lane: the single-page app in src/app, built by Vite in production mode against the
+      # same installed package, served with the same-origin proxy and driven in Chromium from Node
+      # (its JUnit report in artifacts/ too). It runs whenever the package was installed; its
+      # catalogue check runs once its lane passes.
+      - id: app
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        run: npm run app:test
+      - if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        run: npm run app:catalogue
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

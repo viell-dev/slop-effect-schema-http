@@ -71,8 +71,7 @@ Every scenario runs in two lanes. The Node lane runs the consumer in Node. The b
 the same tests in headless Chromium through Vitest browser mode, to show that the library works in
 a browser page; there, a Node-side control server starts the backends, and the browser enforces
 CORS, forbidden headers, cookies and redirects itself. The tests run as test code in the page, not
-as a built application; a bundled single-page app is tracked in
-[#35](https://github.com/viell-dev/slop-effect-schema-http/issues/35).
+as a built application; [the app lane](#the-app-lane) runs a single-page app built by a bundler.
 
 By default the control server, not the backend, answers each backend's CORS preflights and exposes
 every response header, so a browser-lane scenario runs under permissive CORS. Only a test that
@@ -93,7 +92,7 @@ providers are:
 `npm run check` verifies it against the test sources: every entry has a status, and every entry
 marked tested has a test whose title carries its ID. `npm test` verifies it against the executed
 results: every entry marked tested has a passed, not skipped, test carrying its ID in at least one
-lane.
+lane. An entry marked `Lane: app` runs only in the app lane, and only `npm run app` checks it.
 
 ### The packed lane
 
@@ -128,9 +127,40 @@ stay off for the library's build too. `npm run packed` then runs:
 
 The packed lane covers the package's `exports` map, its emitted JavaScript and declarations, and
 the peer `effect` as npm resolves it. It does not cover the browser lane, which always imports the
-source, or a bundled application, tracked in
-[#35](https://github.com/viell-dev/slop-effect-schema-http/issues/35). Nor does it isolate the
+source, or a bundled application, which the app lane covers. Nor does it isolate the
 package from the suite's other dependencies: a package the library imports without declaring it
 would go unnoticed if the suite happens to install it. A check of the packed package in an
 isolated consumer, in the library's own CI, is tracked in
 [#15](https://github.com/viell-dev/slop-effect-schema-http/issues/15).
+
+### The app lane
+
+The app lane runs the library as a static single-page app does: built by a bundler, served as
+static files, and used by someone who navigates, searches again before an answer arrives, and
+reloads. It needs the package that `npm run library:pack` installs, so CI runs it after the packed
+lane.
+
+```sh
+npm run library:pack   # as for the packed lane
+npm run app            # build the app, drive it in Chromium, and check the catalogue
+```
+
+The app in `src/app/` is a small task search over the business service: plain DOM, a history-API
+router that gives each page a scope of its own, and the search box of APP-1
+(`src/clients/flows/search.ts`), one `Interaction` per mounted search page. It is consumer code
+under the same boundary check as `src/clients/`. The page reads the service's origin from its `api`
+query parameter, because each test starts the service on an ephemeral port, and calls only its own
+origin, through the same-origin proxy. `npm run app` runs:
+
+- `app:test`, the app project. Its global setup refuses a missing or stale package, as the packed
+  lane's does, then builds the app with `vite build --config vite.app.config.ts`, in production
+  mode, into `.app/`. The build has no alias for the library, so Vite resolves
+  `viell-effect-schema-http` through the installed package's `exports` map, and it fails unless
+  every library module it bundles comes from the package's `dist/`. The setup then serves `.app/`
+  on a loopback port, with the proxy of `src/harness/proxy.ts` in front, and answers any other path
+  without an extension with `index.html`, so a route loaded directly or reloaded is rendered by the
+  app's router. The tests, `*.app.test.ts`, start backends with the Node lane and drive the page
+  with Playwright's Chromium. The run writes `artifacts/junit-app.xml`. For part of it, use
+  `npx vitest run <file> --mode app`.
+- `app:catalogue`, the catalogue check against that report: every entry marked `Lane: app` needs a
+  passed test there.

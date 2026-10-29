@@ -4,7 +4,7 @@
     "correctness": "error",
     "suspicious": "warn"
   },
-  "ignorePatterns": [".library/**", "artifacts/**"],
+  "ignorePatterns": [".library/**", ".app/**", "artifacts/**"],
   "rules": {
     "eslint/no-underscore-dangle": "off"
   },
@@ -42,7 +42,8 @@
         "src/clients/**",
         "src/values/**",
         "src/formats/**",
-        "src/scenarios/**"
+        "src/scenarios/**",
+        "src/app/**"
       ],
       "rules": {
         "no-restricted-imports": [

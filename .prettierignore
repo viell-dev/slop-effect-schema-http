@@ -1,4 +1,5 @@
 .library/
+.app/
 artifacts/
 coverage/
 package-lock.json

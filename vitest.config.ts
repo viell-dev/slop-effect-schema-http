@@ -23,8 +23,13 @@ const node = defineProject({
     include: ["src/**/*.test.ts"],
     // Tests about the browser itself (CORS, the same-origin proxy) are named
     // `*.browser.test.ts` and run only in the browser project; tests of the packed package are
-    // named `*.packed.test.ts` and run only in the packed project.
-    exclude: ["src/**/*.browser.test.ts", "src/**/*.packed.test.ts"],
+    // named `*.packed.test.ts` and run only in the packed project; tests of the built app are
+    // named `*.app.test.ts` and run only in the app project.
+    exclude: [
+      "src/**/*.browser.test.ts",
+      "src/**/*.packed.test.ts",
+      "src/**/*.app.test.ts",
+    ],
     environment: "node",
     globalSetup: ["./src/harness/library-check.ts"],
     ...timeouts,
@@ -40,7 +45,26 @@ const packed = defineProject({
   test: {
     ...node.test,
     name: "packed",
-    exclude: ["src/**/*.browser.test.ts"],
+    exclude: ["src/**/*.browser.test.ts", "src/**/*.app.test.ts"],
+  },
+});
+
+// The single-page app in `src/app`, built and driven from Node (EXT-7). The global setup checks the
+// installed package as the packed project's does, builds the app against it with Vite in
+// production mode, and serves the build with the same-origin proxy; the tests start backends with
+// the Node lane and drive the page with Playwright's Chromium. They import the library without the
+// alias too, so the test side and the app use the same installed package.
+const app = defineProject({
+  resolve: { alias: { "#lane": nodeLane } },
+  test: {
+    name: "app",
+    include: ["src/**/*.app.test.ts"],
+    environment: "node",
+    globalSetup: [
+      "./src/harness/library-check.ts",
+      "./src/harness/app-setup.ts",
+    ],
+    ...timeouts,
   },
 });
 
@@ -58,8 +82,12 @@ const browser = defineProject({
     name: "browser",
     include: ["src/**/*.test.ts"],
     // Tests that need Node itself (sockets, the line-preserving provider) are named
-    // `*.node.test.ts`; every other test except the packed ones also runs in the browser.
-    exclude: ["src/**/*.node.test.ts", "src/**/*.packed.test.ts"],
+    // `*.node.test.ts`; every other test except the packed and app ones also runs in the browser.
+    exclude: [
+      "src/**/*.node.test.ts",
+      "src/**/*.packed.test.ts",
+      "src/**/*.app.test.ts",
+    ],
     globalSetup: [
       "./src/harness/library-check.ts",
       "./src/harness/browser-setup.ts",
@@ -74,8 +102,12 @@ const browser = defineProject({
   },
 });
 
-// `--mode packed` (`npm run packed:test`) runs only the packed project; the browser lane always
-// imports the library from source.
+// `--mode packed` (`npm run packed:test`) runs only the packed project, and `--mode app`
+// (`npm run app:test`) only the app project; the browser lane always imports the library from
+// source.
 export default defineConfig(({ mode }) => ({
-  test: { projects: mode === "packed" ? [packed] : [node, browser] },
+  test: {
+    projects:
+      mode === "packed" ? [packed] : mode === "app" ? [app] : [node, browser],
+  },
 }));
