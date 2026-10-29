@@ -232,8 +232,8 @@ const rawBytes = (url: string) =>
 const utf8 = new TextEncoder();
 
 /** A report.count call with `period` written into its string parameter exactly as given. */
-const countCall = (period: string) =>
-  `<?xml version="1.0"?>\n<methodCall><methodName>report.count</methodName><params><param><value><string>${period}</string></value></param></params></methodCall>\n`;
+const countCall = (requested: string) =>
+  `<?xml version="1.0"?>\n<methodCall><methodName>report.count</methodName><params><param><value><string>${requested}</string></value></param></params></methodCall>\n`;
 
 /** POST bytes to /RPC2 as text/xml, bypassing the consumer's writer, and read the reply's bytes. */
 const rawCall = (origin: string, body: Uint8Array) =>
@@ -574,6 +574,13 @@ describe(`gateway (${lane.name})`, () => {
             // Malformed references: XML's x is lower-case, and an ampersand must start one.
             countCall("2026&#X31;0"),
             countCall("2026 & 10"),
+            // Attribute values follow the same rules, though XML-RPC defines no attributes.
+            ...["&#0;", "&#xD800;", "&#X31;", "R & D", "a<b"].map((value) =>
+              countCall("202610").replace(
+                "<methodCall>",
+                `<methodCall review="${value}">`,
+              ),
+            ),
           ].map((text) => utf8.encode(text));
           // Bytes that are not UTF-8 at all.
           const [head, tail] = countCall("2026@10").split("@");
@@ -588,15 +595,23 @@ describe(`gateway (${lane.name})`, () => {
             expect(
               wellFormed(yield* rawCall(gateway.origin, body)).response,
             ).toEqual(faultTree(-32700, "parse error. not well formed"));
-          // The control: a well-formed call on the same path is answered.
+          // The controls: a well-formed call on the same path is answered, with or without a
+          // well-formed attribute, which XML-RPC ignores.
           const control = utf8.encode(countCall("202610"));
-          expect(
-            wellFormed(yield* rawCall(gateway.origin, control)).response,
-          ).toEqual({ params: [{ i4: "3" }] });
+          const attributed = utf8.encode(
+            countCall("202610").replace(
+              "<methodCall>",
+              `<methodCall review='R &amp; D &#233;'>`,
+            ),
+          );
+          for (const body of [control, attributed])
+            expect(
+              wellFormed(yield* rawCall(gateway.origin, body)).response,
+            ).toEqual({ params: [{ i4: "3" }] });
           // Every call went out byte for byte, the raw NUL included.
           const ledger = yield* gateway.ledger;
           expect(ledger.map((entry) => Array.from(entry.body))).toEqual(
-            [...malformed, control].map((body) => Array.from(body)),
+            [...malformed, control, attributed].map((body) => Array.from(body)),
           );
           expect(ledger[0]!.body).toContain(0);
         }),
@@ -608,10 +623,10 @@ describe(`gateway (${lane.name})`, () => {
         Effect.gen(function* () {
           const gateway = yield* start();
           // report.count's 404 fault echoes the period as the gateway read it.
-          for (const period of ["2026\r\n13", "2026\r13", "2026\n13"]) {
+          for (const lineEnd of ["2026\r\n13", "2026\r13", "2026\n13"]) {
             const reply = yield* rawCall(
               gateway.origin,
-              utf8.encode(countCall(period)),
+              utf8.encode(countCall(lineEnd)),
             );
             expect(reply).not.toContain(0x0d);
             expect(wellFormed(reply).response).toEqual(

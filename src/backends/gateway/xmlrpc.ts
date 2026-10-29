@@ -120,6 +120,21 @@ const parseXml = (input: string): Node => {
     if (open === null) throw new Error(`expected an element at ${index}`);
     index += open[0].length;
     const name = open[1]!;
+    // XML-RPC defines no attributes, so their values are ignored, but a malformed one still makes
+    // the document malformed: each must be quoted, hold no '<', and use only valid references.
+    const attributes = open[2] ?? "";
+    const attribute = /\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"([^"]*)"|'([^']*)')/y;
+    let at = 0;
+    while (attributes.slice(at).trim() !== "") {
+      attribute.lastIndex = at;
+      const match = attribute.exec(attributes);
+      if (match === null) throw new Error(`malformed attributes in <${name}>`);
+      const value = match[1] ?? match[2] ?? "";
+      if (value.includes("<"))
+        throw new Error(`'<' in an attribute value of <${name}>`);
+      unescape(value);
+      at = attribute.lastIndex;
+    }
     if (open[3] === "/") return { name, children: [] };
     const children: Array<Node | string> = [];
     for (;;) {
