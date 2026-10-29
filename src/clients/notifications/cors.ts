@@ -68,7 +68,7 @@ export const requestedHeaders = (
         )
         .map(([name]) => name),
     ),
-  ).sort();
+  ).toSorted();
 
 export interface Intent {
   readonly origin: string;
