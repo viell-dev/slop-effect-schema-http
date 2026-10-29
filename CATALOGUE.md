@@ -126,40 +126,107 @@ providers`. Observed: Effect's normalized `headers["set-cookie"]` keeps only the
 
 ## JSON business API: envelopes (`business/envelopes`)
 
-- **ERR-1d** "Not found" answered as 200. Status: pending.
+Scenarios are in `src/scenarios/business-envelopes.test.ts` and run in both lanes (Node and
+Chromium); a title ending in `(lines)` or `(fetch)` runs once per provider the lane offers. The
+raw-socket check is in `business-envelopes.node.test.ts`. Round trips for the dialect schemas are in
+`src/clients/business/envelopes-dialects.test.ts`.
+
+- **ERR-1d** "Not found" answered as 200. Status: tested.
+  - `[ERR-1d] decodes a found customer and a not-found 200 into one union` (and moves the
+    not-found envelope into the failure channel with `Operation.mapEffect`)
 - **ERR-2** An error code in a response header on a 200 (a load balancer ejects nodes answering
   anything else): a header rule selected before any body byte is read, ranked above the plain 200
-  rule. Status: pending.
+  rule. Status: tested.
+  - `[ERR-2] selects the header error rule ahead of the plain 200 rule`
+  - `[ERR-2] declared after the plain 200 rule, the header rule is unreachable and the decode
+failure is final`
 - **ERR-3** A batch endpoint whose envelope is always 200 with per-item statuses inside:
-  discrimination in the schema. Status: pending.
-- **ERR-7** Rule matching never peeks at the body. Status: pending.
+  discrimination in the schema. Status: tested.
+  - `[ERR-3] discriminates per-item statuses inside an always-200 batch envelope`
+  - `[ERR-3] refuses a batch item whose status contradicts its payload`
+- **ERR-7** Rule matching never peeks at the body. Status: tested. Client middleware replaces each
+  body with a stream that records every pull, and a never-matching first rule records selection.
+  - `[ERR-7] selects the header rule from metadata alone and never reads its body`
+  - `[ERR-7] reads a selected or unmatched body only after selection has finished`
+  - `[ERR-7] rules see transport metadata only; the type offers no body` (type-level)
 - **STAT-2** Creation answering 200 instead of 201 with a relative `Location`: resolve it against the
-  base URL. Status: pending.
+  base URL. Status: tested. The path-absolute `Location` is resolved against the request URL
+  (RFC 9110); joining it to the base URL would duplicate `/v1`.
+  - `[STAT-2] resolves the relative Location of a 200 creation and follows it`
+  - Round trip: `[STAT-2] a Location resolves against its request URL and refuses to encode` (the
+    container's spelling is the stated loss).
 - **STAT-3** A 204 whose handler writes a debug body the container never sends: declare the body
-  honestly empty; a JSON declaration exposes the documented quirk as fiction. Status: pending.
+  honestly empty; a JSON declaration exposes the documented quirk as fiction. Status: tested.
+  Verified: Node's server sends the 204 head with no `Content-Length`, no `Transfer-Encoding` and
+  no body bytes, although the handler writes JSON.
+  - `[STAT-3] declares the 204 honestly empty; declaring JSON exposes the debug body as fiction`
+  - Node-only: `[STAT-3] the fixture's 204 carries no body bytes on the wire` (raw socket)
 - **STAT-4** A 200 with a JSON content type and zero bytes: an explicit empty-body declaration.
-  Status: pending.
+  Status: tested.
+  - `[STAT-4] an explicit empty declaration accepts a 200 JSON response of zero bytes`
 - **STAT-5** 202 Accepted with a relative `Location` and `Retry-After`, pending for the first polls:
-  polling is a loop over a cold request, not a retry. Status: pending.
+  polling is a loop over a cold request, not a retry. Status: tested. The test waits a tenth of each
+  requested second and asserts the requested delays. Observed: re-executions differ only in Effect's
+  per-execution `b3` and `traceparent` lines.
+  - `[STAT-5] polls a 202 export with the same cold request until it is done`
+  - `[STAT-5] a retry policy does not poll: a pending 202 is a success` (also a typed failure when
+    the poll budget runs out)
 - **STAT-13** PATCH returning the state before the write: re-read and never trust the response.
-  Status: pending.
+  Status: tested.
+  - `[STAT-13] re-reads after PATCH instead of trusting the pre-write state it returns`
 - **HDR-2** `Link`-header pagination with zero-based offsets while the query parameter is one-based:
-  a schema that parses the header and converts. Status: pending.
+  a schema that parses the header and converts. Status: tested.
+  - `[HDR-2] walks Link pagination by converting zero-based offsets to one-based pages`
+  - `[HDR-2] following the Link target literally reads the first page again`
+  - Round trips: `[HDR-2] the gateway's Link spelling round-trips and looser spellings are
+refused`, `[HDR-2] a zero-based window converts to a one-based page and back`, `[HDR-2]
+pagination links decode to pages and encode to the gateway's header`.
 - **HDR-3** Relative versus absolutized `Location` for the same intent, decided by the container:
-  resolve either, after verifying what the fixture really sends. Status: pending.
-- **HDR-5a** JSON served as `text/html`. Status: pending.
-- **HDR-5b** JSON served as `text/json`. Status: pending.
-- **HDR-5c** OData's verbose content-type parameter. Status: pending.
+  resolve either, after verifying what the fixture really sends. Status: tested. Verified: Node
+  never rewrites `Location`, so only the fixture's legacy container sends the absolute form; the
+  original lines (Node lane, line provider) and Fetch's headers in both lanes carry each form as sent.
+  - `[HDR-3] resolves either Location form, as each container really sends it`
+- **HDR-5a** JSON served as `text/html`. Status: tested.
+  - `[HDR-5a] decodes JSON served as text/html, never dispatching on content type`
+- **HDR-5b** JSON served as `text/json`. Status: tested.
+  - `[HDR-5b] decodes JSON served as text/json`
+- **HDR-5c** OData's verbose content-type parameter. Status: tested.
+  - `[HDR-5c] decodes OData verbose JSON whatever its content-type parameters say`
 - **PAY-1** JSON dialects: an anti-hijacking prefix, a JSONP wrapper where any other callback name is
   a decode failure, an OData v2 envelope with metadata and a stringified count, a column-oriented
   grid whose column order is verified, a single result unwrapped from its array, and an enum sent
-  as a name but returned as an ordinal. Status: pending.
+  as a name but returned as an ordinal. Status: tested.
+  - `[PAY-1] strips the anti-hijacking prefix before parsing JSON`
+  - `[PAY-1] unwraps JSONP for the requested callback and refuses any other name`
+  - `[PAY-1] refuses a JSONP callback that is not an identifier before dispatch`
+  - `[PAY-1] reads an OData v2 envelope with metadata and a stringified count`
+  - `[PAY-1] maps a column grid through its verified header in any column order` (with the
+    positional control that silently swaps two money columns)
+  - `[PAY-1] normalizes a single result unwrapped from its array, and none`
+  - `[PAY-1] sends a tier as a name and reads it back from an ordinal`
+  - Round trips: `[PAY-1] the anti-hijacking prefix round-trips and is required`, `[PAY-1] a JSONP
+frame round-trips for its callback and refuses any other`, `[PAY-1] an OData count
+round-trips as canonical digits only`, `[PAY-1] a grid maps rows through its verified header
+and encodes the documented order`, `[PAY-1] an unwrapped list round-trips for none, one and
+many items`, `[PAY-1] a tier is a name in requests and an ordinal in responses`.
 - **PAY-2** 64-bit identifiers above 2^53 that the platform parser rounds: read as text and parse
-  losslessly before the schema sees them, with the lossy control case. Status: pending.
+  losslessly before the schema sees them, with the lossy control case. Status: tested. The lossless
+  dialect uses `JSON.parse` source text access and `JSON.rawJSON`, available in Node 24 and
+  Chromium.
+  - `[PAY-2] parses 64-bit ledger ids losslessly and fetches the right row by id`
+  - `[PAY-2] the platform JSON parser rounds an id into the previous row's (lossy control)`
+  - Round trips: `[PAY-2] lossless JSON keeps 64-bit ids exact in both directions`, `[PAY-2] an
+exact id refuses a value the platform parser already rounded`.
 - **APP-4** Unmodelled responses drained and surfaced as an unexpected-status failure, or read by an
-  explicit fallback inside the operation scope as text or discarded. Status: pending.
+  explicit fallback inside the operation scope as text or discarded. Status: tested. The unmodelled
+  response is the stock HTML page of a web application firewall.
+  - `[APP-4] drains an unmodelled firewall page and fails with UnexpectedResponse`
+  - `[APP-4] an explicit fallback reads an unmodelled body as text inside the operation`
+  - `[APP-4] an explicit fallback can discard an unmodelled body`
 - **APP-5** Validation on both sides: the client refuses an empty string before any network; the
-  server refuses a blank string the client accepted. Status: pending.
+  server refuses a blank string the client accepted. Status: tested.
+  - `[APP-5] refuses an empty customer name before any network`
+  - `[APP-5] the server refuses a blank name that the client accepted`
 
 ## JSON business API: operations (`business/operations`)
 
