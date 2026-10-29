@@ -956,9 +956,10 @@ describe("Operation retries", () => {
           ),
         },
       );
-      expectTypeOf<"retry budget unavailable">().toExtend<
-        Effect.Error<ReturnType<typeof operation.execute>>
-      >();
+      // The schedule's exact error is the only string member of the error union.
+      expectTypeOf<
+        Extract<Effect.Error<ReturnType<typeof operation.execute>>, string>
+      >().toEqualTypeOf<"retry budget unavailable">();
       const exit = yield* operation
         .execute(undefined)
         .pipe(Effect.provide(server.layer), Effect.exit);
