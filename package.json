@@ -5,7 +5,14 @@
   "description": "Server-backed hostile-API integration suite for viell-effect-schema-http.",
   "license": "UNLICENSED",
   "type": "module",
-  "packageManager": "pnpm@12.16.1",
+  "packageManager": "npm@11.19.0",
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "^11.19.0",
+      "onFail": "error"
+    }
+  },
   "scripts": {
     "library": "node scripts/library.mjs",
     "check": "run-p check:*",

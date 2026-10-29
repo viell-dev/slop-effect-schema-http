@@ -1,5 +1,5 @@
-// Regression tests for scripts/boundaries.mjs, run in `pnpm check`. Each case writes a small tree
-// with the suite's layout into a temporary directory, changes it, and runs the check on it.
+// Regression tests for scripts/boundaries.mjs, run in `npm run check`. Each case writes a small
+// tree with the suite's layout into a temporary directory, changes it, and runs the check on it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

@@ -27,13 +27,13 @@ the scenarios. The library's own design, which these tests are judged against, i
     never sharing a schema, codec, helper or constant table with the consumer side, so a bug cannot
     cancel itself out across both.
   - Tests configure a backend only through its JSON options.
-  - `pnpm check` enforces both directions with `scripts/boundaries.mjs`, which resolves every
+  - `npm run check` enforces both directions with `scripts/boundaries.mjs`, which resolves every
     import, through `package.json` `imports` and `tsconfig.json` `paths` aliases too: a backend's
     against that allowlist, and consumer code's and scenarios' against any backend and any harness
     module except `lane.ts` and `#lane`. A `#…` specifier that resolves to nothing, or an
     undeclared package, fails the check. `scripts/boundaries.test.mjs` tests the script in
-    `pnpm check`; extend it when the resolution changes. `pnpm lint` flags common cases too, by
-    specifier text only.
+    `npm run check`; extend it when the resolution changes. `npm run lint` flags common cases too,
+    by specifier text only.
 - **Two lanes.** Every scenario runs in Node and in Chromium (Vitest browser mode), to show that the
   library works in a static single-page app as well as in Node.
   - Tests import `lane` from `#lane` and start backends by name with `lane.backend(name, options)`.
@@ -69,7 +69,7 @@ the scenarios. The library's own design, which these tests are judged against, i
   that reject looser or invalid spellings. A deliberately lossy or one-way mapping states its loss,
   and its reverse fails with a reason.
 - **Types.** Type-level guarantees use `expectTypeOf` and `@ts-expect-error`, which
-  `corepack pnpm check` verifies.
+  `npm run check` verifies.
 - **Traceability.** Start each test title with its catalogue ID, such as `[AUTH-3]`, and update the
   entry's status in `CATALOGUE.md`.
 - **Mismatches.** If the library cannot express a scenario without escaping its API, or behaves
@@ -82,17 +82,20 @@ the scenarios. The library's own design, which these tests are judged against, i
 ## Commands
 
 ```sh
-fnm use                      # or nvm use; Node.js version from .nvmrc
-corepack pnpm install --frozen-lockfile
-corepack pnpm library        # fetch the library source at the commit in library-ref
-corepack pnpm exec playwright install chromium   # once, for the browser lane
-corepack pnpm check          # TypeScript (incl. type-level tests), Prettier, catalogue, boundaries
-corepack pnpm lint           # Oxlint
-corepack pnpm test           # each lane as its own run, then the catalogue against their results
+fnm use                           # or nvm use; Node.js version from .nvmrc, with its bundled npm
+npm ci
+npm run library                   # fetch the library source at the commit in library-ref
+npx playwright install chromium   # once, for the browser lane
+npm run check                     # TypeScript (incl. type-level tests), Prettier, catalogue, boundaries
+npm run lint                      # Oxlint
+npm test                          # each lane as its own run, then the catalogue against their results
 ```
 
-`pnpm test` runs `test:node`, `test:browser` and `test:catalogue` in turn; each lane writes a JUnit
+`.npmrc` sets `ignore-scripts=true`; keep it, and review any dependency that needs an install script
+before adding an exception. It also skips `pre` and `post` scripts, so do not add them.
+
+`npm test` runs `test:node`, `test:browser` and `test:catalogue` in turn; each lane writes a JUnit
 report to `artifacts/`, and CI runs the same three scripts. For part of the suite, use
-`corepack pnpm exec vitest run <file> --project node` (or `browser`).
+`npx vitest run <file> --project node` (or `browser`).
 
 Deliver changes through pull requests into `hostile-servers-test`.
