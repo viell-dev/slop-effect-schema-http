@@ -195,7 +195,9 @@ describe("harness", () => {
           return { status: 200 };
         });
         const socket = yield* startUpload(server.origin);
-        yield* Effect.promise(() => server.arrived(1));
+        yield* Effect.promise(() => server.arrived(1)).pipe(
+          Effect.timeout("2 seconds"),
+        );
         // Recorded before the body is complete; the entry shows the bytes so far.
         yield* eventually(
           () => server.ledger[0]!.body.length === partial.length,
@@ -238,7 +240,9 @@ describe("harness", () => {
           body: JSON.stringify({ name: "echo" }),
         })) as { readonly id: string; readonly origin: string };
         const socket = yield* startUpload(origin);
-        yield* call(`/backends/${id}/arrived?count=1`);
+        yield* call(`/backends/${id}/arrived?count=1`).pipe(
+          Effect.timeout("2 seconds"),
+        );
         type Entry = { readonly body: string; readonly aborted: boolean };
         const ledger = () =>
           fetch(`${control.url}/backends/${id}/ledger`).then(
