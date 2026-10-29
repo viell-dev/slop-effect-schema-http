@@ -18,9 +18,14 @@ describe an external service from the consumer's perspective. This project does 
 server or replace the HTTP client's transport.
 
 The public entry point exports `Body`, `Interaction`, `Operation`, `Policy`, `Request`, `Response`,
-`Transport`, and `UrlEncoding`. Their TypeScript source is the current API reference. There are no
-automated behavior tests yet, so successful static checks and builds do not establish runtime
-correctness.
+`Transport`, and `UrlEncoding`. Their TypeScript source is the current API reference.
+
+Behavior tests cover every module through Effect's `HttpClient` with an in-memory provider: request
+encoding, response selection and decoding, retry policies, timeouts, cancellation, and interactions.
+They do not exercise Fetch, browsers, real servers, or packaged installation. Confirmed defects are
+tracked as [bug
+issues](https://github.com/viell-dev/slop-effect-schema-http/issues?q=is%3Aissue+is%3Aopen+label%3A%22Type%3A+Bug%22),
+and their tests are marked as expected failures until fixed.
 
 ## Development
 
@@ -33,12 +38,12 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm check
 corepack pnpm lint
 corepack pnpm build
+corepack pnpm test
 ```
 
 The build writes JavaScript and declarations to `dist/`. Generated files and dependencies are
-ignored by Git. Run `corepack pnpm format` to format the repository. `corepack pnpm test` currently
-fails with "No test files found"; add meaningful tests before relying on the library's behavior. CI
-runs the static checks, linters, and build on Linux with the pinned Node.js version.
+ignored by Git. Run `corepack pnpm format` to format the repository. CI runs the static checks,
+linters, build, and tests on Linux with the pinned Node.js version.
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the maintenance workflow. Report defects and proposed
 changes in the [issue tracker](https://github.com/viell-dev/slop-effect-schema-http/issues), with
