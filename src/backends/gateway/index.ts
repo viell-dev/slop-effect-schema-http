@@ -255,7 +255,10 @@ export const handler = (options: Options = {}): Handler => {
       );
     let call: ReturnType<typeof Rpc.readCall>;
     try {
-      call = Rpc.readCall(new TextDecoder().decode(request.body));
+      // Expat refuses bytes that are not UTF-8 like any other malformed document.
+      call = Rpc.readCall(
+        new TextDecoder("utf-8", { fatal: true }).decode(request.body),
+      );
     } catch {
       return Rpc.fault(-32700, "parse error. not well formed");
     }

@@ -503,6 +503,15 @@ structs`
   - `[PAY-3b] bare scalar responses: an i4 count, an untyped string and an array of strings`
   - `[PAY-3b] a header declaration cannot relabel a text body, so the gateway refuses the call`
     (both lanes send `text/plain`: the body codec owns the content type)
+  - XML's character rules hold in the gateway's own reader and writer, checked over raw calls and
+    reply bytes:
+    `[PAY-3b] a call holding a NUL or another character XML forbids, raw or as a reference, gets the parse-error fault in well-formed XML`
+    (also an upper-case `&#X`, a bare `&` and bytes that are not UTF-8; a well-formed call on the
+    same path is the control),
+    `[PAY-3b] the gateway reads a call's line ends as LF, and writes a referenced carriage return back as a reference`,
+    and
+    `[PAY-3b] a fixture value XML cannot carry is answered with the internal-error fault, never written`
+    (-32603, decoded by the consumer's strict reader).
   - Helper: `[PAY-3b] parses every type into a lossless tree, ignoring whitespace between
 elements`, `[PAY-3b] round-trips calls and faults`, `[PAY-3b] refuses malformed responses instead
 of guessing`, `[PAY-3b] scalar schemas read the type element and refuse other types or

@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import { Cause, DateTime, Effect, Option, Schedule, Schema } from "effect";
-import { FetchHttpClient, type HttpClient } from "effect/http";
+import { FetchHttpClient, HttpBody, type HttpClient } from "effect/http";
 import { lane } from "#lane";
 import {
   Body,
@@ -228,6 +228,44 @@ const rawBytes = (url: string) =>
   Operation.make(Request.get(url), Response.status(200, Body.bytes)).execute(
     undefined,
   );
+
+const utf8 = new TextEncoder();
+
+/** A report.count call with `period` written into its string parameter exactly as given. */
+const countCall = (period: string) =>
+  `<?xml version="1.0"?>\n<methodCall><methodName>report.count</methodName><params><param><value><string>${period}</string></value></param></params></methodCall>\n`;
+
+/** POST bytes to /RPC2 as text/xml, bypassing the consumer's writer, and read the reply's bytes. */
+const rawCall = (origin: string, body: Uint8Array) =>
+  viaFetch(
+    Operation.make(
+      Request.post(`${origin}/RPC2?session=${TOKEN}`).pipe(
+        Request.body(
+          Body.encoder((bytes: Uint8Array) =>
+            Effect.succeed(HttpBody.uint8Array(bytes, "text/xml")),
+          ),
+        ),
+      ),
+      Response.status(200, Body.bytes),
+    ).execute({ body }),
+  );
+
+/** A reply's text and tree, failing unless its bytes are NUL-free UTF-8 the strict reader accepts. */
+const wellFormed = (bytes: Uint8Array) => {
+  expect(bytes).not.toContain(0);
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  return { text, response: XmlRpc.parseResponse(text) };
+};
+
+/** A fault as the wire tree carries it. */
+const faultTree = (code: number, message: string) => ({
+  fault: {
+    struct: {
+      faultCode: { i4: String(code) },
+      faultString: { string: message },
+    },
+  },
+});
 
 describe(`gateway (${lane.name})`, () => {
   describe("sessions", () => {
@@ -517,6 +555,123 @@ describe(`gateway (${lane.name})`, () => {
           expect(unexpected.metadata.status).toBe(400);
           const [call] = yield* gateway.ledger;
           expect(header(call!.lines, "content-type")).toBe("text/plain");
+        }),
+    );
+
+    it.live(
+      "[PAY-3b] a call holding a NUL or another character XML forbids, raw or as a reference, gets the parse-error fault in well-formed XML",
+      () =>
+        Effect.gen(function* () {
+          const gateway = yield* start();
+          const malformed = [
+            countCall("2026\u000010"),
+            countCall("2026&#0;10"),
+            countCall("2026&#x0;10"),
+            countCall("2026￾10"),
+            countCall("2026&#xFFFF;10"),
+            countCall("2026&#xD800;10"),
+            countCall("2026&#x110000;10"),
+            // Malformed references: XML's x is lower-case, and an ampersand must start one.
+            countCall("2026&#X31;0"),
+            countCall("2026 & 10"),
+          ].map((text) => utf8.encode(text));
+          // Bytes that are not UTF-8 at all.
+          const [head, tail] = countCall("2026@10").split("@");
+          malformed.push(
+            new Uint8Array([
+              ...utf8.encode(head!),
+              0xff,
+              ...utf8.encode(tail!),
+            ]),
+          );
+          for (const body of malformed)
+            expect(
+              wellFormed(yield* rawCall(gateway.origin, body)).response,
+            ).toEqual(faultTree(-32700, "parse error. not well formed"));
+          // The control: a well-formed call on the same path is answered.
+          const control = utf8.encode(countCall("202610"));
+          expect(
+            wellFormed(yield* rawCall(gateway.origin, control)).response,
+          ).toEqual({ params: [{ i4: "3" }] });
+          // Every call went out byte for byte, the raw NUL included.
+          const ledger = yield* gateway.ledger;
+          expect(ledger.map((entry) => Array.from(entry.body))).toEqual(
+            [...malformed, control].map((body) => Array.from(body)),
+          );
+          expect(ledger[0]!.body).toContain(0);
+        }),
+    );
+
+    it.live(
+      "[PAY-3b] the gateway reads a call's line ends as LF, and writes a referenced carriage return back as a reference",
+      () =>
+        Effect.gen(function* () {
+          const gateway = yield* start();
+          // report.count's 404 fault echoes the period as the gateway read it.
+          for (const period of ["2026\r\n13", "2026\r13", "2026\n13"]) {
+            const reply = yield* rawCall(
+              gateway.origin,
+              utf8.encode(countCall(period)),
+            );
+            expect(reply).not.toContain(0x0d);
+            expect(wellFormed(reply).response).toEqual(
+              faultTree(404, "no extract for 2026\n13"),
+            );
+          }
+          const referenced = wellFormed(
+            yield* rawCall(
+              gateway.origin,
+              utf8.encode(countCall("2026&#13;13")),
+            ),
+          );
+          expect(referenced.text).toContain(
+            "<string>no extract for 2026&#13;13</string>",
+          );
+          expect(referenced.response).toEqual(
+            faultTree(404, "no extract for 2026\r13"),
+          );
+          // The raw line ends really went out as written.
+          const [crlf, cr] = yield* gateway.ledger;
+          expect(crlf!.body).toContain(0x0d);
+          expect(cr!.body).toContain(0x0d);
+        }),
+    );
+
+    it.live(
+      "[PAY-3b] a fixture value XML cannot carry is answered with the internal-error fault, never written",
+      () =>
+        Effect.gen(function* () {
+          const gateway = yield* start({
+            ...fixture,
+            accounts: [
+              ...fixture.accounts,
+              {
+                account: "00012399",
+                title: "Null\u0000Title",
+                cents: 0,
+                due: "00000000",
+              },
+            ],
+          });
+          // The consumer's strict reader decodes the reply, so a NUL on the wire would fail it.
+          const title = yield* viaFetch(
+            Rpc.accountTitle(gateway.origin).execute({
+              session: TOKEN,
+              params: ["00012399"],
+            }),
+          );
+          expect(title).toEqual({
+            _tag: "Fault",
+            code: -32603,
+            message: "server error. internal xml-rpc error",
+          });
+          const other = yield* viaFetch(
+            Rpc.accountTitle(gateway.origin).execute({
+              session: TOKEN,
+              params: ["00012345"],
+            }),
+          );
+          expect(other).toEqual({ _tag: "Result", value: "Café Müller" });
         }),
     );
 
