@@ -101,10 +101,12 @@ const write = (response: ServerResponse, reply: Reply): void => {
 
 /**
  * Serve `handler` on an ephemeral loopback port for the current scope. Closing the scope closes
- * every open connection, including held-open requests.
+ * every open connection, including held-open requests. `host` defaults to `127.0.0.1`; any address
+ * in `127.0.0.0/8` is loopback on Linux and Windows.
  */
 export const serve = (
   handler: Handler,
+  host = "127.0.0.1",
 ): Effect.Effect<Server, never, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.promise(
@@ -149,9 +151,9 @@ export const serve = (
                 }
               })();
             });
-            server.listen(0, "127.0.0.1", () => {
+            server.listen(0, host, () => {
               const { port } = server.address() as AddressInfo;
-              origin = `http://127.0.0.1:${port}`;
+              origin = `http://${host}:${port}`;
               resolve({
                 origin,
                 ledger,

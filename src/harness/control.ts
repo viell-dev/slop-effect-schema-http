@@ -68,6 +68,14 @@ const withHarnessCors =
     };
   };
 
+/**
+ * Browsers scope cookies by host, not port, so backends sharing `127.0.0.1` would share one cookie
+ * jar across tests and areas. Each backend started for the browser lane gets its own loopback
+ * address instead, cycling through `127.0.0.2`–`127.0.0.251`.
+ */
+const hostFor = (sequence: number): string =>
+  `127.0.0.${2 + ((sequence - 1) % 250)}`;
+
 interface Running {
   readonly server: Server;
   readonly scope: Scope.Closeable;
@@ -132,7 +140,7 @@ export const startControl = (): Promise<Control> => {
             return inner(request, context);
           };
     const server = await Effect.runPromise(
-      serve(handler).pipe(Scope.provide(scope)),
+      serve(handler, hostFor(Number(id))).pipe(Scope.provide(scope)),
     );
     entry = { server, scope, preflights, waiters };
     running.set(id, entry);
