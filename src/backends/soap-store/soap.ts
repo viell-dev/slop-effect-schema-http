@@ -28,8 +28,10 @@ import * as Xml from "./xml.js";
  *   items are listed directly. The Perl client still runs.
  * - **The front controller (2009).** The port put a servlet in front of the SOAP stack. It
  *   enforces WS-I Basic Profile R2744: SOAP 1.1 requests need exactly one `SOAPAction` header,
- *   quoted, naming the body element as `<namespace>#<element>`. It answers framing errors with
- *   plain-text 400 and unknown media types with 415, because it predates the stack's fault writer.
+ *   quoted, naming the body element as `<namespace>#<element>`. The body element must be in the
+ *   service's namespace, whatever prefix binds it, before anything dispatches on its local name. It
+ *   answers framing errors with plain-text 400 and unknown media types with 415, because it
+ *   predates the stack's fault writer.
  * - **SOAP 1.2 on the same URL (2009).** `application/soap+xml` selects SOAP 1.2, whose action
  *   travels as the `action` parameter of the content type; a `SOAPAction` header is ignored there.
  *   1.2 replies are UTF-8 and say so.
@@ -157,7 +159,13 @@ const frame = (request: Received): Call | Reply => {
   if (payloads.length !== 1)
     return plain(400, "The SOAP Body must hold exactly one element");
   const payload = payloads[0]!;
-  const element = `${Xml.namespace(payload) ?? ""}#${Xml.local(payload)}`;
+  const namespace = Xml.namespace(payload);
+  if (namespace !== NAMESPACE)
+    return plain(
+      400,
+      `The body element {${namespace ?? ""}}${Xml.local(payload)} is not an operation of ${NAMESPACE}`,
+    );
+  const element = `${namespace}#${Xml.local(payload)}`;
   if (action !== element)
     return plain(
       400,

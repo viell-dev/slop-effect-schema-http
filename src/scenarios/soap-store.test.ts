@@ -123,18 +123,16 @@ const idOf = (origin: string, name: string, client: Client) =>
     );
 
 /**
- * A hand-written SOAP 1.1 request: the text goes out as UTF-8 `text/xml` with the given `SOAPAction`
- * value, bypassing the consumer's XML writer, so the store's own reader is what decides. A 200 is
- * read as bytes and the front controller's plain-text 400 as its reason.
+ * A hand-written SOAP request: the text goes out as UTF-8 under the given content type, bypassing
+ * the consumer's XML writer, so the store's own reader is what decides. A 200 is read as bytes and
+ * the front controller's plain-text 400 as its reason.
  */
-const rawSoap11 = (origin: string, soapAction: string) =>
+const rawSoap = (request: Request.Request<unknown>, contentType: string) =>
   Operation.make(
-    Request.post("soap").pipe(
-      Request.baseUrl(origin),
-      Request.setHeader("SOAPAction", soapAction),
+    request.pipe(
       Request.body(
         Body.encoder((text: string) =>
-          Effect.succeed(HttpBody.text(text, "text/xml; charset=utf-8")),
+          Effect.succeed(HttpBody.text(text, contentType)),
         ),
       ),
     ),
@@ -143,12 +141,39 @@ const rawSoap11 = (origin: string, soapAction: string) =>
     ),
   );
 
+/** A hand-written SOAP 1.1 request with the given `SOAPAction` value. */
+const rawSoap11 = (origin: string, soapAction: string) =>
+  rawSoap(
+    Request.post("soap").pipe(
+      Request.baseUrl(origin),
+      Request.setHeader("SOAPAction", soapAction),
+    ),
+    "text/xml; charset=utf-8",
+  );
+
+/** A hand-written SOAP 1.2 request with the given `action` content-type parameter. */
+const rawSoap12 = (origin: string, action: string) =>
+  rawSoap(
+    Request.post("soap").pipe(Request.baseUrl(origin)),
+    `application/soap+xml; charset=utf-8; action="${action}"`,
+  );
+
+/** A SOAP envelope of the given version around a payload written exactly as given. */
+const envelope = (namespace: string, payload: string) =>
+  `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="${namespace}">` +
+  `<soap:Body>${payload}</soap:Body></soap:Envelope>`;
+
+/** A ListDocuments payload in the given default namespace, or in none. */
+const listIn = (namespace: string | undefined) =>
+  `<ListDocuments${namespace === undefined ? "" : ` xmlns="${namespace}"`}><Prefix/></ListDocuments>`;
+
 /** A StoreDocument envelope around a title written exactly as given. */
 const storeEnvelope = (name: string, title: string) =>
-  `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="${SOAP11}"><soap:Body>` +
-  `<StoreDocument xmlns="${NS}"><Name>${name}</Name><Title>${title}</Title>` +
-  `<ContentType>text/plain</ContentType><Content>eA==</Content></StoreDocument>` +
-  `</soap:Body></soap:Envelope>`;
+  envelope(
+    SOAP11,
+    `<StoreDocument xmlns="${NS}"><Name>${name}</Name><Title>${title}</Title>` +
+      `<ContentType>text/plain</ContentType><Content>eA==</Content></StoreDocument>`,
+  );
 
 describe(`soap-store (${lane.name})`, () => {
   describe("fault codes inside HTTP 200", () => {
@@ -1108,6 +1133,95 @@ describe(`soap-store (${lane.name})`, () => {
           expect(yield* raw("invoice")).toContain(
             "<Count>2</Count><Documents><DocumentInfo>",
           );
+        }),
+    );
+
+    it.live(
+      "[PAY-3a] an operation outside the store's namespace is refused, even when SOAPAction names the same namespace",
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          const attempts = [
+            // The same wrong namespace in both places.
+            rawSoap11(backend.origin, `"urn:wrong#ListDocuments"`).execute({
+              body: envelope(SOAP11, listIn("urn:wrong")),
+            }),
+            rawSoap12(backend.origin, "urn:wrong#ListDocuments").execute({
+              body: envelope(SOAP12, listIn("urn:wrong")),
+            }),
+            // No namespace at all, with an action naming none or the store's.
+            rawSoap11(backend.origin, `"#ListDocuments"`).execute({
+              body: envelope(SOAP11, listIn(undefined)),
+            }),
+            rawSoap11(backend.origin, `"${NS}#ListDocuments"`).execute({
+              body: envelope(SOAP11, listIn(undefined)),
+            }),
+            // A neighbouring revision of the store's namespace.
+            rawSoap11(
+              backend.origin,
+              `"urn:docvault:store:2009#ListDocuments"`,
+            ).execute({
+              body: envelope(SOAP11, listIn("urn:docvault:store:2009")),
+            }),
+          ];
+          const reasons: Array<string> = [];
+          for (const attempt of attempts)
+            reasons.push(
+              as(
+                yield* attempt.pipe(Effect.provide(lane.fetchClient)),
+                "Refused",
+              ).value,
+            );
+          // The controller's plain-text reasons end with CRLF.
+          expect(reasons).toEqual(
+            ["urn:wrong", "urn:wrong", "", "", "urn:docvault:store:2009"].map(
+              (namespace) =>
+                `The body element {${namespace}}ListDocuments is not an operation of ${NS}\r\n`,
+            ),
+          );
+          expect(yield* backend.ledger).toHaveLength(attempts.length);
+        }),
+    );
+
+    it.live(
+      "[PAY-3a] any prefix bound to the store's namespace dispatches, wherever the binding is declared",
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          const listed = Schema.decodeEffect(
+            Soap.Soap11.document(Actions.ListDocuments.output),
+          );
+          const payloads = [
+            `<d:ListDocuments xmlns:d="${NS}"><d:Prefix>contract</d:Prefix></d:ListDocuments>`,
+            `<store:ListDocuments xmlns:store="${NS}"><Prefix>contract</Prefix></store:ListDocuments>`,
+          ];
+          for (const payload of payloads) {
+            const answered = as(
+              yield* rawSoap11(backend.origin, `"${NS}#ListDocuments"`)
+                .execute({ body: envelope(SOAP11, payload) })
+                .pipe(Effect.provide(lane.fetchClient)),
+              "Answered",
+            );
+            const result = as(yield* listed(answered.value), "Listed");
+            expect(result.documents.map((document) => document.name)).toEqual([
+              "contract-acme.pdf",
+            ]);
+          }
+          // A binding declared on the Envelope reaches the payload inside the Body.
+          const inherited =
+            `<?xml version="1.0" encoding="utf-8"?>` +
+            `<soap:Envelope xmlns:soap="${SOAP11}" xmlns:dv="${NS}"><soap:Body>` +
+            `<dv:ListDocuments><dv:Prefix>contract</dv:Prefix></dv:ListDocuments>` +
+            `</soap:Body></soap:Envelope>`;
+          const answered = as(
+            yield* rawSoap11(backend.origin, `"${NS}#ListDocuments"`)
+              .execute({ body: inherited })
+              .pipe(Effect.provide(lane.fetchClient)),
+            "Answered",
+          );
+          expect(
+            as(yield* listed(answered.value), "Listed").documents,
+          ).toHaveLength(1);
         }),
     );
 
