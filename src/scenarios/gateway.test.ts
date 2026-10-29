@@ -1,5 +1,13 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
-import { Cause, DateTime, Effect, Option, Schedule, Schema } from "effect";
+import {
+  Cause,
+  DateTime,
+  Effect,
+  Exit,
+  Option,
+  Schedule,
+  Schema,
+} from "effect";
 import { FetchHttpClient, HttpBody, type HttpClient } from "effect/http";
 import { lane } from "#lane";
 import {
@@ -1318,31 +1326,22 @@ describe(`gateway (${lane.name})`, () => {
           ]);
           if (lane.name === "node") {
             // Node's fetch hands the 301 itself to the caller, so the declared case is reached.
-            expect(exit._tag).toBe("Success");
-            const moved = narrow(
-              (
-                exit as {
-                  readonly value: { readonly _tag: "Moved" | "Report" };
-                }
-              ).value,
-              "Moved",
-            );
-            expect(moved).toMatchObject({
-              value: {
-                location: `${gateway.origin}/cgi-bin/report.cgi?session=${TOKEN}&report=balance&account=00012345`,
-              },
-            });
+            expect(Exit.isSuccess(exit)).toBe(true);
+            if (Exit.isSuccess(exit))
+              expect(narrow(exit.value, "Moved")).toMatchObject({
+                value: {
+                  location: `${gateway.origin}/cgi-bin/report.cgi?session=${TOKEN}&report=balance&account=00012345`,
+                },
+              });
           } else {
             // A browser returns an opaque-redirect response: status 0 and no headers, so no case matches.
-            expect(exit._tag).toBe("Failure");
-            const error = Cause.squash(
-              (exit as { readonly cause: Cause.Cause<unknown> }).cause,
-            ) as {
-              readonly _tag: string;
-              readonly metadata?: { readonly status: number };
-            };
-            expect(error._tag).toBe("UnexpectedResponse");
-            expect(error.metadata?.status).toBe(0);
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const error = Cause.squash(exit.cause);
+              expect(error).toBeInstanceOf(Response.UnexpectedResponse);
+              if (error instanceof Response.UnexpectedResponse)
+                expect(error.metadata.status).toBe(0);
+            }
           }
         }),
     );

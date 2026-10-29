@@ -1,7 +1,8 @@
 # Scenario catalogue
 
 Every entry of the scenario catalogue in
-[issue #4](https://github.com/viell-dev/slop-effect-schema-http/issues/4) has an ID here. Tests put
+[issue #4](https://github.com/viell-dev/slop-effect-schema-http/issues/4) has an ID here, and
+scenarios added later from reviews have `EXT-` IDs in their own section at the end. Tests put
 the ID at the start of their title, such as `[AUTH-3] refuses an unknown token scheme`, so
 `rg "\[AUTH-3\]" src` finds the evidence. One entry can have several tests.
 
@@ -222,6 +223,11 @@ receipts`
   - `[QRY-1] ?wsdl and ?wsdl= are different requests` (provider; through a query schema and
     through a URL string, both lanes keep the bare key)
   - `[QRY-1] ?wsdl=types names the schema part, which the WSDL contract refuses as a decode error`
+  - `[QRY-1] currently, client middleware that appends a URL parameter re-serialises the query and
+?wsdl becomes ?wsdl= (#24); editing the URL text keeps it` (provider). Effect builds the
+    dispatch URL with `URLSearchParams` once a request carries a parameter, so the library's
+    rendering survives only middleware that edits the URL text. Documentation is tracked in
+    [#24](https://github.com/viell-dev/slop-effect-schema-http/issues/24).
 - **RET-3** ETag with `If-None-Match` yielding 304 and no body, `If-Match` yielding 412, and 428
   when the validator is missing. Status: tested.
   - `[RET-3] If-None-Match with the current ETag yields 304 and no body` (provider; Chromium
@@ -840,3 +846,25 @@ call is cross-origin and cross-site.
     and with `include` the stored cookie goes instead. Through the same-origin proxy the cookie is
     the page's own: default credentials carry even a `Lax` cookie, and a cookie without `HttpOnly`
     is readable through `document.cookie`.
+
+## Beyond the issue #4 catalogue (`EXT-`)
+
+Scenarios a hostile suite should show that the issue's catalogue does not name, added from the
+[review of PR #23](https://github.com/viell-dev/slop-effect-schema-http/pull/23#issuecomment-6509333821)
+(section 3.2). They are checked like the other entries.
+
+- **EXT-1** One tag for two statuses: a tunnelled write answers `200` with the task or `204` with no
+  body, and the contract decodes both as `Changed`, the task as an `Option`. Tags belong to
+  decoders; ordered status predicates, not unique tags, select the representation. In
+  `src/scenarios/business-operations.test.ts`, both lanes. Status: tested.
+  - `[EXT-1] a 200 with the task and a 204 without a body are both Changed; the status picks the
+decoder` (with a type-level check that both cases have one type)
+  - `[EXT-1] control: a first rule that also matches 204 takes it, and the empty case behind it
+under the same tag is never consulted` (a decode error, after the service applied the delete)
+- **EXT-2** A provider chosen for one operation: `transformClient` replaces the client the library
+  hands over, rather than decorating it, so one operation runs on its own provider while the
+  operations around it keep the layer's. In `src/scenarios/business-operations.test.ts`, both
+  lanes. Status: tested.
+  - `[EXT-2] one operation replaces the layer's client through transformClient, and the operations
+around it keep the layer's` (provider; in the Node lane's `lines` run, the replacement is the
+    Fetch provider)

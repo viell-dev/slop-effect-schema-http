@@ -439,6 +439,50 @@ export const deleteTask = (connection: Connection) =>
     ),
   );
 
+/**
+ * EXT-1: one tag for two statuses. A tunnelled write answers `200` with the task or `204` with no
+ * body, and the caller learns the same thing from both: the change was applied, with the task when
+ * the service returned it. Both cases are `Changed`; the status selects the decoder, so a tag names
+ * what the caller learns, not which case matched.
+ */
+export const changed = Response.status(
+  200,
+  Response.tag(
+    "Changed",
+    Body.jsonSchema(Task).pipe(Body.map((task) => Option.some(task))),
+  ),
+).pipe(
+  Response.orElse(
+    Response.status(
+      204,
+      Response.tag(
+        "Changed",
+        Body.empty.pipe(Body.map(() => Option.none<Task>())),
+      ),
+    ),
+  ),
+  Response.orElse(taskRejections),
+);
+
+/** Replace a task through the tunnel, answered with {@link changed}. */
+export const replaceTaskChanged = (connection: Connection) =>
+  Operation.make(
+    Request.put("tasks").pipe(
+      at(connection),
+      taskPath(TaskId),
+      Request.body(Body.jsonSchema(TaskReplacement)),
+      tunnel,
+    ),
+    changed,
+  );
+
+/** Delete a task through the tunnel, answered with {@link changed}. */
+export const deleteTaskChanged = (connection: Connection) =>
+  Operation.make(
+    Request.del("tasks").pipe(at(connection), taskPath(TaskId), tunnel),
+    changed,
+  );
+
 /** A raw PUT without the tunnel: the control case that the gateway refuses. */
 export const replaceTaskUntunnelled = (connection: Connection) =>
   Operation.make(
