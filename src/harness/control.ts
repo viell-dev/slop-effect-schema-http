@@ -69,12 +69,13 @@ const withHarnessCors =
   };
 
 /**
- * Browsers scope cookies by host, not port, so backends sharing `127.0.0.1` would share one cookie
- * jar across tests and areas. Each backend started for the browser lane gets its own loopback
- * address instead, cycling through `127.0.0.2`–`127.0.0.251`.
+ * Browsers scope cookies by host, not port, and keep them for the whole browser session, so
+ * backends sharing an address would share one cookie jar across tests and areas. Each backend
+ * started for the browser lane gets an address of its own from `127.0.1.2` onwards. That gives
+ * 63,750 addresses before any repeats, far more than one run starts.
  */
 const hostFor = (sequence: number): string =>
-  `127.0.0.${2 + ((sequence - 1) % 250)}`;
+  `127.0.${1 + Math.floor((sequence - 1) / 250)}.${2 + ((sequence - 1) % 250)}`;
 
 interface Running {
   readonly server: Server;

@@ -34,7 +34,7 @@ const pageOrigin =
 
 /**
  * The one place this file starts the service. The browser lane's page and the backend are on
- * different sites (`localhost` and `127.0.0.1`), so the XSRF cookie is issued with
+ * different sites (`localhost` and a loopback address), so the XSRF cookie is issued with
  * `SameSite=None`, the service's setting for cross-site deployments, unless a test overrides it.
  */
 const start = (
@@ -105,8 +105,7 @@ const expectTag = <
 };
 
 /**
- * Every `name=value` pair of a recorded request's cookies. In the browser lane the store is shared
- * by every backend on 127.0.0.1, so other cookies may ride along.
+ * Every `name=value` pair of a recorded request's cookies.
  */
 const cookiePairs = (recorded: Recorded): ReadonlyArray<string> =>
   headerValues(recorded.lines, "cookie").flatMap((line) =>
@@ -272,16 +271,12 @@ describe(`notification service (${lane.name})`, () => {
             expectTag(result, "Created");
             expect(cookiePairs(post!)).toEqual([issued]);
           } else {
-            // Chromium refuses to store a Lax cookie from a cross-site response. Cookies are scoped
-            // by host, not port, so the page may still send an XSRF cookie that an earlier
-            // backend on 127.0.0.1 issued: refused then as incorrect rather than missing.
-            expect(cookiePairs(post!)).not.toContain(issued);
-            const reason = expectTag(result, "CsrfRejected").value;
-            expect(
-              cookiePairs(post!).some((pair) => pair.startsWith("XSRF-TOKEN="))
-                ? "token-incorrect"
-                : "cookie-missing",
-            ).toBe(reason);
+            // Chromium refuses to store a Lax cookie from a cross-site response. Each backend has
+            // its own loopback address, so no cookie from another test can ride along either.
+            expect(cookiePairs(post!)).toEqual([]);
+            expect(expectTag(result, "CsrfRejected").value).toBe(
+              "cookie-missing",
+            );
           }
         }),
     );
