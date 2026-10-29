@@ -32,13 +32,26 @@ export interface Challenge {
   readonly stale: boolean;
 }
 
-/** Parse `Digest k=v, k="v"` parameters with quoted-string escapes, or explain the refusal. */
+/**
+ * Parse `Digest k=v, k="v"` parameters with quoted-string escapes, or explain the refusal.
+ *
+ * The syntax is RFC 7235's challenge: the scheme, spaces, then comma-separated parameters whose
+ * values are RFC 7230 tokens or quoted strings, with only spaces and tabs around the `=` and the
+ * commas. An unquoted value holding anything but token characters, such as `\`, `/`, `@` or a
+ * letter outside ASCII, is refused rather than read up to the first comma.
+ *
+ * Deliberate compatibility beyond RFC 2069, whose grammar quotes `realm`, `nonce` and `opaque` and
+ * writes `stale` and `algorithm` bare: any parameter may take either form, as RFC 7235's
+ * `auth-param` allows and its section 2.2 asks recipients to accept for `realm`, so a server that
+ * writes `nonce=abc` is still answered. The scheme and parameter names are case-insensitive, as
+ * RFC 7235 makes them. The encoder writes RFC 2069's own form.
+ */
 const parameters = (value: string): Map<string, string> | string => {
-  const scheme = /^Digest\s+/i.exec(value);
+  const scheme = /^Digest +/i.exec(value);
   if (scheme === null) return "not a Digest challenge";
   const result = new Map<string, string>();
   const pattern =
-    /\s*([A-Za-z0-9_-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,"]+))\s*(,|$)/y;
+    /[ \t]*([A-Za-z0-9_-]+)[ \t]*=[ \t]*(?:"((?:[^"\\]|\\.)*)"|([!#$%&'*+.^_`|~0-9A-Za-z-]+))[ \t]*(,|$)/y;
   pattern.lastIndex = scheme[0].length;
   while (pattern.lastIndex < value.length) {
     const part = pattern.exec(value);
