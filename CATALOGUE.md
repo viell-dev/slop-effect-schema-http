@@ -563,8 +563,9 @@ are refused`
     cookie's original (percent-encoded) spelling and replaces any hand-set `Cookie` line, and it
     ignores `SameSite`. Chromium hides `Set-Cookie`, drops a hand-set `Cookie`, and stores and sends
     the cookie only with `credentials: "include"` and `SameSite=None; Secure`, because the test page
-    (`localhost`) and the backends (`127.0.0.1`) are different sites. Cookies are scoped by host, not
-    port, so every backend on `127.0.0.1` shares one browser cookie store across tests.
+    (`localhost`) and the backends (loopback addresses) are different sites. Cookies are scoped by
+    host, not port; each browser-lane backend has its own loopback address, so no two backends share
+    a cookie jar.
 - **AUTH-6** HMAC signing over method, path, timestamp, and the encoded body, with a validity
   window: signing runs after body encoding and once per attempt, regardless of its position in the
   declaration pipeline. A tampered body, a stale timestamp, and a missing CSRF token are distinct
