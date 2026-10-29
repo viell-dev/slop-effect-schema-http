@@ -49,11 +49,14 @@ const fail = (message: string): never => {
   throw new Error(`XML-RPC: ${message}`);
 };
 
-/** Child elements, refusing any non-whitespace text between them. */
+/**
+ * Child elements, refusing any text between them but XML's white space: space, tab, CR and LF, not
+ * the other Unicode spaces `trim` removes.
+ */
 const only = (element: Xml.Element): ReadonlyArray<Xml.Element> => {
   if (
     element.children.some(
-      (child) => typeof child === "string" && child.trim() !== "",
+      (child) => typeof child === "string" && !/^[ \t\r\n]*$/.test(child),
     )
   )
     fail(`unexpected text in <${element.name}>`);
@@ -147,9 +150,11 @@ const writeValue = (value: Value): Xml.Element => {
 const document = (root: Xml.Element): string =>
   `<?xml version="1.0"?>\n${Xml.serialize(root)}`;
 
-/** Parse a `<methodResponse>`. Throws on anything that is not one well-formed response. */
-export const parseResponse = (text: string): MethodResponse => {
-  const root = Xml.parse(text);
+/**
+ * Read a `<methodResponse>` from a parsed document. Separate from {@link parseResponse} so that a
+ * tree from another XML parser can be read the same way (EXT-4).
+ */
+export const responseOf = (root: Xml.Element): MethodResponse => {
   if (root.name !== "methodResponse")
     fail(`expected <methodResponse>, found <${root.name}>`);
   const [outcome, ...rest] = only(root);
@@ -161,6 +166,10 @@ export const parseResponse = (text: string): MethodResponse => {
     return { fault: readValue(single(outcome!, "value")) };
   return fail(`unexpected <${outcome!.name}> in <methodResponse>`);
 };
+
+/** Parse a `<methodResponse>`. Throws on anything that is not one well-formed response. */
+export const parseResponse = (text: string): MethodResponse =>
+  responseOf(Xml.parse(text));
 
 export const serializeResponse = (response: MethodResponse): string =>
   document(
@@ -181,9 +190,8 @@ export const serializeResponse = (response: MethodResponse): string =>
         ),
   );
 
-/** Parse a `<methodCall>`. */
-export const parseCall = (text: string): MethodCall => {
-  const root = Xml.parse(text);
+/** Read a `<methodCall>` from a parsed document, as {@link responseOf} reads a response. */
+export const callOf = (root: Xml.Element): MethodCall => {
   if (root.name !== "methodCall")
     fail(`expected <methodCall>, found <${root.name}>`);
   const children = only(root);
@@ -205,6 +213,9 @@ export const parseCall = (text: string): MethodCall => {
           }),
   };
 };
+
+/** Parse a `<methodCall>`. */
+export const parseCall = (text: string): MethodCall => callOf(Xml.parse(text));
 
 export const serializeCall = (call: MethodCall): string =>
   document(
