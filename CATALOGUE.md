@@ -636,8 +636,74 @@ are refused`
 
 ## Transport and browser lane (`browser`)
 
+Scenarios that run in both lanes are in `src/scenarios/browser.test.ts`; those about a page's CORS
+and the same-origin proxy run only in Chromium, in `src/scenarios/browser.browser.test.ts`. The
+proxy is `src/harness/proxy.ts`, pinned over raw sockets in `src/harness/proxy.node.test.ts`; the
+page's helpers are in `src/clients/browser/`. In the browser lane the page is
+`http://localhost:<port>` and each backend has its own `http://127.0.0.<n>:<port>`, so every direct
+call is cross-origin and cross-site.
+
 - **HDR-7b** CORS in a real browser: a page on one origin calling the services, with tracing
   propagation disabled per service and a same-origin proxy for the endpoints whose allowlist cannot
-  be satisfied. Status: pending.
+  be satisfied. Status: tested, in Chromium.
+  - `[HDR-7b] the subscriptions allowlist omits Content-Type: Chromium refuses the JSON POST after its preflight, and the same-origin proxy delivers it`
+  - `[HDR-7b] the announcements allowlist refuses trace headers: with propagation off for that service alone, the page announces while another service keeps its trace headers`
+  - `[HDR-7b] the v1 OPTIONS is answered by the servlet container: Chromium never sends the GET, the exposed-header list hides the retirement headers, and through the proxy the page reads them all`
+  - `[HDR-7b] a service with no CORS at all: a simple form POST still reaches it and counts, though Chromium withholds the answer; the page reads it only through the proxy`
+  - `[HDR-7b] a withheld answer is a transport error, which Policy.transient retries: every attempt of the simple POST reaches the service`
+  - `[HDR-7b] one page reaches every endpoint with every hostile allowlist on: the announcement across origins without trace propagation, the rest through the proxy`
+  - `[HDR-7b] the proxy removes its prefix from the target: an announcement signed over the page's path is refused, and routing after signing keeps the signature valid`
+  - Proxy, in Node over raw sockets:
+    - `[HDR-7b] forwards the target after its prefix byte for byte, replaces Host in place, drops only hop-by-hop lines, and adds Content-Length for a body that arrived chunked`
+    - `[HDR-7b] passes other paths and non-loopback targets on, and refuses a foreign Host or Origin before forwarding`
+    - `[HDR-7b] answers 502 for an unreachable backend, and closes the forwarded request when the page aborts`
+  - Each hostile behaviour is isolated with the notification service's `cors` switches, so every
+    failure is attributed to one allowlist. Chromium reports every refusal (a refused or
+    header-less preflight, a missing `Access-Control-Allow-Origin`) as a rejected fetch, which the
+    library surfaces as `HttpClientError` with a `TransportError` reason. A refused preflight
+    leaves the request unsent, while a CORS simple request is sent and takes effect with only its
+    answer withheld. The library cannot tell these apart, so `Policy.transient` retries a withheld
+    simple POST, and each attempt reaches the service. Effect's `b3` and `traceparent` headers are
+    what make a GET or a form POST need a preflight at all.
+  - Escapes: trace propagation off per service (`HttpClient.TracerPropagationEnabled` provided as
+    `false` in that service's client middleware) satisfies the announcements allowlist, while
+    another service on the same page and layer keeps its trace headers. The same-origin proxy
+    covers what no request can satisfy: the subscriptions allowlist, the container-answered v1
+    `OPTIONS`, the v1 `Access-Control-Expose-Headers` list, and a service without CORS.
+  - What the proxy changes on the wire, as observed: the `/__proxy/<host>:<port>` target prefix is
+    removed and the rest forwarded byte for byte; `Host` becomes the backend's, in place;
+    hop-by-hop lines are dropped and Node's client appends `Connection: close` (and
+    `Content-Length` for a chunked body); nothing is added. Responses pass through except
+    hop-by-hop lines; `Set-Cookie` and `Location` are not rewritten, and no CORS header is added,
+    because the proxy runs ahead of Vite's CORS middleware. The browser then treats the call as
+    same-origin: no preflight, no `Origin` on a GET, `Sec-Fetch-Site: same-origin`, and cookies from
+    the page's own jar.
+  - The proxy changes the request target, so a signature over the URL path breaks when the base URL
+    points at the proxy (`signature_mismatch`). Routing through the proxy in the outermost client
+    middleware, after per-attempt signing, keeps the service's own path signed.
 - **TRN-1** Explicit cookie and credential behavior, with the transport and credentials settings
-  recorded before asserting, in Node and in the browser separately. Status: pending.
+  recorded before asserting, in Node and in the browser separately. Status: tested, in both lanes
+  (Node: the `lines` and `fetch` providers; Chromium: `fetch`).
+  - `[TRN-1] default credentials through ${provider}: the XSRF cookie does not come back, so the POST is refused as cookie-missing`
+  - `[TRN-1] credentials: "include" through FetchHttpClient.RequestInit: Chromium stores and returns the SameSite=None cookie but never the Lax ones; Node's fetch keeps none`
+  - `[TRN-1] HttpClient.withCookiesRef, one jar for every service: Node's jar keeps every cookie and sends each service's cookies to the other; in Chromium it never sees one`
+  - `[TRN-1] a Cookie header set by hand through ${provider}: Node sends it verbatim; Chromium drops it without an error and, under credentials: "include", sends its own stored cookie`
+  - Chromium: `[TRN-1] through the proxy, Fetch's default credentials carry a SameSite=Lax cookie, which is first-party to the page`
+  - Each test records the provider, Fetch's credentials mode (read from
+    `FetchHttpClient.RequestInit` in the Effect context), the cookie jar and any hand-set `Cookie`
+    as a `transport` test annotation before its cookie assertions.
+  - Node, as observed: neither provider keeps cookies, and both show `Set-Cookie`, so response
+    metadata carries the parsed cookies. `credentials: "include"` is accepted and changes nothing.
+    A hand-set `Cookie` is sent verbatim. `HttpClient.withCookiesRef` keeps every cookie whatever
+    its `SameSite` or `HttpOnly`, and sends the whole jar to every origin: one jar shared by two
+    services sends the identity provider's session cookies to the notification service, and the
+    XSRF cookie back to the identity provider.
+  - Chromium, as observed: `Set-Cookie` is hidden from scripts even when
+    `Access-Control-Expose-Headers` lists it, so response metadata has no cookies and a
+    `withCookiesRef` jar stays empty. Under Fetch's default credentials (`same-origin`) a
+    cross-origin call neither sends cookies nor stores those its response sets. With `include`, a
+    `SameSite=None; Secure` cookie is stored and returned; `SameSite=Lax` cookies, explicit or by
+    default, never travel on the cross-site call. A hand-set `Cookie` is dropped without an error,
+    and with `include` the stored cookie goes instead. Through the same-origin proxy the cookie is
+    the page's own: default credentials carry even a `Lax` cookie, and a cookie without `HttpOnly`
+    is readable through `document.cookie`.
