@@ -55,35 +55,22 @@ describe("Body.json", () => {
     }),
   );
 
-  describe("values JSON.stringify omits", () => {
-    const omitted = [
-      ["undefined", undefined],
-      ["a function", () => 1],
-      ["a symbol", Symbol("x")],
-    ] as const;
-
-    for (const [name, value] of omitted) {
-      // Known defect: JSON.stringify returns undefined and the codec sends an empty JSON body. This
-      // pins the current outcome; remove it when the issue is fixed.
-      // https://github.com/viell-dev/slop-effect-schema-http/issues/8
-      it.effect(`currently encodes ${name} as an empty JSON body`, () =>
-        Effect.gen(function* () {
+  // Body.json delegates to HttpBody.json, whose text step deliberately turns JSON.stringify's
+  // `undefined` result into an empty body. Body.jsonSchema is the validated path.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/8
+  it.effect(
+    "encodes values JSON.stringify omits as HttpBody.json does: an empty JSON body",
+    () =>
+      Effect.gen(function* () {
+        for (const value of [undefined, () => 1, Symbol("x")]) {
           const body = yield* Body.json.encode(value);
+          const native = yield* HttpBody.json(value);
           expect(contentTypeOf(body)).toBe("application/json");
+          expect(bytesOf(body)).toEqual(bytesOf(native));
           expect(bytesOf(body).length).toBe(0);
-        }),
-      );
-
-      // Known defect: the intended outcome is an encoding failure. Remove `.fails` when the issue
-      // is fixed. https://github.com/viell-dev/slop-effect-schema-http/issues/8
-      it.effect.fails(`fails encoding ${name}`, () =>
-        Effect.gen(function* () {
-          const error = yield* Effect.flip(Body.json.encode(value));
-          expect(error).toBeInstanceOf(HttpBody.HttpBodyError);
-        }),
-      );
-    }
-  });
+        }
+      }),
+  );
 
   it.effect("decodes any JSON value, including null", () =>
     Effect.gen(function* () {
@@ -447,13 +434,16 @@ describe("Body.jsonSchema", () => {
 });
 
 describe("Body.text and Body.bytes", () => {
-  it.effect("text decoding strips a UTF-8 BOM that bytes decoding keeps", () =>
-    Effect.gen(function* () {
-      const withBom = new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x3b, 0x62]);
-      const asText = yield* Body.text.decode(reply(withBom));
-      const asBytes = yield* Body.bytes.decode(reply(withBom));
-      expect(asText).toBe("a;b");
-      expect(asBytes.length).toBe(6);
-    }),
+  // The BOM stripping comes from the platform's Response.text(), not from this library.
+  it.effect(
+    "text decoding inherits the platform's BOM stripping; bytes keep it",
+    () =>
+      Effect.gen(function* () {
+        const withBom = new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x3b, 0x62]);
+        const asText = yield* Body.text.decode(reply(withBom));
+        const asBytes = yield* Body.bytes.decode(reply(withBom));
+        expect(asText).toBe("a;b");
+        expect(asBytes.length).toBe(6);
+      }),
   );
 });

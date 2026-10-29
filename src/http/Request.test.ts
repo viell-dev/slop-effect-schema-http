@@ -93,17 +93,19 @@ describe("Request.make", () => {
     }),
   );
 
-  it.effect(
-    "decodes '+' in a literal query as a space, as form encoding does",
-    () =>
-      Effect.gen(function* () {
-        expect(
-          yield* urlOf(Request.get("https://api.test/s?q=a+b"), undefined),
-        ).toBe("https://api.test/s?q=a%20b");
-      }),
+  // Whether a declared query should keep its original encoding is an open design question. These
+  // two tests record the current parsing, not a promise.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/14
+  it.effect("currently reads '+' in a declared query as a space", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(Request.get("https://api.test/s?q=a+b"), undefined),
+      ).toBe("https://api.test/s?q=a%20b");
+    }),
   );
 
-  it.effect("skips empty query segments", () =>
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/14
+  it.effect("currently drops empty segments of a declared query", () =>
     Effect.gen(function* () {
       expect(
         yield* urlOf(Request.get("https://api.test/s?&a=1&&b"), undefined),

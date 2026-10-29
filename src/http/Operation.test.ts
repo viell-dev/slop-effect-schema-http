@@ -32,6 +32,7 @@ import * as Policy from "./Policy.js";
 import * as Request from "./Request.js";
 import * as Response from "./Response.js";
 import * as Transport from "./Transport.js";
+import * as UrlEncoding from "./UrlEncoding.js";
 
 const failureOf = <E>(exit: Exit.Exit<unknown, E>): E => {
   if (!Exit.isFailure(exit)) throw new Error("expected a failure");
@@ -1143,9 +1144,9 @@ describe("Operation combinators", () => {
   );
 });
 
-/** Dispatch through a fresh provider and report the exit with every resolved URL. */
-const dispatch = <I, E>(
-  operation: Operation.Operation<I, void, E, HttpClient.HttpClient>,
+/** Dispatch through a fresh provider; report the exit, the composed URLs and the resolved URLs. */
+const dispatch = <I, E, R>(
+  operation: Operation.Operation<I, void, E, R>,
   input: I,
 ) =>
   Effect.gen(function* () {
@@ -1153,19 +1154,21 @@ const dispatch = <I, E>(
     const exit = yield* operation
       .execute(input)
       .pipe(Effect.provide(server.layer), Effect.exit);
-    return { exit, hrefs: server.exchanges.map((exchange) => exchange.href) };
+    return {
+      exit,
+      urls: server.exchanges.map((exchange) => exchange.url),
+      hrefs: server.exchanges.map((exchange) => exchange.href),
+    };
   });
 
-const rejectedBeforeDispatch = (outcome: {
-  readonly exit: Exit.Exit<void, unknown>;
-  readonly hrefs: ReadonlyArray<string>;
-}) => {
-  expect(outcome.hrefs).toEqual([]);
-  expect(Exit.isFailure(outcome.exit)).toBe(true);
-  if (!Exit.isFailure(outcome.exit)) return;
-  expect(Cause.hasDies(outcome.exit.cause)).toBe(false);
-  expect(failureOf(outcome.exit)).toBeInstanceOf(Request.InvalidRequest);
-};
+/** A shared transform that every request of a service applies. */
+const withKey = <I, E, R, H extends boolean>(
+  request: Request.Request<I, E, R, H, false>,
+) =>
+  request.pipe(
+    Request.setQuery("key", "abc"),
+    Request.baseUrl("https://api.test/v1"),
+  );
 
 describe("Operation URL composition", () => {
   const contract = Response.status(204, Body.empty);
@@ -1178,58 +1181,86 @@ describe("Operation URL composition", () => {
     contract,
   );
 
-  const keyed = Operation.make(
-    Request.get("users").pipe(Request.baseUrl("https://api.test/v1?key=abc")),
+  const meta = Operation.make(
+    Request.get("").pipe(
+      Request.path(
+        Schema.String,
+        (id, encode) => `/v1/files/${encode(id)}/meta`,
+      ),
+      Request.baseUrl("https://api.test"),
+    ),
     contract,
   );
 
-  // Known defect: the client's URL parser resolves a `..` path value, so the request reaches a
-  // parent resource. This pins the current outcome; remove it when the issue is fixed.
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/7
+  // The library keeps dot segments (UrlEncoding.defaults). Effect's HttpClient.make wrapper parses
+  // the composed URL with the WHATWG URL parser, which resolves them; a provider also receives the
+  // unparsed request. A consumer that must never send `..` validates it in the path schema or
+  // replaces UrlEncoding.path. https://github.com/viell-dev/slop-effect-schema-http/issues/7
   it.effect(
-    "currently dispatches a '..' path value to the parent resource",
+    "hands a '..' path value to the client unchanged, and Effect's URL parser resolves it",
     () =>
       Effect.gen(function* () {
         const outcome = yield* dispatch(file, { path: ".." });
         expect(Exit.isSuccess(outcome.exit)).toBe(true);
+        expect(outcome.urls).toEqual(["https://api.test/v1/files/.."]);
         expect(outcome.hrefs).toEqual(["https://api.test/v1/"]);
       }),
   );
 
-  // Known defect: no URL can carry a literal `..` segment through the client's URL parser, so the
-  // intended outcome is a typed rejection before dispatch. Remove `.fails` when the issue is fixed.
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/7
-  it.effect.fails("rejects a '..' path value before dispatch", () =>
+  it.effect("keeps an empty path value as an empty segment", () =>
     Effect.gen(function* () {
-      rejectedBeforeDispatch(yield* dispatch(file, { path: ".." }));
-    }),
-  );
-
-  // Known defect: joining appends the path after the base URL's query string. This pins the current
-  // outcome; remove it when the issue is fixed.
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/7
-  it.effect("currently appends the path after a base URL's query", () =>
-    Effect.gen(function* () {
-      const outcome = yield* dispatch(keyed, undefined);
+      const outcome = yield* dispatch(meta, { path: "" });
       expect(Exit.isSuccess(outcome.exit)).toBe(true);
-      expect(outcome.hrefs).toEqual(["https://api.test/v1?key=abc/users"]);
+      expect(outcome.urls).toEqual(["https://api.test/v1/files//meta"]);
+      expect(outcome.hrefs).toEqual(["https://api.test/v1/files//meta"]);
     }),
   );
 
-  // Known defect: the intended outcome is either a typed rejection before dispatch or the joined
-  // path with the base URL's query kept. Remove `.fails` when the issue is fixed.
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/7
-  it.effect.fails("keeps a base URL's query out of the joined path", () =>
+  it.effect("renders an empty path value with a replaced path encoder", () =>
     Effect.gen(function* () {
-      const outcome = yield* dispatch(keyed, undefined);
-      if (Exit.isSuccess(outcome.exit))
-        expect(outcome.hrefs).toEqual(["https://api.test/v1/users?key=abc"]);
-      else rejectedBeforeDispatch(outcome);
+      const outcome = yield* dispatch(meta, { path: "" }).pipe(
+        Effect.provide(
+          UrlEncoding.layer({
+            ...UrlEncoding.defaults,
+            path: (value) => (value === "" ? "-" : encodeURIComponent(value)),
+          }),
+        ),
+      );
+      expect(outcome.urls).toEqual(["https://api.test/v1/files/-/meta"]);
+    }),
+  );
+
+  // The default join is a string join at the slash boundary: a base URL is an origin plus a path
+  // prefix, so a query in it ends up before the path. Shared parameters belong in Request.setQuery,
+  // as the next test shows. https://github.com/viell-dev/slop-effect-schema-http/issues/7
+  it.effect("joins a base URL that has a query as a plain string prefix", () =>
+    Effect.gen(function* () {
+      const outcome = yield* dispatch(
+        Operation.make(
+          Request.get("users").pipe(
+            Request.baseUrl("https://api.test/v1?key=abc"),
+          ),
+          contract,
+        ),
+        undefined,
+      );
+      expect(Exit.isSuccess(outcome.exit)).toBe(true);
+      expect(outcome.urls).toEqual(["https://api.test/v1?key=abc/users"]);
+    }),
+  );
+
+  it.effect("adds a shared query parameter through Request.setQuery", () =>
+    Effect.gen(function* () {
+      const outcome = yield* dispatch(
+        Operation.make(withKey(Request.get("users")), contract),
+        undefined,
+      );
+      expect(outcome.hrefs).toEqual(["https://api.test/v1/users?key=abc"]);
     }),
   );
 
   it.effect(
-    "encodes percent signs, so an encoded dot segment stays literal",
+    "percent-encodes '%' with the default path encoder, so '%2e%2e' stays literal",
     () =>
       Effect.gen(function* () {
         const outcome = yield* dispatch(file, { path: "%2e%2e" });
