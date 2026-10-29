@@ -1,7 +1,9 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import {
   Cause,
+  Context,
   Data,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -10,6 +12,7 @@ import {
   References,
   Schedule,
   Schema,
+  SchemaTransformation,
 } from "effect";
 import {
   HttpClient,
@@ -19,6 +22,7 @@ import {
 } from "effect/http";
 import { TestClock } from "effect/testing";
 import {
+  type BodyProbe,
   bodyText,
   empty,
   json,
@@ -55,6 +59,57 @@ const getItem = Operation.make(
   Request.get("https://api.test/items/1"),
   Response.status(200, Body.json),
 );
+
+/** Read while decoding a response. */
+class Prefix extends Context.Service<Prefix, string>()("test/Prefix") {}
+
+/** Read while encoding a request. */
+class Suffix extends Context.Service<Suffix, string>()("test/Suffix") {}
+
+/** Read by client middleware on each attempt. */
+class Nonce extends Context.Service<Nonce, () => string>()("test/Nonce") {}
+
+/** A label whose decoding reads `Prefix` and whose encoding reads `Suffix`. */
+const Label = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transformEffect({
+      decode: (wire: string) =>
+        Effect.map(Prefix, (prefix) => `${prefix}${wire}`),
+      encode: (label: string) =>
+        Effect.map(Suffix, (suffix) => `${label}${suffix}`),
+    }),
+  ),
+);
+
+interface LogRecord {
+  readonly message: unknown;
+  readonly level: string;
+  readonly annotations: Record<string, unknown>;
+  readonly spans: ReadonlyArray<string>;
+  /** The complete record as JSON, including every annotation and span. */
+  readonly json: string;
+}
+
+/** A logger that keeps each record in structured form. */
+const recording = () => {
+  const records: Array<LogRecord> = [];
+  const logger = Logger.make((options) => {
+    const structured = Logger.formatStructured.log(options);
+    records.push({
+      message: structured.message,
+      level: structured.level,
+      annotations: structured.annotations,
+      spans: Object.keys(structured.spans),
+      json: Logger.formatJson.log(options),
+    });
+  });
+  return { records, layer: Logger.layer([logger]) };
+};
+
+/** A provider reply: a transient 503, then success. */
+const flaky = (_: unknown, index: number) =>
+  index === 0 ? empty(503) : json(200, {});
 
 describe("Operation.make", () => {
   it.effect(
@@ -302,6 +357,82 @@ describe("Operation failures", () => {
       }),
   );
 
+  it.effect("drains each unmatched body before the next attempt", () =>
+    Effect.gen(function* () {
+      const events: Array<string> = [];
+      const probes: Array<BodyProbe> = [];
+      const server = synthetic((_, index) => {
+        events.push(`send ${index + 1}`);
+        const probe = probeBody(["<html>", "busy", "</html>"]);
+        probes.push(probe);
+        return new globalThis.Response(probe.body, {
+          status: 503,
+          headers: { "content-type": "text/html" },
+        });
+      });
+      const exit = yield* Operation.make(
+        Request.get("https://api.test/"),
+        Response.status(200, Body.json),
+        {
+          policy: Policy.make(Schedule.recurs(1), {
+            // The classifier runs after each attempt and before the next one.
+            while: (reason) => {
+              const probe = probes.at(-1);
+              events.push(
+                `${probe?.finished() === true ? "drained" : "unread"} ${probes.length}`,
+              );
+              return Policy.transient(reason);
+            },
+          }),
+        },
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer), Effect.exit);
+      expect(failureOf(exit)).toBeInstanceOf(Response.UnexpectedResponse);
+      expect(events).toEqual(["send 1", "drained 1", "send 2", "drained 2"]);
+      expect(probes.map((probe) => probe.cancelled())).toEqual([false, false]);
+    }),
+  );
+
+  it.effect("keeps provider response lines on UnexpectedResponse", () =>
+    Effect.gen(function* () {
+      const client = HttpClient.make((request) =>
+        Effect.succeed(
+          Transport.withResponseHeaders(
+            HttpClientResponse.fromWeb(
+              request,
+              new globalThis.Response("<html>bad gateway</html>", {
+                status: 502,
+                headers: { "x-trace": "edge-1, origin-2" },
+              }),
+            ),
+            [
+              ["X-Trace", "edge-1"],
+              ["X-Trace", "origin-2"],
+            ],
+          ),
+        ),
+      );
+      const exit = yield* getItem
+        .execute(undefined)
+        .pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.exit,
+        );
+      const error = failureOf(exit);
+      expect(error).toBeInstanceOf(Response.UnexpectedResponse);
+      if (!(error instanceof Response.UnexpectedResponse)) return;
+      expect(error.metadata.status).toBe(502);
+      expect(error.metadata.headers["x-trace"]).toBe("edge-1, origin-2");
+      expect(error.metadata.headerLines).toStrictEqual(
+        Option.some([
+          ["X-Trace", "edge-1"],
+          ["X-Trace", "origin-2"],
+        ]),
+      );
+    }),
+  );
+
   it.effect("reads an unmodelled response through an explicit fallback", () =>
     Effect.gen(function* () {
       const server = synthetic(() => text(418, "short and stout"));
@@ -410,6 +541,106 @@ describe("Operation failures", () => {
     }>();
     expectTypeOf<Effect.Error<Found>>().toEqualTypeOf<Failure | Missing>();
   });
+});
+
+describe("Operation services", () => {
+  it.effect("keeps request encoding and response decoding services apart", () =>
+    Effect.gen(function* () {
+      const send = Operation.make(
+        Request.post("https://api.test/labels").pipe(
+          Request.body(Body.jsonSchema(Label)),
+        ),
+        Response.status(204, Body.empty),
+      );
+      const receive = Operation.make(
+        Request.get("https://api.test/labels/1"),
+        Response.status(200, Body.jsonSchema(Label)),
+      );
+      expectTypeOf<
+        Effect.Services<ReturnType<typeof send.execute>>
+      >().toEqualTypeOf<Suffix | HttpClient.HttpClient>();
+      expectTypeOf<
+        Effect.Services<ReturnType<typeof receive.execute>>
+      >().toEqualTypeOf<Prefix | HttpClient.HttpClient>();
+
+      const server = synthetic((exchange) =>
+        exchange.request.method === "POST" ? empty(204) : json(200, "wire"),
+      );
+      yield* send
+        .execute({ body: "label" })
+        .pipe(Effect.provide(server.layer), Effect.provideService(Suffix, "!"));
+      expect(bodyText(server.exchanges[0]!.request)).toBe('"label!"');
+      expect(
+        yield* receive
+          .execute(undefined)
+          .pipe(
+            Effect.provide(server.layer),
+            Effect.provideService(Prefix, ">"),
+          ),
+      ).toBe(">wire");
+    }),
+  );
+
+  it.effect(
+    "requires client middleware services and runs the middleware in each attempt's scope",
+    () =>
+      Effect.gen(function* () {
+        const events: Array<string> = [];
+        const signals: Array<AbortSignal> = [];
+        const server = synthetic((exchange, index) => {
+          if (index > 0)
+            events.push(
+              `attempt ${index} ${signals[index - 1]!.aborted ? "aborted" : "open"}`,
+            );
+          signals.push(exchange.signal);
+          events.push(`send ${exchange.request.headers["x-nonce"]}`);
+          return index === 0 ? text(503, "busy") : text(200, "done");
+        });
+        // Body.text reads through response.text, which aborts the request only on interruption,
+        // unlike draining response.stream. Only the attempt's scope can abort these signals.
+        const operation = Operation.make(
+          Request.get("https://api.test/"),
+          Response.when(() => true, Body.text),
+          {
+            policy: retries(1),
+            transformClient: (client) =>
+              client.pipe(
+                HttpClient.mapRequestEffect((request) =>
+                  Effect.gen(function* () {
+                    const nonce = (yield* Nonce)();
+                    yield* Effect.addFinalizer(() =>
+                      Effect.sync(() => events.push(`release ${nonce}`)),
+                    );
+                    return HttpClientRequest.setHeader(
+                      request,
+                      "x-nonce",
+                      nonce,
+                    );
+                  }),
+                ),
+              ),
+          },
+        );
+        expectTypeOf<
+          Effect.Services<ReturnType<typeof operation.execute>>
+        >().toEqualTypeOf<Nonce | HttpClient.HttpClient>();
+
+        let issued = 0;
+        const value = yield* operation.execute(undefined).pipe(
+          Effect.provide(server.layer),
+          Effect.provideService(Nonce, () => `n${++issued}`),
+        );
+        expect(value).toBe("done");
+        expect(events).toEqual([
+          "send n1",
+          "release n1",
+          "attempt 1 aborted",
+          "send n2",
+          "release n2",
+        ]);
+        expect(signals.map((signal) => signal.aborted)).toEqual([true, true]);
+      }),
+  );
 });
 
 describe("Operation retries", () => {
@@ -673,6 +904,69 @@ describe("Operation retries", () => {
     }),
   );
 
+  it.effect(
+    "honours Retry-After on a response that client middleware rejected",
+    () =>
+      Effect.gen(function* () {
+        const reasons: Array<Policy.Reason> = [];
+        const server = synthetic((_, index) =>
+          index === 0 ? empty(503, { "retry-after": "60" }) : empty(200),
+        );
+        const fiber = yield* Operation.make(
+          Request.get("https://api.test/"),
+          Response.status(200, Body.empty),
+          {
+            policy: Policy.make(Schedule.recurs(3), {
+              while: (reason) => {
+                reasons.push(reason);
+                return Policy.transient(reason);
+              },
+            }),
+            transformClient: HttpClient.filterStatusOk,
+          },
+        )
+          .execute(undefined)
+          .pipe(Effect.provide(server.layer), Effect.forkChild);
+        yield* TestClock.adjust("59 seconds");
+        expect(server.exchanges).toHaveLength(1);
+        expect(reasons).toHaveLength(1);
+        const rejected = reasons[0];
+        expect(rejected?._tag).toBe("Failure");
+        expect(rejected?.metadata?.status).toBe(503);
+        expect(rejected?.metadata?.headers["retry-after"]).toBe("60");
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(fiber);
+        expect(server.exchanges).toHaveLength(2);
+      }),
+  );
+
+  it.effect("fails with the schedule's error when the schedule fails", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(503));
+      const operation = Operation.make(
+        Request.get("https://api.test/"),
+        Response.status(204, Body.empty),
+        {
+          policy: Policy.make(
+            Schedule.recurs(3).pipe(
+              Schedule.tap(() =>
+                Effect.fail("retry budget unavailable" as const),
+              ),
+            ),
+          ),
+        },
+      );
+      expectTypeOf<"retry budget unavailable">().toExtend<
+        Effect.Error<ReturnType<typeof operation.execute>>
+      >();
+      const exit = yield* operation
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer), Effect.exit);
+      expect(failureOf(exit)).toBe("retry budget unavailable");
+      expect(server.exchanges).toHaveLength(1);
+    }),
+  );
+
   it.effect("waits for the schedule's delay between attempts", () =>
     Effect.gen(function* () {
       const server = synthetic((_, index) =>
@@ -798,6 +1092,78 @@ describe("Operation retries", () => {
       yield* TestClock.adjust("500 millis");
       yield* Fiber.join(fiber);
     }),
+  );
+
+  it.effect(
+    "finishes each attempt's cleanup before classifying it and before the retry delay",
+    () =>
+      Effect.gen(function* () {
+        const events: Array<string> = [];
+        const cleaning = yield* Deferred.make<void>();
+        // The first attempt's cleanup waits for the test; the second finishes at once.
+        const releases = [
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+        ];
+        yield* Deferred.succeed(releases[1]!, undefined);
+        let attempt = 0;
+        const tracked = Body.decoder((response) =>
+          Effect.gen(function* () {
+            const n = ++attempt;
+            yield* Effect.addFinalizer(() =>
+              Deferred.succeed(cleaning, undefined).pipe(
+                Effect.andThen(Deferred.await(releases[n - 1]!)),
+                Effect.andThen(Effect.sync(() => events.push(`released ${n}`))),
+              ),
+            );
+            yield* Body.empty.decode(response);
+            events.push(`decoded ${n}`);
+          }),
+        );
+        const server = synthetic((_, index) => {
+          events.push(`send ${index + 1}`);
+          return index === 0 ? empty(503) : empty(204);
+        });
+        const fiber = yield* Operation.make(
+          Request.get("https://api.test/"),
+          Response.when(() => true, tracked),
+          {
+            policy: Policy.make(Schedule.spaced("1 second"), {
+              while: (reason) => {
+                events.push(`classify ${reason.metadata?.status}`);
+                return Policy.transient(reason);
+              },
+            }),
+          },
+        )
+          .execute(undefined)
+          .pipe(Effect.provide(server.layer), Effect.forkChild);
+        yield* TestClock.adjust("1 minute");
+        yield* Deferred.await(cleaning);
+        // A delay that began during cleanup would elapse within this minute.
+        yield* TestClock.adjust("1 minute");
+        expect(events).toEqual(["send 1", "decoded 1"]);
+        yield* Deferred.succeed(releases[0]!, undefined);
+        yield* TestClock.adjust("999 millis");
+        expect(events).toEqual([
+          "send 1",
+          "decoded 1",
+          "released 1",
+          "classify 503",
+        ]);
+        yield* TestClock.adjust("1 milli");
+        yield* Fiber.join(fiber);
+        expect(events).toEqual([
+          "send 1",
+          "decoded 1",
+          "released 1",
+          "classify 503",
+          "send 2",
+          "decoded 2",
+          "released 2",
+          "classify 204",
+        ]);
+      }),
   );
 
   it.effect("propagates a defect without retrying", () =>
@@ -1082,6 +1448,133 @@ describe("Operation logging", () => {
         ])
           expect(output).not.toContain(secret);
       }),
+  );
+
+  it.effect("records nothing at Effect's default minimum log level", () =>
+    Effect.gen(function* () {
+      const log = recording();
+      const server = synthetic(flaky);
+      yield* Operation.make(
+        Request.get("https://api.test/items"),
+        Response.status(200, Body.json),
+        { policy: retries(1) },
+      )
+        .execute(undefined)
+        .pipe(
+          // A control entry at the default level shows that the logger records.
+          Effect.andThen(Effect.logInfo("control")),
+          Effect.provide(server.layer),
+          Effect.provide(log.layer),
+        );
+      expect(server.exchanges).toHaveLength(2);
+      expect(log.records.map((record) => record.message)).toEqual(["control"]);
+    }),
+  );
+
+  it.effect(
+    "records the attempt sequence at Debug with outcome annotations only",
+    () =>
+      Effect.gen(function* () {
+        const log = recording();
+        yield* Operation.make(
+          Request.post("https://hidden-host.test/hidden-path"),
+          Response.status(200, Body.json),
+          { policy: retries(1) },
+        )
+          .execute(undefined)
+          .pipe(
+            Effect.provide(synthetic(flaky).layer),
+            Effect.provide(log.layer),
+            Effect.provideService(References.MinimumLogLevel, "Debug"),
+          );
+        expect(
+          log.records.map(({ message, level, annotations }) => ({
+            message,
+            level,
+            annotations,
+          })),
+        ).toEqual([
+          {
+            message: "HTTP attempt started",
+            level: "DEBUG",
+            annotations: { "http.method": "POST", "http.attempt": 1 },
+          },
+          {
+            message: "HTTP attempt completed",
+            level: "DEBUG",
+            annotations: {
+              "http.method": "POST",
+              "http.attempt": 1,
+              "http.outcome": "failure",
+              "http.status": 503,
+            },
+          },
+          {
+            message: "HTTP retrying",
+            level: "DEBUG",
+            annotations: { "http.attempt": 2 },
+          },
+          {
+            message: "HTTP attempt started",
+            level: "DEBUG",
+            annotations: { "http.method": "POST", "http.attempt": 2 },
+          },
+          {
+            message: "HTTP attempt completed",
+            level: "DEBUG",
+            annotations: {
+              "http.method": "POST",
+              "http.attempt": 2,
+              "http.outcome": "success",
+              "http.status": 200,
+            },
+          },
+          {
+            message: "HTTP operation completed",
+            level: "DEBUG",
+            annotations: { "http.outcome": "success" },
+          },
+        ]);
+        for (const record of log.records) {
+          expect(record.spans).toEqual(["schema-http.operation"]);
+          expect(record.json).not.toContain("hidden-host");
+          expect(record.json).not.toContain("hidden-path");
+        }
+      }),
+  );
+
+  it.effect("records only the completion when preparation fails", () =>
+    Effect.gen(function* () {
+      const log = recording();
+      const server = synthetic(flaky);
+      const exit = yield* Operation.make(
+        Request.post("https://api.test/items").pipe(
+          Request.body(Body.jsonSchema(Schema.Struct({ n: Schema.Finite }))),
+        ),
+        Response.status(200, Body.json),
+        { policy: retries(1) },
+      )
+        .execute({ body: { n: Number.POSITIVE_INFINITY } })
+        .pipe(
+          Effect.provide(server.layer),
+          Effect.provide(log.layer),
+          Effect.provideService(References.MinimumLogLevel, "Debug"),
+          Effect.exit,
+        );
+      expect(Schema.isSchemaError(failureOf(exit))).toBe(true);
+      expect(server.exchanges).toHaveLength(0);
+      expect(
+        log.records.map(({ message, annotations }) => ({
+          message,
+          annotations,
+        })),
+      ).toEqual([
+        {
+          message: "HTTP operation completed",
+          annotations: { "http.outcome": "failure" },
+        },
+      ]);
+    }),
   );
 });
 

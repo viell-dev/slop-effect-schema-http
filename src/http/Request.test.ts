@@ -1,5 +1,15 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Redacted, Schema } from "effect";
+import {
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Option,
+  Redacted,
+  Schema,
+  SchemaTransformation,
+} from "effect";
 import { HttpClientRequest, UrlParams } from "effect/http";
 import { bodyText } from "../../test/support.js";
 import * as Body from "./Body.js";
@@ -18,6 +28,20 @@ const urlOf = <I, E, R, H extends boolean, Q extends boolean>(
   request: Request.Request<I, E, R, H, Q>,
   input: I,
 ) => Effect.map(compile(request, input), (compiled) => compiled.request.url);
+
+/** Read while encoding a header. */
+class Tenant extends Context.Service<Tenant, string>()("test/Tenant") {}
+
+/** A point that each of `parties` fibers passes only once all of them have reached it. */
+const meeting = (parties: number) =>
+  Effect.map(Deferred.make<void>(), (everyone) => {
+    let arrived = 0;
+    return Effect.suspend(() =>
+      ++arrived === parties
+        ? Deferred.succeed(everyone, undefined)
+        : Effect.void,
+    ).pipe(Effect.andThen(Deferred.await(everyone)));
+  });
 
 describe("Request.make", () => {
   it.effect("keeps the method and URL", () =>
@@ -427,6 +451,65 @@ describe("Request.headers", () => {
     bound.pipe(Request.headers(ApiHeaders));
     expectTypeOf(bound.declaration.headersBound).toEqualTypeOf<true>();
   });
+
+  it("requires a schema whose encoded side is header fields", () => {
+    const NumericPage = Schema.Struct({ "X-Page": Schema.Number });
+    // @ts-expect-error: a plain string is not a set of header fields
+    Request.headers(Schema.String);
+    // @ts-expect-error: header values encode to strings, not numbers
+    Request.headers(NumericPage);
+    Request.headers(Schema.Struct({ "X-Page": Schema.NumberFromString }));
+  });
+
+  it("takes the schema's application type as input, not its encoded type", () => {
+    const paged = Request.get("/").pipe(
+      Request.headers(Schema.Struct({ "X-Page": Schema.NumberFromString })),
+    );
+    void Request.compile(paged, { headers: { "X-Page": 3 } });
+    // @ts-expect-error: the input is the application value, a number
+    void Request.compile(paged, { headers: { "X-Page": "3" } });
+  });
+
+  it.effect(
+    "encodes through an effectful schema without sharing state between compilations",
+    () =>
+      Effect.gen(function* () {
+        // Both compilations meet while encoding, and again between encoding and the header merge,
+        // so each step runs with the other compilation in flight.
+        const encoding = yield* meeting(2);
+        const merging = yield* meeting(2);
+        const Signed = Schema.String.pipe(
+          Schema.decodeTo(
+            Schema.String,
+            SchemaTransformation.transformEffect({
+              decode: (wire: string) => Effect.succeed(wire),
+              encode: (value: string) =>
+                Effect.gen(function* () {
+                  const tenant = yield* Tenant;
+                  yield* encoding;
+                  return `${tenant}:${value}`;
+                }),
+            }),
+          ),
+        );
+        const request = Request.get("https://api.test/").pipe(
+          Request.mapEffect((native) => Effect.as(merging, native)),
+          Request.headers(Schema.Struct({ "X-Signed": Signed })),
+        );
+        const compiling = (value: string) =>
+          compile(request, { headers: { "X-Signed": value } });
+        expectTypeOf<
+          Effect.Services<ReturnType<typeof compiling>>
+        >().toEqualTypeOf<Tenant>();
+        const [a, b] = yield* Effect.all([compiling("a"), compiling("b")], {
+          concurrency: "unbounded",
+        }).pipe(Effect.provideService(Tenant, "t1"));
+        expect(a.headerLines).toEqual([["X-Signed", "t1:a"]]);
+        expect(a.request.headers["x-signed"]).toBe("t1:a");
+        expect(b.headerLines).toEqual([["X-Signed", "t1:b"]]);
+        expect(b.request.headers["x-signed"]).toBe("t1:b");
+      }),
+  );
 });
 
 describe("Request.query", () => {
@@ -522,6 +605,26 @@ describe("Request.query", () => {
     bound.pipe(Request.setQuery("x", "1"));
     expectTypeOf(bound.declaration.queryBound).toEqualTypeOf<true>();
   });
+
+  it("requires a schema whose encoded side is flat query entries", () => {
+    const Nested = Schema.Struct({
+      filter: Schema.Struct({ owner: Schema.String }),
+    });
+    // @ts-expect-error: a nested struct has no query representation
+    Request.query(Nested);
+    Request.query(
+      Schema.Struct({ page: Schema.Number, tag: Schema.Array(Schema.String) }),
+    );
+  });
+
+  it("takes the schema's application type as input, not its encoded type", () => {
+    const paged = Request.get("/").pipe(
+      Request.query(Schema.Struct({ page: Schema.NumberFromString })),
+    );
+    void Request.compile(paged, { query: { page: 2 } });
+    // @ts-expect-error: the input is the application value, a number
+    void Request.compile(paged, { query: { page: "2" } });
+  });
 });
 
 describe("Request.path", () => {
@@ -611,6 +714,14 @@ describe("Request.path", () => {
         ).toBe("https://api.test/x?a=1&b=2");
       }),
   );
+
+  it("renders the schema's encoded value, not its application value", () => {
+    Request.path(Schema.NumberFromString, (page: string, encode) =>
+      encode(page),
+    );
+    // @ts-expect-error: render receives the encoded string
+    Request.path(Schema.NumberFromString, (page: number) => String(page));
+  });
 
   it.effect("leaves dot segments unencoded at the library boundary", () =>
     Effect.gen(function* () {
@@ -1107,6 +1218,23 @@ describe("Request.mapEffect", () => {
           undefined,
         ),
       ).toBe("https://api.test/s?wsdl&sig=abc&a=2");
+    }),
+  );
+
+  it.effect("honours a native edit that gives a bare key an empty value", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("https://soap.test/svc?wsdl").pipe(
+            Request.mapEffect((request) =>
+              Effect.succeed(
+                HttpClientRequest.setUrlParam(request, "wsdl", ""),
+              ),
+            ),
+          ),
+          undefined,
+        ),
+      ).toBe("https://soap.test/svc?wsdl=");
     }),
   );
 

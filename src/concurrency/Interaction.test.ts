@@ -6,6 +6,7 @@ import {
   Effect,
   Exit,
   Fiber,
+  Result,
   Schema,
   Scope,
 } from "effect";
@@ -143,6 +144,101 @@ describe("Interaction.run", () => {
         expect(work.finalized).toEqual(["a"]);
         yield* work.release(1);
         expect(yield* Fiber.join(second)).toBe("b#1");
+      }),
+  );
+
+  it.effect("releases a caller whose work is superseded before it starts", () =>
+    Effect.gen(function* () {
+      const work = yield* controlled<string>();
+      const interaction = yield* Interaction.make(work.execute);
+      // Both runs are admitted before any worker has had a chance to start.
+      const first = yield* Effect.forkChild(interaction.run("a"), {
+        startImmediately: true,
+      });
+      const second = yield* Effect.forkChild(interaction.run("b"), {
+        startImmediately: true,
+      });
+      expect(isInterrupted(yield* Fiber.await(first))).toBe(true);
+      yield* work.awaitStarted(1);
+      // Confirms the scenario: the superseded work never began.
+      expect(work.calls).toEqual(["b"]);
+      yield* work.release(0);
+      expect(yield* Fiber.join(second)).toBe("b#0");
+    }),
+  );
+
+  it.effect(
+    "supersedes in-flight work while returning another input's retained success",
+    () =>
+      Effect.gen(function* () {
+        const work = yield* controlled<string>();
+        const interaction = yield* Interaction.make(work.execute);
+        const retained = yield* Effect.forkChild(interaction.run("a"));
+        yield* work.awaitStarted(1);
+        yield* work.release(0);
+        expect(yield* Fiber.join(retained)).toBe("a#0");
+        const pending = yield* Effect.forkChild(interaction.run("b"));
+        yield* work.awaitStarted(2);
+        expect(yield* interaction.run("a")).toBe("a#0");
+        // Superseded work stays interrupted even if its gate opens afterwards.
+        yield* work.release(1);
+        expect(isInterrupted(yield* Fiber.await(pending))).toBe(true);
+        expect(work.interrupted).toEqual(["b"]);
+        expect(work.calls).toEqual(["a", "b"]);
+      }),
+  );
+
+  it.effect(
+    "treats a synchronous throw in execute as a defect and stays usable",
+    () =>
+      Effect.gen(function* () {
+        const failure = new Error("execute bug");
+        const interaction = yield* Interaction.make((input: string) => {
+          if (input === "bad") throw failure;
+          return Effect.succeed(input.toUpperCase());
+        });
+        for (const attempt of [1, 2]) {
+          const exit = yield* Effect.exit(interaction.run("bad"));
+          expect(Exit.isFailure(exit), `attempt ${attempt}`).toBe(true);
+          if (!Exit.isFailure(exit)) return;
+          expect(Cause.hasFails(exit.cause)).toBe(false);
+          const defect = Cause.findDefect(exit.cause);
+          expect(Result.isSuccess(defect) ? defect.success : undefined).toBe(
+            failure,
+          );
+        }
+        expect(yield* interaction.run("ok")).toBe("OK");
+      }),
+  );
+
+  it.effect(
+    "releases every joined waiter when the retention predicate throws",
+    () =>
+      Effect.gen(function* () {
+        const work = yield* controlled<string>();
+        const failure = new Error("predicate bug");
+        const interaction = yield* Interaction.make(work.execute, {
+          retain: () => {
+            throw failure;
+          },
+        });
+        const first = yield* Effect.forkChild(interaction.run("a"));
+        yield* work.awaitStarted(1);
+        const second = yield* Effect.forkChild(interaction.run("a"), {
+          startImmediately: true,
+        });
+        yield* work.release(0);
+        for (const waiter of [first, second]) {
+          const exit = yield* Fiber.await(waiter);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (!Exit.isFailure(exit)) return;
+          const defect = Cause.findDefect(exit.cause);
+          expect(Result.isSuccess(defect) ? defect.success : undefined).toBe(
+            failure,
+          );
+        }
+        // Both waiters joined one execution.
+        expect(work.calls).toEqual(["a"]);
       }),
   );
 
