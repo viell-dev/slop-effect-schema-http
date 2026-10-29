@@ -18,7 +18,9 @@ describe an external service from the consumer's perspective. This project does 
 server or replace the HTTP client's transport.
 
 The public entry point exports `Body`, `Interaction`, `Operation`, `Policy`, `Request`, `Response`,
-`Transport`, and `UrlEncoding`. Their TypeScript source is the current API reference.
+`Transport`, and `UrlEncoding`. Their TypeScript source and doc comments are the current API
+reference. [docs/design.md](./docs/design.md) records the design decisions: what the library
+promises, and what it leaves to the consumer, to Effect, or to the transport.
 
 Behavior tests cover every module: request encoding, response selection and decoding, retry
 policies, timeouts, cancellation, and interactions. Operation and interaction tests run through

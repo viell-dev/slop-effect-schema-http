@@ -28,9 +28,10 @@ objects. Tests therefore run through Effect's real client wrapper without a netw
 with `TestClock` for retry delays and timeouts. Use deferreds or explicit start signals, not sleeps,
 to order concurrent work.
 
-Write tests against documented intent: the doc comments in the source and the design documentation.
-Behavior the code happens to have is not a promise. A test that records it without design backing is
-titled "currently …" and links an issue where the behavior is decided.
+Write tests against documented intent: the doc comments in the source and
+[docs/design.md](./docs/design.md). A change to a design decision updates that page in the same pull
+request. Behavior the code happens to have is not a promise. A test that records it without design
+backing is titled "currently …" and links an issue where the behavior is decided.
 
 A confirmed defect gets an issue and two tests, each with a comment linking the issue. An ordinary
 test pins the exact current outcome, and a test of the intended behavior is marked

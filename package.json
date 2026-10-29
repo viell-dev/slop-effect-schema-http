@@ -76,8 +76,6 @@
   "files": [
     "dist",
     "src",
-    "docs",
-    "examples",
     "README.md",
     "!dist/**/*.test.*",
     "!src/**/*.test.ts"
