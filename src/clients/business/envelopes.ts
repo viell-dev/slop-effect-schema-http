@@ -373,20 +373,22 @@ export const orderAccepted = Response.status(
 // Operations
 // ---------------------------------------------------------------------------------------------
 
+/** A customer id path, optionally followed by a sub-resource. */
+const customerPath = (suffix = "") =>
+  Request.path(
+    CustomerId,
+    (id, encode) => `customers/${encode(String(id))}${suffix}`,
+  );
+
+/** A URL learned from a response, such as a resolved `Location`, used as the request target. */
+const at = Request.path(Schema.URLFromString, (href) => href);
+
 /** The `/v1/` contracts for a deployment at `origin`. Construction is pure. */
 export const make = (origin: string) => {
   const base = `${origin}/v1`;
   const service = <I, E, R, H extends boolean, Q extends boolean>(
     request: Request.Request<I, E, R, H, Q>,
   ) => request.pipe(Request.baseUrl(base));
-  const customerPath = (suffix = "") =>
-    Request.path(
-      CustomerId,
-      (id, encode) => `customers/${encode(String(id))}${suffix}`,
-    );
-  /** A URL learned from a response, such as a resolved `Location`, used as the request target. */
-  const at = Request.path(Schema.URLFromString, (href) => href);
-
   const lookup = Response.status(200, Body.jsonSchema(CustomerLookup));
 
   const requests = {
@@ -616,8 +618,8 @@ export const make = (origin: string) => {
       Effect.gen(function* () {
         const outcome = yield* patchCustomer.execute(input);
         if (outcome._tag === "Invalid") return outcome;
-        const lookup = yield* getCustomer.execute({ path: input.path });
-        return { _tag: "Reread" as const, lookup };
+        const reread = yield* getCustomer.execute({ path: input.path });
+        return { _tag: "Reread" as const, lookup: reread };
       }),
   );
 
