@@ -419,17 +419,26 @@ describe("Interaction.close", () => {
         while (started.length < 1) yield* Effect.yieldNow;
         yield* Effect.forkChild(interaction.run("b"));
         while (started.length < 2) yield* Effect.yieldNow;
-        const closers = yield* Effect.forkChild(
-          Effect.all([interaction.close, interaction.close], {
-            concurrency: "unbounded",
-          }),
-        );
-        for (let i = 0; i < 10; i++) yield* Effect.yieldNow;
-        expect(closers.pollUnsafe()).toBeUndefined();
+        const entered: Array<number> = [];
+        const closer = (id: number) =>
+          Effect.forkChild(
+            Effect.sync(() => entered.push(id)).pipe(
+              Effect.andThen(interaction.close),
+            ),
+          );
+        const first = yield* closer(1);
+        const second = yield* closer(2);
+        while (entered.length < 2) yield* Effect.yieldNow;
+        for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+        expect(first.pollUnsafe()).toBeUndefined();
+        expect(second.pollUnsafe()).toBeUndefined();
         expect(finished).toEqual([]);
         yield* Deferred.succeed(gate, undefined);
-        yield* Fiber.join(closers);
+        yield* Fiber.join(first);
+        yield* Fiber.join(second);
         expect(finished.toSorted()).toEqual(["a", "b"]);
+        // A caller arriving after closing has completed returns at once.
+        yield* interaction.close;
       }),
   );
 

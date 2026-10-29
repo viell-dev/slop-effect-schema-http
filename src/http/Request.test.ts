@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Redacted, Schema } from "effect";
+import { Cause, Effect, Exit, Option, Redacted, Result, Schema } from "effect";
 import { HttpClientRequest, UrlParams } from "effect/http";
 import { bodyText } from "../../test/support.js";
 import * as Body from "./Body.js";
@@ -626,23 +626,36 @@ describe("Request.path", () => {
     }),
   );
 
-  // Known defect. The path render step is not mapped to InvalidRequest, so this currently dies.
-  // Remove `.fails` when the issue is fixed.
+  const unencodable = Request.get("").pipe(
+    Request.path(Id, (id, encode) => `https://api.test/files/${encode(id)}`),
+  );
+
+  // Known defect: the path render step is not mapped to InvalidRequest. This pins the current
+  // outcome; remove it when the issue is fixed.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/5
+  it.effect("currently dies when a path value cannot be percent-encoded", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        compile(unencodable, { path: loneSurrogate }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
+      expect(Cause.hasFails(exit.cause)).toBe(false);
+      const defect = Cause.findDefect(exit.cause);
+      expect(
+        Result.isSuccess(defect) ? defect.success : undefined,
+      ).toBeInstanceOf(URIError);
+    }),
+  );
+
+  // Known defect: the intended outcome is a typed InvalidRequest. Remove `.fails` when the issue is
+  // fixed. https://github.com/viell-dev/slop-effect-schema-http/issues/5
   it.effect.fails(
     "fails with InvalidRequest when a path value cannot be percent-encoded",
     () =>
       Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          compile(
-            Request.get("").pipe(
-              Request.path(
-                Id,
-                (id, encode) => `https://api.test/files/${encode(id)}`,
-              ),
-            ),
-            { path: loneSurrogate },
-          ),
+          compile(unencodable, { path: loneSurrogate }),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (!Exit.isFailure(exit)) return;
@@ -715,20 +728,37 @@ describe("Request.body", () => {
       }),
   );
 
-  // Known defect. A header schema applied after the body overrides the codec's Content-Type. Remove
-  // `.fails` when the issue is fixed.
+  const relabelled = Request.post("https://api.test/items").pipe(
+    Request.body(Body.json),
+    Request.headers(Schema.Struct({ "Content-Type": Schema.String })),
+  );
+  const relabelledInput = {
+    body: { name: "x" },
+    headers: { "Content-Type": "text/plain" },
+  };
+
+  // Known defect: a header schema applied after the body overrides the codec's Content-Type. This
+  // pins the current outcome; remove it when the issue is fixed.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/6
+  it.effect("currently lets a header schema after the body relabel it", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compile(relabelled, relabelledInput);
+      expect(compiled.request.headers["content-type"]).toBe("text/plain");
+      expect(bodyText(compiled.request)).toBe('{"name":"x"}');
+      expect(compiled.headerLines).toContainEqual([
+        "Content-Type",
+        "text/plain",
+      ]);
+    }),
+  );
+
+  // Known defect: the intended outcome keeps the codec's Content-Type. Remove `.fails` when the
+  // issue is fixed. https://github.com/viell-dev/slop-effect-schema-http/issues/6
   it.effect.fails(
     "keeps the codec's Content-Type when a header schema follows the body",
     () =>
       Effect.gen(function* () {
-        const compiled = yield* compile(
-          Request.post("https://api.test/items").pipe(
-            Request.body(Body.json),
-            Request.headers(Schema.Struct({ "Content-Type": Schema.String })),
-          ),
-          { body: { name: "x" }, headers: { "Content-Type": "text/plain" } },
-        );
+        const compiled = yield* compile(relabelled, relabelledInput);
         expect(compiled.request.headers["content-type"]).toBe(
           "application/json",
         );

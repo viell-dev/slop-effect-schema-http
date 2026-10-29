@@ -55,19 +55,35 @@ describe("Body.json", () => {
     }),
   );
 
-  // Known defect. JSON.stringify returns undefined for these values and the codec sends an empty
-  // application/json body. Remove `.fails` when the issue is fixed.
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/8
-  it.effect.fails(
-    "fails encoding values JSON.stringify omits instead of sending an empty body",
-    () =>
-      Effect.gen(function* () {
-        for (const value of [undefined, () => 1, Symbol("x")]) {
+  describe("values JSON.stringify omits", () => {
+    const omitted = [
+      ["undefined", undefined],
+      ["a function", () => 1],
+      ["a symbol", Symbol("x")],
+    ] as const;
+
+    for (const [name, value] of omitted) {
+      // Known defect: JSON.stringify returns undefined and the codec sends an empty JSON body. This
+      // pins the current outcome; remove it when the issue is fixed.
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/8
+      it.effect(`currently encodes ${name} as an empty JSON body`, () =>
+        Effect.gen(function* () {
+          const body = yield* Body.json.encode(value);
+          expect(contentTypeOf(body)).toBe("application/json");
+          expect(bytesOf(body).length).toBe(0);
+        }),
+      );
+
+      // Known defect: the intended outcome is an encoding failure. Remove `.fails` when the issue
+      // is fixed. https://github.com/viell-dev/slop-effect-schema-http/issues/8
+      it.effect.fails(`fails encoding ${name}`, () =>
+        Effect.gen(function* () {
           const error = yield* Effect.flip(Body.json.encode(value));
           expect(error).toBeInstanceOf(HttpBody.HttpBodyError);
-        }
-      }),
-  );
+        }),
+      );
+    }
+  });
 
   it.effect("decodes any JSON value, including null", () =>
     Effect.gen(function* () {

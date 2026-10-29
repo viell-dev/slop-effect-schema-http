@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import {
   Cause,
+  Data,
   Effect,
   Exit,
   Fiber,
@@ -360,9 +361,16 @@ describe("Operation failures", () => {
   );
 
   it("keeps mapped errors in the result and failure unions", () => {
+    class Missing extends Data.TaggedError("Missing") {}
     const operation = Operation.make(
       Request.get("/"),
-      Response.status(200, Response.tag("Ok", Body.json)).pipe(
+      Response.status(
+        200,
+        Response.tag(
+          "Ok",
+          Body.json.pipe(Body.schema(Schema.Struct({ id: Schema.Number }))),
+        ),
+      ).pipe(
         Response.orElse(
           Response.status(401, Response.tag("Unauthorized", Body.text)),
         ),
@@ -370,10 +378,16 @@ describe("Operation failures", () => {
     );
     type Result = Effect.Success<ReturnType<typeof operation.execute>>;
     expectTypeOf<Result["_tag"]>().toEqualTypeOf<"Ok" | "Unauthorized">();
-    const read = (result: Result) => {
+    const read = (result: Result): { readonly id: number } => {
       // @ts-expect-error: the body is a string for Unauthorized; narrow first
-      const id: { readonly id: number } = result.value;
-      return result._tag === "Ok" ? result.value : id;
+      const unnarrowed: { readonly id: number } = result.value;
+      void unnarrowed;
+      if (result._tag === "Ok") {
+        expectTypeOf(result.value).toEqualTypeOf<{ readonly id: number }>();
+        return result.value;
+      }
+      expectTypeOf(result.value).toEqualTypeOf<string>();
+      return { id: 0 };
     };
     void read;
     type Failure = Effect.Error<ReturnType<typeof operation.execute>>;
@@ -381,6 +395,20 @@ describe("Operation failures", () => {
     expectTypeOf<Request.InvalidRequest>().toExtend<Failure>();
     expectTypeOf<Cause.TimeoutError>().toExtend<Failure>();
     expectTypeOf<HttpClientError.HttpClientError>().toExtend<Failure>();
+
+    const found = operation.pipe(
+      Operation.mapEffect((result) =>
+        result._tag === "Ok"
+          ? Effect.succeed(result.value)
+          : Effect.fail(new Missing()),
+      ),
+    );
+    type Found = ReturnType<typeof found.execute>;
+    expectTypeOf<Effect.Success<Found>>().toEqualTypeOf<{
+      readonly id: number;
+    }>();
+    expectTypeOf<Missing>().toExtend<Effect.Error<Found>>();
+    expectTypeOf<Response.UnexpectedResponse>().toExtend<Effect.Error<Found>>();
   });
 });
 
@@ -1119,49 +1147,85 @@ describe("Operation combinators", () => {
 describe("Operation URL composition", () => {
   const contract = Response.status(204, Body.empty);
 
-  // Known defect. The client's URL parser resolves a `..` path value, so the request reaches a
-  // parent resource. Remove `.fails` when the issue is fixed.
+  const file = Operation.make(
+    Request.get("").pipe(
+      Request.path(Schema.String, (id, encode) => `/v1/files/${encode(id)}`),
+      Request.baseUrl("https://api.test"),
+    ),
+    contract,
+  );
+
+  const keyed = Operation.make(
+    Request.get("users").pipe(Request.baseUrl("https://api.test/v1?key=abc")),
+    contract,
+  );
+
+  /** Dispatch through a fresh provider and report the exit with every resolved URL. */
+  const dispatch = <I, E>(
+    operation: Operation.Operation<I, void, E, HttpClient.HttpClient>,
+    input: I,
+  ) =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(204));
+      const exit = yield* operation
+        .execute(input)
+        .pipe(Effect.provide(server.layer), Effect.exit);
+      return { exit, hrefs: server.exchanges.map((exchange) => exchange.href) };
+    });
+
+  const rejectedBeforeDispatch = (outcome: {
+    readonly exit: Exit.Exit<void, unknown>;
+    readonly hrefs: ReadonlyArray<string>;
+  }) => {
+    expect(outcome.hrefs).toEqual([]);
+    expect(Exit.isFailure(outcome.exit)).toBe(true);
+    if (!Exit.isFailure(outcome.exit)) return;
+    expect(Cause.hasDies(outcome.exit.cause)).toBe(false);
+    expect(failureOf(outcome.exit)).toBeInstanceOf(Request.InvalidRequest);
+  };
+
+  // Known defect: the client's URL parser resolves a `..` path value, so the request reaches a
+  // parent resource. This pins the current outcome; remove it when the issue is fixed.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/7
-  it.effect.fails(
-    "keeps a dot-segment path value inside the rendered path",
+  it.effect(
+    "currently dispatches a '..' path value to the parent resource",
     () =>
       Effect.gen(function* () {
-        const server = synthetic(() => empty(204));
-        yield* Operation.make(
-          Request.get("").pipe(
-            Request.path(
-              Schema.String,
-              (id, encode) => `/v1/files/${encode(id)}`,
-            ),
-            Request.baseUrl("https://api.test"),
-          ),
-          contract,
-        )
-          .execute({ path: ".." })
-          .pipe(Effect.provide(server.layer), Effect.exit);
-        for (const exchange of server.exchanges)
-          expect(exchange.href.startsWith("https://api.test/v1/files/")).toBe(
-            true,
-          );
+        const outcome = yield* dispatch(file, { path: ".." });
+        expect(Exit.isSuccess(outcome.exit)).toBe(true);
+        expect(outcome.hrefs).toEqual(["https://api.test/v1/"]);
       }),
   );
 
-  // Known defect. Joining appends the path after the base URL's query string. Remove `.fails` when
-  // the issue is fixed.
+  // Known defect: no URL can carry a literal `..` segment through the client's URL parser, so the
+  // intended outcome is a typed rejection before dispatch. Remove `.fails` when the issue is fixed.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/7
+  it.effect.fails("rejects a '..' path value before dispatch", () =>
+    Effect.gen(function* () {
+      rejectedBeforeDispatch(yield* dispatch(file, { path: ".." }));
+    }),
+  );
+
+  // Known defect: joining appends the path after the base URL's query string. This pins the current
+  // outcome; remove it when the issue is fixed.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/7
+  it.effect("currently appends the path after a base URL's query", () =>
+    Effect.gen(function* () {
+      const outcome = yield* dispatch(keyed, undefined);
+      expect(Exit.isSuccess(outcome.exit)).toBe(true);
+      expect(outcome.hrefs).toEqual(["https://api.test/v1?key=abc/users"]);
+    }),
+  );
+
+  // Known defect: the intended outcome is either a typed rejection before dispatch or the joined
+  // path with the base URL's query kept. Remove `.fails` when the issue is fixed.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/7
   it.effect.fails("keeps a base URL's query out of the joined path", () =>
     Effect.gen(function* () {
-      const server = synthetic(() => empty(204));
-      yield* Operation.make(
-        Request.get("users").pipe(
-          Request.baseUrl("https://api.test/v1?key=abc"),
-        ),
-        contract,
-      )
-        .execute(undefined)
-        .pipe(Effect.provide(server.layer), Effect.exit);
-      for (const exchange of server.exchanges)
-        expect(new URL(exchange.href).pathname).toBe("/v1/users");
+      const outcome = yield* dispatch(keyed, undefined);
+      if (Exit.isSuccess(outcome.exit))
+        expect(outcome.hrefs).toEqual(["https://api.test/v1/users?key=abc"]);
+      else rejectedBeforeDispatch(outcome);
     }),
   );
 
@@ -1169,22 +1233,9 @@ describe("Operation URL composition", () => {
     "encodes percent signs, so an encoded dot segment stays literal",
     () =>
       Effect.gen(function* () {
-        const server = synthetic(() => empty(204));
-        yield* Operation.make(
-          Request.get("").pipe(
-            Request.path(
-              Schema.String,
-              (id, encode) => `/v1/files/${encode(id)}`,
-            ),
-            Request.baseUrl("https://api.test"),
-          ),
-          contract,
-        )
-          .execute({ path: "%2e%2e" })
-          .pipe(Effect.provide(server.layer));
-        expect(server.exchanges[0]?.href).toBe(
-          "https://api.test/v1/files/%252e%252e",
-        );
+        const outcome = yield* dispatch(file, { path: "%2e%2e" });
+        expect(Exit.isSuccess(outcome.exit)).toBe(true);
+        expect(outcome.hrefs).toEqual(["https://api.test/v1/files/%252e%252e"]);
       }),
   );
 });
