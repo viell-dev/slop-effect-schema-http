@@ -14,24 +14,25 @@ import { type Handler, type Received, type Server, serve } from "./server.js";
 const first = (lines: Received["lines"], name: string) =>
   lines.find(([key]) => key.toLowerCase() === name)?.[1];
 
+/** A CORS preflight: OPTIONS with `Access-Control-Request-Method`. Known from the head alone. */
+const isPreflight = (request: Received): boolean =>
+  request.method === "OPTIONS" &&
+  first(request.lines, "access-control-request-method") !== undefined;
+
 /**
  * Answer CORS preflights and expose every response header to the test page, so the page sees the
- * backend's own conventions. Preflights are remembered so the ledger can leave them out.
+ * backend's own conventions. The ledger leaves the preflights this answers out.
  */
 const withHarnessCors =
-  (
-    handler: Handler,
-    preflights: WeakSet<Received>,
-    arrival: () => void,
-  ): Handler =>
+  (handler: Handler): Handler =>
   async (request, context) => {
     const origin = first(request.lines, "origin");
     const preflightMethod = first(
       request.lines,
       "access-control-request-method",
     );
+    // The same test as `isPreflight`, written out so the method narrows to a string.
     if (request.method === "OPTIONS" && preflightMethod !== undefined) {
-      preflights.add(request);
       return {
         status: 204,
         lines: [
@@ -47,7 +48,6 @@ const withHarnessCors =
         ],
       };
     }
-    arrival();
     const reply = await handler(request, context);
     if (origin === undefined) return reply;
     const lines = (reply.lines ?? []).filter(
@@ -80,16 +80,17 @@ const hostFor = (sequence: number): string =>
 interface Running {
   readonly server: Server;
   readonly scope: Scope.Closeable;
-  readonly preflights: WeakSet<Received>;
-  readonly waiters: Array<{
-    readonly count: number;
-    readonly resolve: () => void;
-  }>;
+  /** Which requests the ledger reports: all of them, or all but the harness's own preflights. */
+  readonly include: (received: Received) => boolean;
 }
 
+/**
+ * The ledger as the page sees it, read when asked: requests are recorded as their heads arrive, so
+ * a body still arriving, or cut off by a disconnect, is reported as the bytes received so far.
+ */
 const recorded = (running: Running): ReadonlyArray<Recorded> =>
   running.server.ledger
-    .filter((received) => !running.preflights.has(received))
+    .filter((received) => running.include(received))
     .map((received) => ({
       method: received.method,
       target: received.target,
@@ -120,31 +121,17 @@ export const startControl = (): Promise<Control> => {
     cors: "harness" | "backend",
   ) => {
     const id = String(++next);
-    const preflights = new WeakSet<Received>();
-    const waiters: Running["waiters"] = [];
     const scope = await Effect.runPromise(Scope.make());
-    let entry: Running | undefined;
-    const arrival = () =>
-      queueMicrotask(() => {
-        if (entry === undefined) return;
-        const count = recorded(entry).length;
-        for (const waiter of waiters.splice(0))
-          if (count >= waiter.count) waiter.resolve();
-          else waiters.push(waiter);
-      });
     const inner = await loadHandler(name, options);
-    const handler: Handler =
-      cors === "harness"
-        ? withHarnessCors(inner, preflights, arrival)
-        : (request, context) => {
-            arrival();
-            return inner(request, context);
-          };
+    const handler = cors === "harness" ? withHarnessCors(inner) : inner;
     const server = await Effect.runPromise(
       serve(handler, hostFor(Number(id))).pipe(Scope.provide(scope)),
     );
-    entry = { server, scope, preflights, waiters };
-    running.set(id, entry);
+    const include =
+      cors === "harness"
+        ? (received: Received) => !isPreflight(received)
+        : () => true;
+    running.set(id, { server, scope, include });
     return { id, origin: server.origin };
   };
 
@@ -198,10 +185,7 @@ export const startControl = (): Promise<Control> => {
           );
         if (request.method === "GET" && match[2] === "/arrived") {
           const count = Number(url.searchParams.get("count") ?? "1");
-          if (recorded(entry).length < count)
-            await new Promise<void>((resolve) =>
-              entry.waiters.push({ count, resolve }),
-            );
+          await entry.server.arrived(count, entry.include);
           return reply(204);
         }
         if (request.method === "DELETE" && match[2] === undefined) {

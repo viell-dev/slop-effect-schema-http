@@ -23,6 +23,10 @@ export interface Recorded {
   readonly target: string;
   /** Header lines in order, with their original spelling and repetition. */
   readonly lines: ReadonlyArray<readonly [string, string]>;
+  /**
+   * The body bytes received when the ledger was read. A request is recorded as its head arrives, so
+   * an upload still in progress, or cut off by a disconnect, shows the bytes that had arrived.
+   */
   readonly body: Uint8Array;
   /** Whether the client had closed the connection before the reply ended, when the ledger was read. */
   readonly aborted: boolean;
@@ -39,7 +43,10 @@ export interface Backend {
    * by the harness are left out, so request counts mean the same in both lanes.
    */
   readonly ledger: Effect.Effect<ReadonlyArray<Recorded>>;
-  /** Completes once at least `count` requests have arrived. */
+  /**
+   * Completes once at least `count` requests have arrived: their heads, whether or not their bodies
+   * are complete. Preflights answered by the harness do not count.
+   */
   readonly arrived: (count: number) => Effect.Effect<void>;
 }
 
