@@ -7,5 +7,63 @@
   "ignorePatterns": [".library/**", "artifacts/**"],
   "rules": {
     "eslint/no-underscore-dangle": "off"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/backends/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/clients/**",
+                  "**/values/**",
+                  "**/formats/**",
+                  "**/scenarios/**",
+                  "viell-effect-schema-http",
+                  "effect",
+                  "effect/*",
+                  "#lane"
+                ],
+                "message": "Backends are black boxes: they may import only Node built-ins and src/harness/server.ts or route.ts."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/clients/**",
+        "src/values/**",
+        "src/formats/**",
+        "src/scenarios/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/backends/**",
+                  "**/harness/server*",
+                  "**/harness/route*",
+                  "**/harness/control*",
+                  "**/harness/registry*",
+                  "**/harness/providers*",
+                  "**/harness/lane.node*",
+                  "**/harness/lane.browser*",
+                  "node:*"
+                ],
+                "message": "Consumer code and scenarios reach backends only over HTTP through #lane, and must also run in a browser."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

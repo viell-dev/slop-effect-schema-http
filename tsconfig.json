@@ -10,7 +10,8 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "paths": {
-      "viell-effect-schema-http": ["./.library/src/main.ts"]
+      "viell-effect-schema-http": ["./.library/src/main.ts"],
+      "#lane": ["./src/harness/lane.node.ts"]
     }
   },
   "include": ["src/**/*", "vitest.config.ts"]
