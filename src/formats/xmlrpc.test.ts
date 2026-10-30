@@ -94,17 +94,43 @@ describe("xml-rpc helper", () => {
     expect(Schema.decodeUnknownSync(XmlRpc.I4)({ i4: "-42" })).toBe(-42);
     expect(Schema.encodeSync(XmlRpc.I4)(-42)).toEqual({ i4: "-42" });
     for (const text of ["+1", "01", "-0", "2147483648", "1.0", " 1"])
-      expect(() => Schema.decodeUnknownSync(XmlRpc.I4)({ i4: text })).toThrow(
-        /canonical i4/,
-      );
+      for (const type of ["i4", "int"])
+        expect(() =>
+          Schema.decodeUnknownSync(XmlRpc.I4)({ [type]: text }),
+        ).toThrow(/canonical i4/);
     expect(() =>
       Schema.decodeUnknownSync(XmlRpc.I4)({ string: "1" }),
     ).toThrow();
+    expect(() => Schema.decodeUnknownSync(XmlRpc.I4)("1")).toThrow();
     expect(() => Schema.decodeUnknownSync(XmlRpc.Text)("bare")).toThrow();
     expect(Schema.decodeUnknownSync(XmlRpc.Untyped)("bare")).toBe("bare");
   });
 
-  it("[PAY-8] base64 decodes Perl's 76-column MIME layout and nothing looser", () => {
+  it("[PAY-3b] <int> reads as <i4>, its synonym, and encodes as <i4>: the spelling is not kept", () => {
+    expect(Schema.decodeUnknownSync(XmlRpc.I4)({ int: "-42" })).toBe(-42);
+    expect(
+      Schema.encodeSync(XmlRpc.I4)(
+        Schema.decodeUnknownSync(XmlRpc.I4)({ int: "2147483647" }),
+      ),
+    ).toEqual({ i4: "2147483647" });
+    expect(() =>
+      Schema.decodeUnknownSync(XmlRpc.I4)({ int: "2147483648" }),
+    ).toThrow(/canonical i4/);
+  });
+
+  it("[PAY-3b] a string value reads untyped or typed, and encodes untyped: the spelling is not kept", () => {
+    expect(Schema.decodeUnknownSync(XmlRpc.StringValue)("bare")).toBe("bare");
+    expect(
+      Schema.decodeUnknownSync(XmlRpc.StringValue)({ string: "Café" }),
+    ).toBe("Café");
+    expect(Schema.encodeSync(XmlRpc.StringValue)("Café")).toBe("Café");
+    for (const other of [{ i4: "1" }, { base64: "QUJD" }, { array: [] }])
+      expect(() =>
+        Schema.decodeUnknownSync(XmlRpc.StringValue)(other),
+      ).toThrow();
+  });
+
+  it("[PAY-8] base64 decodes MIME::Base64's 76-column lines, one line, or any line feeds, refuses other characters, and encodes MIME::Base64's layout", () => {
     const bytes = Uint8Array.from(
       { length: 70 },
       (_, index) => (index * 37) % 256,
@@ -114,12 +140,33 @@ describe("xml-rpc helper", () => {
     expect(lines.map((line) => line.length)).toEqual([76, 20, 0]);
     expect(Schema.decodeUnknownSync(XmlRpc.Base64)(encoded)).toEqual(bytes);
     const flat = encoded.base64.replaceAll("\n", "");
-    expect(() =>
-      Schema.decodeUnknownSync(XmlRpc.Base64)({ base64: flat }),
-    ).toThrow(/76-character/);
-    expect(() =>
-      Schema.decodeUnknownSync(XmlRpc.Base64)({ base64: "QUJ\n" }),
-    ).toThrow(/not base64/);
+    // One line, as XMLRPC::Lite writes it, and line feeds anywhere: the layout is not kept.
+    for (const layout of [
+      flat,
+      `${flat}\n`,
+      `\n${flat.slice(0, 5)}\n\n${flat.slice(5)}`,
+    ]) {
+      expect(
+        Schema.decodeUnknownSync(XmlRpc.Base64)({ base64: layout }),
+      ).toEqual(bytes);
+      expect(
+        Schema.encodeSync(XmlRpc.Base64)(
+          Schema.decodeUnknownSync(XmlRpc.Base64)({ base64: layout }),
+        ),
+      ).toEqual(encoded);
+    }
+    for (const text of [
+      "QUJ\n",
+      "QUJD REVG",
+      "QUJD\tREVG",
+      "QUJD\r\nREVG",
+      "QQ==QUJD",
+      "QUJD*",
+      "QUJD=",
+    ])
+      expect(() =>
+        Schema.decodeUnknownSync(XmlRpc.Base64)({ base64: text }),
+      ).toThrow(/not base64/);
     expect(Schema.decodeUnknownSync(XmlRpc.Base64)({ base64: "" })).toEqual(
       new Uint8Array(),
     );

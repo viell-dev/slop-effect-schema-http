@@ -72,7 +72,9 @@ software or the set, and the conformance tests show whether the backends still a
 ## How the tests use them
 
 - **The replay backend** ([services/replay.md](../services/replay.md)) serves recorded responses
-  over a real socket, so consumer tests decode the real software's bytes in both lanes.
+  over a real socket, so consumer tests decode the real software's bytes in both lanes:
+  `src/scenarios/recordings.test.ts` runs the consumer's own operations against them (catalogue
+  entries EXT-8a to EXT-8d).
 - **The conformance tests** in `src/conformance/` send each recorded request to the backend that
   imitates the software, over a raw socket, and compare the reply with the recorded response. They
   are backend-side code, kept apart from the consumer side by `scripts/boundaries.mjs`.
