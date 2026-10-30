@@ -39,6 +39,10 @@ Each run writes a JUnit report to `artifacts/junit-node.xml` or `artifacts/junit
 `npm run test:catalogue` then reads both. To run part of the suite, use
 `npx vitest run <file> --project node` (or `browser`).
 
+CI runs all four lanes in one job, the `suite` check, with a 20-minute limit. At c0d84d0 the whole
+job took about two minutes on GitHub's Ubuntu runner; split the packed and app lanes into their own
+job if it ever nears the limit.
+
 `.npmrc` sets `ignore-scripts=true`, so no dependency's install script runs; none of the current
 dependencies needs one. Commit `package-lock.json` with any dependency change.
 
@@ -66,7 +70,9 @@ behaviour, without opening `src/backends/`. Code written before this rule was wr
 per area; it is checked against recordings of real software and independent parsers instead
 ([#32](https://github.com/viell-dev/slop-effect-schema-http/issues/32),
 [#33](https://github.com/viell-dev/slop-effect-schema-http/issues/33)). `scripts/boundaries.mjs`
-checks that every backend links its page; [AGENTS.md](./AGENTS.md) states the full rule. The
+checks that every backend links its page, and on pull requests that change either side, CI's
+`scripts/authorship.mjs` checks that the description says which context wrote which side.
+[AGENTS.md](./AGENTS.md) states the full rule. The
 independent parsers are [saxes](https://github.com/lddubeau/saxes) in Node, Chromium's `DOMParser`
 and each platform's `Response.formData()`; `src/scenarios/parsers.test.ts` compares the consumer's
 and the backends' XML, XML-RPC and multipart readers with them over the edge-case corpora in

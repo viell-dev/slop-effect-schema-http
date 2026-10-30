@@ -23,6 +23,7 @@
     "check:catalogue": "node scripts/catalogue.mjs",
     "check:boundaries": "node scripts/boundaries.mjs",
     "check:boundaries-test": "node --test scripts/boundaries.test.mjs",
+    "check:authorship-test": "node --test scripts/authorship.test.mjs",
     "lint": "oxlint",
     "test": "run-s test:node test:browser test:catalogue",
     "test:node": "vitest run --project node --reporter=default --reporter=junit --outputFile.junit=artifacts/junit-node.xml",
