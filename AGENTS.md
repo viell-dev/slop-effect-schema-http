@@ -65,7 +65,11 @@ the scenarios. The library's own design, which these tests are judged against, i
   - Each side is written in a separate agent context; the consumer side's author does not open
     `src/backends/`.
   - A change to observable behaviour updates the service page in the same pull request.
-  - Pull requests record which context wrote which side.
+  - Pull requests record which context wrote which side, in a line or heading of the description
+    that starts with "Authorship", such as `## Authorship`. On a pull request that changes
+    `src/backends/`, `src/conformance/`, `services/` or consumer code, CI's
+    `scripts/authorship.mjs` fails without one; editing the description runs it again. It checks
+    that the statement is there, not that it is true.
   - The rule applies to new work; code written before it is not rewritten under it.
   - `scripts/boundaries.mjs` also checks that every backend entry point links an existing page in
     `services/` with a `Service documentation: services/<page>.md` line.
