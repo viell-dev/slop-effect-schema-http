@@ -1,11 +1,11 @@
 {
   "set": "frontier-rpc2",
   "description": "XML-RPC replies from Frontier::RPC2 0.07b4 under Frontier::Daemon, serving the gateway's five methods over data.json.",
-  "recorded": "2026-10-29T23:24:01.141Z",
+  "recorded": "2026-10-30T00:23:12.198Z",
   "images": [
     "debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3"
   ],
-  "built": "sha256:74ded736dd8d784e4715d0c84758a31dd180beec56625182594b4fed0fdb6427",
+  "built": "sha256:8e9a438ffd956ac489eeb594b48550ae9c698ee8a0b7489ae38eaa74ff296f1a",
   "versions": {
     "perl": ["v5.36.0"],
     "packages": [
@@ -22,8 +22,7 @@
   "client": "scripts/record.mjs: a raw TCP socket from the host to the published port; each request is written as listed, with Content-Length and Connection: close added.",
   "commands": [
     "docker build -t hostile-recording-frontier-rpc2 recordings/frontier-rpc2",
-    "docker network create hostile-recording-frontier-rpc2",
-    "docker run -d --name hostile-recording-frontier-rpc2 --network hostile-recording-frontier-rpc2 --network-alias gateway.example -p 127.0.0.1::8080 hostile-recording-frontier-rpc2",
+    "docker run -d --name hostile-recording-frontier-rpc2 -p 127.0.0.1::8080 hostile-recording-frontier-rpc2",
     "docker port hostile-recording-frontier-rpc2 8080/tcp",
     "docker exec hostile-recording-frontier-rpc2 perl -e print qq{$^V\\n}",
     "docker exec hostile-recording-frontier-rpc2 dpkg-query --show libfrontier-rpc-perl libhttp-daemon-perl libxml-parser-perl perl"
