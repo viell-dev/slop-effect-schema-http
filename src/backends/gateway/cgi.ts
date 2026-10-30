@@ -41,19 +41,26 @@ export const pipe = (...fields: ReadonlyArray<string | number>): Reply => ({
 export const pipeError = (code: string, message: string): Reply =>
   pipe("ERROR", code, message);
 
-/** Apache 1.3's HTML error page for a status, as the core writes it. */
+/** Apache 1.3's HTML error page for a status, as the core writes it, with its length. */
 export const apachePage = (
   status: number,
   title: string,
   message: string,
   lines: ReadonlyArray<readonly [string, string]> = [],
-): Reply => ({
-  status,
-  lines: [...lines, ["Content-Type", "text/html; charset=iso-8859-1"]],
-  body:
+): Reply => {
+  const body =
     `<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">\n<HTML><HEAD>\n<TITLE>${status} ${title}</TITLE>\n` +
-    `</HEAD><BODY>\n<H1>${title}</H1>\n${message}<P>\n<HR>\n<ADDRESS>Apache/1.3.41 Server</ADDRESS>\n</BODY></HTML>\n`,
-});
+    `</HEAD><BODY>\n<H1>${title}</H1>\n${message}<P>\n<HR>\n<ADDRESS>Apache/1.3.41 Server</ADDRESS>\n</BODY></HTML>\n`;
+  return {
+    status,
+    lines: [
+      ...lines,
+      ["Content-Length", String(Buffer.byteLength(body))],
+      ["Content-Type", "text/html; charset=iso-8859-1"],
+    ],
+    body,
+  };
+};
 
 /** Format cents as units with a separator and exactly two decimals, without floating point. */
 export const units = (cents: number, separator: "." | ","): string => {

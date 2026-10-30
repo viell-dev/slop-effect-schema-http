@@ -202,19 +202,42 @@ const escape = (text: string): string =>
     .replaceAll(">", "&gt;")
     .replaceAll("\r", "&#13;");
 
-/** A value written the way the Perl handlers write it. */
+/** Frontier::RPC2's escaping of a typed object's text, which escapes the quote too. */
+const escapeTyped = (text: string): string =>
+  escape(text).replaceAll('"', "&quot;");
+
+/**
+ * Frontier::RPC2's escaping of a plain scalar's text: as a typed object's, and every character
+ * from U+0080 to U+FFFF as a decimal character reference.
+ */
+const escapePlain = (text: string): string =>
+  escapeTyped(text).replace(/[\u0080-￿]/g, (character) =>
+    /[\ud800-\udfff]/.test(character)
+      ? character
+      : `&#${character.charCodeAt(0)};`,
+  );
+
+/**
+ * A value as a handler hands it to Frontier::RPC2's encoder (the service page's "Values"). A plain
+ * Perl scalar is typed by the encoder's guess and written without a line end after it: `i4` for
+ * an integer, `cents` for an amount formatted with two decimals, which the guess makes a
+ * `<double>`, and `plain` for text. The module's typed objects are written with a line end after
+ * `</value>`: `string` for text a guess would make an integer, `boolean`, `dateTime` and
+ * `base64`, and so are structs and arrays. `untyped` is the 1999 `account.title`'s own reply.
+ */
 export type Out =
   | { readonly i4: number }
-  /** Money in cents, written as a `<double>` in units. */
   | { readonly cents: number }
-  | { readonly boolean: boolean }
+  | { readonly plain: string }
   | { readonly string: string }
-  | { readonly untyped: string }
+  | { readonly boolean: boolean }
   | { readonly dateTime: string }
   | { readonly base64: Uint8Array }
+  | { readonly untyped: string }
   | { readonly struct: ReadonlyArray<readonly [string, Out]> }
   | { readonly array: ReadonlyArray<Out> };
 
+/** MIME::Base64's `encode_base64` with its default line end: 76 columns, each line ended. */
 const mime = (bytes: Uint8Array): string =>
   (
     Buffer.from(bytes)
@@ -224,60 +247,81 @@ const mime = (bytes: Uint8Array): string =>
     .map((line) => `${line}\n`)
     .join("");
 
+/** Whether any text in a value holds a character outside `Char`, which no reference may carry. */
+const holdsNonChar = (value: Out): boolean => {
+  if ("struct" in value)
+    return value.struct.some(
+      ([name, member]) =>
+        firstNonChar(name) !== undefined || holdsNonChar(member),
+    );
+  if ("array" in value) return value.array.some(holdsNonChar);
+  const text =
+    "plain" in value
+      ? value.plain
+      : "string" in value
+        ? value.string
+        : "dateTime" in value
+          ? value.dateTime
+          : "untyped" in value
+            ? value.untyped
+            : "";
+  return firstNonChar(text) !== undefined;
+};
+
 const write = (value: Out): string => {
   if ("i4" in value) return `<value><i4>${value.i4}</i4></value>`;
   if ("cents" in value)
     return `<value><double>${units(value.cents, ".")}</double></value>`;
-  if ("boolean" in value)
-    return `<value><boolean>${value.boolean ? 1 : 0}</boolean></value>`;
-  if ("string" in value)
-    return `<value><string>${escape(value.string)}</string></value>`;
+  if ("plain" in value)
+    return `<value><string>${escapePlain(value.plain)}</string></value>`;
   if ("untyped" in value) return `<value>${escape(value.untyped)}</value>`;
+  if ("string" in value)
+    return `<value><string>${escapeTyped(value.string)}</string></value>\n`;
+  if ("boolean" in value)
+    return `<value><boolean>${value.boolean ? 1 : 0}</boolean></value>\n`;
   if ("dateTime" in value)
-    return `<value><dateTime.iso8601>${escape(value.dateTime)}</dateTime.iso8601></value>`;
+    return `<value><dateTime.iso8601>${escapeTyped(value.dateTime)}</dateTime.iso8601></value>\n`;
   if ("base64" in value)
-    return `<value><base64>${mime(value.base64)}</base64></value>`;
+    return `<value><base64>${mime(value.base64)}</base64></value>\n`;
   if ("struct" in value)
     return `<value><struct>\n${value.struct
       .map(
         ([name, member]) =>
-          `<member><name>${escape(name)}</name>${write(member)}</member>\n`,
+          `<member><name>${escapeTyped(name)}</name>${write(member)}</member>\n`,
       )
-      .join("")}</struct></value>`;
-  return `<value><array><data>\n${value.array.map((item) => `${write(item)}\n`).join("")}</data></array></value>`;
+      .join("")}</struct></value>\n`;
+  return `<value><array><data>\n${value.array.map(write).join("")}</data></array></value>\n`;
 };
 
-const document = (body: string): string =>
-  `<?xml version="1.0"?>\n<methodResponse>\n${body}</methodResponse>\n`;
-
-const faultBody = (code: number, message: string): string =>
-  `<fault>\n${write({
-    struct: [
-      ["faultCode", { i4: code }],
-      ["faultString", { string: message }],
-    ],
-  })}\n</fault>\n`;
-
-/** The fault that replaces a reply holding a character outside `Char`. */
-const internalError = document(
-  faultBody(-32603, "server error. internal xml-rpc error"),
-);
-
-/** A methodResponse, or the internal-error fault in place of one XML cannot carry. */
-const xml = (body: string): Reply => {
-  const text = document(body);
+/** A reply with its length, which the script prints as Frontier::Daemon does. */
+const xml = (content: string): Reply => {
+  const body = `<?xml version="1.0"?>\n<methodResponse>\n${content}</methodResponse>\n`;
   return {
     status: 200,
     lines: [
+      ["Content-Length", String(Buffer.byteLength(body))],
       ["Content-Type", "text/xml"],
-      ["Server", "Frontier/5.1.2-WinNT"],
     ],
-    body: firstNonChar(text) === undefined ? text : internalError,
+    body,
   };
 };
 
-export const result = (value: Out): Reply =>
-  xml(`<params>\n<param>\n${write(value)}\n</param>\n</params>\n`);
-
+/** A fault as Frontier::RPC2's `encode_fault` writes it. */
 export const fault = (code: number, message: string): Reply =>
-  xml(faultBody(code, message));
+  xml(
+    `<fault>\n${write({
+      struct: [
+        ["faultCode", { i4: code }],
+        ["faultString", { plain: message }],
+      ],
+    })}</fault>\n`,
+  );
+
+/**
+ * A methodResponse as Frontier::RPC2's `encode_response` writes it, or the internal-error fault in
+ * place of one XML cannot carry.
+ */
+export const result = (value: Out): Reply =>
+  holdsNonChar(value)
+    ? fault(-32603, "server error. internal xml-rpc error")
+    : xml(`<params>\n<param>${write(value)}</param>\n</params>\n`);

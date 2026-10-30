@@ -36,6 +36,9 @@ const files = {
   "src/scenarios/store.node.test.ts": 'import { connect } from "node:net";\n',
   "src/app/main.ts":
     'import { Effect } from "effect";\nimport { parse } from "../formats/xml.js";\n',
+  "src/conformance/wire.ts": 'import { readFileSync } from "node:fs";\n',
+  "src/conformance/store.node.test.ts":
+    'import { lane } from "#lane";\nimport { Effect } from "effect";\nimport { readFileSync } from "node:fs";\nimport { header } from "../harness/lane.js";\nimport { send } from "./wire.js";\n',
 };
 
 let fixtures = 0;
@@ -259,6 +262,34 @@ describe("boundaries.mjs", () => {
       status: 0,
       problems: [],
     });
+  });
+
+  it("keeps the conformance tests apart from backends, Node-side harness modules and consumer code", () => {
+    assert.deepEqual(
+      run({
+        extra: {
+          "src/conformance/review.node.test.ts": [
+            'import { parse } from "../backends/store/xml.js";',
+            'import { control } from "../harness/control.js";',
+            'import { parse as read } from "../formats/xml.js";',
+            'import { value } from "../values/store.js";',
+            "",
+          ].join("\n"),
+          "src/scenarios/review.node.test.ts":
+            'import { send } from "../conformance/wire.js";\n',
+        },
+      }),
+      {
+        status: 1,
+        problems: [
+          "src/scenarios/review.node.test.ts: imports ../conformance/wire.js (src/conformance/wire.ts): the conformance tests are backend-side",
+          "src/conformance/review.node.test.ts: imports ../backends/store/xml.js (src/backends/store/xml.ts): conformance tests reach backends only over HTTP",
+          "src/conformance/review.node.test.ts: imports ../harness/control.js (src/harness/control.ts): conformance tests may use only src/harness/lane.ts and #lane of the harness",
+          "src/conformance/review.node.test.ts: imports ../formats/xml.js (src/formats/xml.ts): conformance tests are backend-side and share nothing with the consumer side",
+          "src/conformance/review.node.test.ts: imports ../values/store.js (src/values/store.ts): conformance tests are backend-side and share nothing with the consumer side",
+        ],
+      },
+    );
   });
 
   it("refuses a backend entry point whose service page link was removed", () => {
