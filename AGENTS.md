@@ -37,6 +37,9 @@ the scenarios. The library's own design, which these tests are judged against, i
   `.http` file by hand: re-record it, and review the diff.
 - `src/conformance/`: backend-side tests that hold each imitating backend to its recordings, with
   their helpers (EXT-6a to EXT-6e). The `replay` backend serves recordings to consumer tests.
+  `readers.node.test.ts` holds the backend side's regression cases for the store's and the
+  gateway's XML readers and the store's bundle writer, beside the consumer side's corpora
+  (EXT-3 to EXT-5).
 
 ## Rules
 

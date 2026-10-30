@@ -100,13 +100,25 @@ In SOAP 1.1 replies, a character above U+00FF is a decimal character reference s
 
 ### XML rules
 
-The store reads XML 1.0 strictly. A character outside the
+The store reads XML 1.0 strictly: a request that breaks any of its
+[well-formedness rules](https://www.w3.org/TR/xml/) is malformed. A character outside the
 [`Char` production](https://www.w3.org/TR/xml/#charsets) is an error, raw or as a character
-reference. CRLF and a lone CR become LF before parsing
-([line ends](https://www.w3.org/TR/xml/#sec-line-ends)), and literal white space in an attribute
-value becomes a space ([attribute normalization](https://www.w3.org/TR/xml/#AVNormalize)). The
-writer refuses those characters too. It writes a carriage return as `&#xD;`, and a tab or line feed
-inside an attribute value as a reference, so a reader's normalization keeps them.
+reference, and so is a reference to any entity but the five predefined ones. CRLF and a lone CR
+become LF before parsing ([line ends](https://www.w3.org/TR/xml/#sec-line-ends)), and literal white
+space in an attribute value becomes a space
+([attribute normalization](https://www.w3.org/TR/xml/#AVNormalize)). White space is space, tab, CR
+and LF only: U+00A0, U+3000 and the other Unicode spaces are not, and U+FEFF is a byte-order mark
+only before the first character. Names may use any character XML's `Name` production allows. The
+XML declaration, when present, comes first and starts with the version; no other processing
+instruction may take `xml`, in any case, as its target, and each needs a target. A comment holds no
+`--` and does not end in `-`.
+
+A document type declaration is refused, though XML allows one, because SOAP forbids it in a message
+(SOAP 1.1 section 3, SOAP 1.2 part 1 section 5), so the store expands no entities. WebDAV `PROPFIND`
+bodies are read by the same rules.
+
+The writer refuses characters outside `Char` too. It writes a carriage return as `&#xD;`, and a tab
+or line feed inside an attribute value as a reference, so a reader's normalization keeps them.
 
 ### Actions
 
@@ -250,7 +262,11 @@ WebDAV errors other than the depth refusal and the multistatus are plain text.
   `multipart/form-data` with a `metadata` part (`application/json`, as a file named
   `metadata.json`) and a `content` part holding the bytes. The metadata is
   `{ "id", "name", "title", "contentType", "size", "etag", "modified" }`. The content part's file
-  name is the document's name as raw UTF-8, with `"` written as `%22`, as browsers write it.
+  name is the document's name as raw UTF-8, with `"` written as `%22`, as browsers write it. The
+  boundary is `DocVaultBundle-<id>-<version>`, the version counting the document's writes from 1.
+  When a part holds `--` and that boundary, the bundle takes the first of
+  `DocVaultBundle-<id>-<version>-2`, `-3` and so on that no part holds, since a boundary must never
+  occur inside a part ([RFC 2046 section 5.1.1](https://www.rfc-editor.org/rfc/rfc2046#section-5.1.1)).
 
 Both uploads refuse with plain text: 400 for a missing name, label or file part, an empty raw
 upload, a malformed body or an invalid name; 415 for the wrong media type; and 409 for a name that
