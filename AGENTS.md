@@ -160,4 +160,8 @@ comes from the installed package's `dist/`. Give the app no alias for the librar
 `src/app` only as an application would use the library. README's "The app lane" says what it
 covers.
 
-Deliver changes through pull requests into `hostile-servers-test`.
+Deliver changes through pull requests into `hostile-servers-test`. While a pull request into it is
+open and under the owner's review, such as
+[#23](https://github.com/viell-dev/slop-effect-schema-http/pull/23) for the suite's first version,
+deliver follow-up work as pull requests into that pull request's branch (`build-hostile-suite`), so
+the owner's review covers it; the suite's workflow runs on those too.
