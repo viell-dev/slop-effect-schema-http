@@ -30,6 +30,13 @@ the scenarios. The library's own design, which these tests are judged against, i
 - `src/scenarios/`: server-backed tests, one file per area.
 - `src/app/`: the single-page app of the app lane (EXT-7), consumer code in plain DOM.
   `vite.app.config.ts` builds it into `.app/`, which Git ignores.
+- `recordings/`: raw HTTP exchanges recorded from real server software, one directory per set with
+  its Dockerfile, the program or configuration it serves, `set.json` and `manifest.json`;
+  [recordings/README.md](./recordings/README.md) describes them. `scripts/record.mjs`
+  (`npm run record -- <set>`) makes a set again in Docker, on demand and never in CI. Never edit a
+  `.http` file by hand: re-record it, and review the diff.
+- `src/conformance/`: backend-side tests that hold each imitating backend to its recordings, with
+  their helpers (EXT-6a to EXT-6e). The `replay` backend serves recordings to consumer tests.
 
 ## Rules
 
@@ -41,11 +48,12 @@ the scenarios. The library's own design, which these tests are judged against, i
   - Tests configure a backend only through its JSON options.
   - `npm run check` enforces both directions with `scripts/boundaries.mjs`, which resolves every
     import, through `package.json` `imports` and `tsconfig.json` `paths` aliases too: a backend's
-    against that allowlist, and consumer code's and scenarios' against any backend and any harness
-    module except `lane.ts` and `#lane`. A `#…` specifier that resolves to nothing, or an
-    undeclared package, fails the check. `scripts/boundaries.test.mjs` tests the script in
-    `npm run check`; extend it when the resolution changes. `npm run lint` flags common cases too,
-    by specifier text only.
+    against that allowlist, consumer code's and scenarios' against any backend, any harness module
+    except `lane.ts` and `#lane`, and the conformance tests, and the conformance tests' against any
+    backend, any such harness module and any consumer code. A `#…` specifier that resolves to
+    nothing, or an undeclared package, fails the check. `scripts/boundaries.test.mjs` tests the
+    script in `npm run check`; extend it when the resolution changes. `npm run lint` flags common
+    cases too, by specifier text only.
 - **Separate authorship.** The import rule keeps the code apart; this rule keeps the authors'
   knowledge apart, so that one misreading of a format cannot end up on both sides and cancel out.
   - A backend is written from the catalogue and its service page.
@@ -58,6 +66,10 @@ the scenarios. The library's own design, which these tests are judged against, i
   - The rule applies to new work; code written before it is not rewritten under it.
   - `scripts/boundaries.mjs` also checks that every backend entry point links an existing page in
     `services/` with a `Service documentation: services/<page>.md` line.
+  - The conformance tests in `src/conformance/` belong to the backend side. A backend that imitates
+    recorded software keeps its conformance tests passing: fix a difference in the backend and its
+    service page, or keep it, pin it in the test and explain it in the service page's "Recordings"
+    section and the catalogue. Mask only values that change with every run, and name each mask.
 - **Two lanes.** Every scenario runs in Node and in Chromium (Vitest browser mode), to show that the
   library works in a static single-page app as well as in Node.
   - Tests import `lane` from `#lane` and start backends by name with `lane.backend(name, options)`.

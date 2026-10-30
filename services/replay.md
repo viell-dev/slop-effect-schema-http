@@ -20,9 +20,10 @@ of the recording:
 
 - **Framing.** A recorded chunked body is sent chunked again, but its chunk sizes are the server's,
   not the recorded ones. A recorded `Content-Length` body is sent as recorded.
-- **Connection management.** A recording without a `Connection` line gets the server's own
-  `Connection: keep-alive` and `Keep-Alive` lines, as every backend's replies do; one with a
-  `Connection` line keeps it.
+- **Connection management.** A recording without a `Connection` line gets the server's own, after
+  the recorded lines: `Connection: close` when the request asks to close, and otherwise
+  `Connection: keep-alive` with `Keep-Alive: timeout=5`, as every backend's replies do. A recording
+  with a `Connection` line keeps it, and gets nothing added.
 
 The recorded `Date` is sent as recorded, so it names the day of the recording.
 

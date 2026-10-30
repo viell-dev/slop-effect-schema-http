@@ -36,7 +36,8 @@ can remove it.
   like markup in the request target, a `<` or `>` once the target is percent-decoded, with its stock
   HTML page: 403 `text/html; charset=utf-8`, `Cache-Control: no-cache`, `Connection: close`, and a
   support ID in the text. The security team owns its policy; it predates every consumer of this API
-  and answers before the application sees the request.
+  and answers before the application sees the request. It also removes the container's `Server`
+  line from every reply, so no `/v1/` reply names its server.
 
 ### Customers
 
@@ -46,11 +47,14 @@ can remove it.
   exactly 200.
 
   Two containers serve this path behind a round-robin balancer, and `X-Served-By` names the one
-  that answered. Ops documentation says both absolutize `Location`; only the legacy servlet
-  container (`app-legacy-2`) does, building it from the request's `Host` header as
-  `http://<host>/v1/customers/<id>`. The newer container (`app-1`) sends the path,
-  `/v1/customers/<id>`, exactly as the handler wrote it. Which form a client sees is the balancer's
-  choice; it alternates, starting with `app-1`.
+  that answered. Ops documentation says the servlet container absolutizes `Location`; neither
+  container does, since Tomcat leaves a `Location` header as the handler set it and absolutizes
+  only `sendRedirect`'s 302, and only with `useRelativeRedirects="false"`, the behaviour of releases
+  before 7.0.67. The legacy node (`app-legacy-2`) still runs the 2012 build, whose controller builds
+  the URL itself from the request's `Host` header, in the form Tomcat's `sendRedirect` uses:
+  `http://<host>/v1/customers/<id>`, with the port when `Host` names one. The newer node (`app-1`)
+  sends the path, `/v1/customers/<id>`, exactly as the handler wrote it. Which form a client sees is
+  the balancer's choice; it alternates, starting with `app-1`.
 
 - **`GET /v1/customers?page=&per_page=&name=`** lists customers as `{ "customers": [...] }`. The
   controller reads a one-based `page` (default 1) and `per_page` (default 2, at most 50), and
@@ -198,6 +202,21 @@ ids.
   `{ "warehouse": [...] }`, one is `{ "warehouse": {…} }`, and none is `{}`. Mobile clients written
   against the bridge parse exactly that, so it cannot be fixed. An unknown region has none, and a
   missing `region` is 400 with a `missing` error in the validation shape.
+
+### Recordings
+
+The customer creation is held to recordings of Tomcat 7.0.109, the last Tomcat 7 release, with its
+defaults and with `useRelativeRedirects="false"`
+([recordings/README.md](../recordings/README.md); catalogue EXT-6d). `app-1`'s reply matches
+Tomcat's reply to a handler that sets `Location` on a 200, and `app-legacy-2`'s absolute `Location`
+matches the URL Tomcat's `sendRedirect` builds for the same path and `Host`. The differences that
+remain are documented above: `X-Served-By`, the `Server` line the firewall removes, the legacy
+node's own absolute URL, and the framing of the suite's HTTP server, which chunks a reply Tomcat
+would count (recordings/README.md, "Comparing").
+
+The recordings also show what the ops documentation got wrong: by default Tomcat 7.0.109 writes
+`sendRedirect`'s location as given, even a relative `customers/1006`, and a `setStatus(200)` after
+`sendRedirect` leaves the 302 in place.
 
 ## `/v2/`: the operations era
 
