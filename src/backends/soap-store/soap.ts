@@ -191,7 +191,10 @@ const respond = (version: Version, outcome: Outcome): Reply => {
           {},
           Xml.leaf("faultcode", outcome.sender ? "soap:Client" : "soap:Server"),
           Xml.leaf("faultstring", outcome.message),
-          Xml.tag("detail", {}, outcome.detail),
+          // A fault without detail entries has no detail element, as SAAJ writes it.
+          ...(outcome.detail === ""
+            ? []
+            : [Xml.tag("detail", {}, outcome.detail)]),
         )
       : Xml.tag(
           "env:Fault",
@@ -209,7 +212,9 @@ const respond = (version: Version, outcome: Outcome): Reply => {
             {},
             `<env:Text xml:lang="en">${Xml.escape(outcome.message)}</env:Text>`,
           ),
-          Xml.tag("env:Detail", {}, outcome.detail),
+          ...(outcome.detail === ""
+            ? []
+            : [Xml.tag("env:Detail", {}, outcome.detail)]),
         );
   return render(version, 500, fault);
 };

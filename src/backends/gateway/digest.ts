@@ -52,13 +52,28 @@ const badRequest = (reason: string): Verdict => ({
   ),
 });
 
+/**
+ * A nonce of the form mod_auth_digest writes: the issue time's eight bytes in microseconds, in
+ * base64, which ends in `=`, then forty hex digits of SHA-1 over the time and a secret. A sequence
+ * number in the microseconds keeps two nonces of one millisecond apart.
+ */
+const nonceOf = (secret: Buffer, sequence: number): string => {
+  const time = Buffer.alloc(8);
+  time.writeBigUInt64LE(BigInt(Date.now()) * 1000n + BigInt(sequence % 1000));
+  return (
+    time.toString("base64") +
+    createHash("sha1").update(time).update(secret).digest("hex")
+  );
+};
+
 /** Per-instance Digest state: the nonces issued and whether each has been used. */
 export const digest = (options: DigestOptions) => {
   const nonces = new Map<string, "fresh" | "spent">();
-  const opaque = randomBytes(16).toString("hex");
+  const secret = randomBytes(20);
+  let issued = 0;
 
   const challenge = (stale: boolean): Verdict => {
-    const nonce = randomBytes(18).toString("base64");
+    const nonce = nonceOf(secret, issued++);
     nonces.set(nonce, "fresh");
     // The realm is interpolated unescaped, as the service page documents; the fixtures use plain
     // realms, so a malformed challenge is never exercised.
@@ -71,7 +86,7 @@ export const digest = (options: DigestOptions) => {
         [
           [
             "WWW-Authenticate",
-            `Digest realm="${options.realm}", nonce="${nonce}", opaque="${opaque}", algorithm=MD5` +
+            `Digest realm="${options.realm}", nonce="${nonce}", algorithm=MD5` +
               (stale ? ", stale=true" : ""),
           ],
         ],
@@ -100,8 +115,7 @@ export const digest = (options: DigestOptions) => {
     )
       return badRequest("Digest: missing directive");
     if (uri !== request.target) return badRequest("Digest: uri mismatch");
-    if (realm !== options.realm || fields.get("opaque") !== opaque)
-      return challenge(false);
+    if (realm !== options.realm) return challenge(false);
     const state = nonces.get(nonce);
     if (state === undefined) return challenge(false);
     nonces.set(nonce, "spent");

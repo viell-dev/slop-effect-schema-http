@@ -67,6 +67,9 @@ export interface Options {
 
 const PERIOD = /^\d{4}(0[1-9]|1[0-2])$/;
 
+/** The `Server` line Apache 1.3 writes on every reply. */
+const SERVER = "Apache/1.3.41 (Unix)";
+
 const METHODS = [
   "system.listMethods",
   "report.count",
@@ -81,14 +84,29 @@ const refuse = (status: number, code: string, message: string): Reply => ({
   status,
 });
 
-/** Apache's `Redirect permanent` for `rpt.exe`. */
+/**
+ * Apache's `Redirect permanent` for `rpt.exe`: the scheme, the host and port the request's `Host`
+ * names (`UseCanonicalName Off`), or the server's own port when it names none and that port is not
+ * 80, then the new path and the request's query. The page escapes the target as HTML.
+ */
 const legacy = (request: Received, origin: string): Reply => {
   const query = request.target.indexOf("?");
-  const location = `${origin}/cgi-bin/report.cgi${query < 0 ? "" : request.target.slice(query)}`;
+  const own = new URL(origin);
+  const host = header(request.lines, "host") ?? own.host;
+  const authority =
+    /:\d*$/.test(host) || own.port === "" || own.port === "80"
+      ? host
+      : `${host}:${own.port}`;
+  const location = `http://${authority}/cgi-bin/report.cgi${query < 0 ? "" : request.target.slice(query)}`;
+  const escaped = location
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
   return apachePage(
     301,
     "Moved Permanently",
-    `The document has moved <A HREF="${location}">here</A>.`,
+    `The document has moved <A HREF="${escaped}">here</A>.`,
     [["Location", location]],
   );
 };
@@ -221,7 +239,7 @@ export const handler = (options: Options = {}): Handler => {
         : undefined;
     switch (call.method) {
       case "system.listMethods":
-        return Rpc.result({ array: METHODS.map((name) => ({ string: name })) });
+        return Rpc.result({ array: METHODS.map((name) => ({ plain: name })) });
       case "report.count": {
         const period = one("string");
         if (period === undefined)
@@ -260,7 +278,7 @@ export const handler = (options: Options = {}): Handler => {
               {
                 array: invoice.lines.map((line) => ({
                   struct: [
-                    ["text", { string: line.text }],
+                    ["text", { plain: line.text }],
                     ["amount", { cents: line.cents }],
                   ] as const,
                 })),
@@ -331,6 +349,7 @@ export const handler = (options: Options = {}): Handler => {
       matched.remaining--;
       await hold(matched.delay.milliseconds, context.signal);
     }
-    return reply;
+    // Apache 1.3 fronts every script and signs every reply.
+    return { ...reply, lines: [["Server", SERVER], ...(reply.lines ?? [])] };
   };
 };
