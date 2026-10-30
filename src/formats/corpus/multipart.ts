@@ -179,7 +179,7 @@ export const bundleCases: ReadonlyArray<BundleCase> = [
   {
     id: "delimiter-in-content",
     about:
-      "content holding the delimiter line the store writes for this bundle (it must come first, as DOC-000001)",
+      "content holding the delimiter line of the store's first-choice boundary for this bundle (it must come first, as DOC-000001), so the store has to pick another",
     document: {
       name: "delimiter.txt",
       title: "Delimiter",
