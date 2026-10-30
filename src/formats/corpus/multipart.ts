@@ -190,10 +190,6 @@ export const bundleCases: ReadonlyArray<BundleCase> = [
         ),
       ),
     },
-    disagreements: {
-      store:
-        "writes a boundary that occurs in the content, which RFC 2046 section 5.1.1 forbids, so no parser can find the parts: both formData() parsers refuse the bundle, and so does the consumer's bundle operation",
-    },
   },
   {
     id: "plain",

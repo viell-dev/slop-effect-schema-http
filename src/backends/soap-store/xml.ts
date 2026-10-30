@@ -39,13 +39,14 @@ export interface Node {
   readonly namespaces: ReadonlyMap<string, string>;
 }
 
-const predefined: Readonly<Record<string, string>> = {
-  lt: "<",
-  gt: ">",
-  amp: "&",
-  quot: '"',
-  apos: "'",
-};
+/** The five predefined entities; no other is declared, since the store reads no DTD. */
+const predefined: ReadonlyMap<string, string> = new Map([
+  ["lt", "<"],
+  ["gt", ">"],
+  ["amp", "&"],
+  ["quot", '"'],
+  ["apos", "'"],
+]);
 
 const unescape = (text: string): string =>
   text.replace(/&([^;&\s]*);?/g, (whole, entity: string) => {
@@ -60,26 +61,52 @@ const unescape = (text: string): string =>
         throw new XmlError(`${whole} does not reference an XML character`);
       return String.fromCodePoint(code);
     }
-    const value = predefined[entity];
+    const value = predefined.get(entity);
     if (value === undefined) throw new XmlError(`unknown entity &${entity};`);
     return value;
   });
 
-const nameSyntax = "[A-Za-z_][\\w.:-]*";
+/**
+ * XML white space, `S` ([3]): space, tab, CR and LF, and no other Unicode space. No CR is left
+ * once line ends are normalized.
+ */
+const space = "[ \\t\\n]";
+const blank = new RegExp(`^${space}*$`);
+
+/** `NameStartChar` ([4]) and `NameChar` ([4a]), as the contents of a `u`-flag character class. */
+const nameStart =
+  ":A-Z_a-z\\u{C0}-\\u{D6}\\u{D8}-\\u{F6}\\u{F8}-\\u{2FF}\\u{370}-\\u{37D}\\u{37F}-\\u{1FFF}" +
+  "\\u{200C}-\\u{200D}\\u{2070}-\\u{218F}\\u{2C00}-\\u{2FEF}\\u{3001}-\\u{D7FF}\\u{F900}-\\u{FDCF}" +
+  "\\u{FDF0}-\\u{FFFD}\\u{10000}-\\u{EFFFF}";
+const nameChar = `${nameStart}\\-.0-9\\u{B7}\\u{300}-\\u{36F}\\u{203F}-\\u{2040}`;
+const nameSyntax = `[${nameStart}][${nameChar}]*`;
+
 const token = new RegExp(
   [
-    "<!--[\\s\\S]*?-->",
-    "<\\?[\\s\\S]*?\\?>",
+    "<!--([\\s\\S]*?)-->",
+    "<\\?([\\s\\S]*?)\\?>",
     "<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>",
-    `</(${nameSyntax})\\s*>`,
-    `<(${nameSyntax})((?:\\s+${nameSyntax}\\s*=\\s*(?:"[^"<]*"|'[^'<]*'))*)\\s*(/?)>`,
+    `</(${nameSyntax})${space}*>`,
+    `<(${nameSyntax})((?:${space}+${nameSyntax}${space}*=${space}*(?:"[^"<]*"|'[^'<]*'))*)${space}*(/?)>`,
     "([^<]+)",
   ].join("|"),
-  "y",
+  "uy",
 );
 const attribute = new RegExp(
-  `(${nameSyntax})\\s*=\\s*(?:"([^"<]*)"|'([^'<]*)')`,
-  "g",
+  `(${nameSyntax})${space}*=${space}*(?:"([^"<]*)"|'([^'<]*)')`,
+  "gu",
+);
+
+/** A processing instruction's target and the data after it ([16] PI, [17] PITarget). */
+const instruction = new RegExp(`^(${nameSyntax})(?:${space}[\\s\\S]*)?$`, "u");
+
+/** The XML declaration's content after `<?` ([23] XMLDecl to [26] VersionNum, [32] SDDecl). */
+const xmlDeclaration = new RegExp(
+  [
+    `^xml${space}+version${space}*=${space}*(?:"1\\.[0-9]+"|'1\\.[0-9]+')`,
+    `(?:${space}+encoding${space}*=${space}*(?:"[A-Za-z][\\w.-]*"|'[A-Za-z][\\w.-]*'))?`,
+    `(?:${space}+standalone${space}*=${space}*(?:"(?:yes|no)"|'(?:yes|no)'))?${space}*$`,
+  ].join(""),
 );
 
 interface Open {
@@ -90,8 +117,8 @@ interface Open {
 }
 
 /**
- * Parse a whole document; DTDs, stray text, unbalanced tags and characters XML does not allow
- * throw {@link XmlError}. Offsets refer to the text after line-end normalization.
+ * Parse a whole document; DTDs, stray text, unbalanced tags and anything else XML 1.0 calls
+ * malformed throw {@link XmlError}. Offsets refer to the text after line-end normalization.
  */
 export const parse = (document: string): Node => {
   const source = document.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
@@ -102,14 +129,47 @@ export const parse = (document: string): Node => {
   while (token.lastIndex < source.length) {
     const offset = token.lastIndex;
     const match = token.exec(source);
-    if (match === null) throw new XmlError(`unexpected markup at ${offset}`);
-    const [whole, cdata, closing, opening, attributes, selfClosing, text] =
-      match;
+    if (match === null)
+      throw new XmlError(
+        source.startsWith("<!DOCTYPE", offset)
+          ? `a document type declaration at ${offset}: the store reads no DTD`
+          : `unexpected markup at ${offset}`,
+      );
+    const [
+      whole,
+      comment,
+      pi,
+      cdata,
+      closing,
+      opening,
+      attributes,
+      selfClosing,
+      text,
+    ] = match;
     const parent = stack.at(-1);
-    if (whole.startsWith("<!--") || whole.startsWith("<?")) continue;
+    if (comment !== undefined) {
+      if (comment.includes("--") || comment.endsWith("-"))
+        throw new XmlError(`'--' inside a comment at ${offset}`);
+      continue;
+    }
+    if (pi !== undefined) {
+      const target = instruction.exec(pi)?.[1];
+      if (target === undefined)
+        throw new XmlError(
+          `a processing instruction without a target, or without white space after it, at ${offset}`,
+        );
+      if (/^xml$/i.test(target)) {
+        // Only the XML declaration may use the name, and only at the very start.
+        if (offset !== 0 || target !== "xml")
+          throw new XmlError(`a misplaced XML declaration at ${offset}`);
+        if (!xmlDeclaration.test(pi))
+          throw new XmlError(`a malformed XML declaration: ${whole}`);
+      }
+      continue;
+    }
     if (text !== undefined || cdata !== undefined) {
       if (parent === undefined) {
-        if (text !== undefined && text.trim() === "") continue;
+        if (text !== undefined && blank.test(text)) continue;
         throw new XmlError(`text outside the root element at ${offset}`);
       }
       if (text?.includes("]]>") === true)

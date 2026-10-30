@@ -213,14 +213,30 @@ the string `Client` as `faultCode`, which the specification does not allow.
 
 ### XML rules
 
-Both servers parsed with expat, so a call is read as expat reads it. Line ends are normalized to LF
-first, and a character outside XML 1.0's
-[`Char` production](https://www.w3.org/TR/xml/#charsets), raw or as a character reference, or an
-`&` that starts no reference, makes the document malformed; so do bytes that are not UTF-8, and a
-hexadecimal reference spelt with an upper-case `&#X`, since XML allows only the lower-case `x`.
-XML-RPC defines no attributes, so their values are ignored, but a malformed one still makes the
-document malformed: each must be quoted, hold no `<`, and use only valid references. A malformed
-call is answered with the -32700 parse-error fault before the session or the method is looked at.
+Both servers parsed with expat, so a call is read as expat reads it, apart from the document type
+declarations below. Line ends are normalized to LF first, and a call that breaks any of
+[XML 1.0's well-formedness rules](https://www.w3.org/TR/xml/) is malformed. Among them, a character
+outside the [`Char` production](https://www.w3.org/TR/xml/#charsets), raw or as a character
+reference, or an `&` that starts no reference, makes the document malformed; so do bytes that are
+not UTF-8, a hexadecimal reference spelt with an upper-case `&#X`, since XML allows only the
+lower-case `x`, and `]]>` in text. White space is space, tab, CR and LF only; U+00A0 and the other
+Unicode spaces are text. Names may use any character XML's `Name` production allows. The XML
+declaration, when present, comes first and starts with the version; no other processing
+instruction may take `xml`, in any case, as its target, and each needs a target. A comment holds no
+`--` and does not end in `-`. Comments and processing instructions may stand anywhere outside a
+tag, inside a string or a method name too, whose text then runs on around them. XML-RPC defines no
+attributes, so their values are ignored, but a malformed one still makes the document malformed:
+each must be quoted, hold no `<`, use only valid references, stand apart from the one before by
+white space, and appear once per element. A malformed call is answered with the -32700 parse-error
+fault before the session or the method is looked at.
+
+**No document type declarations (2014).** In August 2014, after published entity-expansion attacks
+had taken down XML-RPC endpoints elsewhere, the security team patched the script to refuse every
+call that holds a document type declaration before expat sees it, well-formed or not. The refusal is
+the same -32700 parse-error fault, because the dispatcher has no other fault for it. Expat itself
+would read the declaration and expand its internal entities. No client of the endpoint sends a DTD,
+and the security team, who own the patch, will not lift it.
+
 The writer escapes text as above, writes a carriage return as `&#13;` so a reader's line-end
 handling keeps it (a 2004 patch: the module writes it raw), and never writes a character outside
 `Char`, raw or as a reference: a stored value that holds one turns the reply into the -32603

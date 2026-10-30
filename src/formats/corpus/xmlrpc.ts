@@ -108,24 +108,9 @@ const struct = (
 const consumerRefusesDtd =
   "refuses every DTD: the reader expands no entities, and none of the services the suite reads sends one";
 
-/**
- * What the gateway's reader gets wrong, as observed over HTTP. Each is a backend defect, recorded
- * here rather than fixed by the consumer side, which does not open the backend's source.
- */
+/** Where the gateway's reader departs from XML 1.0 by its service page, as observed over HTTP. */
 const gateway = {
-  dtd: "refuses it with the parse-error fault, though the document is well-formed: its service page says calls are read as expat reads them, and expat reads a DTD and expands its internal entities",
-  space:
-    "accepts it: the gateway takes U+00A0 for XML white space, which [3] S limits to space, tab, CR and LF",
-  declaration:
-    "accepts it: the gateway checks neither the XML declaration's place at the start nor its content ([22] prolog, [23] XMLDecl)",
-  comment:
-    "accepts it: the gateway refuses '--' in a comment inside the root, but not in one before it ([15] Comment)",
-  cdataEnd:
-    "accepts it and answers the text with ']]>' in it, which [14] CharData forbids in character data",
-  duplicate:
-    "accepts it: the gateway does not refuse an attribute given twice (WFC: Unique Att Spec), though its service page says a malformed attribute makes the call malformed",
-  commentInText:
-    "refuses it with the parse-error fault, though [43] content allows a comment between pieces of character data",
+  dtd: "refuses it with the parse-error fault, though the document is well-formed: since a 2014 security patch the gateway refuses every call with a document type declaration before expat reads it, as its service page documents under 'XML rules'",
 } as const;
 
 export const xmlRpcCorpus: ReadonlyArray<RpcCase> = [
@@ -274,7 +259,6 @@ export const xmlRpcCorpus: ReadonlyArray<RpcCase> = [
     "call-cdata-end-in-text",
     "']]>' in character data ([14] CharData)",
     { text: "a]]>b" },
-    { disagreements: { gateway: gateway.cdataEnd } },
   ),
   // Line ends (2.11).
   call(true, "call-crlf", "CRLF in a string becomes LF (2.11)", {
@@ -342,7 +326,6 @@ export const xmlRpcCorpus: ReadonlyArray<RpcCase> = [
     "call-attr-duplicate",
     "an attribute given twice (WFC: Unique Att Spec)",
     { attributes: ' kind="a" kind="b"' },
-    { disagreements: { gateway: gateway.duplicate } },
   ),
   call(
     true,
@@ -355,7 +338,6 @@ export const xmlRpcCorpus: ReadonlyArray<RpcCase> = [
     "call-attr-nbsp-separator",
     "U+00A0 as the separator before an attribute: not white space ([3] S)",
     { attributes: '\u00a0kind="a"' },
-    { disagreements: { gateway: gateway.space } },
   ),
   call(true, "call-attr-line-ends", "line ends in an attribute value (3.3.3)", {
     attributes: ' kind="a\r\nb"',
@@ -416,35 +398,30 @@ export const xmlRpcCorpus: ReadonlyArray<RpcCase> = [
     "call-prolog-declaration-late",
     "an XML declaration after a comment ([22] prolog, [17] PITarget)",
     { declaration: "", prolog: '<!-- c --><?xml version="1.0"?>' },
-    { disagreements: { gateway: gateway.declaration } },
   ),
   call(
     false,
     "call-prolog-declaration-after-space",
     "an XML declaration after white space ([22] prolog, [17] PITarget)",
     { declaration: '\n<?xml version="1.0"?>' },
-    { disagreements: { gateway: gateway.declaration } },
   ),
   call(
     false,
     "call-prolog-declaration-no-version",
     "a declaration without a version ([23] XMLDecl)",
     { declaration: "<?xml?>" },
-    { disagreements: { gateway: gateway.declaration } },
   ),
   call(
     false,
     "call-prolog-nbsp",
     "U+00A0 before the root: not white space ([3] S)",
     { prolog: "\u00a0" },
-    { disagreements: { gateway: gateway.space } },
   ),
   call(
     false,
     "call-comment-double-hyphen",
     "'--' inside a comment before the root ([15] Comment)",
     { prolog: "<!-- a -- b -->" },
-    { disagreements: { gateway: gateway.comment } },
   ),
   call(
     false,
@@ -457,7 +434,6 @@ export const xmlRpcCorpus: ReadonlyArray<RpcCase> = [
     "call-comment-in-string",
     "a comment inside the account ([43] content)",
     { text: "1234<!-- x -->5678" },
-    { disagreements: { gateway: gateway.commentInText } },
   ),
   call(true, "call-epilog-comment", "a comment after the root ([27] Misc)", {
     epilog: "<!-- end -->",

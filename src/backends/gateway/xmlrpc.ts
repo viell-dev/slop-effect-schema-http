@@ -79,7 +79,27 @@ const unescape = (text: string): string => {
   }
 };
 
-/** Just enough XML to read a methodCall: elements, text, entities, a declaration and comments. */
+/** XML 1.0's white space, `S`: space, tab and LF once line ends are normalized, nothing else. */
+const isSpace = (character: string | undefined): boolean =>
+  character === " " || character === "\t" || character === "\n";
+
+/** XML 1.0's `Name`: `NameStartChar` then `NameChar`s, most of Unicode included. */
+const nameStart =
+  ":A-Z_a-z\\u{C0}-\\u{D6}\\u{D8}-\\u{F6}\\u{F8}-\\u{2FF}\\u{370}-\\u{37D}\\u{37F}-\\u{1FFF}" +
+  "\\u{200C}-\\u{200D}\\u{2070}-\\u{218F}\\u{2C00}-\\u{2FEF}\\u{3001}-\\u{D7FF}\\u{F900}-\\u{FDCF}" +
+  "\\u{FDF0}-\\u{FFFD}\\u{10000}-\\u{EFFFF}";
+const nameSyntax = `[${nameStart}][${nameStart}\\-.0-9\\u{B7}\\u{300}-\\u{36F}\\u{203F}-\\u{2040}]*`;
+const nameToken = new RegExp(nameSyntax, "uy");
+
+/** The XML declaration's content: a version, then an optional encoding and standalone. */
+const declaration =
+  /^xml[ \t\n]+version[ \t\n]*=[ \t\n]*(?:"1\.[0-9]+"|'1\.[0-9]+')(?:[ \t\n]+encoding[ \t\n]*=[ \t\n]*(?:"[A-Za-z][\w.-]*"|'[A-Za-z][\w.-]*'))?(?:[ \t\n]+standalone[ \t\n]*=[ \t\n]*(?:"(?:yes|no)"|'(?:yes|no)'))?[ \t\n]*$/;
+
+/**
+ * Enough XML to read a methodCall as expat would: elements, attributes, text, references, CDATA,
+ * comments and processing instructions, with every well-formedness rule they carry. A document
+ * type declaration is refused, well-formed or not (the service page's "XML rules").
+ */
 const parseXml = (input: string): Node => {
   // CRLF and a lone CR become LF before anything else reads the text (XML 1.0 §2.11).
   const source = input.replace(/\r\n?/g, "\n");
@@ -89,67 +109,125 @@ const parseXml = (input: string): Node => {
       `U+${invalid.code.toString(16).toUpperCase().padStart(4, "0")} at ${invalid.offset} is not an XML character`,
     );
   let index = 0;
-  const skip = () => {
+  const fail = (message: string): never => {
+    throw new Error(`${message} at ${index}`);
+  };
+  const spaces = (): boolean => {
+    const start = index;
+    while (isSpace(source[index])) index++;
+    return index > start;
+  };
+  const readName = (): string | undefined => {
+    nameToken.lastIndex = index;
+    const match = nameToken.exec(source)?.[0];
+    if (match !== undefined) index = nameToken.lastIndex;
+    return match;
+  };
+  // At `<!--`: no `--` inside, and no `-` before the closing `-->`.
+  const comment = () => {
+    const end = source.indexOf("-->", index + 4);
+    if (end < 0) fail("unterminated comment");
+    const content = source.slice(index + 4, end);
+    if (content.includes("--") || content.endsWith("-"))
+      fail("'--' inside a comment");
+    index = end + 3;
+  };
+  // At `<?`: a target, then white space before any data; `xml` in any case is reserved for the
+  // declaration, which only the very start may hold.
+  const instruction = () => {
+    const end = source.indexOf("?>", index + 2);
+    if (end < 0) fail("unterminated processing instruction");
+    const start = index;
+    index += 2;
+    const target = readName();
+    if (target === undefined) fail("a processing instruction without a target");
+    if (index < end && !isSpace(source[index]))
+      fail("no white space after the processing instruction's target");
+    if (/^xml$/i.test(target!)) {
+      if (start !== 0 || target !== "xml") fail("a misplaced XML declaration");
+      if (!declaration.test(source.slice(start + 2, end)))
+        fail("a malformed XML declaration");
+    }
+    index = end + 2;
+  };
+  // Comments, processing instructions and white space, before and after the root.
+  const misc = () => {
     for (;;) {
-      while (/\s/.test(source[index] ?? "")) index++;
-      if (source.startsWith("<?", index))
-        index = source.indexOf("?>", index) + 2;
-      else if (source.startsWith("<!--", index))
-        index = source.indexOf("-->", index) + 3;
+      spaces();
+      if (source.startsWith("<?", index)) instruction();
+      else if (source.startsWith("<!--", index)) comment();
       else return;
-      if (index < 2) throw new Error("unterminated markup");
     }
   };
   const element = (): Node => {
-    const open = /^<([A-Za-z_][\w.:-]*)(\s+[^>]*?)?(\/?)>/.exec(
-      source.slice(index),
-    );
-    if (open === null) throw new Error(`expected an element at ${index}`);
-    index += open[0].length;
-    const name = open[1]!;
+    if (source[index] !== "<") fail("expected an element");
+    index++;
+    const tag = readName() ?? fail("expected an element name");
     // Attribute values are checked, then ignored.
-    const attributes = open[2] ?? "";
-    const attribute = /\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"([^"]*)"|'([^']*)')/y;
-    let at = 0;
-    while (attributes.slice(at).trim() !== "") {
-      attribute.lastIndex = at;
-      const match = attribute.exec(attributes);
-      if (match === null) throw new Error(`malformed attributes in <${name}>`);
-      const value = match[1] ?? match[2] ?? "";
-      if (value.includes("<"))
-        throw new Error(`'<' in an attribute value of <${name}>`);
+    const attributes = new Set<string>();
+    for (;;) {
+      const spaced = spaces();
+      if (source.startsWith("/>", index)) {
+        index += 2;
+        return { name: tag, children: [] };
+      }
+      if (source[index] === ">") {
+        index++;
+        break;
+      }
+      if (!spaced) fail(`no white space before an attribute of <${tag}>`);
+      const key = readName() ?? fail(`a malformed attribute in <${tag}>`);
+      if (attributes.has(key)) fail(`attribute ${key} given twice in <${tag}>`);
+      attributes.add(key);
+      spaces();
+      if (source[index] !== "=") fail(`attribute ${key} has no value`);
+      index++;
+      spaces();
+      const quote = source[index];
+      if (quote !== '"' && quote !== "'") fail(`attribute ${key} is unquoted`);
+      const end = source.indexOf(quote!, index + 1);
+      if (end < 0) fail(`attribute ${key} is unterminated`);
+      const value = source.slice(index + 1, end);
+      if (value.includes("<")) fail(`'<' in attribute ${key} of <${tag}>`);
       unescape(value);
-      at = attribute.lastIndex;
+      index = end + 1;
     }
-    if (open[3] === "/") return { name, children: [] };
     const children: Array<Node | string> = [];
     for (;;) {
-      if (index >= source.length) throw new Error(`unterminated <${name}>`);
-      if (source.startsWith(`</${name}>`, index)) {
-        index += name.length + 3;
-        return { name, children };
+      if (index >= source.length) fail(`unterminated <${tag}>`);
+      if (source.startsWith("</", index)) {
+        index += 2;
+        if (readName() !== tag) fail(`an end tag that does not close <${tag}>`);
+        spaces();
+        if (source[index] !== ">") fail(`a malformed end tag of <${tag}>`);
+        index++;
+        return { name: tag, children };
       }
-      if (source.startsWith("</", index))
-        throw new Error(`mismatched end tag at ${index}`);
       if (source.startsWith("<![CDATA[", index)) {
         const end = source.indexOf("]]>", index);
-        if (end < 0) throw new Error("unterminated CDATA");
+        if (end < 0) fail("unterminated CDATA");
         children.push(source.slice(index + 9, end));
         index = end + 3;
-      } else if (source[index] === "<") children.push(element());
+      } else if (source.startsWith("<!--", index)) comment();
+      else if (source.startsWith("<?", index)) instruction();
+      else if (source[index] === "<") children.push(element());
       else {
         const end = source.indexOf("<", index);
-        if (end < 0) throw new Error(`unterminated <${name}>`);
-        children.push(unescape(source.slice(index, end)));
+        if (end < 0) fail(`unterminated <${tag}>`);
+        const text = source.slice(index, end);
+        if (text.includes("]]>")) fail("']]>' in character data");
+        children.push(unescape(text));
         index = end;
       }
     }
   };
-  skip();
+  misc();
+  // The 2014 patch: no DTD reaches expat, whatever it declares.
+  if (source.startsWith("<!DOCTYPE", index))
+    fail("a document type declaration");
   const root = element();
-  skip();
-  if (index !== source.length)
-    throw new Error("content after the root element");
+  misc();
+  if (index !== source.length) fail("content after the root element");
   return root;
 };
 
