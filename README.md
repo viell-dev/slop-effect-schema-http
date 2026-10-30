@@ -52,9 +52,10 @@ no accounts, network access beyond loopback, secrets or private data, and they a
 the consumer reaches them only over HTTP. `npm run check` runs `scripts/boundaries.mjs`, which
 resolves every import, following `package.json` `imports` and `tsconfig.json` `paths` aliases: a
 backend may import only Node built-ins, other backend modules and the harness's server and router,
-and consumer code may import neither a backend nor a Node-side harness module. A `#…` specifier
-that resolves to nothing and an undeclared package are refused. `npm run check` also runs the
-script's own tests, `scripts/boundaries.test.mjs`, on generated fixture trees.
+consumer code may import neither a backend nor a Node-side harness module, and the backend-side
+conformance tests in `src/conformance/` may import neither a backend nor consumer code. A `#…`
+specifier that resolves to nothing and an undeclared package are refused. `npm run check` also runs
+the script's own tests, `scripts/boundaries.test.mjs`, on generated fixture trees.
 
 Each service is documented the way its owners would publish it for integrators, on a page under
 [services/](./services/): endpoints, formats, conventions, errors and the history of each quirk,
@@ -70,6 +71,16 @@ independent parsers are [saxes](https://github.com/lddubeau/saxes) in Node, Chro
 and each platform's `Response.formData()`; `src/scenarios/parsers.test.ts` compares the consumer's
 and the backends' XML, XML-RPC and multipart readers with them over the edge-case corpora in
 `src/formats/corpus/` (catalogue entries EXT-3 to EXT-5).
+
+The quirks that come from server software are held to that software.
+[recordings/](./recordings/README.md) holds raw HTTP exchanges recorded, byte for byte, from Perl's
+Frontier::RPC2 and XMLRPC::Lite, httpd 2.4's Digest and `Redirect permanent`, Tomcat 7 and the
+JAX-WS reference implementation in JDK 8, each in a disposable Docker container from an image
+pinned by digest. `npm run record -- <set>` makes a set again; it needs Docker, runs on demand and
+never in CI. The `replay` backend ([services/replay.md](./services/replay.md)) serves the recorded
+responses over a real socket, and the Node-lane tests in `src/conformance/` send each recorded
+request to the backend that imitates the software and pin every difference that remains, as the
+service pages explain (catalogue entries EXT-6a to EXT-6e).
 
 Every scenario runs in two lanes. The Node lane runs the consumer in Node. The browser lane runs
 the same tests in headless Chromium through Vitest browser mode, to show that the library works in

@@ -134,6 +134,9 @@ case sends once`. Observed, and as designed: `Policy.transient` classifies statu
   - `[ERR-6] only LockDocument's union holds SOAP faults: one more rule` (type-level)
   - Round trip: `[ERR-6] SOAP faults round-trip in both versions, with Client and Server read as
 Sender and Receiver`
+  - Recorded (EXT-6e): the JAX-WS reference implementation in JDK 8 answers SOAP 1.1 and 1.2 faults
+    with HTTP 500, sender faults included, as the store does. It writes no detail element for a
+    fault without detail entries, where the store wrote an empty one; the store now omits it.
 - **STAT-7** PROPFIND answered with 207, plus 412, 428, 415, and 405 with `Allow`: methods as
   strings, statuses as numbers. Status: tested.
   - `[STAT-7] PROPFIND travels as a method string with Depth: 1 and its 207 multistatus decodes`
@@ -307,6 +310,11 @@ pagination links decode to pages and encode to the gateway's header`.
   never rewrites `Location`, so only the fixture's legacy container sends the absolute form; the
   original lines (Node lane, line provider) and Fetch's headers in both lanes carry each form as sent.
   - `[HDR-3] resolves either Location form, as each container really sends it`
+  - Recorded (EXT-6d), a correction: the container does not decide the form. Tomcat 7.0.109 never
+    rewrites a `Location` header a handler sets, and absolutizes only `sendRedirect`'s location,
+    always a 302, and only with `useRelativeRedirects="false"`, the behaviour before 7.0.67. The
+    service page now gives the legacy node's absolute `Location` to its 2012 build, which builds it
+    from `Host` in the form Tomcat's `sendRedirect` uses, and the conformance test checks that form.
 - **HDR-5a** JSON served as `text/html`. Status: tested.
   - `[HDR-5a] decodes JSON served as text/html, never dispatching on content type`
 - **HDR-5b** JSON served as `text/json`. Status: tested.
@@ -485,10 +493,20 @@ request's lines plus one`
     parameter, and a separator other than a space or tab, is refused).
   - MD5 is a pure TypeScript implementation (`src/formats/md5.ts`, RFC 1321 vectors), because
     Web Crypto has none. Chromium returns the 401 to the page without an authentication prompt.
+  - Recorded (EXT-6b), with httpd 2.4.68's `mod_auth_digest` and `AuthDigestQop none` standing in
+    for Apache 1.3's `mod_digest`; httpd 2.4.69 refuses the directive. httpd challenges with
+    `realm`, `nonce` and `algorithm=MD5` and no `opaque`, and curl computes the response the
+    service page gives. The gateway's challenge carried an `opaque` and required it back; it now
+    has httpd's form and nonce shape. httpd accepts a replayed `Authorization` within the nonce's
+    lifetime and answers an expired nonce with `stale=true`; the gateway's single-use nonces are
+    the service's own. Apache 1.3's 401 page is not recorded (no maintained image exists).
 - **ERR-1b** XML-RPC faults inside 200. Status: tested.
   - `[ERR-1b] an XML-RPC fault inside 200 is a member of the result union` (type-level as well)
   - `[ERR-1b] a fault can be moved into the failure channel by the consumer`
   - Schema: `[ERR-1b] an outcome is a result or a fault, both members of one union`
+  - Recorded (EXT-6a): Frontier::Daemon's own dispatcher answers faults `1`, `3` and `4` with
+    Perl's messages, and XMLRPC::Lite answers protocol errors with the string `Client` as
+    `faultCode`. The gateway's codes are its own dispatcher's, written in Frontier::RPC2's layout.
 - **ERR-1c** Pipe-delimited `ERROR` lines inside 200. Status: tested.
   - `[ERR-1c] an ERROR line inside 200 decodes as a gateway error beside the OK line`
   - `[ERR-1c] a reply that is neither an OK nor an ERROR line is a decode error`
@@ -506,6 +524,10 @@ request's lines plus one`
     Chromium returns an opaque redirect with status 0 and no headers, so the operation fails with
     `UnexpectedResponse` and the 301 stays unreachable)
   - Node-only: `[STAT-10] the line-preserving provider observes the 301 itself`
+  - Recorded (EXT-6c): httpd 2.4.69's `Redirect permanent` builds the absolute `Location` from the
+    request's `Host`, port included, and keeps the query for any method. The gateway built it from
+    its own address; it now builds it from `Host`, and its page escapes the target as httpd's does.
+    Apache 1.3's page is not recorded (no maintained image exists), so the gateway keeps it.
 - **HDR-5d** CSV served as `application/octet-stream`. Status: tested.
   - `[HDR-5d] CSV served as application/octet-stream decodes by status and body, never by content
 type`
@@ -531,6 +553,16 @@ structs`
 elements`, `[PAY-3b] round-trips calls and faults`, `[PAY-3b] refuses malformed responses instead
 of guessing`, `[PAY-3b] scalar schemas read the type element and refuse other types or
 spellings`
+  - Recorded (EXT-6a), with Frontier::RPC2 0.07b4 and XMLRPC::Lite 0.717 serving the same methods
+    over the same data. The gateway wrote raw UTF-8, other line ends than the module's, and
+    `Server: Frontier/5.1.2-WinNT`, which no Perl module writes; it now writes Frontier::RPC2's
+    bytes, apart from struct member order, which Perl's hash order changes with every process:
+    character references for text outside ASCII, `&quot;`, and a line end after each typed value.
+    Neither module can write the untyped `account.title`, which the service page now gives to a
+    hand-written reply, and neither refuses a call that is not `text/xml`: Frontier::RPC2 decodes
+    it and XMLRPC::Lite answers a `Client` fault in 200, so the 400 is the gateway's Apache
+    configuration. XMLRPC::Lite writes `<int>`, base64 on one line, raw UTF-8 and `<data />`, and
+    turns untyped text holding a letter outside ASCII into base64.
 - **PAY-4b** A UTF-8 BOM that would poison the first CSV column name. Status: tested.
   - `[PAY-4b] a BOM-preserving decode poisons the first column name; the byte codec does not`
   - `[PAY-4b] Fetch's text decoding drops the BOM silently, so a text codec cannot write it back`
@@ -551,6 +583,8 @@ the client`
   - Helper: five `[PAY-4c]` tests of strict ISO-8859-1, record splitting, field slicing, padded
     text and zero-padded counts. WHATWG's `latin1` label is windows-1252, so the codec maps bytes
     itself and refuses the C0 and C1 ranges.
+  - Not recorded: the layout uses only unsigned, zero-padded fields, so a COBOL writer would add
+    nothing the suite's writer lacks (recordings/README.md).
 - **PAY-5** CSV for a German spreadsheet with BOM, CRLF, semicolons, and a decimal comma,
   round-tripped with the BOM written back on encode. Status: tested.
   - `[PAY-5] the German sheet round-trips byte for byte, BOM included, and the import accepts it`
@@ -559,10 +593,15 @@ the client`
   - Helper: `[PAY-5] round-trips a German sheet byte for byte: BOM, CRLF, semicolons, quoting`,
     `[PAY-5] refuses what Excel would not write: a missing BOM, bare LF, needless quotes, stray
 quotes`
+  - Not recorded: Excel cannot run in a disposable container, and LibreOffice would stand in for
+    different software (recordings/README.md).
 - **PAY-8** Base64 of Latin-1 bytes inside XML-RPC, decoded by the same fixed-width schema that reads
   the HTTP endpoint. Status: tested.
   - `[PAY-8] base64 inside XML-RPC decodes through the same fixed-width schema as the download`
   - Helper: `[PAY-8] base64 decodes Perl's 76-column MIME layout and nothing looser`
+  - Recorded (EXT-6a): MIME::Base64's `encode_base64` under Frontier::RPC2 writes the layout the
+    gateway writes, 76 columns with a newline after every line, the last included. XMLRPC::Lite
+    calls it with an empty line end and writes base64 on one line.
 - **VAL-1c** XML-RPC's separator-free date, bare `YYYYMMDD`, and a zero date meaning null. Status:
   tested.
   - `[VAL-1c] zero dates decode to none and others to UTC instants across XML-RPC, pipe and fixed
@@ -593,6 +632,9 @@ are refused`
   - `[RET-4] a timed-out authenticated request has still spent its nonce` (a whole-operation
     timeout surfaces as `TimeoutError`, and the server observes the abort)
   - `[RET-4] a retry policy replays the encoded request, so its retry meets stale=true`
+  - Recorded (EXT-6b): httpd 2.4 sends `Authentication-Info` with a `nextnonce` on success, which
+    would save the second round trip, and its nonces last their lifetime. The gateway sends none,
+    and its nonces are single-use, as the service page documents.
 
 ## Notification service (`notifications`)
 
@@ -742,6 +784,9 @@ prefix.
     `[APP-2] a jsonerror body is a relayed store fault or another service fault`,
     `[APP-2] the Request Error page is read one way, for its exception message`,
     `[APP-2] the download's file facts round-trip through its header schema`.
+  - Not recorded: WCF's `jsonerror` responses and the `d` wrapper, because hosting WCF needs .NET
+    Framework and an HTTP.sys URL reservation on the host, not a container
+    (services/soap-proxy.md).
 - **APP-3** Translation between services: id spaces as a visible reference, a lossy money-to-priority
   mapping made reversible through a text field, an active flag recovered from status, an honest
   one-way transform whose reverse fails with a reason, inactive directory entries refused as
@@ -861,8 +906,17 @@ call is cross-origin and cross-site.
 Scenarios a hostile suite should show that the issue's catalogue does not name, added from the
 [review of PR #23](https://github.com/viell-dev/slop-effect-schema-http/pull/23#issuecomment-6509333821)
 (section 3.2; EXT-3 to EXT-5 from sections 4.3 and 4.4, tracked in
-[#33](https://github.com/viell-dev/slop-effect-schema-http/issues/33)). They are checked like the
+[#33](https://github.com/viell-dev/slop-effect-schema-http/issues/33); EXT-6a to EXT-6e from
+sections 4.2 to 4.4, tracked in
+[#32](https://github.com/viell-dev/slop-effect-schema-http/issues/32)). They are checked like the
 other entries.
+
+EXT-6a to EXT-6e hold backends to recordings of the real software they imitate
+([recordings/README.md](./recordings/README.md)). Each test sends a recorded request to the backend
+over a raw socket, masks only values that change with every run, and pins every other difference,
+each explained in the backend's service page under "Recordings". The tests are backend-side, in
+`src/conformance/`, and Node-only, because they read the recordings from disk and compare raw header
+lines; each set also has a test that the replay backend serves it as recorded.
 
 - **EXT-1** One tag for two statuses: a tunnelled write answers `200` with the task or `204` with no
   body, and the contract decodes both as `Changed`, the task as an `Option`. Tags belong to
@@ -984,6 +1038,79 @@ around it keep the layer's` (provider; in the Node lane's `lines` run, the repla
   - As observed in both lanes and every provider: a label's LF and lone CR travel as CRLF, as the
     multipart encoding normalizes them, and the store stores CRLF (`label-line-breaks`); a `Blob`
     without a type travels and is stored as `application/octet-stream` (`untyped`).
+- **EXT-6a** The gateway's XML-RPC replies against Frontier::RPC2 0.07b4 under Frontier::Daemon
+  and XMLRPC::Lite 0.717, recorded serving the gateway's five methods over the same data: every
+  value type, base64 long enough to wrap, three faults, and a call sent as `text/plain`
+  (`recordings/frontier-rpc2`, `recordings/xmlrpc-lite`). In `src/conformance/xmlrpc.node.test.ts`,
+  Node lane. Status: tested.
+  - `[EXT-6a] ${name}: the gateway writes Frontier::RPC2's bytes, members in any order` (the
+    array of strings, the integer, two structs with every scalar type and an empty array, and the
+    base64; masks: `Date`, struct member order)
+  - `[EXT-6a] account-title: Frontier::RPC2 types the title and writes character references; the gateway's hand-written reply does neither`
+  - `[EXT-6a] ${name}: the same fault layout, with the gateway's own code and string` (Frontier's
+    codes `4`, `3` and `1` against the gateway's 404, -32601 and -32700)
+  - `[EXT-6a] not-xml: Frontier::RPC2 decodes a text/plain call; the gateway's Apache refuses it with 400`
+  - `[EXT-6a] ${name}: XMLRPC::Lite sends the gateway's values in its own spelling` (the same
+    values, read type by type)
+  - `[EXT-6a] XMLRPC::Lite writes <int>, base64 on one line, raw UTF-8 and no white space between elements`
+  - `[EXT-6a] account-title: XMLRPC::Lite types the title as a string, which the gateway leaves untyped`
+  - `[EXT-6a] ${name}: XMLRPC::Lite's fault code is ${code}; the gateway's …` (`404`, and the
+    string `Client` for protocol errors and the `text/plain` call)
+  - Replay: `[EXT-6a] serves every exchange of frontier-rpc2 as recorded: status line, header lines in order, body`,
+    and the same for `xmlrpc-lite`.
+  - Fixed in the gateway: Frontier::RPC2's exact bytes (character references, `&quot;`, its line
+    ends), `Content-Length`, and Apache's `Server` line in place of `Frontier/5.1.2-WinNT`. Kept,
+    in services/gateway.md: the fault codes, the hand-written `account.title`, Apache's 400 for a
+    call that is not `text/xml`, and HTTP::Daemon's head, which Apache replaces.
+- **EXT-6b** The gateway's audit Digest against httpd 2.4.68's `mod_auth_digest` with
+  `AuthDigestQop none`, the last httpd that accepts it, recorded with curl computing the
+  `Authorization`: the challenge, the authorized request, the same request again at once and after
+  the nonce's lifetime, and a wrong password (`recordings/httpd-digest`). In
+  `src/conformance/digest.node.test.ts`, Node lane. Status: tested.
+  - `[EXT-6b] curl's recorded responses are RFC 2069's, computed from the nonce it was given`
+  - `[EXT-6b] ${name}: the same challenge, without opaque, qop or domain` (masks: `Date`, the
+    nonce, checked to have httpd's shape)
+  - `[EXT-6b] accepted: curl's computation authorizes the request, answered without httpd's Authentication-Info`
+    (adapted: the gateway's own nonce, and the response computed from it as curl computed its own)
+  - `[EXT-6b] replayed: httpd accepts the same Authorization again within the nonce's lifetime; the gateway's spent nonce answers as httpd's stale one`
+  - `[EXT-6b] wrong-password: a fresh challenge without stale, as httpd answers`
+  - Replay: `[EXT-6b] serves every exchange of httpd-digest as recorded: status line, header lines in order, body`
+    and `[EXT-6b] answers a request no unused exchange matches with 404, and reuses exchanges only when asked`.
+  - Fixed in the gateway: the challenge's form, without `opaque`, and httpd's nonce shape; Apache's
+    `Server` line and the page's `Content-Length`. Kept, in services/gateway.md: single-use
+    nonces, no `Authentication-Info` (httpd's starts with a stray comma), and Apache 1.3's page.
+- **EXT-6c** The gateway's old desktop path against httpd 2.4.69's `Redirect permanent`, for a GET
+  with the report's query and a POST (`recordings/httpd-redirect`). In
+  `src/conformance/redirect.node.test.ts`, Node lane. Status: tested.
+  - `[EXT-6c] ${name}: the same 301 and absolute Location, from the request's Host, under Apache 1.3's page`
+    (mask: `Date`; both pages link the target, escaped)
+  - Replay: `[EXT-6c] serves every exchange of httpd-redirect as recorded: status line, header lines in order, body`
+  - Fixed in the gateway: `Location` from the request's `Host`, the escaped link, `Server` and
+    `Content-Length`. Kept: Apache 1.3's page and version.
+- **EXT-6d** The business API's customer creation against Tomcat 7.0.109, with its defaults and with
+  `useRelativeRedirects="false"`: a `Location` set on a 200, and `sendRedirect` with a path, a
+  relative path, and followed by `setStatus(200)` (`recordings/tomcat7-redirect`). In
+  `src/conformance/location.node.test.ts`, Node lane. Status: tested.
+  - `[EXT-6d] header: app-1 answers as Tomcat does when the handler sets Location on a 200`
+  - `[EXT-6d] legacy-header: app-legacy-2 absolutizes the Location Tomcat leaves as set, in the form Tomcat's sendRedirect builds`
+    (adapted: the recording's `/legacy` context prefix, and four customers so the legacy node's
+    creation gets the recorded id)
+  - `[EXT-6d] Tomcat 7.0.109 absolutizes only sendRedirect's location, only with useRelativeRedirects="false", and keeps the 302`
+  - Replay: `[EXT-6d] serves every exchange of tomcat7-redirect as recorded: status line, header lines in order, body`
+  - Corrected in services/business.md and HDR-3: the absolute form is the legacy build's, not the
+    container's. Kept: `X-Served-By`, the `Server` line the firewall removes, and chunked framing.
+- **EXT-6e** The SOAP store's `LockDocument` faults against the JAX-WS reference implementation in
+  JDK 8 (`Endpoint.publish`, a SOAP 1.2 binding for 1.2), for a missing owner, an unknown id and a
+  lock conflict in both versions (`recordings/jaxws-faults`). In
+  `src/conformance/soap-faults.node.test.ts`, Node lane. Status: tested.
+  - `[EXT-6e] soap11-${name}: the same fault under HTTP 500, in the store's Latin-1 writer`
+  - `[EXT-6e] soap12-${name}: the same fault under HTTP 500, whatever the 1.2 binding says of sender faults`
+    (each compared by namespace-resolved infoset, qualified-name codes included; mask: `Date`;
+    adapted: SOAP 1.2 calls go to `/soap`)
+  - Replay: `[EXT-6e] serves every exchange of jaxws-faults as recorded: status line, header lines in order, body`
+  - Fixed in the store: no detail element for a fault without detail entries. Kept, in
+    services/soap-store.md: the Latin-1 SOAP 1.1 writer and its own prefixes and declaration; the
+    JDK server's `Content-type` and `Transfer-encoding` spellings are not copied.
 - **EXT-7a** Mount and navigation in a built single-page app: a route starts an interaction, and
   navigating away within the page disposes it, which aborts its request on the wire. In
   `src/scenarios/spa.app.test.ts`, which drives the app in `src/app` with Playwright's Chromium
