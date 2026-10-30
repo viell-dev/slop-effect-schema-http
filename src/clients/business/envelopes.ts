@@ -1,4 +1,4 @@
-import { Clock, Data, Duration, Effect, Schema } from "effect";
+import { Clock, Data, Duration, Effect, Option, Schema } from "effect";
 import {
   Body,
   Operation,
@@ -251,9 +251,14 @@ const missing = Body.jsonSchema(NotFoundError).pipe(
   Body.map(() => ({ _tag: "NotFound" as const })),
 );
 
+/**
+ * `X-Served-By` is the balancer's diagnostic, not part of the creation: Tomcat itself writes none
+ * (EXT-8c). Requiring it would turn a creation that happened into a decode error, which a caller
+ * could retry into a duplicate customer.
+ */
 const CreatedHeaders = Schema.Struct({
   location: Schema.String,
-  "x-served-by": Schema.String,
+  "x-served-by": Schema.optionalKey(Schema.String),
 });
 
 /** A 200 creation: an acknowledgement body and the new resource only in `Location`. */
@@ -270,7 +275,7 @@ const created = Body.decoder(
       return {
         _tag: "Created" as const,
         location,
-        servedBy: headers["x-served-by"],
+        servedBy: Option.fromNullishOr(headers["x-served-by"]),
       };
     }),
   "application/json",

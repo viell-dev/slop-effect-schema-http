@@ -876,6 +876,11 @@ describe("business API: envelopes", () => {
               `${backend.origin}/v1/customers/1006`,
               `${backend.origin}/v1/customers/1007`,
             ]);
+            expect(
+              outcomes.map((outcome) =>
+                outcome._tag === "Created" ? outcome.servedBy : undefined,
+              ),
+            ).toEqual([Option.some("app-1"), Option.some("app-legacy-2")]);
             const names: Array<string> = [];
             for (const location of locations) {
               const found = yield* api.getCustomerAt.execute({

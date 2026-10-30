@@ -137,6 +137,8 @@ Sender and Receiver`
   - Recorded (EXT-6e): the JAX-WS reference implementation in JDK 8 answers SOAP 1.1 and 1.2 faults
     with HTTP 500, sender faults included, as the store does. It writes no detail element for a
     fault without detail entries, where the store wrote an empty one; the store now omits it.
+  - Decoded by the consumer (EXT-8d): the reference implementation's SOAP 1.1 and 1.2 faults
+    decode through the one extra rule, in both lanes. No fix was needed.
 - **STAT-7** PROPFIND answered with 207, plus 412, 428, 415, and 405 with `Allow`: methods as
   strings, statuses as numbers. Status: tested.
   - `[STAT-7] PROPFIND travels as a method string with Depth: 1 and its 207 multistatus decodes`
@@ -315,6 +317,9 @@ pagination links decode to pages and encode to the gateway's header`.
     always a 302, and only with `useRelativeRedirects="false"`, the behaviour before 7.0.67. The
     service page now gives the legacy node's absolute `Location` to its 2012 build, which builds it
     from `Host` in the form Tomcat's `sendRedirect` uses, and the conformance test checks that form.
+  - Decoded by the consumer (EXT-8c): Tomcat's 200 reaches `Created` in every provider of both
+    lanes. It carries no `X-Served-By`, which the creation contract required; the header is now
+    optional and `servedBy` an `Option`, which this entry's test checks for both containers.
 - **HDR-5a** JSON served as `text/html`. Status: tested.
   - `[HDR-5a] decodes JSON served as text/html, never dispatching on content type`
 - **HDR-5b** JSON served as `text/json`. Status: tested.
@@ -500,6 +505,8 @@ request's lines plus one`
     has httpd's form and nonce shape. httpd accepts a replayed `Authorization` within the nonce's
     lifetime and answers an expired nonce with `stale=true`; the gateway's single-use nonces are
     the service's own. Apache 1.3's 401 page is not recorded (no maintained image exists).
+  - Decoded by the consumer (EXT-8b): its parser reads httpd's challenges, and it computes the
+    `Authorization` curl sent, byte for byte, from the recorded nonce. No fix was needed.
 - **ERR-1b** XML-RPC faults inside 200. Status: tested.
   - `[ERR-1b] an XML-RPC fault inside 200 is a member of the result union` (type-level as well)
   - `[ERR-1b] a fault can be moved into the failure channel by the consumer`
@@ -507,6 +514,9 @@ request's lines plus one`
   - Recorded (EXT-6a): Frontier::Daemon's own dispatcher answers faults `1`, `3` and `4` with
     Perl's messages, and XMLRPC::Lite answers protocol errors with the string `Client` as
     `faultCode`. The gateway's codes are its own dispatcher's, written in Frontier::RPC2's layout.
+  - Decoded by the consumer (EXT-8a): Frontier::RPC2's faults and XMLRPC::Lite's `<int>` 404 are
+    Fault outcomes; XMLRPC::Lite's string `Client` is the fault rule's decode error, since the
+    specification makes `faultCode` an `<int>`.
 - **ERR-1c** Pipe-delimited `ERROR` lines inside 200. Status: tested.
   - `[ERR-1c] an ERROR line inside 200 decodes as a gateway error beside the OK line`
   - `[ERR-1c] a reply that is neither an OK nor an ERROR line is a decode error`
@@ -528,6 +538,8 @@ request's lines plus one`
     request's `Host`, port included, and keeps the query for any method. The gateway built it from
     its own address; it now builds it from `Host`, and its page escapes the target as httpd's does.
     Apache 1.3's page is not recorded (no maintained image exists), so the gateway keeps it.
+  - Decoded by the consumer (EXT-8c): in the Node lane, httpd's 301 reaches the declared `Moved`
+    case with httpd's `Location` as written; Chromium's manual mode gives the opaque redirect.
 - **HDR-5d** CSV served as `application/octet-stream`. Status: tested.
   - `[HDR-5d] CSV served as application/octet-stream decodes by status and body, never by content
 type`
@@ -552,7 +564,11 @@ structs`
   - Helper: `[PAY-3b] parses every type into a lossless tree, ignoring whitespace between
 elements`, `[PAY-3b] round-trips calls and faults`, `[PAY-3b] refuses malformed responses instead
 of guessing`, `[PAY-3b] scalar schemas read the type element and refuse other types or
-spellings`
+spellings`,
+    `[PAY-3b] <int> reads as <i4>, its synonym, and encodes as <i4>: the spelling is not kept`,
+    `[PAY-3b] a string value reads untyped or typed, and encodes untyped: the spelling is not kept`
+  - Decoded by the consumer (EXT-8a): `<int>` and the modules' typed `account.title` broke its
+    reader; it now reads both, as the specification allows.
   - Recorded (EXT-6a), with Frontier::RPC2 0.07b4 and XMLRPC::Lite 0.717 serving the same methods
     over the same data. The gateway wrote raw UTF-8, other line ends than the module's, and
     `Server: Frontier/5.1.2-WinNT`, which no Perl module writes; it now writes Frontier::RPC2's
@@ -598,10 +614,15 @@ quotes`
 - **PAY-8** Base64 of Latin-1 bytes inside XML-RPC, decoded by the same fixed-width schema that reads
   the HTTP endpoint. Status: tested.
   - `[PAY-8] base64 inside XML-RPC decodes through the same fixed-width schema as the download`
-  - Helper: `[PAY-8] base64 decodes Perl's 76-column MIME layout and nothing looser`
+  - Helper:
+    `[PAY-8] base64 decodes MIME::Base64's 76-column lines, one line, or any line feeds, refuses other characters, and encodes MIME::Base64's layout`
+    (the layout of a decoded text is the stated loss)
   - Recorded (EXT-6a): MIME::Base64's `encode_base64` under Frontier::RPC2 writes the layout the
     gateway writes, 76 columns with a newline after every line, the last included. XMLRPC::Lite
     calls it with an empty line end and writes base64 on one line.
+  - Decoded by the consumer (EXT-8a): its base64 schema accepted only MIME::Base64's layout, so
+    XMLRPC::Lite's extract was a decode error. The specification gives base64 no line layout, so
+    the schema now ignores line feeds wherever they fall and still refuses any other character.
 - **VAL-1c** XML-RPC's separator-free date, bare `YYYYMMDD`, and a zero date meaning null. Status:
   tested.
   - `[VAL-1c] zero dates decode to none and others to UTC instants across XML-RPC, pipe and fixed
@@ -906,8 +927,8 @@ call is cross-origin and cross-site.
 Scenarios a hostile suite should show that the issue's catalogue does not name, added from the
 [review of PR #23](https://github.com/viell-dev/slop-effect-schema-http/pull/23#issuecomment-6509333821)
 (section 3.2; EXT-3 to EXT-5 from sections 4.3 and 4.4, tracked in
-[#33](https://github.com/viell-dev/slop-effect-schema-http/issues/33); EXT-6a to EXT-6e from
-sections 4.2 to 4.4, tracked in
+[#33](https://github.com/viell-dev/slop-effect-schema-http/issues/33); EXT-6a to EXT-6e and
+EXT-8a to EXT-8d from sections 4.2 to 4.4, tracked in
 [#32](https://github.com/viell-dev/slop-effect-schema-http/issues/32)). They are checked like the
 other entries.
 
@@ -917,6 +938,14 @@ over a raw socket, masks only values that change with every run, and pins every 
 each explained in the backend's service page under "Recordings". The tests are backend-side, in
 `src/conformance/`, and Node-only, because they read the recordings from disk and compare raw header
 lines; each set also has a test that the replay backend serves it as recorded.
+
+EXT-8a to EXT-8d hold the consumer to the same recordings. The replay backend
+([services/replay.md](./services/replay.md)) serves the recorded responses over a real socket, and
+the consumer's own operations send their requests and decode the real software's bytes, in both
+lanes. A test adapts a request only where a consumer contract cannot produce the recorded target,
+and names the adaptation. Where the real bytes broke consumer code, the entry records the fix and
+its reason. The tests are in `src/scenarios/recordings.test.ts`, written by a consumer-side context
+that did not open `src/backends/` or `src/conformance/`.
 
 - **EXT-1** One tag for two statuses: a tunnelled write answers `200` with the task or `204` with no
   body, and the contract decodes both as `Changed`, the task as an `Option`. Tags belong to
@@ -1163,3 +1192,80 @@ around it keep the layer's` (provider; in the Node lane's `lines` run, the repla
   - `[EXT-7c] a reload starts clean: the earlier page's search in flight is closed, and the new page asks again for its own`
     (the new document shows only its own states, and sends its link's search again although the
     earlier page held a result for it)
+- **EXT-8a** The consumer's XML-RPC reader and the gateway's contracts against Frontier::RPC2
+  0.07b4 and XMLRPC::Lite 0.717 (`recordings/frontier-rpc2`, `recordings/xmlrpc-lite`), served by
+  the replay backend: every value type, base64 long enough to wrap, three faults, and the answer to
+  a call sent as `text/plain`. Each test sends the consumer's own call through `Rpc`'s operations,
+  adapted only by dropping the gateway's `session` parameter, which the recorded servers never
+  took; the ledger shows each call as the recording's. The malformed and the `text/plain` calls,
+  which the consumer's writer cannot produce, are sent as recorded and decoded by the method's
+  decoder. In `src/scenarios/recordings.test.ts`, both lanes. Status: tested.
+  - `[EXT-8a] ${set}: the method list, the integer and the title decode through the gateway's contracts (${spelling})`
+  - `[EXT-8a] ${set}: invoice 7 decodes through the gateway's struct contract, its members in Perl's hash order`
+  - `[EXT-8a] ${set}: invoice 8's migrated 31 February is the contract's decode error, and its other members decode`
+    (VAL-1c's declared outcome; read again with `issued` as text, the false flag, the zero date,
+    `0.05` and the empty array, `<data />` from XMLRPC::Lite, decode as declared)
+  - `[EXT-8a] ${set}: the extract's base64 decodes through the same fixed-width schema as the download`
+  - `[EXT-8a] ${set}: its faults are Fault outcomes where faultCode is an integer, and the contract's decode error where it is not`
+    (Frontier::RPC2's `4`, `3` and `1` with Perl's messages, and XMLRPC::Lite's `404`, are Fault
+    outcomes; XMLRPC::Lite's string `Client` is a decode error of the fault rule)
+  - `[EXT-8a] ${set}: the answer to a call sent as text/plain, decoded by report.count's decoder`
+    (Frontier::RPC2 decodes the call and answers `3`; XMLRPC::Lite's `Client` fault is a decode
+    error)
+  - Fixed in the consumer, because the real bytes broke it: `XmlRpc.I4` reads `<int>`, which the
+    specification gives as `<i4>`'s other name and XMLRPC::Lite writes for every integer, and
+    writes `<i4>`; `XmlRpc.Base64` ignores line feeds wherever they fall, so XMLRPC::Lite's base64
+    on one line decodes, where only MIME::Base64's 76-column layout did; and `account.title` reads
+    a typed `<string>`, which both modules write, as well as the gateway's untyped value, through
+    `XmlRpc.StringValue`. Each states its loss: an `<int>`'s spelling, a typed string's and the
+    base64 layout are not re-encoded.
+  - Kept: XMLRPC::Lite's string `faultCode` stays a decode error, since the specification makes it
+    an `<int>`; `XmlRpc.I4` still refuses `+` and leading zeros, which the specification allows and
+    neither module writes.
+- **EXT-8b** The consumer's Digest code against httpd 2.4.68's `mod_auth_digest` with
+  `AuthDigestQop none` and the `Authorization` curl computed (`recordings/httpd-digest`), served by
+  the replay backend, which answers each request in turn whatever its `Authorization`. In
+  `src/scenarios/recordings.test.ts`, both lanes. Status: tested.
+  - `[EXT-8b] the consumer's parser reads httpd's challenges: realm, a nonce holding + / and =, algorithm=MD5, stale=true unquoted, no opaque`
+  - `[EXT-8b] withDigest answers httpd's challenge with the Authorization curl sent, byte for byte, and reads the report under httpd's Authentication-Info`
+    (and again with the same `Authorization`, which httpd accepts within the nonce's lifetime)
+  - `[EXT-8b] httpd's stale=true challenge is answered once more, with the new nonce`
+  - `[EXT-8b] a wrong password computes the response curl sent, and httpd's fresh challenge without stale ends the loop`
+  - No fix was needed: from the recorded nonce and the recorded credentials, the consumer writes
+    curl's `Authorization` lines exactly, for the right and a wrong password, and httpd's
+    `Authentication-Info: , nextnonce="…"` does not disturb the report's decoding.
+- **EXT-8c** Redirects as httpd 2.4.69's `Redirect permanent` (`recordings/httpd-redirect`) and
+  Tomcat 7.0.109 (`recordings/tomcat7-redirect`) wrote them, through the gateway's `legacyBalance`
+  (STAT-10) and the business API's customer creation (STAT-2, HDR-3), per provider and lane. No
+  following provider is run against a `Location` naming a recorded host (`gateway.example:8080`,
+  `business.example:8080`), since following it would leave loopback. Adapted: Tomcat's
+  `sendRedirect` replies are selected by the recording servlet's `variant` query, and its
+  `useRelativeRedirects="false"` mode is the context `/legacy`. In
+  `src/scenarios/recordings.test.ts`, both lanes. Status: tested.
+  - `[EXT-8c] httpd-redirect/get: httpd's 301 reaches legacyBalance as ${provider} hands it over`
+    (Node, `lines` and Fetch with `redirect: "manual"`: the declared `Moved` case with httpd's
+    absolute `Location` as written, from the recorded `Host`; Chromium, Fetch with
+    `redirect: "manual"`: the opaque redirect, status 0 and no `Location`, an `UnexpectedResponse`)
+  - `[EXT-8c] tomcat7-redirect: a Location set on a 200, as Tomcat leaves it in both modes, reaches createCustomer's Created case (${provider})`
+    (every provider of both lanes; `/v1/customers/1006` resolved against the request URL)
+  - `[EXT-8c] tomcat7-redirect: sendRedirect's 302s are no case of the creation contract; ${provider} hands each over with the Location Tomcat wrote`
+    (Node: `UnexpectedResponse` with status 302 and `customers/1006`, `/v1/customers/1006` or the
+    absolute form as written; Chromium: status 0)
+  - `[EXT-8c] tomcat7-redirect: Fetch follows sendRedirect's 302 to the path Tomcat wrote, or to the relative one resolved against the request, as a GET`
+    (both lanes: a GET of `/v1/customers/1006` without a body, the relative `customers/1006`
+    resolved against `/v1/customers?variant=relative`)
+  - Fixed in the consumer, because the real bytes broke it: the creation contract required
+    `X-Served-By`, which Tomcat does not write, so Tomcat's 200 was a decode error. The header is
+    the balancer's diagnostic, and a decode error after a creation that happened invites a retry
+    that duplicates the customer; it is now optional, and `servedBy` an `Option`.
+- **EXT-8d** The JAX-WS reference implementation's `LockDocument` faults
+  (`recordings/jaxws-faults`) through the consumer's `LockDocument` operation and its one extra
+  rule for faults under 500 (ERR-6), in both SOAP versions. Adapted: SOAP 1.2 calls go to
+  `/soap12`, where the recording published that binding, and the missing-owner fault answers a
+  complete call, since the consumer refuses an empty owner before dispatch, as the test shows. In
+  `src/scenarios/recordings.test.ts`, both lanes. Status: tested.
+  - `[EXT-8d] jaxws-faults: the RI's SOAP 1.1 faults under 500 decode through LockDocument's fault rule: S:Client and S:Server, with and without detail`
+  - `[EXT-8d] jaxws-faults: the RI's SOAP 1.2 faults under 500 decode through LockDocument's fault rule: S:Sender and S:Receiver, with and without Detail`
+  - No fix was needed: UTF-8 under a charset, the `S` prefix with codes resolved by namespace,
+    `<?xml version="1.0" ?>`, chunked framing, the unused `xmlns:ns4`, and no detail element for
+    the missing-owner fault all decode.
