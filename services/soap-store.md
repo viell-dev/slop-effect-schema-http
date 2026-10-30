@@ -63,7 +63,7 @@ The namespace is `urn:docvault:store:2003`, and each action's URI is
 - **The one correct action (2011).** `LockDocument` was written by a contractor who read the SOAP
   1.1 specification: it reports errors as real SOAP faults with HTTP 500 and has no `FaultCode`.
   Its fault writer answers 500 for SOAP 1.2 too, where the 1.2 binding would send 400 for sender
-  faults. Nobody else adopted it.
+  faults, as the JAX-WS reference implementation does. Nobody else adopted it.
 
 ### Requests
 
@@ -145,7 +145,20 @@ Fault codes inside HTTP 200:
 
 A SOAP 1.1 fault has `faultcode`, `faultstring` and `detail`; a SOAP 1.2 fault has `env:Code` with
 `env:Value`, `env:Reason` with `<env:Text xml:lang="en">`, and `env:Detail`. The detail elements are
-in the store's namespace.
+in the store's namespace. A fault without one, the missing-field fault, has no `detail` or
+`env:Detail` element at all, as SAAJ writes it.
+
+### Recordings
+
+`LockDocument`'s faults are held to recordings of the JAX-WS reference implementation in JDK 8,
+publishing SOAP 1.1 and SOAP 1.2 endpoints with `Endpoint.publish` and faulting on the same three
+refusals ([recordings/README.md](../recordings/README.md); catalogue EXT-6e). The store's faults
+carry the same status, the same codes, reasons, language and detail entries, in the same
+namespaces. What differs is the writer, as documented above: the store writes SOAP 1.1 as
+ISO-8859-1 under a charset-less `text/xml` where the runtime writes UTF-8 and says so, and its
+prefixes and XML declaration are its own. The runtime's server spells `Content-type` and
+`Transfer-encoding`, sends no `Connection` line, and adds an unused `xmlns:ns4` declaration of the
+other SOAP version's namespace to every fault, none of which the store copies.
 
 ## Service description
 

@@ -31,8 +31,11 @@ Any other path answers 404, and another method on a listed path answers 405 with
   Monitoring only ever checked that the CGI did not crash, so a status other than 200 would page the
   night operator; no script has been allowed to change since. The month-end extract, which the
   mainframe team wrote, is the exception.
-- **Apache's pages.** Redirects and refusals that Apache itself writes are Apache 1.3's HTML error
-  pages, `text/html; charset=iso-8859-1`, signed `Apache/1.3.41 Server`.
+- **Apache's pages.** Apache 1.3 fronts every script and signs every reply with
+  `Server: Apache/1.3.41 (Unix)`. Redirects and refusals that Apache itself writes are Apache 1.3's
+  HTML error pages, `text/html; charset=iso-8859-1` with their `Content-Length`, signed
+  `Apache/1.3.41 Server`. The scripts' own replies arrive chunked, as Apache sends output whose
+  length a CGI does not give.
 - **Sessions.** `login.cgi` issues sessions, which the other scripts and `/RPC2` take as the
   `session` query parameter. The 2009 SSO bridge mints opaque tokens that every endpoint taking
   `session` accepts as a session value too: the query-parameter form of the token other services
@@ -77,8 +80,11 @@ doubled inside. Negative amounts start with `-`.
 ## The old desktop path (1998)
 
 `/cgi-bin/rpt.exe` is the compiled-in path of the 1998 Windows desktop client, kept alive as an
-Apache `Redirect permanent` to `/cgi-bin/report.cgi` with the same query. Apache writes the
-`Location` absolute, and the 301 carries its HTML page.
+Apache `Redirect permanent` to `/cgi-bin/report.cgi` with the same query, whatever the method.
+Apache writes the `Location` absolute and builds it from the request (`UseCanonicalName Off`):
+`http://`, the host and port the `Host` header names, or the server's own port when `Host` names
+none and that port is not 80, then the new path and the query. The 301 carries its HTML page, which
+links the same target with `&` and `"` escaped.
 
 ## The month-end extract (2001)
 
@@ -138,11 +144,15 @@ with `"`, with a quote doubled inside.
 
 ## XML-RPC (1999)
 
-`POST /RPC2?session=…` is the XML-RPC endpoint the desktop reporting client has called since 1999,
-first served by Frontier::RPC and later by XMLRPC::Lite. Like every XML-RPC server of its age it
-answers HTTP 200 for every call that reached the dispatcher, faults included, as `text/xml` with
-`Server: Frontier/5.1.2-WinNT`. Only a request that is not `text/xml` at all is refused by the HTTP
-layer, with Apache's 400 page.
+`POST /RPC2?session=…` is the XML-RPC endpoint the desktop reporting client has called since 1999:
+a Perl CGI whose replies Frontier::RPC2 encodes, sent with their `Content-Length`. A 2003 move to
+XMLRPC::Lite never went live, because XMLRPC::Lite writes `<int>` where the client expects `<i4>`,
+base64 on one line, and any text holding a letter outside ASCII as base64 unless the handler types
+it, and the desktop client read none of them. Like every XML-RPC server of its age the endpoint
+answers HTTP 200 for every call that reached the dispatcher, faults included, as `text/xml`. Only a
+request that is not `text/xml` at all is refused, by the Apache configuration in front of the
+script, with Apache's 400 page; the modules themselves would not refuse it, since Frontier::RPC2
+decodes whatever arrives and XMLRPC::Lite answers a `Client` fault in 200.
 
 | Method               | Parameters         | Result                                                        |
 | -------------------- | ------------------ | ------------------------------------------------------------- |
@@ -152,8 +162,11 @@ layer, with Apache's 400 page.
 | `invoice.get`        | `<i4>` invoice id  | a `<struct>`, below                                           |
 | `extract.fetch`      | `<string>` period  | `<base64>`: the extract file, the same bytes as `extract.cgi` |
 
-The 1999 `account.title` handler returns the bare scalar without a type element. A parameter
-without a type element counts as a string, and `<int>` as `<i4>`. An invoice is a struct of `id`
+The 1999 `account.title` handler predates the module and prints its reply itself: the title as a
+bare `<value>` without a type element, in UTF-8 as stored, with `&`, `<` and `>` escaped. Neither
+Frontier::RPC2 nor XMLRPC::Lite can write an untyped value; given the title, Frontier::RPC2 writes a
+`<string>` with character references, and XMLRPC::Lite a `<string>` or base64. A parameter without
+a type element counts as a string, and `<int>` as `<i4>`. An invoice is a struct of `id`
 (`<i4>`), `account` (`<string>`), `amount` (`<double>`), `paid` (`<boolean>`), `issued` and
 `settled` (`<dateTime.iso8601>`), and `lines`, an array of structs of `text` and `amount`. Dates are
 as stored: invoices migrated from 1998 may hold impossible dates, and an unpaid invoice is settled
@@ -161,15 +174,33 @@ as stored: invoices migrated from 1998 may hold impossible dates, and an unpaid 
 
 ### Values
 
-Values are written the way Perl wrote them: `<i4>`, doubles with exactly two decimals, `<boolean>`
-as `1` or `0`, `dateTime.iso8601` without separators in the date or a zone (`YYYYMMDDTHH:MM:SS`),
-`00000000T00:00:00` for "no date", untyped `<value>` strings where the original handlers forgot the
-type, and base64 wrapped by MIME::Base64 at 76 columns with a newline after every line.
+Frontier::RPC2 types a handler's plain Perl scalars by guessing, and writes the module's typed
+objects as their type says. The handlers return:
+
+- integers (ids, counts and fault codes) as plain scalars: `<value><i4>7</i4></value>`;
+- amounts as plain scalars formatted with exactly two decimals, which the guess makes `<double>`;
+- text as plain scalars: `<string>`, with `&`, `<`, `>` and `"` escaped and every character from
+  U+0080 to U+FFFF as a decimal character reference, such as `Caf&#233;`;
+- an account, all digits, which the guess would make an integer, as a typed string: `<string>`
+  with the four characters escaped and no character references;
+- booleans as typed `<boolean>` `1` or `0`;
+- dates as typed `dateTime.iso8601`, as stored, without separators in the date or a zone
+  (`YYYYMMDDTHH:MM:SS`), and `00000000T00:00:00` for "no date";
+- the extract as typed base64, encoded by MIME::Base64's `encode_base64` with its default line
+  end: 76 columns, with a newline after every line, the last one included.
+
+A plain scalar's `</value>` is followed by nothing; a typed object's, a struct's and an array's by a
+newline. A struct's members come in Perl's hash order, which changes with every process, so read
+them by name.
 
 ### Faults
 
 Faults follow the 2001 interoperability list for protocol errors, and use HTTP-like numbers for
-application errors because the 2003 maintainers liked them:
+application errors because the 2003 maintainers liked them. The script's own dispatcher writes them
+through Frontier::RPC2's `encode_fault`, in the module's layout, with the members in hash order.
+The module's own dispatcher would have answered `1` for a malformed call, `3` for an unknown method
+and `4` for any error in a handler, with Perl's messages; XMLRPC::Lite answers protocol errors with
+the string `Client` as `faultCode`, which the specification does not allow.
 
 | `faultCode` | `faultString`                                                                  | When                                   |
 | ----------- | ------------------------------------------------------------------------------ | -------------------------------------- |
@@ -190,9 +221,10 @@ hexadecimal reference spelt with an upper-case `&#X`, since XML allows only the 
 XML-RPC defines no attributes, so their values are ignored, but a malformed one still makes the
 document malformed: each must be quoted, hold no `<`, and use only valid references. A malformed
 call is answered with the -32700 parse-error fault before the session or the method is looked at.
-The writer escapes text, writes a carriage return as `&#13;` so a reader's line-end handling keeps
-it, and never writes a character outside `Char`: a stored value that holds one turns the reply into
-the -32603 internal-error fault.
+The writer escapes text as above, writes a carriage return as `&#13;` so a reader's line-end
+handling keeps it (a 2004 patch: the module writes it raw), and never writes a character outside
+`Char`, raw or as a reference: a stored value that holds one turns the reply into the -32603
+internal-error fault.
 
 ## The audit endpoint (1997 Digest)
 
@@ -208,26 +240,61 @@ tool, made every nonce single-use instead of turning the module off. So each non
 request: reusing it is answered with a fresh challenge carrying `stale=true`, and every audit call
 costs two round trips. A nonce is spent as soon as a request arrives with it, before the reply is
 written, so a request the client abandons has still spent its nonce, and so has a request whose
-response was wrong.
+response was wrong. Without that change the module would accept a nonce again until it expires,
+and answer an expired one with `stale=true`, as httpd 2.4's mod_auth_digest does.
 
 A request without valid credentials answers 401 with Apache's "Authorization Required" page and a
 challenge:
 
 ```http
-WWW-Authenticate: Digest realm="Reporting Gateway", nonce="<nonce>", opaque="<opaque>", algorithm=MD5
+WWW-Authenticate: Digest realm="Reporting Gateway", nonce="<nonce>", algorithm=MD5
 ```
 
-The realm is written between quotes as configured, without escaping, as mod_digest wrote its
-`AuthName`; a realm containing `"` or `\` would produce a malformed challenge. The nonce is base64
-and the opaque value hex, so neither contains those characters.
+The challenge offers no `opaque`, `domain` or `qop`. The realm is written between quotes as
+configured, without escaping, as mod_digest wrote its `AuthName`; a realm containing `"` or `\`
+would produce a malformed challenge. The nonce is the issue time's eight bytes in base64, which end
+in `=`, followed by forty hex digits, so it may hold `+`, `/` and `=` but never those characters.
 
-The `Authorization` header must carry `username`, `realm`, `nonce`, `uri`, `response` and the
-challenge's `opaque`. A missing directive answers Apache's 400 page, and so does a `uri` that
+The `Authorization` header must carry `username`, `realm`, `nonce`, `uri` and `response`; any other
+directive is ignored. A missing directive answers Apache's 400 page, and so does a `uri` that
 differs from the request line's target: mod_digest compares them byte for byte. A wrong realm,
-opaque value, nonce or response is answered with a fresh challenge.
+nonce or response is answered with a fresh challenge. An authorized reply carries no
+`Authentication-Info`: the module offers no next nonce, which is why each call needs a challenge of
+its own.
 
 `GET /admin/audit.cgi?period=<YYYYMM>` answers `OK|<period>|<count>|<cents>` with the extract's
 trailer totals, or `ERROR|E_NOPERIOD|…` in 200.
+
+## Recordings
+
+The XML-RPC endpoint, the audit endpoint and the old desktop path are held to recordings of the
+software this page names, or of its closest runnable successor
+([recordings/README.md](../recordings/README.md); catalogue EXT-6a to EXT-6c):
+
+| Part             | Recorded from                                                        |
+| ---------------- | -------------------------------------------------------------------- |
+| XML-RPC          | Frontier::RPC2 0.07b4 under Frontier::Daemon, and XMLRPC::Lite 0.717 |
+| the audit Digest | httpd 2.4.68's mod_auth_digest with `AuthDigestQop none`, and curl   |
+| the 301          | httpd 2.4.69's mod_alias `Redirect permanent`                        |
+
+The gateway's replies match those recordings, apart from the dates, nonces and struct member order
+that change with every run, except where this page documents otherwise:
+
+- Apache 1.3's pages and `Server` line, which httpd 2.4 writes its own way: no Apache 1.3 can be
+  recorded, so the pages are not checked. httpd 2.4.68 is the last release that answers RFC 2069
+  Digest at all; 2.4.69 refuses `AuthDigestQop none` at startup.
+- The XML-RPC script's fault codes, its hand-written `account.title`, Apache's 400 for a call that
+  is not `text/xml`, and its `&#13;` for a carriage return. Frontier::Daemon's head is
+  HTTP::Daemon's (`Server: libwww-perl-daemon/6.16`); the script's is Apache's.
+- The audit endpoint's single-use nonces, and the missing `Authentication-Info`. httpd 2.4 accepts
+  a replayed `Authorization` within the nonce's lifetime, and sends `Authentication-Info` with a
+  `nextnonce` whose value starts with a stray comma when there is no `qop`.
+- The framing and connection lines of the suite's HTTP server, which differ the same way for every
+  backend (recordings/README.md, "Comparing").
+
+XMLRPC::Lite's replies carry the same values as the gateway's in its own spelling: `<int>`, base64
+on one line, raw UTF-8, `"` unescaped, `<data />` for an empty array, no white space between
+elements, and a `SOAPServer` header. The replay backend serves every recording to consumer tests.
 
 ## Test options
 

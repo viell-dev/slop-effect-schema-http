@@ -76,6 +76,11 @@ name `portal.<Name>`, and answers 200:
   pool, the facade started passing the client-disconnected token to its outbound call, so a client
   that goes away also aborts the forwarded SOAP request.
 
+WCF's replies are not recorded: hosting WCF needs .NET Framework and an HTTP.sys URL reservation on
+the host, not a disposable container, so the `d` wrapper, the `jsonerror` 500s and the "Request
+Error" page are this page's description, imitated without a recording
+([recordings/README.md](../recordings/README.md), "Not recorded").
+
 ## What the store receives
 
 Each publish is one SOAP 1.1 `StoreDocument` call to the store's `POST /soap`, sent as
