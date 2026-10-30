@@ -295,8 +295,13 @@ const typed = <const K extends (typeof scalars)[number]>(
     ),
   ) as unknown as Schema.Codec<string, { readonly [P in K]: string }>;
 
-/** `<i4>`: a 32-bit integer in canonical decimal (no sign on zero, no `+`, no leading zeros). */
-export const I4 = typed("i4").pipe(
+/**
+ * `<i4>` or `<int>`, which the specification gives as two names of one type: a 32-bit integer in
+ * canonical decimal (no sign on zero, no `+`, no leading zeros). The gateway and Frontier::RPC2
+ * write `<i4>`, XMLRPC::Lite `<int>` (EXT-8a). Encoding writes `<i4>`, so an `<int>`'s spelling is
+ * not kept.
+ */
+export const I4 = Schema.Union([typed("i4"), typed("int")]).pipe(
   Schema.decodeTo(
     Schema.Int,
     SchemaTransformation.transformEffect<number, string>({
@@ -337,6 +342,13 @@ export const Text = typed("string");
 /** An untyped `<value>text</value>`, which the specification defines as a string. */
 export const Untyped = Schema.String;
 
+/**
+ * A string in either spelling the specification gives it: untyped, as the gateway's hand-written
+ * `account.title` reply, or a typed `<string>`, as Frontier::RPC2 and XMLRPC::Lite write the same
+ * title (EXT-8a). Encoding writes the untyped form, so a typed string's spelling is not kept.
+ */
+export const StringValue = Schema.Union([Untyped, Text]);
+
 const MIME_LINE = 76;
 
 /** Base64 laid out as Perl's MIME::Base64 writes it: 76-character lines, each ending in `\n`. */
@@ -351,8 +363,12 @@ const mime = (bytes: Uint8Array): string => {
 };
 
 /**
- * `<base64>` to bytes. The gateway's Perl stack wraps base64 at 76 characters with a newline after
- * every line; only exactly that layout is accepted, so the bytes re-encode to the same text.
+ * `<base64>` to bytes. The specification gives base64 no line layout, so line feeds are ignored
+ * wherever they fall, as MIME's decoders ignore line breaks: MIME::Base64 under Frontier::RPC2 and
+ * the gateway wrap at 76 characters with a line feed after every line, and XMLRPC::Lite writes one
+ * line (EXT-8a). Any other character outside the alphabet, such as a space, a tab or a referenced
+ * carriage return, and padding anywhere but the end are refused. Encoding writes MIME::Base64's
+ * layout, so the line layout of a decoded text is not kept.
  */
 export const Base64 = typed("base64").pipe(
   Schema.decodeTo(
@@ -367,16 +383,9 @@ export const Base64 = typed("base64").pipe(
         )
           return Effect.fail(invalid("not base64", text, options));
         const binary = atob(flat);
-        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-        return mime(bytes) === text
-          ? Effect.succeed(bytes)
-          : Effect.fail(
-              invalid(
-                "base64 is not wrapped as 76-character lines ending in \\n",
-                text,
-                options,
-              ),
-            );
+        return Effect.succeed(
+          Uint8Array.from(binary, (char) => char.charCodeAt(0)),
+        );
       },
       encode: (bytes) => Effect.succeed(mime(bytes)),
     }),

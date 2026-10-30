@@ -68,7 +68,8 @@ export const method =
 
 const Money = XmlRpc.DoubleText.pipe(Schema.decodeTo(CentsFromUnits));
 
-export const Invoice = XmlRpc.struct({
+/** An invoice's members and the value convention of each. */
+export const InvoiceFields = {
   id: XmlRpc.I4,
   account: XmlRpc.Text.pipe(Schema.decodeTo(AccountNumber)),
   amount: Money,
@@ -78,7 +79,9 @@ export const Invoice = XmlRpc.struct({
     Schema.decodeTo(OptionalDateTimeFromXmlRpc),
   ),
   lines: XmlRpc.array(XmlRpc.struct({ text: XmlRpc.Text, amount: Money })),
-});
+};
+
+export const Invoice = XmlRpc.struct(InvoiceFields);
 
 const PeriodParam = XmlRpc.Text.pipe(Schema.decodeTo(Period));
 
@@ -95,11 +98,14 @@ export const reportCount = method(
   XmlRpc.I4,
 );
 
-/** An untyped `<value>` scalar, which the specification reads as a string. */
+/**
+ * The gateway answers an untyped `<value>`, which the specification reads as a string; the same
+ * title from Frontier::RPC2 or XMLRPC::Lite is a typed `<string>` (EXT-8a), so either is read.
+ */
 export const accountTitle = method(
   "account.title",
   Schema.Tuple([XmlRpc.Text.pipe(Schema.decodeTo(AccountNumber))]),
-  XmlRpc.Untyped,
+  XmlRpc.StringValue,
 );
 
 export const invoice = method(

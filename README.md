@@ -80,7 +80,9 @@ pinned by digest. `npm run record -- <set>` makes a set again; it needs Docker, 
 never in CI. The `replay` backend ([services/replay.md](./services/replay.md)) serves the recorded
 responses over a real socket, and the Node-lane tests in `src/conformance/` send each recorded
 request to the backend that imitates the software and pin every difference that remains, as the
-service pages explain (catalogue entries EXT-6a to EXT-6e).
+service pages explain (catalogue entries EXT-6a to EXT-6e). On the consumer's side,
+`src/scenarios/recordings.test.ts` decodes the replayed responses through the consumer's own
+operations in both lanes (EXT-8a to EXT-8d).
 
 Every scenario runs in two lanes. The Node lane runs the consumer in Node. The browser lane runs
 the same tests in headless Chromium through Vitest browser mode, to show that the library works in
