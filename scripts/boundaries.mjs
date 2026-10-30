@@ -10,10 +10,13 @@
 //   harness modules and the consumer side are refused, so a backend stays a black box reached only
 //   over HTTP.
 // - Consumer code and scenarios (`src/clients`, `src/values`, `src/formats`, `src/scenarios`, and
-//   the single-page app in `src/app`) may not import a backend or a Node-side harness module: of
-//   the harness, only `src/harness/lane.ts` and the `#lane` alias are theirs. Outside
-//   `*.node.test.ts` files they may not import Node built-ins either, because they also run in a
-//   browser.
+//   the single-page app in `src/app`) may not import a backend, a Node-side harness module or the
+//   conformance tests: of the harness, only `src/harness/lane.ts` and the `#lane` alias are theirs.
+//   Outside `*.node.test.ts` files they may not import Node built-ins either, because they also run
+//   in a browser.
+// - The conformance tests (`src/conformance`), which hold backends to recordings of real software,
+//   are backend-side and Node-only: they reach backends over HTTP through the lane, and import
+//   neither a backend, a Node-side harness module, nor consumer code.
 // - Every backend entry point (`src/backends/<name>.ts` or `src/backends/<name>/index.ts`, the
 //   files the harness loads by name) carries a `Service documentation: services/<page>.md` line,
 //   except the harness's own `echo` helper. Every such line in a backend names an existing page,
@@ -59,6 +62,7 @@ const harness = join(src, "harness");
 const consumer = ["clients", "values", "formats", "scenarios", "app"].map(
   (name) => join(src, name),
 );
+const conformance = join(src, "conformance");
 const backendHarness = new Set(
   ["server.ts", "route.ts"].map((name) => join(harness, name)),
 );
@@ -342,9 +346,24 @@ for (const file of consumerFiles) {
       return "consumer code reaches backends only over HTTP";
     if (inside(harness, target.path) && !consumerHarness.has(target.path))
       return "consumer code may use only src/harness/lane.ts and #lane of the harness";
+    if (inside(conformance, target.path))
+      return "the conformance tests are backend-side";
     return undefined;
   });
 }
+
+const conformanceFiles = existsSync(conformance) ? sources(conformance) : [];
+for (const file of conformanceFiles)
+  check(file, (target) => {
+    if (target.kind !== "file") return undefined;
+    if (inside(backends, target.path))
+      return "conformance tests reach backends only over HTTP";
+    if (inside(harness, target.path) && !consumerHarness.has(target.path))
+      return "conformance tests may use only src/harness/lane.ts and #lane of the harness";
+    if (consumer.some((directory) => inside(directory, target.path)))
+      return "conformance tests are backend-side and share nothing with the consumer side";
+    return undefined;
+  });
 
 // The service pages. A backend file may link several; an entry point must link at least one.
 const SERVICE_LINK = /Service documentation: services\/([^\s/`'"]+\.md)/g;
@@ -391,7 +410,7 @@ for (const file of backendFiles) {
 }
 
 console.log(
-  `boundaries: ${checked} imports in ${backendFiles.length} backend and ${consumerFiles.length} consumer files; ${linked} of ${entryPoints.length} backends link a service page`,
+  `boundaries: ${checked} imports in ${backendFiles.length} backend, ${consumerFiles.length} consumer and ${conformanceFiles.length} conformance files; ${linked} of ${entryPoints.length} backends link a service page`,
 );
 if (problems.length > 0) {
   for (const problem of problems) console.error(problem);
