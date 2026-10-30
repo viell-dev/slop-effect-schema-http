@@ -942,12 +942,15 @@ around it keep the layer's` (provider; in the Node lane's `lines` run, the repla
   by the consumer's reader and, over HTTP, by the SOAP store. Every reader is compared with the
   independent parser, not with another reader: on acceptance, and on the decoded tree (the
   consumer) or the title stored, read back from the bundle's JSON (the store). A recorded
-  disagreement that stops holding fails too. In `src/scenarios/parsers.test.ts`, both lanes.
-  Status: tested.
+  disagreement that stops holding fails too. In `src/scenarios/parsers.test.ts`, both lanes; the
+  backend side's own regression cases, which the corpus does not hold, in
+  `src/conformance/readers.node.test.ts`, Node lane. Status: tested.
   - `[EXT-3] ${parser} gives XML 1.0's verdict on every document of the XML corpus, except its recorded disagreements`
   - `[EXT-3] the consumer's XML reader agrees with ${parser} on every document: acceptance, and the decoded tree when accepted`
   - `[EXT-3] the store's XML reader agrees with ${parser} on every document, judged over HTTP: a "Malformed XML" 400, or the title it stored`
     (the ledger holds exactly the corpus bytes)
+  - `[EXT-3] the store's XML reader gives XML 1.0's verdict on the backend-side cases the corpus does not hold, and refuses a DTD as SOAP requires`
+    (18 documents, each with the production that decides it; the ledger holds exactly their bytes)
   - The independent parsers: both give XML 1.0's verdict on every document, except that saxes
     refuses an entity declared in the internal DTD subset (`doctype-internal-entity`). saxes reads
     no declarations from a DTD, a limitation its README documents, though XML 1.0 section 4.1 (WFC:
@@ -970,15 +973,21 @@ around it keep the layer's` (provider; in the Node lane's `lines` run, the repla
     `__proto__`, which it took for duplicates (`attr-object-names`).
   - Recorded, by design: the consumer and the store refuse every DTD (`doctype-bare`,
     `doctype-internal-entity`). SOAP 1.1 section 3 and SOAP 1.2 part 1 section 5 forbid a
-    document type declaration in a message, and neither reader expands entities.
-  - Recorded, backend defects seen over HTTP, for the store's side to fix: the store takes U+00A0,
-    U+3000 and U+FEFF for white space (`attr-nbsp-separator`, `attr-ideographic-space`,
-    `prolog-nbsp`, `prolog-zero-width-space`); refuses non-ASCII names as "unexpected markup"
-    (`attr-name-non-ascii`); checks neither the XML declaration's place nor its content
-    (`prolog-declaration-late`, `-after-space`, `-no-version`, `-order`, `-standalone`); does not
+    document type declaration in a message, and neither reader expands entities; the store's
+    service page says so.
+  - The store's reader, fixed against the corpus by the backend side: it took U+00A0, U+3000 and
+    U+FEFF for white space (`attr-nbsp-separator`, `attr-ideographic-space`, `prolog-nbsp`,
+    `prolog-zero-width-space`); refused non-ASCII names as "unexpected markup"
+    (`attr-name-non-ascii`); checked neither the XML declaration's place nor its content
+    (`prolog-declaration-late`, `-after-space`, `-no-version`, `-order`, `-standalone`); did not
     check a processing instruction's target (`prolog-pi-reserved`, `prolog-pi-no-target`); and
-    accepts `--` inside a comment (`comment-double-hyphen`, `comment-hyphen-end`,
-    `comment-double-hyphen-in-text`). Its service page says it reads XML 1.0 strictly.
+    accepted `--` inside a comment (`comment-double-hyphen`, `comment-hyphen-end`,
+    `comment-double-hyphen-in-text`). Its service page says it reads XML 1.0 strictly. The
+    backend-side cases hold the same rules elsewhere in a document (end tags, the epilog, a title's
+    content, the declaration's spelling) and a defect the corpus does not reach: the store looked
+    entities up on a plain object, so `&constructor;` and `&__proto__;` read as text from
+    `Object.prototype` instead of being refused as undeclared (`entity-constructor`,
+    `entity-proto`).
 - **EXT-4** The suite's XML-RPC readers against an independent XML parser, over a corpus of 61
   calls (33 well-formed) and 31 replies (25 well-formed) in `src/formats/corpus/xmlrpc.ts`: the
   same XML edge cases inside XML-RPC documents, and value-type edge cases (untyped values, white
@@ -989,11 +998,14 @@ around it keep the layer's` (provider; in the Node lane's `lines` run, the repla
   the specification gives where a case names it. The gateway reads every call over HTTP: the
   -32700 fault is its parse error, and the decoded text comes back in the 404 fault for an unknown
   account, the -32601 fault for an unknown method, or the known account's title. In
-  `src/scenarios/parsers.test.ts`, both lanes. Status: tested.
+  `src/scenarios/parsers.test.ts`, both lanes; the backend side's own regression cases in
+  `src/conformance/readers.node.test.ts`, Node lane. Status: tested.
   - `[EXT-4] ${parser} gives XML 1.0's verdict on every call and reply of the XML-RPC corpus, except its recorded disagreements`
   - `[EXT-4] the consumer's XML-RPC reader agrees with ${parser} on every call and reply, and reads the values the specification gives`
   - `[EXT-4] the gateway's XML-RPC reader agrees with ${parser} on every call, judged over HTTP: the parse-error fault, or the decoded text it answers with`
     (the ledger holds exactly the corpus bytes)
+  - `[EXT-4] the gateway's XML-RPC reader gives XML 1.0's verdict on the backend-side cases the corpus does not hold, and refuses a DTD as its page documents`
+    (18 calls, each with the production that decides it; the ledger holds exactly their bytes)
   - The independent parsers: as for EXT-3, saxes alone refuses the entity from the internal DTD
     subset (`call-doctype-internal-entity`).
   - The consumer: before the EXT-3 fixes to the shared XML reader, it disagreed on
@@ -1004,30 +1016,44 @@ around it keep the layer's` (provider; in the Node lane's `lines` run, the repla
     (`reply-nbsp-beside-type`). `XmlRpc.callOf` and `XmlRpc.responseOf` read a tree from any
     parser. Recorded, by design: it refuses every DTD (`call-doctype-*`, `reply-doctype`), because
     it expands no entities and no service the suite reads sends one.
-  - Recorded, backend defects seen over HTTP, for the gateway's side to fix: it answers any DTD
-    with the parse-error fault (`call-doctype-bare`, `call-doctype-internal-entity`), though its
-    service page says calls are read as expat reads them, and expat reads a DTD and expands its
-    internal entities; it refuses a comment inside a string (`call-comment-in-string`); it takes
-    U+00A0 for white space (`call-attr-nbsp-separator`, `call-prolog-nbsp`); it checks neither the
-    XML declaration's place nor its content (`call-prolog-declaration-late`, `-after-space`,
-    `-no-version`); it accepts `--` in a comment before the root, though not inside it
-    (`call-comment-double-hyphen`), `]]>` in text (`call-cdata-end-in-text`), and an attribute
-    given twice (`call-attr-duplicate`).
+  - Recorded, as the gateway's service page documents: it answers every DTD with the parse-error
+    fault (`call-doctype-bare`, `call-doctype-internal-entity`), a 2014 security patch in front of
+    expat, which would read the DTD and expand its internal entities. The page said calls were read
+    as expat reads them without this exception; the backend side kept the refusal and documented
+    it with its owner and reason, rather than writing a DTD reader no client needs.
+  - The gateway's reader, fixed against the corpus by the backend side: it refused a comment
+    inside a string (`call-comment-in-string`); took U+00A0 for white space
+    (`call-attr-nbsp-separator`, `call-prolog-nbsp`); checked neither the XML declaration's place
+    nor its content (`call-prolog-declaration-late`, `-after-space`, `-no-version`); and accepted
+    `--` in a comment before the root, though not inside it (`call-comment-double-hyphen`), `]]>`
+    in text (`call-cdata-end-in-text`), and an attribute given twice (`call-attr-duplicate`). The
+    backend-side cases also hold what the corpus does not reach: it refused a processing
+    instruction inside a string, a comment inside the method name, `>` and `]]>` in an attribute
+    value, white space before an end tag's `>`, and non-ASCII names; and it accepted U+3000 and
+    U+FEFF as white space, a processing instruction without a target or with `xml` as one, a
+    misordered declaration or one with `standalone="maybe"`, and comments ending in `--->` or
+    holding `--` after the root.
 - **EXT-5** The store's multipart reader and writer against the platform's `Response.formData()`
   (undici in Node, Chromium's in the browser), over 10 uploads and 7 bundles in
   `src/formats/corpus/multipart.ts`. Each upload the consumer sends, as the ledger recorded it, is
   read by `formData()` and compared with what the store stored (its answer, and the document's type
   and bytes from WebDAV) or refused; each bundle is read by `formData()` and compared with the
   document the store started with, and the consumer's bundle operation must read it as `formData()`
-  does through every provider. In `src/scenarios/parsers.test.ts`, both lanes. Status: tested.
+  does through every provider. In `src/scenarios/parsers.test.ts`, both lanes; the backend side's
+  own regression cases in `src/conformance/readers.node.test.ts`, Node lane. Status: tested.
   - `[EXT-5] ${formParser} reads the upload bodies the consumer sends through ${provider}, from the ledger, as the store read them: label, file name, type and bytes`
     (provider)
   - `[EXT-5] ${formParser} reads the store's bundles as the store's own record has them, and the consumer's bundle operation reads them as ${formParser} does`
-  - Recorded, a backend defect for the store's side to fix: a bundle's boundary is
-    `DocVaultBundle-<id>-1` whatever the content holds, so content holding that delimiter line
-    (`delimiter-in-content`) makes a body no parser can split, which RFC 2046 section 5.1.1
-    forbids. Both `formData()` parsers refuse it, and the consumer's bundle operation fails with a
-    `DecodeError`.
+  - `[EXT-5] the store's bundle boundary occurs in no part: a numbered variant when the content or the metadata holds the usual one (RFC 2046 section 5.1.1)`
+    (the boundary each bundle takes, its delimiter only where it delimits, and Node's `formData()`
+    reading the title and content back)
+  - The store's bundle writer, fixed by the backend side: a bundle's boundary was
+    `DocVaultBundle-<id>-<version>` whatever the parts held, so content holding that delimiter line
+    (`delimiter-in-content`) made a body no parser could split, which RFC 2046 section 5.1.1
+    forbids. Both `formData()` parsers refused it, and the consumer's bundle operation failed with
+    a `DecodeError`. The store now takes the first numbered variant, `-2`, `-3` and so on, that no
+    part holds, as its service page says; the backend-side cases put the delimiter and its first
+    variant in the content, and the delimiter in the title, which the metadata part carries.
   - A limit of the platforms: the HTML standard's multipart/form-data encoding writes `"`, CR and LF
     in a file name as `%22`, `%0D` and `%0A`, and gives no rule for reading them back. undici and the
     store decode them; Chromium's `formData()` keeps them (`quote-name`, `line-feed-name`). Neither

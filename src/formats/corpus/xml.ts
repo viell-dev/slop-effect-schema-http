@@ -78,23 +78,6 @@ const malformed = (
 const soapForbidsDtd =
   "refuses every DTD: SOAP 1.1 section 3 and SOAP 1.2 part 1 section 5 forbid a document type declaration in a message, and the reader expands no entities";
 
-/**
- * What the store's reader gets wrong, as observed over HTTP. Each is a backend defect, recorded here
- * rather than fixed by the consumer side, which does not open the backend's source.
- */
-const store = {
-  space:
-    "accepts it: the store takes Unicode spaces such as U+00A0 and U+3000 for XML white space, which [3] S limits to space, tab, CR and LF",
-  names:
-    "refuses it ('unexpected markup'): the store reads only ASCII name characters, where [4] NameStartChar and [4a] NameChar admit most of Unicode",
-  declaration:
-    "accepts it: the store checks neither the XML declaration's place at the start nor its content ([22] prolog, [23] XMLDecl, [32] SDDecl), and reads a misplaced one as a processing instruction",
-  target:
-    "accepts it: the store does not check a processing instruction's target ([16] PI, [17] PITarget)",
-  comment:
-    "accepts it: the store ends a comment at the first '-->' without refusing '--' inside it ([15] Comment)",
-} as const;
-
 export const xmlCorpus: ReadonlyArray<Case> = [
   // Characters outside [2] Char, raw.
   malformed("char-nul", "a raw NUL in text ([2] Char)", { title: "A\u0000B" }),
@@ -301,13 +284,11 @@ export const xmlCorpus: ReadonlyArray<Case> = [
     "attr-nbsp-separator",
     "U+00A0 as the separator before an attribute: not white space ([3] S)",
     { attributes: '\u00a0note="1"' },
-    { store: store.space },
   ),
   malformed(
     "attr-ideographic-space",
     "U+3000 before the end of a start tag: not white space ([3] S)",
     { attributes: ' note="1"\u3000' },
-    { store: store.space },
   ),
   valid(
     "attr-line-separators",
@@ -342,7 +323,6 @@ export const xmlCorpus: ReadonlyArray<Case> = [
     "attr-name-non-ascii",
     "non-ASCII name characters, and U+00B7 after the first ([4] NameStartChar, [4a] NameChar)",
     { attributes: ' größe="x" naïve·x="y"' },
-    { store: store.names },
   ),
   // Document type declarations.
   valid(
@@ -398,7 +378,6 @@ export const xmlCorpus: ReadonlyArray<Case> = [
     "prolog-zero-width-space",
     "U+FEFF after the declaration: a character, not a signature ([22] prolog)",
     { prolog: "\ufeff" },
-    { store: store.space },
   ),
   valid(
     "prolog-line-ends",
@@ -418,71 +397,50 @@ export const xmlCorpus: ReadonlyArray<Case> = [
     "prolog-declaration-late",
     "an XML declaration after a comment: 'xml' is a reserved PI target ([22] prolog, [17] PITarget)",
     { declaration: "", prolog: '<!-- c --><?xml version="1.0"?>' },
-    { store: store.declaration },
   ),
   malformed(
     "prolog-declaration-after-space",
     "an XML declaration after white space ([22] prolog, [17] PITarget)",
     { declaration: ' <?xml version="1.0"?>' },
-    { store: store.declaration },
   ),
   malformed(
     "prolog-declaration-no-version",
     "a declaration without a version ([23] XMLDecl)",
     { declaration: '<?xml encoding="utf-8"?>' },
-    { store: store.declaration },
   ),
   malformed(
     "prolog-declaration-order",
     "a declaration naming the encoding before the version ([23] XMLDecl)",
     { declaration: '<?xml encoding="utf-8" version="1.0"?>' },
-    { store: store.declaration },
   ),
   malformed(
     "prolog-declaration-standalone",
     "standalone='maybe' ([32] SDDecl)",
     { declaration: '<?xml version="1.0" standalone="maybe"?>' },
-    { store: store.declaration },
   ),
-  malformed(
-    "prolog-pi-reserved",
-    "'XmL' as a PI target ([17] PITarget)",
-    { prolog: "<?XmL data?>" },
-    { store: store.target },
-  ),
-  malformed(
-    "prolog-pi-no-target",
-    "a PI without a target ([16] PI)",
-    { prolog: "<? data?>" },
-    { store: store.target },
-  ),
+  malformed("prolog-pi-reserved", "'XmL' as a PI target ([17] PITarget)", {
+    prolog: "<?XmL data?>",
+  }),
+  malformed("prolog-pi-no-target", "a PI without a target ([16] PI)", {
+    prolog: "<? data?>",
+  }),
   malformed("prolog-text", "text before the root ([22] prolog)", {
     prolog: "x",
   }),
-  malformed(
-    "prolog-nbsp",
-    "U+00A0 before the root: not white space ([3] S)",
-    { prolog: "\u00a0" },
-    { store: store.space },
-  ),
+  malformed("prolog-nbsp", "U+00A0 before the root: not white space ([3] S)", {
+    prolog: "\u00a0",
+  }),
   // Comments.
-  malformed(
-    "comment-double-hyphen",
-    "'--' inside a comment ([15] Comment)",
-    { prolog: "<!-- a -- b -->" },
-    { store: store.comment },
-  ),
-  malformed(
-    "comment-hyphen-end",
-    "a comment ending in '--->' ([15] Comment)",
-    { prolog: "<!-- a --->" },
-    { store: store.comment },
-  ),
+  malformed("comment-double-hyphen", "'--' inside a comment ([15] Comment)", {
+    prolog: "<!-- a -- b -->",
+  }),
+  malformed("comment-hyphen-end", "a comment ending in '--->' ([15] Comment)", {
+    prolog: "<!-- a --->",
+  }),
   malformed(
     "comment-double-hyphen-in-text",
     "'--' inside a comment in the title ([15] Comment)",
     { title: "a<!-- b -- c -->d" },
-    { store: store.comment },
   ),
   malformed(
     "comment-overlap",

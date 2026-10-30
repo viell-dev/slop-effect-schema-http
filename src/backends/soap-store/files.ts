@@ -112,7 +112,6 @@ export const routes = (store: Store): ReadonlyArray<Route> => [
     handle: (_request, context) => {
       const document = store.byId(context.params["id"] ?? "");
       if (document === undefined) return plain(404, "Not Found");
-      const boundary = `DocVaultBundle-${document.id}-${document.version}`;
       const metadata = JSON.stringify({
         id: document.id,
         name: document.name,
@@ -123,19 +122,41 @@ export const routes = (store: Store): ReadonlyArray<Route> => [
         modified: dateTime(document.modified),
       });
       const fileName = document.name.replace(/"/g, "%22");
-      return {
-        status: 200,
-        lines: [["Content-Type", `multipart/form-data; boundary=${boundary}`]],
-        body: Buffer.concat([
+      const parts = [
+        Buffer.from(
+          'Content-Disposition: form-data; name="metadata"; filename="metadata.json"\r\n' +
+            `Content-Type: application/json\r\n\r\n${metadata}`,
+          "utf8",
+        ),
+        Buffer.concat([
           Buffer.from(
-            `--${boundary}\r\nContent-Disposition: form-data; name="metadata"; filename="metadata.json"\r\n` +
-              `Content-Type: application/json\r\n\r\n${metadata}\r\n` +
-              `--${boundary}\r\nContent-Disposition: form-data; name="content"; filename="${fileName}"\r\n` +
+            `Content-Disposition: form-data; name="content"; filename="${fileName}"\r\n` +
               `Content-Type: ${document.contentType}\r\n\r\n`,
             "utf8",
           ),
           document.content,
-          Buffer.from(`\r\n--${boundary}--\r\n`, "utf8"),
+        ]),
+      ];
+      // RFC 2046 section 5.1.1: the boundary must not occur in any part, so when a part holds the
+      // usual one, the bundle takes the first numbered variant that none holds.
+      const usual = `DocVaultBundle-${document.id}-${document.version}`;
+      let boundary = usual;
+      for (
+        let attempt = 2;
+        parts.some((part) => part.includes(`--${boundary}`, 0, "utf8"));
+        attempt++
+      )
+        boundary = `${usual}-${attempt}`;
+      return {
+        status: 200,
+        lines: [["Content-Type", `multipart/form-data; boundary=${boundary}`]],
+        body: Buffer.concat([
+          ...parts.flatMap((part) => [
+            Buffer.from(`--${boundary}\r\n`, "utf8"),
+            part,
+            Buffer.from("\r\n", "utf8"),
+          ]),
+          Buffer.from(`--${boundary}--\r\n`, "utf8"),
         ]),
       };
     },
