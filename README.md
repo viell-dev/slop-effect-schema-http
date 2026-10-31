@@ -21,8 +21,8 @@ arrive through pull requests into this branch.
 
 ## Running the suite
 
-Use the Node.js version in `.nvmrc` and the npm it bundles; `package.json` requires npm 11.19 or
-later.
+Use the Node.js version in [.nvmrc](./.nvmrc) and the npm it bundles; [package.json](./package.json)
+declares the required npm version. Select Node from this checkout with `fnm use` or `nvm use`.
 
 ```sh
 npm ci
@@ -39,12 +39,13 @@ Each run writes a JUnit report to `artifacts/junit-node.xml` or `artifacts/junit
 `npm run test:catalogue` then reads both. To run part of the suite, use
 `npx vitest run <file> --project node` (or `browser`).
 
-CI runs all four lanes in one job, the `suite` check, with a 20-minute limit. At c0d84d0 the whole
-job took about two minutes on GitHub's Ubuntu runner; split the packed and app lanes into their own
-job if it ever nears the limit.
+CI runs all four lanes in one job, the `suite` check, with a 20-minute limit. Split the packed and
+app lanes into their own job if the suite nears that limit.
 
 `.npmrc` sets `ignore-scripts=true`, so no dependency's install script runs; none of the current
-dependencies needs one. Commit `package-lock.json` with any dependency change.
+dependencies needs one. Keep it, and review any dependency that needs an install script before
+adding an exception. It also skips `pre` and `post` scripts, so do not add them. Commit
+`package-lock.json` with any dependency change.
 
 `library-ref` names the library commit under test. `npm run library` writes that commit's `src`
 tree into `.library/` using Git alone, and the suite imports the library from that source. To test
