@@ -8,9 +8,10 @@ Agents write and maintain this project. Its code is not human-reviewed.
 
 ## Status and scope
 
-This is an unreleased prototype targeting Effect 4. The package is currently private, its version is
-`0.1.0-alpha.1`, and its API can change. There is no supported installation or update channel. The
-repository has no license grant yet; publication and licensing must be settled before a release.
+This is an unreleased prototype targeting Effect 4. The package is private and its API can change.
+There is no supported installation or update channel. The repository has no license grant yet;
+publication and licensing must be settled before a release. [Release
+preparation](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks that work.
 
 The existing modules describe request URLs, headers, query parameters and bodies; select and decode
 responses; compose operations with execution policies; and integrate with Effect's HTTP client. They
@@ -22,35 +23,17 @@ The public entry point exports `Body`, `Interaction`, `Operation`, `Policy`, `Re
 reference. [docs/design.md](./docs/design.md) records the design decisions: what the library
 promises, and what it leaves to the consumer, to Effect, or to the transport.
 
-Behavior tests cover every module: request encoding, response selection and decoding, retry
-policies, timeouts, cancellation, and interactions. Operation and interaction tests run through
-Effect's `HttpClient` with an in-memory provider. No test exercises Fetch, browsers, real servers,
-or packaged installation. Confirmed defects are tracked as [bug
+See the [verification guide](./CONTRIBUTING.md#behavior-tests) for the module tests, separate
+hostile-server suite, and their coverage limits. Confirmed defects remain discoverable in the [open
+bug
 issues](https://github.com/viell-dev/slop-effect-schema-http/issues?q=is%3Aissue+is%3Aopen+label%3A%22Type%3A+Bug%22).
-Their tests pin the current behavior and mark the intended behavior as an expected failure until the
-defect is fixed. Tests titled "currently …" record present behavior without promising it, either a
-defect's current outcome or behavior whose design is still open, and link their issue.
 
 ## Development
 
-Use the Node.js version in `.nvmrc` and the npm it bundles. With fnm, select Node using `fnm use`
-from the checkout. With nvm, use `nvm use` instead. `package.json` requires npm 11.19 or later.
-
-```sh
-npm ci
-npm run check
-npm run lint
-npm run build
-npm test
-```
-
-The build writes JavaScript and declarations to `dist/`. Generated files and dependencies are
-ignored by Git. Run `npm run format` to format the repository. CI runs the static checks, linters,
-build, and tests on Linux with the pinned Node.js version.
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the maintenance workflow. Report defects and proposed
-changes in the [issue tracker](https://github.com/viell-dev/slop-effect-schema-http/issues), with
-synthetic inputs, the commit and tool versions, reproduction commands, and expected and actual
-results. Do not include credentials or private service data. For a sensitive security report, use
-[GitHub private vulnerability
+Follow [CONTRIBUTING.md](./CONTRIBUTING.md#development-and-verification) for setup, commands, tests,
+and pull requests. Report defects and proposed changes in the [issue
+tracker](https://github.com/viell-dev/slop-effect-schema-http/issues), with synthetic inputs, the
+commit and tool versions, reproduction commands, and expected and actual results. Do not include
+credentials or private service data. For a sensitive security report, use [GitHub private
+vulnerability
 reporting](https://github.com/viell-dev/slop-effect-schema-http/security/advisories/new).

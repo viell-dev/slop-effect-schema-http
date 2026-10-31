@@ -6,9 +6,18 @@ maintenance cost; a filed request is not a commitment to implement it.
 
 ## Development and verification
 
-Use the Node.js version in `.nvmrc` with the npm it bundles; `package.json` requires npm 11.19 or
-later. Install with `npm ci`, which installs exactly what `package-lock.json` records. Existing
-commands are:
+Use the Node.js version in [.nvmrc](./.nvmrc) with the npm it bundles. From the checkout, select it
+with `fnm use` or `nvm use`. [package.json](./package.json) declares the required npm version and
+available scripts. Install with `npm ci`, which installs exactly what `package-lock.json` records,
+then run the required checks:
+
+```sh
+npm ci
+npm run check
+npm run lint
+npm run build
+npm test
+```
 
 - `npm run check`: TypeScript and formatting checks, including the type-level assertions in tests.
 - `npm run lint`: Oxlint, ESLint, and Markdown linting.
@@ -50,12 +59,29 @@ If the intended behavior is a design question, write only the "currently …" pi
 discussion issue. Do not encode the answer as a test. Pin a type-level limitation with
 `@ts-expect-error` and a linked issue. Do not weaken an assertion to make a test pass.
 
-The suite does not exercise Fetch, browsers, real servers, or packaged installation. It checks the
-library's own header-line normalization and Effect's parsing of synthetic responses, but not how a
-transport joins repeated request headers, follows redirects, stores and sends cookies, or enforces
-CORS. Server-backed integration tests are tracked in [issue
-#4](https://github.com/viell-dev/slop-effect-schema-http/issues/4). Runtime behavior outside these
-tests remains unverified.
+The tests on `main` cover every module, including request encoding, response selection and decoding,
+retry policies, timeouts, cancellation, and interactions. They check the library's own header-line
+normalization and Effect's parsing of synthetic responses. They do not exercise Fetch, browsers,
+real servers, or packaged installation.
+
+### Hostile-server integration tests
+
+The separate [`hostile-servers-test`
+branch](https://github.com/viell-dev/slop-effect-schema-http/tree/hostile-servers-test) tests the
+public API over real sockets against synthetic backends. It has its own history and never merges
+into `main`; suite changes use task branches and pull requests targeting that branch.
+
+Follow its
+[README](https://github.com/viell-dev/slop-effect-schema-http/blob/hostile-servers-test/README.md#running-the-suite)
+for setup, choosing the library commit under test, and running the Node, Chromium, packed-package,
+and built-app lanes. Its
+[catalogue](https://github.com/viell-dev/slop-effect-schema-http/blob/hostile-servers-test/CATALOGUE.md)
+maps scenarios to tests, observed limits, and defect issues. Coverage is specific to the tested
+commit, provider, and lane; do not extrapolate cookie, redirect, header, or CORS behavior between
+platforms. The packed lane uses the suite's dependencies; verification in an isolated consumer
+remains tracked in [#15](https://github.com/viell-dev/slop-effect-schema-http/issues/15).
+
+## Pull requests
 
 Create a task branch from `main` and submit a pull request. Main requires pull requests, passing CI,
 and resolved review conversations, including for administrators. Keep dependencies locked and follow
@@ -82,7 +108,8 @@ depends on the answer. Blocked work links its dependency. The catalog in
 There is no release or publishing workflow yet. Release preparation must settle licensing,
 distribution, supported environments, and a stable release goal with the owner. Keep changing
 features in alpha; use beta once that goal is feature complete, and RC only for a candidate intended
-to become the exact stable release.
+to become the exact stable release. [Issue
+#2](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks release readiness.
 
 Before publication, establish behavior tests, package installation checks, user-facing API examples,
 release instructions, change history, and the required documentation site for general use. The
