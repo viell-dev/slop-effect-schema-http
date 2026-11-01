@@ -64,7 +64,7 @@ export interface Config {
    */
   readonly tracePropagation?: boolean | undefined;
   /** An explicit cookie jar shared by this service's operations (`HttpClient.withCookiesRef`). */
-  readonly jar?: Ref.Ref<Cookies.Cookies> | undefined;
+  readonly jar?: Ref.Ref<ReadonlyArray<Cookies.Cookie>> | undefined;
   /**
    * Node only: send this `Origin`, as a browser page on that origin would, so the service answers
    * with its CORS headers. Browsers set `Origin` themselves and forbid scripts from setting it.

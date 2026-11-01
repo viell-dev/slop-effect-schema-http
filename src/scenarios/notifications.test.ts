@@ -35,7 +35,8 @@ const pageOrigin =
 /**
  * The one place this file starts the service. The browser lane's page and the backend are on
  * different sites (`localhost` and a loopback address), so the XSRF cookie is issued with
- * `SameSite=None`, the service's setting for cross-site deployments, unless a test overrides it.
+ * `SameSite=None`, the service's setting for cross-site deployments. Node uses `Lax` because
+ * Effect's jar correctly refuses Secure cookies over these HTTP fixtures.
  */
 const start = (
   options: { readonly [key: string]: Json } = {},
@@ -47,7 +48,7 @@ const start = (
       acceptedToken: fixture.token,
       signingSecret: fixture.secret,
       allowedOrigins: [pageOrigin],
-      csrfCookieSameSite: "None",
+      csrfCookieSameSite: lane.name === "browser" ? "None" : "Lax",
       ...options,
     },
     cors === undefined ? undefined : { cors },
@@ -60,7 +61,7 @@ const start = (
  * cross-origin requests.
  */
 const connect = (backend: Backend, config: Partial<Notify.Config> = {}) =>
-  Effect.map(Ref.make(Cookies.empty), (jar) =>
+  Effect.map(Ref.make<ReadonlyArray<Cookies.Cookie>>([]), (jar) =>
     Notify.make({
       baseUrl: backend.origin,
       token: Effect.succeed(Option.some(fixture.token)),
@@ -72,8 +73,9 @@ const connect = (backend: Backend, config: Partial<Notify.Config> = {}) =>
   );
 
 /** One cookie jar for several Node clients of the same page; the browser's store is shared anyway. */
-const sharedCookies = Effect.map(Ref.make(Cookies.empty), (jar) =>
-  lane.name === "node" ? { jar } : {},
+const sharedCookies = Effect.map(
+  Ref.make<ReadonlyArray<Cookies.Cookie>>([]),
+  (jar) => (lane.name === "node" ? { jar } : {}),
 );
 
 /** Effect's Fetch provider with `credentials: "include"`, which Node's fetch ignores. */
@@ -187,7 +189,7 @@ describe(`notification service (${lane.name})`, () => {
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
-          const jar = yield* Ref.make(Cookies.empty);
+          const jar = yield* Ref.make<ReadonlyArray<Cookies.Cookie>>([]);
           const notify = yield* connect(
             backend,
             lane.name === "node" ? { jar } : {},
@@ -198,8 +200,8 @@ describe(`notification service (${lane.name})`, () => {
           if (lane.name === "node") {
             // Node's fetch shows Set-Cookie to the consumer, and the explicit jar keeps it.
             expect(session.cookie).toBe(encodeURIComponent(session.token));
-            const kept = Option.getOrUndefined(
-              Cookies.get(yield* Ref.get(jar), "XSRF-TOKEN"),
+            const kept = (yield* Ref.get(jar)).find(
+              (cookie) => cookie.name === "XSRF-TOKEN",
             );
             expect(kept?.valueEncoded).toBe(session.cookie);
           } else {
@@ -277,6 +279,44 @@ describe(`notification service (${lane.name})`, () => {
             expect(expectTag(result, "CsrfRejected").value).toBe(
               "cookie-missing",
             );
+          }
+        }),
+    );
+
+    it.live(
+      "[AUTH-5] Node's explicit jar withholds Secure cookies over HTTP; Chromium accepts them on loopback with credentials included",
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start({ csrfCookieSameSite: "None" });
+          const notify = yield* connect(backend);
+          const session = yield* viaFetch(notify.csrf.execute(undefined));
+          const result = yield* viaFetch(
+            notify.subscribe.execute({
+              csrf: session,
+              subscription: { channel: "billing", address: "a@example.test" },
+            }),
+          );
+          const [bootstrap, post, ...rest] = yield* backend.ledger;
+          expect(rest).toEqual([]);
+          expect([
+            bootstrap?.method,
+            bootstrap?.target,
+            post?.method,
+            post?.target,
+          ]).toEqual(["GET", "/v2/session/csrf", "POST", "/v2/subscriptions"]);
+          expect(headerValues(post!.lines, "x-xsrf-token")).toEqual([
+            session.token,
+          ]);
+          if (lane.name === "node") {
+            expect(cookiePairs(post!)).toEqual([]);
+            expect(expectTag(result, "CsrfRejected").value).toBe(
+              "cookie-missing",
+            );
+          } else {
+            expect(cookiePairs(post!)).toEqual([
+              `XSRF-TOKEN=${encodeURIComponent(session.token)}`,
+            ]);
+            expectTag(result, "Created");
           }
         }),
     );

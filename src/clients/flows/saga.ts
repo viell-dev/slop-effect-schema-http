@@ -51,7 +51,7 @@ export interface Config {
   /** How the notification service's XSRF cookie travels; see the notification contract. */
   readonly csrfCookie: "by-hand" | "transport";
   /** An explicit cookie jar for the XSRF cookie, where the transport keeps none. */
-  readonly jar?: Ref.Ref<Cookies.Cookies> | undefined;
+  readonly jar?: Ref.Ref<ReadonlyArray<Cookies.Cookie>> | undefined;
 }
 
 export interface Input {

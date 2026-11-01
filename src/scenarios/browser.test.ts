@@ -224,10 +224,10 @@ describe(`transport and credentials (${lane.name})`, () => {
     );
 
     it.live(
-      "[TRN-1] HttpClient.withCookiesRef, one jar for every service: Node's jar keeps every cookie and sends each service's cookies to the other; in Chromium it never sees one",
+      "[TRN-1] HttpClient.withCookiesRef shares cookies between Node services on the same host; in Chromium the jar never sees one",
       (context: TestContext) =>
         Effect.gen(function* () {
-          const jar = yield* Ref.make(Cookies.empty);
+          const jar = yield* Ref.make<ReadonlyArray<Cookies.Cookie>>([]);
           // The application's one HttpClient, with an explicit cookie jar over Effect's Fetch.
           const jarred = Layer.effect(
             HttpClient.HttpClient,
@@ -266,15 +266,19 @@ describe(`transport and credentials (${lane.name})`, () => {
             expect([late, later]).toEqual([[], []]);
             expect(headerValues(grant!.lines, "cookie")).toEqual([]);
             if (lane.name === "node") {
-              expect(Object.keys(kept.cookies)).toEqual([
+              expect(kept.map((cookie) => cookie.name)).toEqual([
                 "IDPSESSION",
                 "IDPLB",
                 "XSRF-TOKEN",
               ]);
               const sso = `IDPSESSION=${Option.getOrThrow(granted.value.session)}; IDPLB=node-3`;
               const all = `${sso}; ${xsrf(csrf.token)}`;
-              // The jar is not scoped by origin: the identity provider's cookies go to the
-              // notification service, and its XSRF cookie back to the identity provider.
+              // Cookie scope is host/path, not origin: these services use different ports on
+              // the same host, with Path=/, so their cookies travel to both services.
+              expect(identity.origin).not.toBe(backend.origin);
+              expect(new URL(identity.origin).hostname).toBe(
+                new URL(backend.origin).hostname,
+              );
               expect(headerValues(bootstrap!.lines, "cookie")).toEqual([sso]);
               expect(headerValues(post!.lines, "cookie")).toEqual([all]);
               expect(headerValues(me!.lines, "cookie")).toEqual([all]);
@@ -282,7 +286,7 @@ describe(`transport and credentials (${lane.name})`, () => {
             } else {
               // Chromium hides Set-Cookie from the jar, and under `same-origin` credentials sends
               // no cookie of its own across origins.
-              expect(Cookies.isEmpty(kept)).toBe(true);
+              expect(kept).toEqual([]);
               for (const recorded of [bootstrap!, post!, me!])
                 expect(headerValues(recorded.lines, "cookie")).toEqual([]);
               expect(expectTag(result, "CsrfRejected").value).toBe(

@@ -142,7 +142,7 @@ const start = {
       acceptedToken: TOKEN,
       signingSecret: SECRET,
       allowedOrigins: [pageOrigin],
-      csrfCookieSameSite: "None",
+      csrfCookieSameSite: lane.name === "browser" ? "None" : "Lax",
       ...options,
     }),
   store: (options: { readonly [key: string]: Json } = {}) =>
@@ -191,7 +191,7 @@ const counted = (source: Credentials.Source) => {
 
 /** A notification client over the one source; Node keeps the XSRF cookie in an explicit jar. */
 const notifyClient = (backend: Backend, source: Credentials.Source) =>
-  Effect.map(Ref.make(Cookies.empty), (jar) =>
+  Effect.map(Ref.make<ReadonlyArray<Cookies.Cookie>>([]), (jar) =>
     Notify.make({
       baseUrl: backend.origin,
       token: Credentials.notifications(source),
@@ -782,7 +782,7 @@ const sixServices = (
     const portal = yield* start.portal(store);
     const notifications = yield* start.notifications(options.notifications);
     const credentials = yield* Credentials.source(TOKEN);
-    const jar = yield* Ref.make(Cookies.empty);
+    const jar = yield* Ref.make<ReadonlyArray<Cookies.Cookie>>([]);
     const saga = Saga.make({
       origins: {
         identity: identity.origin,
