@@ -1,0 +1,52 @@
+{
+  "description": "Stock nginx 1.30.6 default merge_slashes routing between global and individual task histories, with original and normalized URI diagnostics.",
+  "host": "business.example",
+  "port": 80,
+  "probe": { "method": "GET", "target": "/v2/tasks/history" },
+  "client": "scripts/record.mjs: raw HTTP/1.1 requests over a TCP socket to the container's ephemeral loopback port.",
+  "substitutions": [
+    "Current nginx 1.30.6 stands in for the service's 2016 gateway. merge_slashes is deliberately unset to test its default-on behavior; this is not a recording of that historical deployment.",
+    "Two exact-match locations return synthetic service-shaped JSON histories. nginx itself normalizes the URI and selects the location; no application code merges slashes. Authentication and the full business application are outside this probe.",
+    "X-Request-Uri, X-Normalized-Uri and X-Query-String are diagnostic response headers added only for this recording. They expose nginx variables; the imitating service does not promise them. Empty query strings omit X-Query-String.",
+    "The scope is adjacent-slash routing and preservation of slashes in query data. Percent decoding, dot segments, trailing-slash redirects and other nginx normalization rules are not covered."
+  ],
+  "versions": {
+    "nginx": ["nginx", "-v"],
+    "configuration": ["nginx", "-T"]
+  },
+  "exchanges": [
+    {
+      "name": "global-control",
+      "description": "The ordinary global-history path selects both tasks.",
+      "request": { "method": "GET", "target": "/v2/tasks/history" }
+    },
+    {
+      "name": "empty-id",
+      "description": "An empty task id leaves two slashes and selects global history after nginx normalization.",
+      "request": { "method": "GET", "target": "/v2/tasks//history" }
+    },
+    {
+      "name": "many-slashes",
+      "description": "Several adjacent runs compress before exact location selection.",
+      "request": { "method": "GET", "target": "/v2///tasks////history" }
+    },
+    {
+      "name": "query-slashes",
+      "description": "Path slashes merge while slash runs in the raw query stay intact.",
+      "request": {
+        "method": "GET",
+        "target": "/v2/tasks//history?audit=//kept///"
+      }
+    },
+    {
+      "name": "task-control",
+      "description": "A valid task id selects only its individual history.",
+      "request": { "method": "GET", "target": "/v2/tasks/T-1001/history" }
+    },
+    {
+      "name": "task-slashes",
+      "description": "Repeated slashes around a valid task id still select that individual history.",
+      "request": { "method": "GET", "target": "/v2//tasks///T-1001//history" }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+HTTP/1.1 200 OK
+Server: nginx/1.30.6
+Date: Sun, 01 Nov 2026 05:02:54 GMT
+Content-Type: application/json
+Content-Length: 68
+Connection: close
+X-Request-Uri: /v2//tasks///T-1001//history
+X-Normalized-Uri: /v2/tasks/T-1001/history
+
+{"events":[{"task":"T-1001","action":"created","at":1700000000000}]}
