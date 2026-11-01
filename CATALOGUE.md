@@ -599,8 +599,16 @@ the client`
   - Helper: five `[PAY-4c]` tests of strict ISO-8859-1, record splitting, field slicing, padded
     text and zero-padded counts. WHATWG's `latin1` label is windows-1252, so the codec maps bytes
     itself and refuses the C0 and C1 ranges.
-  - Not recorded: the layout uses only unsigned, zero-padded fields, so a COBOL writer would add
-    nothing the suite's writer lacks (recordings/README.md).
+  - Independent referee (#47): [a hand-authored binary file](./fixtures/gateway/README.md), made
+    from the service page in a fresh context that read neither implementation. Backend conformance
+    compares the HTTP download and XML-RPC payload byte for byte; the consumer decodes to the
+    worksheet's values and re-encodes to the file. Both contexts copied the inputs separately.
+    These disk-fixture checks run in Node; the existing scenarios above run in both lanes.
+    Corrupt count, total, padding and record length fail independently. Deliberately mapping `X`
+    to paid in the consumer or writing underscores as title padding in the backend also fails
+    the golden comparison.
+  - Not recorded from a mainframe or COBOL writer: the hand-made referee checks the documented
+    unsigned, zero-padded layout; it does not establish conformance with real mainframe software.
 - **PAY-5** CSV for a German spreadsheet with BOM, CRLF, semicolons, and a decimal comma,
   round-tripped with the BOM written back on encode. Status: tested.
   - `[PAY-5] the German sheet round-trips byte for byte, BOM included, and the import accepts it`
@@ -623,6 +631,9 @@ quotes`
   - Decoded by the consumer (EXT-8a): its base64 schema accepted only MIME::Base64's layout, so
     XMLRPC::Lite's extract was a decode error. The specification gives base64 no line layout, so
     the schema now ignores line feeds wherever they fall and still refuses any other character.
+  - Independent fixed-width referee (#47, PAY-4c): a Node conformance check compares the embedded
+    bytes with the hand-made file, and both Node providers decode the RPC result to the worksheet
+    and encode it back to that file. The real-Perl recording above remains the framing referee.
 - **VAL-1c** XML-RPC's separator-free date, bare `YYYYMMDD`, and a zero date meaning null. Status:
   tested.
   - `[VAL-1c] zero dates decode to none and others to UTC instants across XML-RPC, pipe and fixed
@@ -788,6 +799,10 @@ prefix.
   - `[APP-2] the saga extracts, translates, writes, archives, publishes, announces and confirms across six services`
     (every ledger; the archived, published and forwarded bytes equal the gateway's download byte
     for byte; every search hit decodes back to the item it was written from)
+  - Independent fixed-width referee (#47, PAY-4c): both Node providers run the saga's first-step
+    download operation against the hand-made fixture's inputs, checking decoded values, exact
+    bytes, file facts and the authenticated request. This isolates the first step; the full saga
+    and its browser lane remain covered by the existing tests above.
   - `[APP-2] a store fault at the archive step compensates the created tasks exactly once`
     (soap-store `failStore`)
   - `[APP-2] a store fault relayed by the portal facade at the publish step compensates exactly once`
