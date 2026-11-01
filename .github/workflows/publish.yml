@@ -1,0 +1,72 @@
+name: Publish qualified npm package
+
+on:
+  workflow_dispatch:
+    inputs:
+      qualification_run:
+        description: Successful Release qualification run for this exact main commit
+        required: true
+        type: string
+      publish:
+        description: Publish to npm (false only verifies and dry-runs)
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-release
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Verify qualification producer and download its exact assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUALIFICATION_RUN: ${{ inputs.qualification_run }}
+        run: |
+          node --input-type=module -e "import assert from 'node:assert/strict'; assert.match(process.env.QUALIFICATION_RUN, /^[0-9]+$/);"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUALIFICATION_RUN" > /tmp/qualification.json
+          node scripts/check-qualification.mjs /tmp/qualification.json
+          gh run download "$QUALIFICATION_RUN" --repo "$GITHUB_REPOSITORY" --name candidate-ubuntu-latest --dir artifacts
+      - name: Check bytes and select npm tag
+        id: package
+        run: |
+          node --input-type=module -e "import assert from 'node:assert/strict'; import fs from 'node:fs'; import p from './package.json' with {type:'json'}; assert.match(p.version, /^0\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?$/); const m=JSON.parse(fs.readFileSync('artifacts/'+p.version+'/manifest.json')); assert.equal(m.sourceCommit, process.env.GITHUB_SHA); assert.equal(m.name, p.name); assert.equal(m.version, p.version); const file='artifacts/'+p.version+'/'+p.name+'-'+p.version+'.tgz'; fs.appendFileSync(process.env.GITHUB_OUTPUT, 'file='+file+'\ntag='+(p.version.includes('-')?p.version.split('-')[1].split('.')[0]:'latest')+'\nversion='+p.version+'\n');"
+          cd "artifacts/$(node -p 'require("./package.json").version')"
+          sha256sum --check SHA256SUMS
+      - if: ${{ !inputs.publish }}
+        env:
+          TARBALL: ${{ steps.package.outputs.file }}
+          NPM_TAG: ${{ steps.package.outputs.tag }}
+        run: npm publish "./$TARBALL" --dry-run --ignore-scripts --access public --tag "$NPM_TAG"
+      - if: ${{ inputs.publish }}
+        env:
+          PUBLISH_ENABLED: ${{ vars.NPM_PUBLISH_ENABLED }}
+          TARBALL: ${{ steps.package.outputs.file }}
+          NPM_TAG: ${{ steps.package.outputs.tag }}
+        run: |
+          test "$PUBLISH_ENABLED" = true
+          npm publish "./$TARBALL" --ignore-scripts --access public --provenance --tag "$NPM_TAG"
+      - if: ${{ inputs.publish }}
+        env:
+          RELEASE_VERSION: ${{ steps.package.outputs.version }}
+        run: node scripts/verify-registry.mjs "artifacts/$RELEASE_VERSION/manifest.json"

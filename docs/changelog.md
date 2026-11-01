@@ -1,16 +1,24 @@
 # Change history
 
-## Unreleased alpha
+## 0.1.0-rc.1 — 2026-11-01
 
-There are no published releases or supported update channels. The package version in the site
-navigation identifies development metadata; it does not identify a supported release.
+First installable candidate for `0.1.0`, distributed through GitHub Releases only. No npm package
+has been published. This candidate is intended to become stable with a version and release-metadata
+update after the [publication
+prerequisites](https://github.com/viell-dev/slop-effect-schema-http/issues/2) are complete.
 
-The current prototype provides consumer-owned request and response contracts, finite body codecs,
-execution policies, header-line interoperability, replaceable URL encoding and scoped interactions.
-Current maintenance has added isolated tarball verification, required real-socket regressions,
-explicit middleware/encoding/browser guidance, and an MIT license.
+- Consumer-owned request and response contracts, finite body codecs, ordered response selection,
+  retry policies, header-line interoperability, replaceable URL encoding and scoped interactions.
+- Preserve literal question marks at the start of declared query keys, including bare keys
+  ([#66](https://github.com/viell-dev/slop-effect-schema-http/issues/66)).
+- Installable ESM package with strict declarations, all public subpath exports, MIT license and
+  source maps; remove the development-only `private` flag.
+- Checksummed tarball and runnable synthetic consumer example, verified in an isolated installation.
+  Release qualification covers Windows/Linux, Effect 4.0.7/4.1.1 package consumers, and all four
+  hostile-server lanes.
+- Published installation, compatibility, recovery and release procedures.
 
-Future release entries will identify their version, compatibility changes, fixes and remaining
-limits. [Release readiness](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks
-the prerequisites for distribution. [Version policy](./versions.md) explains what this site
-describes.
+The [limits](./limits.md) remain part of the contract: finite bodies, client-owned transport and
+browser policy, no server generation or general cache. The separate [human
+check](https://github.com/viell-dev/slop-effect-schema-http/issues/67) is required before stable
+publication; automated qualification does not replace it.

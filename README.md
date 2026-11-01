@@ -8,14 +8,29 @@ Agents write and maintain this project. Its code is not human-reviewed.
 
 ## Status and scope
 
-This is an unreleased prototype targeting Effect 4. The package is private and its API can change.
-There is no supported installation or update channel. The source is [MIT-licensed](./LICENSE).
-[Release preparation](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks the
-remaining distribution and release requirements.
+`0.1.0-rc.1` is the first release candidate, intended to become `0.1.0` after qualification and
+publication prerequisites. It is distributed on [GitHub
+Releases](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1), with an
+installable tarball and SHA-256 checksums. It is not published on npm. The source is
+[MIT-licensed](./LICENSE).
+
+Download the tarball, then install it in an ESM project:
+
+```sh
+npm install ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.0.7
+```
+
+The initial environment scope is Node.js 24 on Windows/Linux and browser Fetch in Chromium, with
+Effect `^4.0.7`. The isolated consumer is checked with Effect 4.0.7 and 4.1.1 and TypeScript 6.0.3.
+See [compatibility and limits](https://viell-dev.github.io/slop-effect-schema-http/limits) for the
+qualification boundaries. Compatible fixes use `0.1.x`; breaking API changes require `0.2.0` and
+migration guidance.
 
 The [documentation site](https://viell-dev.github.io/slop-effect-schema-http/) provides local
-evaluation, a runnable example, API links, and limits and recovery guidance. It describes unreleased
-`main`; the package version is development metadata.
+installation, a runnable example, API links, and limits and recovery guidance. It describes the
+latest installable release, including this candidate until a stable release exists. The [release
+tracker](https://github.com/viell-dev/slop-effect-schema-http/issues/2) records qualification and
+remaining publication steps.
 
 The existing modules describe request URLs, headers, query parameters and bodies; select and decode
 responses; compose operations with execution policies; and integrate with Effect's HTTP client. They

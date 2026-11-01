@@ -1,6 +1,6 @@
 # Contributing
 
-This project is an unreleased, agent-maintained library for consumer-owned HTTP contracts. Read the
+This project is an agent-maintained library for consumer-owned HTTP contracts. Read the
 [README](./README.md) before proposing changes. Requests are assessed for fit and long-term
 maintenance cost; a filed request is not a commitment to implement it.
 
@@ -131,11 +131,10 @@ the package separately from that suite.
 
 ## Documentation site
 
-VitePress `2.0.0-alpha.21` is pinned exactly; it is a prerelease. The site in `docs/` describes
-unreleased `main` until a supported installable release exists. At that point, update the default
-site to that release, label unreleased behavior explicitly, and revise the prototype-status guards
-in `scripts/check-doc-links.mjs` alongside the content. The public [version
-policy](./docs/versions.md) explains this to readers.
+VitePress `2.0.0-alpha.21` is pinned exactly; it is a prerelease. The public default site describes
+the newest stable installable release, or the newest GitHub candidate before stable. See the public
+[version policy](./docs/versions.md) and [release procedure](./RELEASING.md) for deployment and
+current-release corrections.
 
 From the root, after the library build, run:
 
@@ -152,19 +151,15 @@ site, fails on VitePress dead links or missing snippets, and checks rendered int
 anchors and package facts. External links are reviewed separately. `docs:dev` starts the local
 development server; `docs:preview` serves the production build. Keep both on loopback.
 
-Required pull-request CI runs the example and site build with read-only permissions. A successful
-`main` push uploads that build and deploys through the `github-pages` environment; only the separate
-deployment job receives Pages/OIDC permissions. The environment permits `main` deployments only.
-Workflow concurrency cancels superseded runs for the same ref. The configured base and package
-homepage use `https://viell-dev.github.io/slop-effect-schema-http/`.
+Required pull-request CI runs the example and site build with read-only permissions. Main pushes
+verify changes without deploying unreleased documentation. The separate `pages.yml` workflow
+validates a published tag or a documentation-only descendant, builds it, and deploys through the
+main-only `github-pages` environment. Only its deployment job receives Pages/OIDC permissions.
 
-Each built page contains a `documentation-commit` meta tag. Local dirty builds carry `-dirty`; CI
-rejects that marker. Record the deployed commit and Actions run in the delivery PR, then verify the
-published home page and navigation, assets, and that metadata against the deployed commit. Update
-the repository homepage only after the site is live. Documentation corrections use a normal pull
-request and new deployment; keep software tags in place. To recover a failed deployment, fix the
-cause and rerun the verified commit or deliver a corrective PR, then verify the resulting site. No
-package publication occurs in this workflow.
+Each page contains `documentation-commit` and `library-version` meta tags. Local dirty builds carry
+`-dirty`; CI rejects that marker. Record and verify the deployed commit and Actions run. Keep
+software tags in place when correcting documentation. No package publication occurs in this
+workflow.
 
 ## Pull requests
 
@@ -190,20 +185,20 @@ depends on the answer. Blocked work links its dependency. The catalog in
 
 ## Before a release
 
-The source is [MIT-licensed](./LICENSE). There is no release or publishing workflow yet. Release
-preparation must settle distribution, supported environments, and a stable release goal with the
-owner. Keep changing features in alpha; use beta once that goal is feature complete, and RC only for
-a candidate intended to become the exact stable release. [Issue
-#2](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks release readiness.
+Follow [RELEASING.md](./RELEASING.md). The agreed `0.1.0` goal is the existing finite-body API, ESM,
+Node 24 on Windows/Linux and Chromium Fetch with Effect 4. The [release
+tracker](https://github.com/viell-dev/slop-effect-schema-http/issues/2) owns evidence and remaining
+work. `0.1.0-rc.1` is a GitHub-only candidate; removing `private` is not an instruction to publish
+on npm.
 
-Before publication, establish behavior tests, package installation checks, user-facing API examples,
-release instructions, change history, and the required documentation site for general use. The
-public default documentation describes the latest installable release; label unreleased behavior
-explicitly. Verify the exact release commit and complete artifacts before publishing, then verify
-downloads and installation. Documentation corrections must not move software tags.
+Every release needs exact-commit checks, isolated installation, all hostile lanes, an independent
+deep review, verified artifacts and public documentation. A release may use prior review evidence
+for unchanged code, with scope and limits recorded. Fix material findings and independently review
+the affected changes; no review substitutes for required checks.
 
 Before the first stable release, a person must install a representative candidate and try the main
-library workflow. Agents prepare an installable candidate, synthetic example, numbered tasks and
-expected results, and an assigned issue requesting the person's actual usability report. Stable
-publication waits for that report and resolution of blockers. Repeat a focused human pass after
-substantial API or workflow changes; automated checks and agent review do not satisfy this gate.
+library workflow. Agents supply the build, synthetic inputs and numbered tasks in an assigned issue.
+Stable publication waits for the actual usability report and resolution of blockers. Repeat a
+focused human pass after substantial API or workflow changes. Automated consumer tests and agent
+reviews cannot satisfy this gate. The candidate request is
+[#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67).

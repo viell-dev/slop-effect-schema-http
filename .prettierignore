@@ -4,3 +4,4 @@ package-lock.json
 **/*.md
 docs/.vitepress/cache/
 docs/.vitepress/dist/
+artifacts/

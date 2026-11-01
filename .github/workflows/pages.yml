@@ -1,0 +1,67 @@
+name: Release documentation
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Newest stable release (or newest candidate before stable)
+        required: true
+        type: string
+      correction:
+        description: Optional documentation-only correction commit, descending from the tag
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-documentation
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.correction || inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify published version and correction scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          test "$RELEASE_TAG" = "$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --slurp --jq 'add | map(select(.draft == false)) | sort_by(.published_at) | reverse | (map(select(.prerelease == false)) + map(select(.prerelease == true))) | .[0].tag_name')"
+          node --input-type=module -e "import assert from 'node:assert/strict'; import p from './package.json' with {type:'json'}; assert.equal(p.version, process.env.RELEASE_TAG); assert.match(p.version, /^0\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?$/);"
+          git merge-base --is-ancestor "refs/tags/$RELEASE_TAG" HEAD
+          git diff --name-only "refs/tags/$RELEASE_TAG" HEAD > /tmp/docs-changes.txt
+          node --input-type=module -e "import assert from 'node:assert/strict'; import fs from 'node:fs'; for (const path of fs.readFileSync('/tmp/docs-changes.txt', 'utf8').trim().split('\n').filter(Boolean)) assert.ok(path.startsWith('docs/'), 'Non-documentation change: ' + path);"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run check
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run docs:examples
+      - run: npm run docs:build
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

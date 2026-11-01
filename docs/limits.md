@@ -2,10 +2,17 @@
 
 ## Compatibility and scope
 
-This prototype targets Effect 4. `package.json` owns the accepted peer range; development and the
-isolated consumer currently verify Effect 4.0.7 with the pinned Node.js toolchain. The hostile suite
-also exercises Chromium at its selected library commit. These observations do not establish a
-supported browser, provider or version matrix for a release.
+The initial supported scope is ESM with Node.js 24 on Windows/Linux, or browser Fetch in Chromium.
+Qualification uses Node 24.21.0, TypeScript 6.0.3 and Effect 4.0.7; isolated package consumers also
+check Effect 4.1.1. `package.json` accepts Effect `^4.0.7`, relying on Effect's compatible updates;
+these two tested versions are evidence, not a claim to have tested every future version. Report a
+regression with the exact dependency version and retain a known-good lockfile when upgrading.
+
+The hostile source, Chromium, packed-package and built-app lanes exercise real loopback servers.
+Their browser is pinned by Playwright 1.64.1. The release's qualification run records its exact
+platforms and browser. Other Node majors, macOS, Firefox, Safari, Deno, Bun and CommonJS are outside
+the initial qualification scope. Browser support does not imply support for every bundler or browser
+configuration; provider behavior and browser policy still apply.
 
 Bodies are finite. Streaming bodies are deferred. The library does not provide a transport, server
 generation, runtime, configuration system, or general cache. `Interaction` retains one success for

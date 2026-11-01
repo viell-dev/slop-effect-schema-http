@@ -36,11 +36,11 @@ export default defineConfig({
       { text: "Get started", link: "/getting-started" },
       { text: "Usage", link: "/usage" },
       { text: "API", link: "/api" },
-      { text: `Unreleased ${manifest.version}`, link: "/versions" },
+      { text: manifest.version, link: "/versions" },
     ],
     sidebar: [
       { text: "Overview", link: "/" },
-      { text: "Evaluate the prototype", link: "/getting-started" },
+      { text: "Install and get started", link: "/getting-started" },
       { text: "Describe and execute a request", link: "/usage" },
       { text: "API modules", link: "/api" },
       { text: "Design", link: "/design" },
@@ -53,7 +53,7 @@ export default defineConfig({
     editLink: { pattern: `${repository}/edit/main/docs/:path` },
     outline: [2, 3],
     footer: {
-      message: `Unreleased ${manifest.version} · <a href="${repository}/blob/main/LICENSE">MIT license</a>`,
+      message: `${manifest.version} · <a href="${repository}/blob/main/LICENSE">MIT license</a>`,
       copyright: "Agent-maintained. The code is not human-reviewed.",
     },
   },
