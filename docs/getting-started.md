@@ -7,7 +7,7 @@ directory and Node.js 24. The example uses synthetic values and makes no network
 
 ```sh
 npm init -y
-npm install --ignore-scripts ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.0.7
+npm install --ignore-scripts ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.1.1
 node release-check.mjs
 ```
 
@@ -62,7 +62,7 @@ To try that artifact in a separate project, copy the tarball there and install i
 Effect peer:
 
 ```sh
-npm install ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.0.7
+npm install ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.1.1
 ```
 
 Use the actual filename printed by `npm pack`; metadata in `package.json` owns the version and peer

@@ -30,9 +30,10 @@ anything. Removing `private` makes the artifact publishable; it does not authori
 
    This clears only the local generated `dist/`, then runs type/format/lint checks, a fresh build,
    behavior/socket tests, executable docs, the site/link checks, and a moderate-or-higher dependency
-   audit. It packs once, installs that tarball into an isolated consumer with Effect 4.0.7, verifies
+   audit. It packs once, installs that tarball into an isolated consumer with Effect 4.1.1, verifies
    strict declarations and every export, and executes the synthetic example. It then installs and
-   verifies the **same bytes** with Effect 4.1.1. No package or release is published.
+   verifies the **same bytes** with the Effect 4.0.7 peer floor and a TypeScript 7.0.2 consumer. No
+   package or release is published.
 
    Outputs are under `artifacts/VERSION/`: the `.tgz`, `SHA256SUMS`, `manifest.json` (file list,
    integrity, source commit and tool versions), and `release-check.mjs`. Existing output is refused;
