@@ -34,6 +34,15 @@ does before an exception is added. The setting also skips `pre` and `post` scrip
 those to `package.json`. Add or update a dependency with `npm install`, commit `package-lock.json`
 with `package.json`, and check that `npm ci` still succeeds from a clean checkout.
 
+The root `overrides` entry replaces minimatch 10 with 11.0.1 in development tools to address
+[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249). It crosses the tools'
+declared major-version range; the required checks validate this repository's usage. Remove it when
+ESLint, `@eslint/config-array`, `@typescript-eslint/typescript-estree`, and mdrefine all resolve a
+patched version without it, then rerun the checks and `npm audit`.
+[#49](https://github.com/viell-dev/slop-effect-schema-http/issues/49) records the compatibility
+evidence; [#41](https://github.com/viell-dev/slop-effect-schema-http/issues/41) tracks dependency
+follow-up.
+
 ### Behavior tests
 
 Tests sit beside their module as `src/**/*.test.ts` and use `@effect/vitest`. Shared fixtures live
