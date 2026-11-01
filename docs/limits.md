@@ -20,6 +20,10 @@ Bodies are finite. Streaming bodies are deferred. The library does not provide a
 generation, runtime, configuration system, or general cache. `Interaction` retains one success for
 one interaction. Read [Design](./design.md) for the precise behavior and delegated policies.
 
+Unmatched responses are drained before `UnexpectedResponse` is returned. A server that never ends
+that body can hold the attempt open; set a policy `attemptTimeout` or the caller's whole-operation
+timeout when the service cannot guarantee completion.
+
 Browser Fetch hides some cookies, headers and redirect metadata, and CORS can turn an answer into a
 transport failure after the server has acted. Native middleware can change URL and header
 representations. `Body.text` is lenient UTF-8 through Fetch-backed providers. The relevant
