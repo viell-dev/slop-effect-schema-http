@@ -288,8 +288,21 @@ describe(`notification service (${lane.name})`, () => {
       () =>
         Effect.gen(function* () {
           const backend = yield* start({ csrfCookieSameSite: "None" });
-          const notify = yield* connect(backend);
+          const jar = yield* Ref.make<ReadonlyArray<Cookies.Cookie>>([]);
+          const notify = yield* connect(
+            backend,
+            lane.name === "node" ? { jar } : {},
+          );
           const session = yield* viaFetch(notify.csrf.execute(undefined));
+          if (lane.name === "node") {
+            const kept = yield* Ref.get(jar);
+            expect(kept).toHaveLength(1);
+            expect(kept[0]?.name).toBe("XSRF-TOKEN");
+            expect(kept[0]?.valueEncoded).toBe(
+              encodeURIComponent(session.token),
+            );
+            expect(kept[0]?.options?.secure).toBe(true);
+          }
           const result = yield* viaFetch(
             notify.subscribe.execute({
               csrf: session,
