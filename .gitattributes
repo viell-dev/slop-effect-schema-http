@@ -2,3 +2,5 @@
 # What builds the recording containers keeps LF, which shells and Perl in the containers need.
 recordings/** text eol=lf
 recordings/**/*.http -text
+# Hand-authored binary contract fixtures preserve Latin-1 bytes and fixed-width padding.
+fixtures/**/*.DAT binary
