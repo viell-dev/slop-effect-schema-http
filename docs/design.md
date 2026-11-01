@@ -71,10 +71,20 @@ const users = service(Request.get("users"));
 ```
 
 A query string in a URL passed to `Request.make` or a method helper such as `Request.get` becomes
-raw query declarations. Parsing it keeps a bare key (`?wsdl`) distinct from an empty value
-(`?wsdl=`), and the entries are encoded again during materialization. Whether a declared query
-should instead keep its original encoding is an [open
-question](https://github.com/viell-dev/slop-effect-schema-http/issues/14).
+raw query declarations through form decoding. Parsing splits on `&`, drops empty segments, reads `+`
+as a space, and decodes percent escapes. It keeps a bare key (`?wsdl`) distinct from an empty value
+(`?wsdl=`). Semicolons and additional equals signs inside a value are data, so `?a=1;b=2` renders as
+`?a=1%3Bb%3D2` under the default policy. Every decoded entry is rendered through `UrlEncoding.query`
+during materialization: `?q=a+b` becomes `?q=a%20b`, and `?a=%41` becomes `?a=A`.
+
+This treats a declared query as structured fields that `setQuery`, `removeQuery`, and query schemas
+can edit uniformly. The [decision in
+#14](https://github.com/viell-dev/slop-effect-schema-http/issues/14) keeps one query representation
+and rendering policy, avoiding a second path for untouched literal segments. A custom
+`UrlEncoding.query` receives the decoded entries; the original spelling is already gone. To supply
+opaque query text, start with a request without query declarations and set the native URL text
+through `Request.mapEffect`. Base-URL joining still runs afterwards, and client or provider URL
+processing still applies.
 
 A URL that cannot be rendered or encoded fails with `Request.InvalidRequest`.
 
