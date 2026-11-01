@@ -1,0 +1,9 @@
+{
+  "name": "hostile-recording-express-jsonp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "express": "5.3.0"
+  }
+}

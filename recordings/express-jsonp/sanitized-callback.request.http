@@ -1,0 +1,4 @@
+GET /v1/rates?callback=alert%281%29%2F%2F HTTP/1.1
+Host: business.example
+Connection: close
+

@@ -1,0 +1,10 @@
+HTTP/1.1 200 OK
+X-Powered-By: Express
+X-Content-Type-Options: nosniff
+Content-Type: text/javascript; charset=utf-8
+Content-Length: 127
+ETag: W/"7f-FziS0ZO1mI9FFoCC09ZuDG7WeNc"
+Date: Sun, 01 Nov 2026 05:18:01 GMT
+Connection: close
+
+/**/ typeof otherWidget === 'function' && otherWidget({"base":"USD","rates":{"EUR":"0.9150","GBP":"0.7890","JPY":"149.2000"}});

@@ -218,6 +218,40 @@ The recordings also show what the ops documentation got wrong: by default Tomcat
 `sendRedirect`'s location as given, even a relative `customers/1006`, and a `setStatus(200)` after
 `sendRedirect` leaves the 302 in place.
 
+The rates' JSONP framing is held to eight raw exchanges from stock Express 5.3.0's
+[`res.jsonp`](https://expressjs.com/en/5x/api/response/#resjsonp) on Node 24.21.0 in
+[`recordings/express-jsonp/`](../recordings/express-jsonp/) (catalogue PAY-1). Express itself
+selects the callback and writes the frame and headers with its defaults; the handler supplies only
+the fixed synthetic rates object. The image is pinned by digest and the application and transitive
+dependencies are locked. This is a current substitute for the historical storefront endpoint,
+without its callback validator or CDN, rather than evidence of the 2012 deployment.
+
+Each ordinary conformance comparison starts a fresh business backend and sends the recorded request
+unchanged: target, encoded and repeated query parameters, `Host`, header order and empty body.
+Equivalent recorded data are seeded through the documented `envelopes.rates` option; the recorded
+request and rates-data bytes stay unadapted. Every body byte, JSON value, property and key order
+agrees for `showRates`, `otherWidget`, `_$rates2`, the repeated callback's first value `showRates`,
+and plain JSON without `callback`.
+
+The service deliberately keeps its identifier-only rejection: an empty callback, `alert(1)//` and
+`widget.showRates` answer `400 Bad Request`, `text/plain`, with exactly `Invalid callback name`.
+Stock Express instead returns plain JSON for the empty callback, sanitizes the punctuation to
+`alert1`, and permits the dotted expression, all under `200 OK`. The path-only CDN policy also
+stays: in a separate two-request comparison, `showRates` is a `MISS`, then `otherWidget` is a `HIT`
+carrying the first caller's exact `showRates` frame. The uncached Express recording gives the
+second widget its own frame. The cache does not expire during a backend start.
+
+Only the run-dependent `Date` is masked. The tests pin the complete ordered header lines and every
+deterministic difference. Express labels JSONP `text/javascript; charset=utf-8`; the service uses
+`application/javascript; charset=utf-8`. Plain JSON has Express's
+`application/json; charset=utf-8` versus Spring's `application/json;charset=UTF-8`. Express sends
+`X-Powered-By: Express`, `X-Content-Type-Options: nosniff`, a body-specific weak `ETag` and
+`Content-Length`; the imitation omits these, the suite's Node server chunks the body, and accepted
+responses add `X-Cache`. Rejections have no `X-Cache`. Both sides send `Connection: close` for
+these requests. The replies are inspected as data over HTTP; this comparison does not execute
+scripts or establish cross-origin script loading, historical Express behaviour or unrecorded JSONP
+cases.
+
 ## `/v2/`: the operations era
 
 ### Conventions shared by every `/v2/` route

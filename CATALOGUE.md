@@ -348,9 +348,19 @@ pagination links decode to pages and encode to the gateway's header`.
   a decode failure, an OData v2 envelope with metadata and a stringified count, a column-oriented
   grid whose column order is verified, a single result unwrapped from its array, and an enum sent
   as a name but returned as an ordinal. Status: tested.
+  Eight [stock Express recordings](recordings/express-jsonp/set.json) provide an outside referee
+  for JSONP framing and plain JSON. Backend conformance checks every body byte/value and pins
+  metadata, callback-policy and CDN differences. Consumer replay runs the existing rates operation
+  and dialect reader in both lanes, rejecting another callback's frame, plain JSON where JSONP is
+  required, and callbacks outside the application's identifier contract. This covers current
+  Express HTTP replies; it neither executes scripts nor establishes historical deployment behavior.
   - `[PAY-1] strips the anti-hijacking prefix before parsing JSON`
   - `[PAY-1] unwraps JSONP for the requested callback and refuses any other name`
   - `[PAY-1] refuses a JSONP callback that is not an identifier before dispatch`
+  - `[PAY-1] decode stock Express` (all eight recordings, both providers)
+  - `[PAY-1] the existing rates operation reads Express` (three identifiers)
+  - `[PAY-1] the rates contract rejects non-identifiers before Express replay`
+  - `[PAY-1] a showRates decoder refuses Express` (foreign callback and plain JSON)
   - `[PAY-1] reads an OData v2 envelope with metadata and a stringified count`
   - `[PAY-1] maps a column grid through its verified header in any column order` (with the
     positional control that silently swaps two money columns)

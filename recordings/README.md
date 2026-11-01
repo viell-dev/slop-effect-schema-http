@@ -23,6 +23,7 @@ recordings are checked in and made on demand, never in CI.
 | `cgi-pm-query`     | CGI.pm 4.55 on Perl 5.36, HTTP::Daemon 6.16 (Debian)             | the gateway's CGI query handling        | AUTH-2                |
 | `httpd-dav`        | httpd 2.4.69, stock `mod_dav` and `mod_dav_fs`                   | the store's WebDAV view                 | STAT-7, PAY-3a, RET-3 |
 | `nginx-paths`      | nginx 1.30.6, default `merge_slashes on`                         | the business API's `/v2` gateway        | QRY-3                 |
+| `express-jsonp`    | Express 5.3.0 `res.jsonp`, Node 24.21.0                          | the business API's `/v1/rates`          | PAY-1                 |
 
 Each set's `manifest.json` names its base images by digest, the software versions as the software
 reports them, the date of the recording, the exact commands, and every exchange. Its `set.json`
@@ -57,6 +58,15 @@ longer slash runs, valid-id controls and query slash preservation. This probes c
 routing, without the service's authentication or historical gateway deployment. It does not cover
 percent decoding, dot segments or other nginx normalization rules.
 
+The Express set passes a fixed rates object directly to stock
+[`res.jsonp`](https://expressjs.com/en/5x/api/response/#resjsonp). Its eight replies establish the
+guarded frame, repeated-callback selection, plain/empty-callback JSON, and the framework's dotted
+and sanitized callbacks. The recording uses all Express defaults with an exact dependency lock;
+it adds neither the service's identifier-only validator nor its path-only CDN cache. Conformance
+pins these deliberate differences, including a sequential cache check. Consumer replay decodes
+the replies as data in both lanes; it does not execute them as scripts or claim to reproduce the
+historical storefront deployment.
+
 ## Files
 
 A set's directory holds:
@@ -64,8 +74,11 @@ A set's directory holds:
 - `Dockerfile`, and the server configuration or the small program the server runs, written for the
   recording: the Perl handlers, httpd's configuration and CGI, the servlet, the JAX-WS endpoints.
   The base image is pinned by digest, and Debian packages by version.
-- `data.json`, for the XML-RPC and WebDAV sets: the synthetic data served by the real software,
+- `data.json`, for the XML-RPC, WebDAV and Express sets: the synthetic data served by the real software,
   also used to configure the imitating backend in the comparison.
+- `package.json` and `package-lock.json`, for the Express set: the exact framework and transitive
+  package versions and integrity hashes installed in its container. These are separate from the
+  suite's dependencies.
 - `set.json`: the description, the `Host` the requests carry, the server's port, a probe request,
   the commands that report versions, the substitutions, and the exchanges in order.
 - `<name>.request.http` and `<name>.response.http`: one exchange exactly as the bytes crossed the
@@ -108,9 +121,10 @@ backends still agree.
   over a real socket, so consumer tests decode the real software's bytes in both lanes:
   `src/scenarios/recordings.test.ts` runs the consumer's own operations against them (catalogue
   entries EXT-8a to EXT-8d); `src/scenarios/cgi-query.test.ts` checks the CGI.pm set (AUTH-2),
-  `src/scenarios/webdav-recordings.test.ts` checks mod_dav (STAT-7, PAY-3a, RET-3), and
+  `src/scenarios/webdav-recordings.test.ts` checks mod_dav (STAT-7, PAY-3a, RET-3),
   `src/scenarios/nginx-paths.test.ts` checks nginx routing and the application contract's empty-id
-  validation (QRY-3).
+  validation (QRY-3), and `src/scenarios/express-jsonp.test.ts` checks Express JSONP and callback
+  validation/binding (PAY-1).
 - **The conformance tests** in `src/conformance/` send each recorded request to the backend that
   imitates the software, over a raw socket, and compare the reply with the recorded response. They
   are backend-side code, kept apart from the consumer side by `scripts/boundaries.mjs`.

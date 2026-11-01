@@ -1,0 +1,10 @@
+HTTP/1.1 200 OK
+X-Powered-By: Express
+X-Content-Type-Options: nosniff
+Content-Type: text/javascript; charset=utf-8
+Content-Length: 123
+ETag: W/"7b-igh39wkjBjtpZCDtrjHr48hyba0"
+Date: Sun, 01 Nov 2026 05:18:01 GMT
+Connection: close
+
+/**/ typeof showRates === 'function' && showRates({"base":"USD","rates":{"EUR":"0.9150","GBP":"0.7890","JPY":"149.2000"}});
