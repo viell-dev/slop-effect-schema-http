@@ -13,6 +13,10 @@ There is no supported installation or update channel. The source is [MIT-license
 [Release preparation](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks the
 remaining distribution and release requirements.
 
+The [documentation site](https://viell-dev.github.io/slop-effect-schema-http/) provides local
+evaluation, a runnable example, API links, and limits and recovery guidance. It describes unreleased
+`main`; the package version is development metadata.
+
 The existing modules describe request URLs, headers, query parameters and bodies; select and decode
 responses; compose operations with execution policies; and integrate with Effect's HTTP client. They
 describe an external service from the consumer's perspective. This project does not generate a

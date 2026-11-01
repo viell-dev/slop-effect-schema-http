@@ -4,7 +4,14 @@ import oxlint from "eslint-plugin-oxlint";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", "coverage"] },
+  {
+    ignores: [
+      "dist",
+      "coverage",
+      "docs/.vitepress/cache",
+      "docs/.vitepress/dist",
+    ],
+  },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {

@@ -4,7 +4,11 @@
     "correctness": "error",
     "suspicious": "warn"
   },
-  "ignorePatterns": ["dist/**"],
+  "ignorePatterns": [
+    "dist/**",
+    "docs/.vitepress/cache/**",
+    "docs/.vitepress/dist/**"
+  ],
   "rules": {
     "eslint/no-underscore-dangle": "off"
   }

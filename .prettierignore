@@ -2,3 +2,5 @@ dist/
 coverage/
 package-lock.json
 **/*.md
+docs/.vitepress/cache/
+docs/.vitepress/dist/
