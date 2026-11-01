@@ -586,6 +586,8 @@ spellings`,
   - Fixture fact: the poisoning is real only for BOM-preserving decoders (`TextDecoder` with
     `ignoreBOM`, Node's `Buffer.toString`). `Body.text` uses the WHATWG UTF-8 decode, which strips
     the BOM in both lanes and both providers, so it cannot poison the name, and it loses the BOM.
+  - Independent German-file referee (#47, PAY-5): the literal UTF-8 BOM is preserved by both
+    writers, and the consumer rejects the hand-made sheet when those three bytes are removed.
 - **PAY-4c** Fixed-width records with no delimiters, Latin-1 titles, implied decimals, zero padding,
   and a trailer whose record count and control total the decode verifies. Status: tested.
   - `[PAY-4c] the extract decodes from Latin-1 bytes with implied decimals and a verified trailer,
@@ -613,12 +615,25 @@ the client`
   round-tripped with the BOM written back on encode. Status: tested.
   - `[PAY-5] the German sheet round-trips byte for byte, BOM included, and the import accepts it`
   - `[PAY-5] an edited sheet uploads and reads back with the new amount and title`
-  - `[PAY-5] the importer refuses sheets German Excel would not write, as ERROR lines inside 200`
+  - `[PAY-5] the importer refuses missing BOMs, decimal points and LF record separators, as ERROR lines inside 200`
   - Helper: `[PAY-5] round-trips a German sheet byte for byte: BOM, CRLF, semicolons, quoting`,
-    `[PAY-5] refuses what Excel would not write: a missing BOM, bare LF, needless quotes, stray
-quotes`
+    `[PAY-5] refuses a missing BOM, wrong record separators, needless quotes and stray quotes`
   - Not recorded: Excel cannot run in a disposable container, and LibreOffice would stand in for
     different software (recordings/README.md).
+  - Independent referee (#47): [a hand-authored German CSV file](./fixtures/gateway/german-accounts.md),
+    constructed from the service page in a fresh context before either implementation was read.
+    Separately authored backend checks compare the export and imported/re-exported bytes with
+    this file; both Node consumer providers decode, encode, upload and read back its semantic rows.
+    These disk-fixture checks run in Node; the existing scenarios above run in both lanes.
+  - The literal file covers a BOM, CRLF record separators, semicolons, doubled quotes, an embedded
+    CRLF, accented UTF-8, signed/zero/sub-unit amounts, leading zeroes and an absent date. Invalid
+    BOM, UTF-8, separators, final CRLF and amount spellings are checked separately. Changing the
+    backend's record endings to LF or multiplying the consumer's decoded cents by 100 fails the
+    golden assertions.
+  - Clarified in #60: CRLF separates records; CR, LF and CRLF inside quoted fields are preserved
+    data. Initially proposed rejection inputs for quoted CR/LF were retained as positive controls
+    on both sides after triage, including a consumer helper check in Node and Chromium. No parser
+    behavior changed, and no real-Excel file was recorded.
 - **PAY-8** Base64 of Latin-1 bytes inside XML-RPC, decoded by the same fixed-width schema that reads
   the HTTP endpoint. Status: tested.
   - `[PAY-8] base64 inside XML-RPC decodes through the same fixed-width schema as the download`

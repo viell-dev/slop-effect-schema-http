@@ -130,17 +130,17 @@ with the detail records, and the headers and the audit totals then report the tr
 
 `POST /cgi-bin/import.cgi?session=…&locale=de_DE` is the Frankfurt office's upload of the German
 accounts sheet. It replaces the accounts table and answers `OK|<rows>`, or
-`ERROR|E_FORMAT|<reason>`; only `locale=de_DE` is supported. The validator refuses anything German
-Excel would not have produced:
+`ERROR|E_FORMAT|<reason>`; only `locale=de_DE` is supported. The validator refuses:
 
 - a missing byte-order mark, or bytes that are not UTF-8;
-- a line break other than CRLF, or a file that does not end with CRLF;
+- a record separator other than CRLF, or a file that does not end with CRLF;
 - a header other than `Konto;Bezeichnung;Betrag;Fällig`;
 - a row without exactly four fields, a `Konto` that is not eight digits, a `Betrag` without a
   decimal comma and two decimals, or a `Fällig` that is not eight digits.
 
 The reason names the line, such as `line 3: Betrag needs a decimal comma`. Fields may be quoted
-with `"`, with a quote doubled inside.
+with `"`, with a quote doubled inside. Inside a quoted field, CR, LF and CRLF are field data and
+are preserved as supplied; the CRLF separator rule applies between records.
 
 ## XML-RPC (1999)
 
