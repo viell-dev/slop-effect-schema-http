@@ -43,7 +43,12 @@ export interface Options<
   RP = never,
 > {
   readonly policy?: Policy.Policy<EP, RP> | undefined;
-  /** A native client transformation applied inside each attempt, suitable for nonces and signatures. */
+  /**
+   * A native client transformation applied inside each attempt, after request materialization, suitable
+   * for nonces and URL-dependent signatures. Run a signer after other request edits it must cover.
+   * Appending native URL parameters can reserialize the entire query as form data, changing bare keys and
+   * escapes. Prefer Request query combinators, or preserve the query text when editing the URL directly.
+   */
   readonly transformClient?:
     | ((client: HttpClient.HttpClient) => HttpClient.HttpClient.With<E, R>)
     | undefined;

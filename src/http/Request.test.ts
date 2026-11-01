@@ -1160,6 +1160,38 @@ describe("Request.mapInput", () => {
 });
 
 describe("Request.mapEffect", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/25
+  it.effect("sees the path and separate query before final URL rendering", () =>
+    Effect.gen(function* () {
+      const seen: Array<{ readonly url: string; readonly query: unknown }> = [];
+      const compiled = yield* compile(
+        Request.get("items").pipe(
+          Request.baseUrl("https://api.test/v1"),
+          Request.setQuery("wsdl", null),
+          Request.setQuery("q", "a b"),
+          Request.mapEffect((request) => {
+            seen.push({ url: request.url, query: request.urlParams.params });
+            return Effect.succeed(request);
+          }),
+        ),
+        undefined,
+      );
+      expect(seen).toEqual([
+        {
+          url: "items",
+          query: [
+            ["wsdl", ""],
+            ["q", "a b"],
+          ],
+        },
+      ]);
+      expect(compiled.request.url).toBe(
+        "https://api.test/v1/items?wsdl&q=a%20b",
+      );
+      expect(compiled.request.urlParams.params).toEqual([]);
+    }),
+  );
+
   it.effect(
     "prepares the native request after the declared fields, with the input",
     () =>

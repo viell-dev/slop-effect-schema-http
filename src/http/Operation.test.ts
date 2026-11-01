@@ -112,6 +112,44 @@ const flaky = (_: unknown, index: number) =>
   index === 0 ? empty(503) : json(200, {});
 
 describe("Operation.make", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/24
+  it.effect(
+    "client URL parameters reserialize the compiled query as form data",
+    () =>
+      Effect.gen(function* () {
+        const request = Request.get("https://api.test/svc").pipe(
+          Request.setQuery("wsdl", null),
+          Request.setQuery("q", "a b"),
+        );
+        for (const useParameter of [true, false]) {
+          const server = synthetic(() => empty(204));
+          yield* Operation.make(request, Response.status(204, Body.empty), {
+            transformClient: (client) =>
+              client.pipe(
+                HttpClient.mapRequest((native) =>
+                  useParameter
+                    ? HttpClientRequest.appendUrlParam(native, "key", "abc")
+                    : HttpClientRequest.setUrl(native, `${native.url}&key=abc`),
+                ),
+              ),
+          })
+            .execute(undefined)
+            .pipe(Effect.provide(server.layer));
+          const exchange = server.exchanges[0]!;
+          expect(exchange.url).toBe(
+            useParameter
+              ? "https://api.test/svc?wsdl&q=a%20b"
+              : "https://api.test/svc?wsdl&q=a%20b&key=abc",
+          );
+          expect(exchange.href).toBe(
+            useParameter
+              ? "https://api.test/svc?wsdl=&q=a+b&key=abc"
+              : "https://api.test/svc?wsdl&q=a%20b&key=abc",
+          );
+        }
+      }),
+  );
+
   it.effect(
     "dispatches the compiled request and decodes the selected response",
     () =>
@@ -644,6 +682,33 @@ describe("Operation services", () => {
 });
 
 describe("Operation retries", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/26
+  it.effect("retries a decoded POST fault unless its classifier declines", () =>
+    Effect.gen(function* () {
+      for (const allowRetry of [true, false]) {
+        const server = synthetic(() => text(500, "already locked"));
+        const value = yield* Operation.make(
+          Request.post("https://api.test/lock"),
+          Response.status(500, Body.text),
+          {
+            policy: allowRetry
+              ? retries(2)
+              : Policy.make(Schedule.recurs(2), { while: () => false }),
+          },
+        )
+          .execute(undefined)
+          .pipe(Effect.provide(server.layer));
+        expect(value).toBe("already locked");
+        expect(server.exchanges).toHaveLength(allowRetry ? 3 : 1);
+        expect(
+          server.exchanges.every(
+            (exchange) => exchange.request.method === "POST",
+          ),
+        ).toBe(true);
+      }
+    }),
+  );
+
   it.effect("performs a single attempt without a policy", () =>
     Effect.gen(function* () {
       const server = synthetic(() => empty(503));

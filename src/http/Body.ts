@@ -102,7 +102,11 @@ export const json: Codec<
   mediaType: "application/json",
 });
 
-/** UTF-8 text. */
+/**
+ * UTF-8 text. Incoming decoding delegates to `response.text`. Fetch-backed providers ignore charset
+ * parameters, strip a leading UTF-8 BOM, and replace malformed bytes with U+FFFD without failing.
+ * Use {@link bytes} with a schema or custom decoder for strict or non-UTF-8 decoding.
+ */
 export const text: Codec<string, never, HttpClientError.HttpClientError> = make(
   {
     encode: (value: string) => Effect.sync(() => HttpBody.text(value)),
