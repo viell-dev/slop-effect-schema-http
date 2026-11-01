@@ -1,9 +1,10 @@
 /**
  * Strict CSV for consumer code: bytes to rows to named records, each step a reversible schema.
- * A dialect fixes the delimiter, the line ending and the byte-order mark, and the reader accepts
- * exactly what the writer produces: every record ends with the dialect's line ending, a field is
- * quoted only when it must be, and a stray quote, bare CR or bare LF is refused. Decoding then
- * encoding reproduces the input bytes.
+ * A dialect fixes the delimiter, the record separator and the byte-order mark, and the reader
+ * accepts exactly what the writer produces: every record ends with the dialect's separator, a
+ * field is quoted only when it must be, and a stray quote or wrong record separator is refused.
+ * CR, LF and CRLF inside quoted fields remain field data, independently of the record separator
+ * (#60). Decoding then encoding reproduces the input bytes.
  *
  * The byte step is deliberate. A WHATWG UTF-8 decode, such as `Response.text()`, silently drops a
  * leading BOM, so a text codec can never write it back; a BOM-preserving decoder (`TextDecoder` with
@@ -20,6 +21,7 @@ import {
 export interface Dialect {
   /** A single character. */
   readonly delimiter: string;
+  /** Record separator; quoted fields retain their own CR, LF or CRLF characters. */
   readonly newline: "\n" | "\r\n";
   /** Whether the file starts with a UTF-8 byte-order mark, required on decode and written on encode. */
   readonly bom: boolean;

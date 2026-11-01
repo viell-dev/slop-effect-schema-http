@@ -1042,7 +1042,7 @@ describe(`gateway (${lane.name})`, () => {
     );
 
     it.live(
-      "[PAY-5] the importer refuses sheets German Excel would not write, as ERROR lines inside 200",
+      "[PAY-5] the importer refuses missing BOMs, decimal points and LF record separators, as ERROR lines inside 200",
       () =>
         Effect.gen(function* () {
           const gateway = yield* start();

@@ -24,7 +24,7 @@ describe("csv helper", () => {
     expect(Schema.encodeSync(schema)(rows)).toEqual(bytes);
   });
 
-  it("[PAY-5] refuses what Excel would not write: a missing BOM, bare LF, needless quotes, stray quotes", () => {
+  it("[PAY-5] refuses a missing BOM, wrong record separators, needless quotes and stray quotes", () => {
     const decode = Schema.decodeUnknownSync(Csv.bytes(excelDe));
     expect(() => decode(utf8("a;b\r\n"))).toThrow(/byte-order mark/);
     expect(() => decode(utf8("\uFEFFa;b\n"))).toThrow(/bare LF/);
@@ -36,6 +36,17 @@ describe("csv helper", () => {
     expect(() =>
       decode(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0xe9, 0x0d, 0x0a])),
     ).toThrow(/not valid UTF-8/);
+  });
+
+  // #60: record separators and quoted field contents are different parts of the CSV contract.
+  it("[PAY-5] CR, LF and CRLF inside quoted German fields round-trip as data", () => {
+    const schema = Csv.bytes(excelDe);
+    for (const lineBreak of ["\r", "\n", "\r\n"]) {
+      const original = utf8(`\uFEFFa;"x${lineBreak}y"\r\n`);
+      const rows = Schema.decodeUnknownSync(schema)(original);
+      expect(rows).toEqual([["a", `x${lineBreak}y`]]);
+      expect(Schema.encodeSync(schema)(rows)).toEqual(original);
+    }
   });
 
   it("[PAY-4b] a BOM kept by the text decoder poisons the first column name", () => {
