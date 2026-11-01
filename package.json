@@ -95,6 +95,9 @@
   "peerDependencies": {
     "effect": "^4.0.7"
   },
+  "overrides": {
+    "minimatch@10": "11.0.1"
+  },
   "devDependencies": {
     "@effect/vitest": "^4.0.7",
     "@eslint/js": "^10.0.1",
