@@ -6,6 +6,8 @@ type-checked and executed in CI. The snippets on this page are imported from tha
 
 ## Define the consumer's contract
 
+<<< ../examples/quickstart.ts#imports
+
 <<< ../examples/quickstart.ts#contract
 
 The path schema accepts an application number and encodes it as a string. `Request.path` supplies
