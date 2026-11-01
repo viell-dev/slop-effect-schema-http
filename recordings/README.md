@@ -22,6 +22,7 @@ recordings are checked in and made on demand, never in CI.
 | `jaxws-faults`     | the JAX-WS reference implementation in JDK 8 (Temurin)           | the SOAP store's `LockDocument`         | EXT-6e                |
 | `cgi-pm-query`     | CGI.pm 4.55 on Perl 5.36, HTTP::Daemon 6.16 (Debian)             | the gateway's CGI query handling        | AUTH-2                |
 | `httpd-dav`        | httpd 2.4.69, stock `mod_dav` and `mod_dav_fs`                   | the store's WebDAV view                 | STAT-7, PAY-3a, RET-3 |
+| `nginx-paths`      | nginx 1.30.6, default `merge_slashes on`                         | the business API's `/v2` gateway        | QRY-3                 |
 
 Each set's `manifest.json` names its base images by digest, the software versions as the software
 reports them, the date of the recording, the exact commands, and every exchange. Its `set.json`
@@ -47,6 +48,14 @@ keeps file tags independent of inode allocation. If the dataset, timestamps or E
 changes, take the new GET tag, update the definition's conditional headers, then re-record the set.
 Never edit the raw HTTP files. An initial pass is a way to discover a validator, not a replacement
 for the final recorded conditional exchange.
+
+The nginx set uses exact-match locations returning synthetic global and individual task histories.
+No handler normalizes paths: nginx selects the location with its default
+[`merge_slashes on`](https://nginx.org/en/docs/http/ngx_http_core_module.html#merge_slashes).
+Six exchanges retain the original and normalized URI in diagnostic headers, covering an empty id,
+longer slash runs, valid-id controls and query slash preservation. This probes current nginx's
+routing, without the service's authentication or historical gateway deployment. It does not cover
+percent decoding, dot segments or other nginx normalization rules.
 
 ## Files
 
@@ -98,8 +107,10 @@ backends still agree.
 - **The replay backend** ([services/replay.md](../services/replay.md)) serves recorded responses
   over a real socket, so consumer tests decode the real software's bytes in both lanes:
   `src/scenarios/recordings.test.ts` runs the consumer's own operations against them (catalogue
-  entries EXT-8a to EXT-8d); `src/scenarios/cgi-query.test.ts` checks the CGI.pm set (AUTH-2), and
-  `src/scenarios/webdav-recordings.test.ts` checks mod_dav (STAT-7, PAY-3a, RET-3).
+  entries EXT-8a to EXT-8d); `src/scenarios/cgi-query.test.ts` checks the CGI.pm set (AUTH-2),
+  `src/scenarios/webdav-recordings.test.ts` checks mod_dav (STAT-7, PAY-3a, RET-3), and
+  `src/scenarios/nginx-paths.test.ts` checks nginx routing and the application contract's empty-id
+  validation (QRY-3).
 - **The conformance tests** in `src/conformance/` send each recorded request to the backend that
   imitates the software, over a raw socket, and compare the reply with the recorded response. They
   are backend-side code, kept apart from the consumer side by `scripts/boundaries.mjs`.

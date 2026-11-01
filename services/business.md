@@ -376,6 +376,43 @@ pre-warm it. Success is `201` with `{ payout, amount, to, nonce }` and
 
 The events and abandoned-request routes need no token.
 
+### Recordings
+
+The gateway's adjacent-slash routing is held to six raw exchanges from stock nginx 1.30.6 in
+[`recordings/nginx-paths/`](../recordings/nginx-paths/) (catalogue QRY-3). The recording leaves
+[`merge_slashes`](https://nginx.org/en/docs/http/ngx_http_core_module.html#merge_slashes) unset,
+exercising its default `on`: nginx compresses adjacent path slashes before selecting a location.
+The ordinary global-history and task-history paths are controls. An empty task id, several runs of
+slashes, and repeated slashes around a valid id select the same respective histories; an empty id
+therefore reaches global history rather than an individual task.
+
+This is a current nginx substitute for the gateway installed in 2016, not a recording of that
+deployment. Two exact-match nginx locations return fixed synthetic histories, with two creation
+events globally and one for `T-1001`; nginx performs the routing itself. They replace the full
+business application and omit authentication. The conformance tests seed equivalent histories
+through the documented `operations.tasks` option and add one `Authorization: Bearer` line to each
+recorded request for the imitation. The original target, `Host`, `Connection`, header order and
+empty request body are preserved, and each comparison makes exactly one HTTP request.
+
+The probe adds three diagnostic headers: `X-Request-Uri` exposes nginx's
+[`$request_uri`](https://nginx.org/en/docs/http/ngx_http_core_module.html#var_request_uri),
+`X-Normalized-Uri` its
+[`$uri`](https://nginx.org/en/docs/http/ngx_http_core_module.html#var_uri), and `X-Query-String` its
+[`$args`](https://nginx.org/en/docs/http/ngx_http_core_module.html#var_args), the last omitted when
+empty. The query case retains `audit=//kept///` while its path slashes merge. These headers belong
+only to the recording. The imitation's request ledger preserves the original path and query, but
+history does not echo query values, so this comparison cannot establish how its internal query
+parser treated the query. Percent decoding, dot segments, trailing-slash redirects and other nginx
+normalization rules are outside this probe.
+
+Only the run-dependent `Date` is masked. Every event, value, order and JSON body byte agrees. The
+tests explicitly pin all remaining deterministic differences: nginx sends `Server: nginx/1.30.6`,
+the imitation sends no `Server`; the probe uses `application/json`, the imitation's application
+uses `application/json; charset=utf-8`; nginx counts `Content-Length`, the suite's Node server uses
+`Transfer-Encoding: chunked`; and the imitation omits the three probe-only diagnostic headers.
+Both retain `200 OK` and `Connection: close`. The service's documented synthetic authentication,
+history and JSON policies are unchanged by the probe.
+
 ## Test options
 
 Start the API with `lane.backend("business", { envelopes, operations })`; each member configures its

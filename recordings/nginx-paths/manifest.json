@@ -1,0 +1,109 @@
+{
+  "set": "nginx-paths",
+  "description": "Stock nginx 1.30.6 default merge_slashes routing between global and individual task histories, with original and normalized URI diagnostics.",
+  "recorded": "2026-11-01T05:02:46.269Z",
+  "images": [
+    "nginx:1.30.6-alpine@sha256:0e52bd054126cdc040b1276c0af347aeb02a41b9cfe305d6094767ac30e97949"
+  ],
+  "built": "sha256:263ab4549013fcff65537ee9755d212944e331dbd0af423dfed3737a204e9f69",
+  "versions": {
+    "nginx": ["nginx version: nginx/1.30.6"],
+    "configuration": [
+      "# configuration file /etc/nginx/nginx.conf:",
+      "events {}",
+      "http {",
+      "    # Leave merge_slashes unset: this recording exercises nginx's default, on.",
+      "    server {",
+      "        listen 80;",
+      "        server_name business.example;",
+      "        default_type application/json;",
+      "        add_header X-Request-Uri $request_uri always;",
+      "        add_header X-Normalized-Uri $uri always;",
+      "        add_header X-Query-String $args always;",
+      "",
+      "        location = /v2/tasks/history {",
+      "            return 200 '{\"events\":[{\"task\":\"T-1001\",\"action\":\"created\",\"at\":1700000000000},{\"task\":\"T-1002\",\"action\":\"created\",\"at\":1700000060000}]}';",
+      "        }",
+      "        location = /v2/tasks/T-1001/history {",
+      "            return 200 '{\"events\":[{\"task\":\"T-1001\",\"action\":\"created\",\"at\":1700000000000}]}';",
+      "        }",
+      "        location / {",
+      "            return 404 '{\"error\":\"not_found\"}';",
+      "        }",
+      "    }",
+      "}",
+      "nginx: the configuration file /etc/nginx/nginx.conf syntax is ok",
+      "nginx: configuration file /etc/nginx/nginx.conf test is successful"
+    ]
+  },
+  "substitutions": [
+    "Current nginx 1.30.6 stands in for the service's 2016 gateway. merge_slashes is deliberately unset to test its default-on behavior; this is not a recording of that historical deployment.",
+    "Two exact-match locations return synthetic service-shaped JSON histories. nginx itself normalizes the URI and selects the location; no application code merges slashes. Authentication and the full business application are outside this probe.",
+    "X-Request-Uri, X-Normalized-Uri and X-Query-String are diagnostic response headers added only for this recording. They expose nginx variables; the imitating service does not promise them. Empty query strings omit X-Query-String.",
+    "The scope is adjacent-slash routing and preservation of slashes in query data. Percent decoding, dot segments, trailing-slash redirects and other nginx normalization rules are not covered."
+  ],
+  "client": "scripts/record.mjs: raw HTTP/1.1 requests over a TCP socket to the container's ephemeral loopback port.",
+  "commands": [
+    "docker build -t hostile-recording-nginx-paths recordings/nginx-paths",
+    "docker run -d --name hostile-recording-nginx-paths -p 127.0.0.1::80 hostile-recording-nginx-paths",
+    "docker port hostile-recording-nginx-paths 80/tcp",
+    "docker exec hostile-recording-nginx-paths nginx -v",
+    "docker exec hostile-recording-nginx-paths nginx -T"
+  ],
+  "exchanges": [
+    {
+      "name": "global-control",
+      "description": "The ordinary global-history path selects both tasks.",
+      "method": "GET",
+      "target": "/v2/tasks/history",
+      "status": "HTTP/1.1 200 OK",
+      "request": "global-control.request.http",
+      "response": "global-control.response.http"
+    },
+    {
+      "name": "empty-id",
+      "description": "An empty task id leaves two slashes and selects global history after nginx normalization.",
+      "method": "GET",
+      "target": "/v2/tasks//history",
+      "status": "HTTP/1.1 200 OK",
+      "request": "empty-id.request.http",
+      "response": "empty-id.response.http"
+    },
+    {
+      "name": "many-slashes",
+      "description": "Several adjacent runs compress before exact location selection.",
+      "method": "GET",
+      "target": "/v2///tasks////history",
+      "status": "HTTP/1.1 200 OK",
+      "request": "many-slashes.request.http",
+      "response": "many-slashes.response.http"
+    },
+    {
+      "name": "query-slashes",
+      "description": "Path slashes merge while slash runs in the raw query stay intact.",
+      "method": "GET",
+      "target": "/v2/tasks//history?audit=//kept///",
+      "status": "HTTP/1.1 200 OK",
+      "request": "query-slashes.request.http",
+      "response": "query-slashes.response.http"
+    },
+    {
+      "name": "task-control",
+      "description": "A valid task id selects only its individual history.",
+      "method": "GET",
+      "target": "/v2/tasks/T-1001/history",
+      "status": "HTTP/1.1 200 OK",
+      "request": "task-control.request.http",
+      "response": "task-control.response.http"
+    },
+    {
+      "name": "task-slashes",
+      "description": "Repeated slashes around a valid task id still select that individual history.",
+      "method": "GET",
+      "target": "/v2//tasks///T-1001//history",
+      "status": "HTTP/1.1 200 OK",
+      "request": "task-slashes.request.http",
+      "response": "task-slashes.response.http"
+    }
+  ]
+}

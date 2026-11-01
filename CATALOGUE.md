@@ -461,10 +461,18 @@ in [services/business.md](./services/business.md), whose `/v2/` half is this par
   - Fixture fact: keeping the last is this fixture's deliberate PHP-era rule, confirmed by the
     filter it echoes; `URLSearchParams.get` keeps the first. Both providers send both entries.
 - **QRY-3** An empty path segment left to the application contract, and a base URL replaceable per
-  operation. Status: tested.
+  operation. Status: tested. Six [stock nginx recordings](recordings/nginx-paths/set.json) provide
+  an outside referee for the gateway's adjacent-slash routing: default-on compression selects
+  global history for an empty id, while a valid id selects one task. Diagnostic headers retain the
+  original/normalized URI and unchanged query slash runs. Backend conformance checks every event
+  and pins metadata differences; consumer replay checks real replies and pre-dispatch validation
+  in both lanes. Authentication and historical nginx behavior are outside the recording's scope.
   - `[QRY-3] an empty id leaves an empty segment, and merged slashes answer another resource`
   - `[QRY-3] the application contract refuses an empty id before dispatch`
   - `[QRY-3] one operation replaces the shared base URL and keeps the credential`
+  - `[QRY-3] nginx routes` (each recorded path, both providers)
+  - `[QRY-3] an unconstrained empty id reads nginx's global history`
+  - `[QRY-3] the task contract rejects an empty id before nginx replay`
 - **RET-1** A strictly increasing nonce in front of two 503 warm-ups with HTTP-date `Retry-After`,
   the replay check before the warm-up check. A retry that replays the encoded request turns a
   transient failure permanent (pinned), then a caller-driven loop and per-attempt client middleware
