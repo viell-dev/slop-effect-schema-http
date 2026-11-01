@@ -3,7 +3,7 @@
   "version": "0.1.0-alpha.1",
   "private": true,
   "description": "Consumer-owned HTTP contracts composed with Effect",
-  "license": "",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/viell-dev/slop-effect-schema-http.git"

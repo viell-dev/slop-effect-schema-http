@@ -74,6 +74,7 @@ try {
   }
   for (const file of [
     "README.md",
+    "LICENSE",
     "dist/main.js",
     "dist/main.d.ts",
     "src/main.ts",
@@ -127,6 +128,12 @@ try {
   const installedManifest = readJson(join(installed, "package.json"));
   assert.deepEqual(installedManifest.exports, manifest.exports);
   assert.equal(installedManifest.version, manifest.version);
+  assert.equal(installedManifest.license, manifest.license);
+  assert.equal(
+    readFileSync(join(installed, "LICENSE"), "utf8"),
+    readFileSync(join(repository, "LICENSE"), "utf8"),
+    "The installed package must preserve the source license text",
+  );
 
   for (const file of ["consumer.ts", "runtime.mjs"]) {
     copyFileSync(

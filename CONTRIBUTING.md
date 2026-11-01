@@ -79,10 +79,10 @@ real servers, or packaged installation.
 
 After building, `npm run test:package` packs the library with the pinned npm and checks the file
 list and every declared export target. The package includes `dist/`, source files for declaration
-maps, README, and package metadata; tests, tooling configuration, and documentation source stay out.
-It installs that tarball in a temporary consumer outside the checkout, with the currently installed
-Effect peer, TypeScript, and Node type versions pinned exactly. Dependency install scripts remain
-disabled.
+maps, README, license, and package metadata; tests, tooling configuration, and documentation source
+stay out. It installs that tarball in a temporary consumer outside the checkout, with the currently
+installed Effect peer, TypeScript, and Node type versions pinned exactly. Dependency install scripts
+remain disabled.
 
 The consumer emits JavaScript and declarations with strict checking and `skipLibCheck: false`,
 including imports of every declared subpath. It imports the package root and each subpath at
@@ -132,10 +132,10 @@ depends on the answer. Blocked work links its dependency. The catalog in
 
 ## Before a release
 
-There is no release or publishing workflow yet. Release preparation must settle licensing,
-distribution, supported environments, and a stable release goal with the owner. Keep changing
-features in alpha; use beta once that goal is feature complete, and RC only for a candidate intended
-to become the exact stable release. [Issue
+The source is [MIT-licensed](./LICENSE). There is no release or publishing workflow yet. Release
+preparation must settle distribution, supported environments, and a stable release goal with the
+owner. Keep changing features in alpha; use beta once that goal is feature complete, and RC only for
+a candidate intended to become the exact stable release. [Issue
 #2](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks release readiness.
 
 Before publication, establish behavior tests, package installation checks, user-facing API examples,

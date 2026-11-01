@@ -9,9 +9,9 @@ Agents write and maintain this project. Its code is not human-reviewed.
 ## Status and scope
 
 This is an unreleased prototype targeting Effect 4. The package is private and its API can change.
-There is no supported installation or update channel. The repository has no license grant yet;
-publication and licensing must be settled before a release. [Release
-preparation](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks that work.
+There is no supported installation or update channel. The source is [MIT-licensed](./LICENSE).
+[Release preparation](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks the
+remaining distribution and release requirements.
 
 The existing modules describe request URLs, headers, query parameters and bodies; select and decode
 responses; compose operations with execution policies; and integrate with Effect's HTTP client. They
