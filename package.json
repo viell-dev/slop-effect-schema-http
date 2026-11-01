@@ -8,7 +8,7 @@
     "type": "git",
     "url": "git+https://github.com/viell-dev/slop-effect-schema-http.git"
   },
-  "homepage": "https://github.com/viell-dev/slop-effect-schema-http#readme",
+  "homepage": "https://viell-dev.github.io/slop-effect-schema-http/",
   "bugs": {
     "url": "https://github.com/viell-dev/slop-effect-schema-http/issues"
   },
@@ -79,7 +79,11 @@
     "lint:mdrefine": "mdrefine lint",
     "test": "vitest run",
     "test:package": "node scripts/check-package.mjs",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs && node scripts/check-doc-links.mjs",
+    "docs:preview": "vitepress preview docs",
+    "docs:examples": "tsc -p tsconfig.examples.json && node examples/quickstart.ts"
   },
   "files": [
     "dist",
@@ -113,6 +117,7 @@
     "prettier": "^3.9.10",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
+    "vitepress": "2.0.0-alpha.21",
     "vitest": "^5.0.5"
   }
 }

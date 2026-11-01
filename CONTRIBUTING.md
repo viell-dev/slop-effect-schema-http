@@ -27,8 +27,9 @@ npm run test:package
 - `npm run test:package`: verify the built tarball in an isolated consumer; run the build first.
 - `npm run format`: apply the configured formatters.
 
-CI requires all five verification commands on Linux. For code changes, reproduce the reported
-behavior first and add a meaningful test at the layer that exposes it.
+CI requires all five verification commands on Linux, plus the documentation checks below. For code
+changes, reproduce the reported behavior first and add a meaningful test at the layer that exposes
+it.
 
 `.npmrc` sets `ignore-scripts=true`, so no dependency's install script runs. Keep it: none of the
 current dependencies needs one, and a new dependency that does needs a review of what the script
@@ -127,6 +128,43 @@ maps scenarios to tests, observed limits, and defect issues. Coverage is specifi
 commit, provider, and lane; do not extrapolate cookie, redirect, header, or CORS behavior between
 platforms. The packed lane uses the suite's dependencies; the isolated consumer check above verifies
 the package separately from that suite.
+
+## Documentation site
+
+VitePress `2.0.0-alpha.21` is pinned exactly; it is a prerelease. The site in `docs/` describes
+unreleased `main` until a supported installable release exists. At that point, update the default
+site to that release, label unreleased behavior explicitly, and revise the prototype-status guards
+in `scripts/check-doc-links.mjs` alongside the content. The public [version
+policy](./docs/versions.md) explains this to readers.
+
+From the root, after the library build, run:
+
+```sh
+npm run docs:examples
+npm run docs:build
+npm run docs:dev
+```
+
+The first command type-checks `examples/quickstart.ts` without `skipLibCheck`, then executes it
+through the built package's public entry point. The usage page imports its code regions directly.
+The example uses a synthetic client and makes no external request. `docs:build` builds the static
+site, fails on VitePress dead links or missing snippets, and checks rendered internal pages, assets,
+anchors and package facts. External links are reviewed separately. `docs:dev` starts the local
+development server; `docs:preview` serves the production build. Keep both on loopback.
+
+Required pull-request CI runs the example and site build with read-only permissions. A successful
+`main` push uploads that build and deploys through the `github-pages` environment; only the separate
+deployment job receives Pages/OIDC permissions. The environment permits `main` deployments only.
+Workflow concurrency cancels superseded runs for the same ref. The configured base and package
+homepage use `https://viell-dev.github.io/slop-effect-schema-http/`.
+
+Each built page contains a `documentation-commit` meta tag. Local dirty builds carry `-dirty`; CI
+rejects that marker. Record the deployed commit and Actions run in the delivery PR, then verify the
+published home page and navigation, assets, and that metadata against the deployed commit. Update
+the repository homepage only after the site is live. Documentation corrections use a normal pull
+request and new deployment; keep software tags in place. To recover a failed deployment, fix the
+cause and rerun the verified commit or deliver a corrective PR, then verify the resulting site. No
+package publication occurs in this workflow.
 
 ## Pull requests
 

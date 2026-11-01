@@ -4,4 +4,11 @@
   "rules": {
     "style/wrap": ["warn", { "width": 100 }],
   },
+  "overrides": [
+    {
+      "files": ["docs/**/*.md"],
+      "dialect": "vitepress",
+      "vitepress": { "srcDir": "docs" },
+    },
+  ],
 }
