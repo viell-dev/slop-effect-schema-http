@@ -1,0 +1,69 @@
+{
+  "description": "Stock Express 5.3.0 res.jsonp on Node 24.21.0 with service-shaped rates: framing, callback selection/sanitization and plain JSON controls.",
+  "host": "business.example",
+  "port": 8080,
+  "probe": { "method": "GET", "target": "/v1/rates" },
+  "client": "scripts/record.mjs: raw HTTP/1.1 requests over a TCP socket to the container's ephemeral loopback port.",
+  "substitutions": [
+    "Express 5.3.0 on Node 24.21.0 substitutes for the service's historical storefront endpoint. Express's real res.jsonp generates every frame; the handler supplies only a fixed synthetic rates object.",
+    "All Express defaults are retained, including the callback query name, query parser, ETag generation and response headers. Exact application and transitive dependency versions/integrities are locked in package-lock.json; the Node base image is pinned by digest.",
+    "The probe has no CDN cache and no application callback validator. The business service intentionally restricts callbacks to plain identifiers and caches by path; conformance must retain these policies and document differences from stock Express rather than reproducing them in the probe.",
+    "The recorded replies are decoded as data over HTTP, not executed as scripts. This set does not establish historical Express behavior or cross-origin script execution."
+  ],
+  "versions": {
+    "node": ["node", "--version"],
+    "npm": ["npm", "--version"],
+    "express": ["node", "-p", "require('express/package.json').version"]
+  },
+  "exchanges": [
+    {
+      "name": "plain-json",
+      "description": "Without a callback, Express sends the rates as ordinary JSON.",
+      "request": { "method": "GET", "target": "/v1/rates" }
+    },
+    {
+      "name": "show-rates",
+      "description": "A normal identifier is guarded and called in Express's JSONP frame.",
+      "request": { "method": "GET", "target": "/v1/rates?callback=showRates" }
+    },
+    {
+      "name": "other-widget",
+      "description": "A later callback receives its own frame because this probe has no path-only CDN cache.",
+      "request": { "method": "GET", "target": "/v1/rates?callback=otherWidget" }
+    },
+    {
+      "name": "identifier-symbols",
+      "description": "Dollar, underscore and digits are retained in a plain identifier.",
+      "request": { "method": "GET", "target": "/v1/rates?callback=_%24rates2" }
+    },
+    {
+      "name": "empty-callback",
+      "description": "An explicitly empty callback falls back to ordinary JSON in stock Express.",
+      "request": { "method": "GET", "target": "/v1/rates?callback=" }
+    },
+    {
+      "name": "sanitized-callback",
+      "description": "Stock Express sanitizes punctuation in a callback rather than applying the service's identifier-only rejection.",
+      "request": {
+        "method": "GET",
+        "target": "/v1/rates?callback=alert%281%29%2F%2F"
+      }
+    },
+    {
+      "name": "dotted-callback",
+      "description": "Stock Express permits a dotted callback expression which the service's plain-identifier policy refuses.",
+      "request": {
+        "method": "GET",
+        "target": "/v1/rates?callback=widget.showRates"
+      }
+    },
+    {
+      "name": "repeated-callback",
+      "description": "Repeated callback parameters expose Express's first-value selection before framing.",
+      "request": {
+        "method": "GET",
+        "target": "/v1/rates?callback=showRates&callback=otherWidget"
+      }
+    }
+  ]
+}

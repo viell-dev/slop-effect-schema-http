@@ -1,0 +1,103 @@
+{
+  "set": "express-jsonp",
+  "description": "Stock Express 5.3.0 res.jsonp on Node 24.21.0 with service-shaped rates: framing, callback selection/sanitization and plain JSON controls.",
+  "recorded": "2026-11-01T05:17:46.178Z",
+  "images": [
+    "node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1"
+  ],
+  "built": "sha256:d623fce8d8714d0db8161668ecb58607dfd72d75d0eda7f90370ee0121f33726",
+  "versions": {
+    "node": ["v24.21.0"],
+    "npm": ["11.19.0"],
+    "express": ["5.3.0"]
+  },
+  "substitutions": [
+    "Express 5.3.0 on Node 24.21.0 substitutes for the service's historical storefront endpoint. Express's real res.jsonp generates every frame; the handler supplies only a fixed synthetic rates object.",
+    "All Express defaults are retained, including the callback query name, query parser, ETag generation and response headers. Exact application and transitive dependency versions/integrities are locked in package-lock.json; the Node base image is pinned by digest.",
+    "The probe has no CDN cache and no application callback validator. The business service intentionally restricts callbacks to plain identifiers and caches by path; conformance must retain these policies and document differences from stock Express rather than reproducing them in the probe.",
+    "The recorded replies are decoded as data over HTTP, not executed as scripts. This set does not establish historical Express behavior or cross-origin script execution."
+  ],
+  "client": "scripts/record.mjs: raw HTTP/1.1 requests over a TCP socket to the container's ephemeral loopback port.",
+  "commands": [
+    "docker build -t hostile-recording-express-jsonp recordings/express-jsonp",
+    "docker run -d --name hostile-recording-express-jsonp -p 127.0.0.1::8080 hostile-recording-express-jsonp",
+    "docker port hostile-recording-express-jsonp 8080/tcp",
+    "docker exec hostile-recording-express-jsonp node --version",
+    "docker exec hostile-recording-express-jsonp npm --version",
+    "docker exec hostile-recording-express-jsonp node -p require('express/package.json').version"
+  ],
+  "exchanges": [
+    {
+      "name": "plain-json",
+      "description": "Without a callback, Express sends the rates as ordinary JSON.",
+      "method": "GET",
+      "target": "/v1/rates",
+      "status": "HTTP/1.1 200 OK",
+      "request": "plain-json.request.http",
+      "response": "plain-json.response.http"
+    },
+    {
+      "name": "show-rates",
+      "description": "A normal identifier is guarded and called in Express's JSONP frame.",
+      "method": "GET",
+      "target": "/v1/rates?callback=showRates",
+      "status": "HTTP/1.1 200 OK",
+      "request": "show-rates.request.http",
+      "response": "show-rates.response.http"
+    },
+    {
+      "name": "other-widget",
+      "description": "A later callback receives its own frame because this probe has no path-only CDN cache.",
+      "method": "GET",
+      "target": "/v1/rates?callback=otherWidget",
+      "status": "HTTP/1.1 200 OK",
+      "request": "other-widget.request.http",
+      "response": "other-widget.response.http"
+    },
+    {
+      "name": "identifier-symbols",
+      "description": "Dollar, underscore and digits are retained in a plain identifier.",
+      "method": "GET",
+      "target": "/v1/rates?callback=_%24rates2",
+      "status": "HTTP/1.1 200 OK",
+      "request": "identifier-symbols.request.http",
+      "response": "identifier-symbols.response.http"
+    },
+    {
+      "name": "empty-callback",
+      "description": "An explicitly empty callback falls back to ordinary JSON in stock Express.",
+      "method": "GET",
+      "target": "/v1/rates?callback=",
+      "status": "HTTP/1.1 200 OK",
+      "request": "empty-callback.request.http",
+      "response": "empty-callback.response.http"
+    },
+    {
+      "name": "sanitized-callback",
+      "description": "Stock Express sanitizes punctuation in a callback rather than applying the service's identifier-only rejection.",
+      "method": "GET",
+      "target": "/v1/rates?callback=alert%281%29%2F%2F",
+      "status": "HTTP/1.1 200 OK",
+      "request": "sanitized-callback.request.http",
+      "response": "sanitized-callback.response.http"
+    },
+    {
+      "name": "dotted-callback",
+      "description": "Stock Express permits a dotted callback expression which the service's plain-identifier policy refuses.",
+      "method": "GET",
+      "target": "/v1/rates?callback=widget.showRates",
+      "status": "HTTP/1.1 200 OK",
+      "request": "dotted-callback.request.http",
+      "response": "dotted-callback.response.http"
+    },
+    {
+      "name": "repeated-callback",
+      "description": "Repeated callback parameters expose Express's first-value selection before framing.",
+      "method": "GET",
+      "target": "/v1/rates?callback=showRates&callback=otherWidget",
+      "status": "HTTP/1.1 200 OK",
+      "request": "repeated-callback.request.http",
+      "response": "repeated-callback.response.http"
+    }
+  ]
+}
