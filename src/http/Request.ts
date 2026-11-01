@@ -73,8 +73,9 @@ const construct = <I, E, R, H extends boolean, Q extends boolean>(
 
 /**
  * A request with no required input; execute it with `undefined`. A query string in `url` becomes raw query
- * declarations, keeping bare keys distinct from empty values. A fragment is discarded. Custom method
- * strings pass through to the transport unchanged.
+ * declarations through form decoding: `+` is a space, percent escapes are decoded, and empty `&` segments
+ * are dropped. Bare keys stay distinct from empty values. Materialization renders the decoded entries
+ * through `UrlEncoding.query`. A fragment is discarded. Custom method strings pass through unchanged.
  */
 export const make = (method: string, url: string): Request<unknown> => {
   const hash = url.indexOf("#");

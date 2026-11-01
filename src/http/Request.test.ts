@@ -117,10 +117,9 @@ describe("Request.make", () => {
     }),
   );
 
-  // Whether a declared query should keep its original encoding is an open design question. These
-  // two tests record the current parsing, not a promise.
+  // A declared URL's query is shorthand for form-decoded fields, rendered by UrlEncoding.query.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/14
-  it.effect("currently reads '+' in a declared query as a space", () =>
+  it.effect("reads '+' in a declared query as a space", () =>
     Effect.gen(function* () {
       expect(
         yield* urlOf(Request.get("https://api.test/s?q=a+b"), undefined),
@@ -129,11 +128,62 @@ describe("Request.make", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/14
-  it.effect("currently drops empty segments of a declared query", () =>
+  it.effect("drops empty segments of a declared query", () =>
     Effect.gen(function* () {
       expect(
         yield* urlOf(Request.get("https://api.test/s?&a=1&&b"), undefined),
       ).toBe("https://api.test/s?a=1&b");
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/14
+  it.effect.each([
+    ["a=1;b=2", "a=1%3Bb%3D2"],
+    ["a=b=c", "a=b%3Dc"],
+    ["a=%41", "a=A"],
+    ["a=%7e", "a=~"],
+    ["a=%zz", "a=%25zz"],
+    ["a=x%2By", "a=x%2By"],
+    ["%71=a+b", "q=a%20b"],
+  ] as const)(
+    "form-decodes and renders declared query case %$",
+    ([input, output]) =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(Request.get(`https://api.test/s?${input}`), undefined),
+        ).toBe(`https://api.test/s?${output}`);
+      }),
+  );
+
+  it.effect("edits form-decoded query keys with the raw combinators", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("https://api.test/s?%71=a+b&flag").pipe(
+            Request.setQuery("q", "a+b"),
+          ),
+          undefined,
+        ),
+      ).toBe("https://api.test/s?q=a%2Bb&flag");
+    }),
+  );
+
+  it.effect("keeps opaque query text supplied by native URL preparation", () =>
+    Effect.gen(function* () {
+      const query = "q=a+b&&tag=%7e;item=b=c";
+      expect(
+        yield* urlOf(
+          Request.get("svc").pipe(
+            Request.baseUrl("https://api.test"),
+            Request.mapEffect((native) =>
+              Effect.succeed(
+                HttpClientRequest.setUrl(native, `${native.url}?${query}`),
+              ),
+            ),
+          ),
+          undefined,
+        ),
+      ).toBe(`https://api.test/svc?${query}`);
     }),
   );
 });
