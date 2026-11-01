@@ -17,15 +17,17 @@ npm run check
 npm run lint
 npm run build
 npm test
+npm run test:package
 ```
 
 - `npm run check`: TypeScript and formatting checks, including the type-level assertions in tests.
 - `npm run lint`: Oxlint, ESLint, and Markdown linting.
 - `npm run build`: JavaScript and declaration output in `dist/`.
 - `npm test`: Vitest behavior tests.
+- `npm run test:package`: verify the built tarball in an isolated consumer; run the build first.
 - `npm run format`: apply the configured formatters.
 
-CI requires all four verification commands on Linux. For code changes, reproduce the reported
+CI requires all five verification commands on Linux. For code changes, reproduce the reported
 behavior first and add a meaningful test at the layer that exposes it.
 
 `.npmrc` sets `ignore-scripts=true`, so no dependency's install script runs. Keep it: none of the
@@ -73,6 +75,22 @@ retry policies, timeouts, cancellation, and interactions. They check the library
 normalization and Effect's parsing of synthetic responses. They do not exercise Fetch, browsers,
 real servers, or packaged installation.
 
+### Packed-package verification
+
+After building, `npm run test:package` packs the library with the pinned npm and checks the file
+list and every declared export target. The package includes `dist/`, source files for declaration
+maps, README, and package metadata; tests, tooling configuration, and documentation source stay out.
+It installs that tarball in a temporary consumer outside the checkout, with the currently installed
+Effect peer, TypeScript, and Node type versions pinned exactly. Dependency install scripts remain
+disabled.
+
+The consumer emits JavaScript and declarations with strict checking and `skipLibCheck: false`,
+including imports of every declared subpath. It imports the package root and each subpath at
+runtime, then executes a schema-backed operation through a synthetic client. The fixtures are in
+`fixtures/package/`. Successful runs remove the temporary consumer; failed runs retain it and print
+its path for diagnosis. This checks Node ESM consumption at the selected versions, not a published
+registry install, bundler, browser, or compatibility matrix.
+
 ### Hostile-server integration tests
 
 The separate [`hostile-servers-test`
@@ -87,8 +105,8 @@ and built-app lanes. Its
 [catalogue](https://github.com/viell-dev/slop-effect-schema-http/blob/hostile-servers-test/CATALOGUE.md)
 maps scenarios to tests, observed limits, and defect issues. Coverage is specific to the tested
 commit, provider, and lane; do not extrapolate cookie, redirect, header, or CORS behavior between
-platforms. The packed lane uses the suite's dependencies; verification in an isolated consumer
-remains tracked in [#15](https://github.com/viell-dev/slop-effect-schema-http/issues/15).
+platforms. The packed lane uses the suite's dependencies; the isolated consumer check above verifies
+the package separately from that suite.
 
 ## Pull requests
 

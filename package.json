@@ -78,6 +78,7 @@
     "lint:eslint": "eslint .",
     "lint:mdrefine": "mdrefine lint",
     "test": "vitest run",
+    "test:package": "node scripts/check-package.mjs",
     "test:watch": "vitest"
   },
   "files": [
