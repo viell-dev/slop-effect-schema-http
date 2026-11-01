@@ -1,0 +1,5 @@
+GET /dav/documents/report.txt HTTP/1.1
+Host: store.example
+If-None-Match: "11-6103c9e4a1000"
+Connection: close
+

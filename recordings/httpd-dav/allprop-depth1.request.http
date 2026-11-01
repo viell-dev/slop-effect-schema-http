@@ -1,0 +1,8 @@
+PROPFIND /dav/documents/ HTTP/1.1
+Host: store.example
+Depth: 1
+Content-Type: application/xml; charset=utf-8
+Content-Length: 90
+Connection: close
+
+<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:allprop/></D:propfind>

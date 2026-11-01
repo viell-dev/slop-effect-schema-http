@@ -1,0 +1,20 @@
+{
+  "documents": [
+    {
+      "name": "report.txt",
+      "title": "report.txt",
+      "contentType": "text/plain",
+      "text": "synthetic report\n",
+      "modified": "2024-01-31T12:00:00Z"
+    },
+    {
+      "name": "Café & notes.txt",
+      "title": "Café & notes.txt",
+      "contentType": "text/plain",
+      "text": "café\n",
+      "modified": "2024-01-31T12:00:00Z"
+    }
+  ],
+  "collections": ["archive", "templates"],
+  "clock": "2024-01-31T12:00:00Z"
+}

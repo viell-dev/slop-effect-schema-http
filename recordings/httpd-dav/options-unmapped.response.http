@@ -1,0 +1,11 @@
+HTTP/1.1 200 OK
+Date: Sun, 01 Nov 2026 04:31:53 GMT
+Server: Apache/2.4.69 (Unix)
+DAV: 1,2
+DAV: <http://apache.org/dav/propset/fs/1>
+MS-Author-Via: DAV
+Allow: OPTIONS,MKCOL,PUT,LOCK
+Content-Length: 0
+Connection: close
+Content-Type: text/plain
+

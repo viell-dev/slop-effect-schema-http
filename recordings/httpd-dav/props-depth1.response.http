@@ -1,0 +1,110 @@
+HTTP/1.1 207 Multi-Status
+Date: Sun, 01 Nov 2026 04:31:53 GMT
+Server: Apache/2.4.69 (Unix)
+Content-Length: 3288
+Connection: close
+Content-Type: text/xml; charset="utf-8"
+
+<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:ns1="urn:recording:missing" xmlns:ns0="DAV:">
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/" xmlns:g0="DAV:" xmlns:g1="urn:recording:missing">
+<D:href>/dav/documents/</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype><D:collection/></lp1:resourcetype>
+<D:getcontenttype>httpd/unix-directory</D:getcontenttype>
+<lp1:getetag>"1000-6103c9e4a1000"</lp1:getetag>
+<lp1:getlastmodified>Wed, 31 Jan 2024 12:00:00 GMT</lp1:getlastmodified>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+<D:propstat>
+<D:prop>
+<g0:displayname/>
+<g0:getcontentlength/>
+<g1:missing/>
+</D:prop>
+<D:status>HTTP/1.1 404 Not Found</D:status>
+</D:propstat>
+</D:response>
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/" xmlns:g0="DAV:" xmlns:g1="urn:recording:missing">
+<D:href>/dav/documents/Caf%c3%a9%20&amp;%20notes.txt</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype/>
+<lp1:getcontentlength>6</lp1:getcontentlength>
+<D:getcontenttype>text/plain</D:getcontenttype>
+<lp1:getetag>"6-6103c9e4a1000"</lp1:getetag>
+<lp1:getlastmodified>Wed, 31 Jan 2024 12:00:00 GMT</lp1:getlastmodified>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+<D:propstat>
+<D:prop>
+<g0:displayname/>
+<g1:missing/>
+</D:prop>
+<D:status>HTTP/1.1 404 Not Found</D:status>
+</D:propstat>
+</D:response>
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/" xmlns:g0="DAV:" xmlns:g1="urn:recording:missing">
+<D:href>/dav/documents/report.txt</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype/>
+<lp1:getcontentlength>17</lp1:getcontentlength>
+<D:getcontenttype>text/plain</D:getcontenttype>
+<lp1:getetag>"11-6103c9e4a1000"</lp1:getetag>
+<lp1:getlastmodified>Wed, 31 Jan 2024 12:00:00 GMT</lp1:getlastmodified>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+<D:propstat>
+<D:prop>
+<g0:displayname/>
+<g1:missing/>
+</D:prop>
+<D:status>HTTP/1.1 404 Not Found</D:status>
+</D:propstat>
+</D:response>
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/" xmlns:g0="DAV:" xmlns:g1="urn:recording:missing">
+<D:href>/dav/documents/templates/</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype><D:collection/></lp1:resourcetype>
+<D:getcontenttype>httpd/unix-directory</D:getcontenttype>
+<lp1:getetag>"1000-6103c9e4a1000"</lp1:getetag>
+<lp1:getlastmodified>Wed, 31 Jan 2024 12:00:00 GMT</lp1:getlastmodified>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+<D:propstat>
+<D:prop>
+<g0:displayname/>
+<g0:getcontentlength/>
+<g1:missing/>
+</D:prop>
+<D:status>HTTP/1.1 404 Not Found</D:status>
+</D:propstat>
+</D:response>
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/" xmlns:g0="DAV:" xmlns:g1="urn:recording:missing">
+<D:href>/dav/documents/archive/</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype><D:collection/></lp1:resourcetype>
+<D:getcontenttype>httpd/unix-directory</D:getcontenttype>
+<lp1:getetag>"1000-6103c9e4a1000"</lp1:getetag>
+<lp1:getlastmodified>Wed, 31 Jan 2024 12:00:00 GMT</lp1:getlastmodified>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+<D:propstat>
+<D:prop>
+<g0:displayname/>
+<g0:getcontentlength/>
+<g1:missing/>
+</D:prop>
+<D:status>HTTP/1.1 404 Not Found</D:status>
+</D:propstat>
+</D:response>
+</D:multistatus>

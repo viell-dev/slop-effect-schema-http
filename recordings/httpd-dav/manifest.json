@@ -1,0 +1,151 @@
+{
+  "set": "httpd-dav",
+  "description": "httpd 2.4.69 mod_dav/mod_dav_fs over a fixed two-file/two-collection dataset: multistatus, missing properties, validators and method lists.",
+  "recorded": "2026-11-01T04:31:52.149Z",
+  "images": [
+    "httpd:2.4.69@sha256:d3accb516506c05ae0068bb54ba6798a10b249b64db91268fca692326cb02b4b"
+  ],
+  "built": "sha256:e669dc01639fd27580613e1221dbd9e2177cc6d21f0e62327c1cb59ffa558347",
+  "versions": {
+    "httpd": [
+      "Server version: Apache/2.4.69 (Unix)",
+      "Server built:   Oct 28 2026 01:15:47"
+    ],
+    "modules": [
+      "Loaded Modules:",
+      " core_module (static)",
+      " so_module (static)",
+      " http_module (static)",
+      " mpm_event_module (shared)",
+      " unixd_module (shared)",
+      " authz_core_module (shared)",
+      " mime_module (shared)",
+      " dav_module (shared)",
+      " dav_fs_module (shared)"
+    ]
+  },
+  "substitutions": [
+    "This records stock httpd 2.4.69 mod_dav/mod_dav_fs, not DocVault's 2009 servlet-backed implementation. Two static files with fixed modification times and two directories stand in for the service's document/collection records.",
+    "FileETag is explicitly MTime Size, so file validators do not depend on the container filesystem's inode allocation. DocVault's opaque document-version validators need not have these filesystem-derived values.",
+    "DavDepthInfinity is disabled to exercise the documented finite-depth refusal. Stock mod_dav supports more methods than DocVault's fixed layout and does not add its 2016 mandatory-validator policy; conformance records these differences rather than changing that policy.",
+    "The exact conditional ETag values were taken from an initial GET of this fixed dataset. Re-recording with changed file content, modification times or FileETag settings requires updating those definition headers from a fresh GET, then recording again; never edit the raw HTTP files."
+  ],
+  "client": "scripts/record.mjs: raw HTTP/1.1 requests over a TCP socket to the container's ephemeral loopback port.",
+  "commands": [
+    "docker build -t hostile-recording-httpd-dav recordings/httpd-dav",
+    "docker run -d --name hostile-recording-httpd-dav -p 127.0.0.1::80 hostile-recording-httpd-dav",
+    "docker port hostile-recording-httpd-dav 80/tcp",
+    "docker exec hostile-recording-httpd-dav httpd -v",
+    "docker exec hostile-recording-httpd-dav httpd -M"
+  ],
+  "exchanges": [
+    {
+      "name": "allprop-depth1",
+      "description": "A depth-1 allprop listing includes the collection, subcollections and both files.",
+      "method": "PROPFIND",
+      "target": "/dav/documents/",
+      "status": "HTTP/1.1 207 Multi-Status",
+      "request": "allprop-depth1.request.http",
+      "response": "allprop-depth1.response.http"
+    },
+    {
+      "name": "props-depth1",
+      "description": "Explicit properties include a deliberately unknown property so 404 propstats can be inspected separately from 200 properties.",
+      "method": "PROPFIND",
+      "target": "/dav/documents/",
+      "status": "HTTP/1.1 207 Multi-Status",
+      "request": "props-depth1.request.http",
+      "response": "props-depth1.response.http"
+    },
+    {
+      "name": "options-collection",
+      "description": "The collection's actual DAV classes and Allow methods.",
+      "method": "OPTIONS",
+      "target": "/dav/documents/",
+      "status": "HTTP/1.1 200 OK",
+      "request": "options-collection.request.http",
+      "response": "options-collection.response.http"
+    },
+    {
+      "name": "options-document",
+      "description": "An existing file's actual DAV classes and Allow methods.",
+      "method": "OPTIONS",
+      "target": "/dav/documents/report.txt",
+      "status": "HTTP/1.1 200 OK",
+      "request": "options-document.request.http",
+      "response": "options-document.response.http"
+    },
+    {
+      "name": "options-unmapped",
+      "description": "An unmapped file name's actual DAV classes and Allow methods.",
+      "method": "OPTIONS",
+      "target": "/dav/documents/new.txt",
+      "status": "HTTP/1.1 200 OK",
+      "request": "options-unmapped.request.http",
+      "response": "options-unmapped.response.http"
+    },
+    {
+      "name": "mkcol-existing",
+      "description": "MKCOL on an existing collection observes the 405 and its Allow behavior.",
+      "method": "MKCOL",
+      "target": "/dav/documents/",
+      "status": "HTTP/1.1 405 Method Not Allowed",
+      "request": "mkcol-existing.request.http",
+      "response": "mkcol-existing.response.http"
+    },
+    {
+      "name": "finite-depth",
+      "description": "A missing Depth implies infinity; DavDepthInfinity off produces 403 with an HTML explanation, rather than DocVault's DAV:error element.",
+      "method": "PROPFIND",
+      "target": "/dav/documents/",
+      "status": "HTTP/1.1 403 Forbidden",
+      "request": "finite-depth.request.http",
+      "response": "finite-depth.response.http"
+    },
+    {
+      "name": "get-document",
+      "description": "The fixed ASCII file's bytes, strong ETag and Last-Modified header.",
+      "method": "GET",
+      "target": "/dav/documents/report.txt",
+      "status": "HTTP/1.1 200 OK",
+      "request": "get-document.request.http",
+      "response": "get-document.response.http"
+    },
+    {
+      "name": "get-not-modified-wildcard",
+      "description": "If-None-Match wildcard matches the existing file and returns 304 without content.",
+      "method": "GET",
+      "target": "/dav/documents/report.txt",
+      "status": "HTTP/1.1 304 Not Modified",
+      "request": "get-not-modified-wildcard.request.http",
+      "response": "get-not-modified-wildcard.response.http"
+    },
+    {
+      "name": "get-not-modified",
+      "description": "The exact strong ETag from the initial GET yields 304 without content.",
+      "method": "GET",
+      "target": "/dav/documents/report.txt",
+      "status": "HTTP/1.1 304 Not Modified",
+      "request": "get-not-modified.request.http",
+      "response": "get-not-modified.response.http"
+    },
+    {
+      "name": "put-weak",
+      "description": "The current file's ETag in weak form cannot satisfy the strong If-Match comparison.",
+      "method": "PUT",
+      "target": "/dav/documents/report.txt",
+      "status": "HTTP/1.1 412 Precondition Failed",
+      "request": "put-weak.request.http",
+      "response": "put-weak.response.http"
+    },
+    {
+      "name": "put-stale",
+      "description": "A stale strong If-Match prevents replacement and returns 412.",
+      "method": "PUT",
+      "target": "/dav/documents/report.txt",
+      "status": "HTTP/1.1 412 Precondition Failed",
+      "request": "put-stale.request.http",
+      "response": "put-stale.response.http"
+    }
+  ]
+}
