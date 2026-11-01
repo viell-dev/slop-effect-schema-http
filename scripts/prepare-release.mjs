@@ -66,7 +66,16 @@ run(
   "--tarball",
   join(output, `${manifest.name}-${manifest.version}.tgz`),
   "--effect",
-  "4.1.1",
+  "4.0.7",
+);
+run(
+  "run",
+  "test:package",
+  "--",
+  "--tarball",
+  join(output, `${manifest.name}-${manifest.version}.tgz`),
+  "--typescript",
+  "7.0.2",
 );
 assert.equal(git("rev-parse", "HEAD"), commit);
 assert.equal(git("status", "--porcelain", "--untracked-files=all"), "");

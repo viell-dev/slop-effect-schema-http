@@ -17,11 +17,11 @@ installable tarball and SHA-256 checksums. It is not published on npm. The sourc
 Download the tarball, then install it in an ESM project:
 
 ```sh
-npm install ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.0.7
+npm install ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.1.1
 ```
 
 The initial environment scope is Node.js 24 on Windows/Linux and browser Fetch in Chromium, with
-Effect `^4.0.7`. The isolated consumer is checked with Effect 4.0.7 and 4.1.1 and TypeScript 6.0.3.
+Effect `^4.0.7`. Isolated consumers check Effect 4.0.7 and 4.1.1, and TypeScript 6.0.3 and 7.0.2.
 See [compatibility and limits](https://viell-dev.github.io/slop-effect-schema-http/limits) for the
 qualification boundaries. Compatible fixes use `0.1.x`; breaking API changes require `0.2.0` and
 migration guidance.

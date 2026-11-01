@@ -29,9 +29,11 @@ const { values } = parseArgs({
     "out-dir": { type: "string" },
     tarball: { type: "string" },
     effect: { type: "string" },
+    typescript: { type: "string" },
   },
 });
 if (values.effect) assert.match(values.effect, /^\d+\.\d+\.\d+$/);
+if (values.typescript) assert.match(values.typescript, /^\d+\.\d+\.\d+$/);
 const suppliedTarball = values.tarball && resolve(values.tarball);
 const digest = (file) =>
   createHash("sha256").update(readFileSync(file)).digest("hex");
@@ -131,7 +133,7 @@ try {
         effect: values.effect ?? version("effect"),
       },
       devDependencies: {
-        typescript: version("typescript"),
+        typescript: values.typescript ?? version("typescript"),
         "@types/node": version("@types/node"),
       },
     }),
@@ -243,7 +245,7 @@ try {
           sha256: checksum,
           node: process.version,
           effect: values.effect ?? version("effect"),
-          typescript: version("typescript"),
+          typescript: values.typescript ?? version("typescript"),
         },
         null,
         2,

@@ -79,7 +79,7 @@ describe("Operation over real loopback sockets", () => {
               response.end(request.headers.cookie ?? "none");
             }
           });
-          const jar = yield* Ref.make(Cookies.empty);
+          const jar = yield* Ref.make<ReadonlyArray<Cookies.Cookie>>([]);
           const options = {
             transformClient: (client: HttpClient.HttpClient) =>
               useJar ? HttpClient.withCookiesRef(client, jar) : client,

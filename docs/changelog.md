@@ -17,6 +17,9 @@ prerequisites](https://github.com/viell-dev/slop-effect-schema-http/issues/2) ar
   Release qualification covers Windows/Linux, Effect 4.0.7/4.1.1 package consumers, and all four
   hostile-server lanes.
 - Published installation, compatibility, recovery and release procedures.
+- Refresh Effect, ESLint, mdrefine and compatible transitive dependencies, and qualify TypeScript 7
+  consumers. The build/lint toolchain retains TypeScript 6 until typescript-eslint supports 7
+  ([#69](https://github.com/viell-dev/slop-effect-schema-http/issues/69)).
 
 The [limits](./limits.md) remain part of the contract: finite bodies, client-owned transport and
 browser policy, no server generation or general cache. The separate [human

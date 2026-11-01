@@ -108,14 +108,14 @@
     "minimatch@10": "11.0.1"
   },
   "devDependencies": {
-    "@effect/vitest": "^4.0.7",
+    "@effect/vitest": "^4.1.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.6",
-    "effect": "^4.0.7",
-    "eslint": "^10.13.0",
+    "effect": "^4.1.1",
+    "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-oxlint": "^1.90.0",
-    "mdrefine": "^0.5.0",
+    "mdrefine": "^0.6.3",
     "npm-run-all2": "^9.0.4",
     "oxlint": "^1.90.0",
     "prettier": "^3.9.10",

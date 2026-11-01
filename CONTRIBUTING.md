@@ -17,6 +17,7 @@ npm run check
 npm run lint
 npm run build
 npm test
+npm run test:release
 npm run test:package
 ```
 
@@ -24,10 +25,11 @@ npm run test:package
 - `npm run lint`: Oxlint, ESLint, and Markdown linting.
 - `npm run build`: JavaScript and declaration output in `dist/`.
 - `npm test`: Vitest behavior tests.
+- `npm run test:release`: reject mismatched, pending or failed release qualification producers.
 - `npm run test:package`: verify the built tarball in an isolated consumer; run the build first.
 - `npm run format`: apply the configured formatters.
 
-CI requires all five verification commands on Linux, plus the documentation checks below. For code
+CI requires these verification commands on Linux, plus the documentation checks below. For code
 changes, reproduce the reported behavior first and add a meaningful test at the layer that exposes
 it.
 
@@ -45,6 +47,13 @@ patched version without it, then rerun the checks and `npm audit`.
 [#49](https://github.com/viell-dev/slop-effect-schema-http/issues/49) records the compatibility
 evidence; [#41](https://github.com/viell-dev/slop-effect-schema-http/issues/41) tracks dependency
 follow-up.
+
+The development compiler remains TypeScript 6.0.3 because current typescript-eslint 8.72.1 requires
+`>=4.8.4 <6.1.0`; TypeScript 7's native compiler does not provide its required programmatic API.
+Release preparation separately checks strict package consumers with TypeScript 7.0.2.
+[#69](https://github.com/viell-dev/slop-effect-schema-http/issues/69) records the resolution failure
+and reconsideration trigger. Keep compatible peer installation; do not force the development
+compiler past the lint tools' supported range.
 
 ### Behavior tests
 

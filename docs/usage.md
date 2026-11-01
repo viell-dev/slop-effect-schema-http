@@ -16,9 +16,9 @@ selects HTTP 200 and validates its JSON body. The operation's input is `{ path: 
 successful output has a numeric `id` and a string `name`.
 
 Other request bindings follow the same shape: `Request.body` adds `{ body }`, `Request.query` adds
-`{ query }`, and `Request.headers` adds `{ headers }`. Input is encoded once per evaluation.
-Raw setters such as `Request.setQuery` are useful for fixed fields; a schema owns its entire group
-once bound. [Design](./design.md#fields-and-schemas) gives the ownership and encoding rules.
+`{ query }`, and `Request.headers` adds `{ headers }`. Input is encoded once per evaluation. Raw
+setters such as `Request.setQuery` are useful for fixed fields; a schema owns its entire group once
+bound. [Design](./design.md#fields-and-schemas) gives the ownership and encoding rules.
 
 ## Supply an HTTP client and run the effect
 

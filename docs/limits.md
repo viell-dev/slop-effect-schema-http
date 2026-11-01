@@ -3,10 +3,12 @@
 ## Compatibility and scope
 
 The initial supported scope is ESM with Node.js 24 on Windows/Linux, or browser Fetch in Chromium.
-Qualification uses Node 24.21.0, TypeScript 6.0.3 and Effect 4.0.7; isolated package consumers also
-check Effect 4.1.1. `package.json` accepts Effect `^4.0.7`, relying on Effect's compatible updates;
-these two tested versions are evidence, not a claim to have tested every future version. Report a
-regression with the exact dependency version and retain a known-good lockfile when upgrading.
+Qualification uses Node 24.21.0 and Effect 4.1.1. Isolated package consumers also check the Effect
+4.0.7 peer floor and TypeScript 6.0.3/7.0.2. `package.json` accepts Effect `^4.0.7`; its HTTP
+modules are marked unstable upstream and can change across minor versions. The tested versions
+establish the current compatibility evidence. Review Effect's release notes and retain a known-good
+lockfile when upgrading, including any application-owned client middleware. Report regressions with
+the exact dependency version.
 
 The hostile source, Chromium, packed-package and built-app lanes exercise real loopback servers.
 Their browser is pinned by Playwright 1.64.1. The release's qualification run records its exact
