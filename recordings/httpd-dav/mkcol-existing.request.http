@@ -1,0 +1,4 @@
+MKCOL /dav/documents/ HTTP/1.1
+Host: store.example
+Connection: close
+

@@ -1,0 +1,15 @@
+HTTP/1.1 403 Forbidden
+Date: Sun, 01 Nov 2026 04:31:53 GMT
+Server: Apache/2.4.69 (Unix)
+Content-Length: 271
+Connection: close
+Content-Type: text/html; charset=ISO-8859-1
+
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+<title>403 Forbidden</title>
+</head><body>
+<h1>Forbidden</h1>
+<p>PROPFIND requests with a Depth of "infinity" are not allowed for /dav/documents/.</p>
+</body></html>

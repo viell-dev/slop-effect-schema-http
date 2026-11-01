@@ -1,0 +1,4 @@
+OPTIONS /dav/documents/report.txt HTTP/1.1
+Host: store.example
+Connection: close
+

@@ -12,15 +12,16 @@ recordings are checked in and made on demand, never in CI.
 
 ## The sets
 
-| Set                | Software                                                         | Imitated by                             | Catalogue |
-| ------------------ | ---------------------------------------------------------------- | --------------------------------------- | --------- |
-| `frontier-rpc2`    | Frontier::RPC2 0.07b4 under Frontier::Daemon, Perl 5.36 (Debian) | the gateway's `/RPC2`                   | EXT-6a    |
-| `xmlrpc-lite`      | XMLRPC::Lite 0.717 on SOAP::Lite 1.27, its HTTP daemon (Debian)  | the gateway's `/RPC2`                   | EXT-6a    |
-| `httpd-digest`     | httpd 2.4.68, `mod_auth_digest` with `AuthDigestQop none`; curl  | the gateway's `/admin/audit.cgi`        | EXT-6b    |
-| `httpd-redirect`   | httpd 2.4.69, `mod_alias` `Redirect permanent`                   | the gateway's `/cgi-bin/rpt.exe`        | EXT-6c    |
-| `tomcat7-redirect` | Tomcat 7.0.109 on OpenJDK 8, defaults and `useRelativeRedirects` | the business API's `POST /v1/customers` | EXT-6d    |
-| `jaxws-faults`     | the JAX-WS reference implementation in JDK 8 (Temurin)           | the SOAP store's `LockDocument`         | EXT-6e    |
-| `cgi-pm-query`     | CGI.pm 4.55 on Perl 5.36, HTTP::Daemon 6.16 (Debian)             | the gateway's CGI query handling        | AUTH-2    |
+| Set                | Software                                                         | Imitated by                             | Catalogue             |
+| ------------------ | ---------------------------------------------------------------- | --------------------------------------- | --------------------- |
+| `frontier-rpc2`    | Frontier::RPC2 0.07b4 under Frontier::Daemon, Perl 5.36 (Debian) | the gateway's `/RPC2`                   | EXT-6a                |
+| `xmlrpc-lite`      | XMLRPC::Lite 0.717 on SOAP::Lite 1.27, its HTTP daemon (Debian)  | the gateway's `/RPC2`                   | EXT-6a                |
+| `httpd-digest`     | httpd 2.4.68, `mod_auth_digest` with `AuthDigestQop none`; curl  | the gateway's `/admin/audit.cgi`        | EXT-6b                |
+| `httpd-redirect`   | httpd 2.4.69, `mod_alias` `Redirect permanent`                   | the gateway's `/cgi-bin/rpt.exe`        | EXT-6c                |
+| `tomcat7-redirect` | Tomcat 7.0.109 on OpenJDK 8, defaults and `useRelativeRedirects` | the business API's `POST /v1/customers` | EXT-6d                |
+| `jaxws-faults`     | the JAX-WS reference implementation in JDK 8 (Temurin)           | the SOAP store's `LockDocument`         | EXT-6e                |
+| `cgi-pm-query`     | CGI.pm 4.55 on Perl 5.36, HTTP::Daemon 6.16 (Debian)             | the gateway's CGI query handling        | AUTH-2                |
+| `httpd-dav`        | httpd 2.4.69, stock `mod_dav` and `mod_dav_fs`                   | the store's WebDAV view                 | STAT-7, PAY-3a, RET-3 |
 
 Each set's `manifest.json` names its base images by digest, the software versions as the software
 reports them, the date of the recording, the exact commands, and every exchange. Its `set.json`
@@ -37,6 +38,16 @@ These recordings hold query outcomes to CGI.pm 4.55, not to a historical CGI.pm 
 installation. Name-only and empty sessions both produce the service's session-error outcome;
 those replies do not distinguish an absent value from an empty one inside the parser.
 
+The WebDAV set uses two static UTF-8 files, two subcollections and fixed modification times.
+Stock mod_dav produces the multistatus, missing-property groups, quoted charset, method lists and
+conditional replies. Its full property sets, prefixes, href spelling/order and metadata differ
+from DocVault's deliberately restricted servlet view; backend tests retain and pin those
+differences. The exact conditional ETags were copied from an initial GET. `FileETag MTime Size`
+keeps file tags independent of inode allocation. If the dataset, timestamps or ETag configuration
+changes, take the new GET tag, update the definition's conditional headers, then re-record the set.
+Never edit the raw HTTP files. An initial pass is a way to discover a validator, not a replacement
+for the final recorded conditional exchange.
+
 ## Files
 
 A set's directory holds:
@@ -44,8 +55,8 @@ A set's directory holds:
 - `Dockerfile`, and the server configuration or the small program the server runs, written for the
   recording: the Perl handlers, httpd's configuration and CGI, the servlet, the JAX-WS endpoints.
   The base image is pinned by digest, and Debian packages by version.
-- `data.json`, for the two XML-RPC sets: the synthetic data both Perl servers serve, which is also
-  the gateway's test options in the comparison.
+- `data.json`, for the XML-RPC and WebDAV sets: the synthetic data served by the real software,
+  also used to configure the imitating backend in the comparison.
 - `set.json`: the description, the `Host` the requests carry, the server's port, a probe request,
   the commands that report versions, the substitutions, and the exchanges in order.
 - `<name>.request.http` and `<name>.response.http`: one exchange exactly as the bytes crossed the
@@ -77,15 +88,18 @@ Docker Desktop's `host.docker.internal` reaches; on a Docker engine whose contai
 the host's loopback interface, set `RECORD_RELAY_HOST` to an address they can.
 
 A re-recording changes every `Date` and nonce, and the Perl sets fix Perl's hash seed so that
-struct members keep their order. Review the diff: anything else that changed is a change in the
-software or the set, and the conformance tests show whether the backends still agree.
+struct members keep their order. WebDAV filesystem `creationdate` values also reflect the new
+container's files; fixed modification times do not fix filesystem change times. Review the diff:
+other changes reflect the software, filesystem or set, and conformance tests show whether the
+backends still agree.
 
 ## How the tests use them
 
 - **The replay backend** ([services/replay.md](../services/replay.md)) serves recorded responses
   over a real socket, so consumer tests decode the real software's bytes in both lanes:
   `src/scenarios/recordings.test.ts` runs the consumer's own operations against them (catalogue
-  entries EXT-8a to EXT-8d); `src/scenarios/cgi-query.test.ts` checks the CGI.pm set (AUTH-2).
+  entries EXT-8a to EXT-8d); `src/scenarios/cgi-query.test.ts` checks the CGI.pm set (AUTH-2), and
+  `src/scenarios/webdav-recordings.test.ts` checks mod_dav (STAT-7, PAY-3a, RET-3).
 - **The conformance tests** in `src/conformance/` send each recorded request to the backend that
   imitates the software, over a raw socket, and compare the reply with the recorded response. They
   are backend-side code, kept apart from the consumer side by `scripts/boundaries.mjs`.

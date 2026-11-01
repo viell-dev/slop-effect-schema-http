@@ -148,6 +148,12 @@ Sender and Receiver`
 schema`
   - Round trip: `[STAT-7] AllowList round-trips method tokens case-sensitively and refuses
 non-tokens`. Separators and empty list elements are not kept; encoding joins with `", "`.
+  - Recorded referee (#47): stock httpd 2.4.69 mod_dav's quoted XML charset, explicit-property 404
+    groups, OPTIONS lists, MKCOL 405 and missing-Depth 403 (`recordings/httpd-dav`). Conformance
+    retains DocVault's smaller method set/DAV class and its XML depth error instead of Apache HTML.
+    Apache's recorded MKCOL advertises only TRACE, unlike its OPTIONS list; both are pinned as
+    observed rather than treated as DocVault's policy. Consumer checks decode the real lists and
+    error outcomes in both lanes/providers.
 - **STAT-12** A GET carrying a SOAP body for downloads: rejected client-side before dispatch as a
   typed error. Status: tested.
   - `[STAT-12] the documented GET download with a SOAP body is refused before dispatch` (provider;
@@ -193,6 +199,13 @@ skips`
 others`, `[PAY-3a] SOAP 1.1 and 1.2 documents round-trip a payload and refuse the other
 version's envelope`, and `[PAY-3a] the WSDL summary and the WebDAV listing are decode-only, and
 their reverse says why` (each drops what it skips, so its encoder fails with that reason).
+  - Recorded WebDAV referee (#47): allprop and explicit-property multistatus include the root,
+    two subcollections and two files. Backend tests retain every property/status group and pin
+    extra/missing properties, namespaces, href escaping/order and opaque tag differences. The
+    consumer reads both through the existing listing decoder, preserving accented names and byte
+    lengths while skipping collections and 404 properties. Removing the backend collection marker
+    fails both comparisons; disabling the consumer's 404 handling fails explicit-property reads
+    while allprop controls pass. Both implementations are restored after mutation probes.
 - **PAY-4a** Latin-1 XML whose encoding must be read from its own declaration. Status: tested.
   - `[PAY-4a] reads ISO-8859-1 from the reply's own declaration, character references included`
   - Round trips: `[PAY-4a] XmlTextFromBytes reads the encoding from the declaration and writes the
@@ -248,6 +261,11 @@ tag, 428 without one`
   - Round trips: `[RET-3] EntityTag round-trips strong and weak tags and refuses looser
 spellings`, `[RET-3] ConditionHeaders round-trips the three write conditions and refuses both
 validators together`
+  - Recorded referee (#47): mod_dav GET bytes/validators, wildcard and matching-tag 304 with no
+    content, and weak/stale If-Match 412. Backend conformance adapts only current tag identities,
+    counts setup/verification GETs, and proves rejected writes leave the resource unchanged.
+    Consumer operations decode the real GET/304/412 replies in both lanes/providers. DocVault's
+    mandatory-validator policy is its own rule; this does not make it a stock httpd policy.
 
 ## JSON business API: envelopes (`business/envelopes`)
 

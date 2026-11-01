@@ -228,7 +228,9 @@ Documents are at `/dav/documents/<name>`, with the name percent-encoded.
 - `OPTIONS` answers 200 with `DAV: 1` and the resource's `Allow`.
 - `PROPFIND` takes `Depth: 0` or `1` (`infinity` and a missing header are refused with 403, any
   other value with 400) and an optional XML body, which must be a `DAV:` `propfind` element. It
-  answers `207 Multi-Status`. Documents report `resourcetype`, `displayname`, `getcontentlength`,
+  answers `207 Multi-Status` with the same fixed property set for an `allprop` request or an
+  explicit property selection; the request's property list does not filter or extend the reply.
+  Documents report `resourcetype`, `displayname`, `getcontentlength`,
   `getcontenttype`, `getetag` and `getlastmodified`; collections report `resourcetype` with
   `collection`, `displayname` and `getlastmodified`, and the other three under a 404 propstat. A
   depth-1 listing of `/dav/documents/` is sorted by href. An unmapped name answers 404.
@@ -243,6 +245,55 @@ Documents are at `/dav/documents/<name>`, with the name percent-encoded.
   answers 204.
 
 WebDAV errors other than the depth refusal and the multistatus are plain text.
+
+### Recordings
+
+The WebDAV view is held to stock httpd 2.4.69's `mod_dav` and `mod_dav_fs`, recorded over the same
+two-document, two-subcollection dataset ([recordings/README.md](../recordings/README.md), set
+`httpd-dav`; catalogue STAT-7, PAY-3a and RET-3). The recordings establish the common 207 resource
+and property structure, collection markers, byte lengths (including six UTF-8 bytes for `café`
+and its newline), document media types and modification times, quoted XML charset, 304 without
+content, and strong-comparison rejection of weak or stale `If-Match` with 412. Stock filesystem
+DAV supplies external checks for these conventions alongside DocVault's servlet contract.
+
+The backend comparisons retain every property and status group and pin these differences:
+
+- Apache's `allprop` includes `creationdate`, `supportedlock`, `lockdiscovery` and, on files, the
+  Apache namespace's `executable` property. It omits `displayname`; DocVault always supplies it.
+  Apache supplies a collection's `getcontenttype` as `httpd/unix-directory` and a filesystem ETag.
+  DocVault puts `getcontentlength`, `getcontenttype` and `getetag` in the collection's 404 group.
+  Under explicit selection, Apache puts `displayname` and the requested `urn:recording:missing`
+  property in a 404 group, also putting a collection's length there. DocVault keeps its fixed set,
+  including successful `displayname`, and omits the unknown property. Its documents have one 200
+  group; its collections have separate 200 and 404 groups under either request form.
+- Both writers use `DAV:` for DAV elements. Apache also declares the filesystem property namespace
+  and echoes the requested unknown namespace; its `D`, `lp`, `g` and `ns` prefixes and line layout
+  differ from DocVault's compact `D`-only document. Apache writes the accented href with lowercase
+  percent escapes and an XML-escaped literal ampersand. DocVault uses uppercase percent escapes and
+  `%26`. Apache's observed listing order differs from DocVault's href order; both include the root
+  collection, two files and two subcollections.
+- Apache's ETags derive from file modification time and size. DocVault's opaque document-version
+  tags are different strong tags; the report's tag is checked against GET and the listing. They
+  are pinned as differences, never masked. For the matching-tag GET and current weak-tag PUT, the
+  comparison first GETs DocVault's tag and substitutes it for the recorded filesystem tag in the
+  conditional header. The wildcard and stale-tag requests are unchanged. Setup and post-rejection
+  verification GETs are counted in the request ledger; the latter prove that a rejected PUT changes
+  no bytes, type, modification time or tag.
+- OPTIONS on Apache advertises DAV classes `1,2`, its filesystem property-set URI,
+  `MS-Author-Via: DAV` and broader resource-specific method lists. DocVault retains DAV class `1`
+  and the restricted `Allow` lists above. The recorded MKCOL on an existing collection returns
+  405 with `Allow: TRACE`, whereas DocVault returns its collection's `Allow`; this observation is
+  distinct from Apache's OPTIONS list. Neither observation expands DocVault's fixed layout or its
+  mandatory-validator write policy.
+- Apache's missing-Depth refusal is a 403 HTML explanation; DocVault's is a 403 DAV XML error with
+  `propfind-finite-depth`. Apache's 405 and 412 pages are HTML, whereas DocVault's are plain text.
+  Apache sends `Server`, `Content-Length` and, for GET/304, `Accept-Ranges: bytes`; DocVault's Node
+  server omits `Server` and `Accept-Ranges`, and frames nonempty replies with chunked encoding.
+  OPTIONS has an empty body and zero length on both; Apache additionally sends the resource's
+  content type. Both use `Connection: close` for the recorded requests.
+
+Only the response `Date` is masked. Apache-only creation times remain real, validated property
+values, and no property, namespace, validator or other transport metadata is masked away.
 
 ## The file endpoints
 

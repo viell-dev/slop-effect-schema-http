@@ -1,0 +1,124 @@
+{
+  "description": "httpd 2.4.69 mod_dav/mod_dav_fs over a fixed two-file/two-collection dataset: multistatus, missing properties, validators and method lists.",
+  "host": "store.example",
+  "port": 80,
+  "probe": { "method": "OPTIONS", "target": "/dav/documents/" },
+  "client": "scripts/record.mjs: raw HTTP/1.1 requests over a TCP socket to the container's ephemeral loopback port.",
+  "substitutions": [
+    "This records stock httpd 2.4.69 mod_dav/mod_dav_fs, not DocVault's 2009 servlet-backed implementation. Two static files with fixed modification times and two directories stand in for the service's document/collection records.",
+    "FileETag is explicitly MTime Size, so file validators do not depend on the container filesystem's inode allocation. DocVault's opaque document-version validators need not have these filesystem-derived values.",
+    "DavDepthInfinity is disabled to exercise the documented finite-depth refusal. Stock mod_dav supports more methods than DocVault's fixed layout and does not add its 2016 mandatory-validator policy; conformance records these differences rather than changing that policy.",
+    "The exact conditional ETag values were taken from an initial GET of this fixed dataset. Re-recording with changed file content, modification times or FileETag settings requires updating those definition headers from a fresh GET, then recording again; never edit the raw HTTP files."
+  ],
+  "versions": {
+    "httpd": ["httpd", "-v"],
+    "modules": ["httpd", "-M"]
+  },
+  "exchanges": [
+    {
+      "name": "allprop-depth1",
+      "description": "A depth-1 allprop listing includes the collection, subcollections and both files.",
+      "request": {
+        "method": "PROPFIND",
+        "target": "/dav/documents/",
+        "headers": [
+          ["Depth", "1"],
+          ["Content-Type", "application/xml; charset=utf-8"]
+        ],
+        "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>"
+      }
+    },
+    {
+      "name": "props-depth1",
+      "description": "Explicit properties include a deliberately unknown property so 404 propstats can be inspected separately from 200 properties.",
+      "request": {
+        "method": "PROPFIND",
+        "target": "/dav/documents/",
+        "headers": [
+          ["Depth", "1"],
+          ["Content-Type", "application/xml; charset=utf-8"]
+        ],
+        "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:propfind xmlns:D=\"DAV:\" xmlns:R=\"urn:recording:missing\"><D:prop><D:resourcetype/><D:displayname/><D:getcontentlength/><D:getcontenttype/><D:getetag/><D:getlastmodified/><R:missing/></D:prop></D:propfind>"
+      }
+    },
+    {
+      "name": "options-collection",
+      "description": "The collection's actual DAV classes and Allow methods.",
+      "request": { "method": "OPTIONS", "target": "/dav/documents/" }
+    },
+    {
+      "name": "options-document",
+      "description": "An existing file's actual DAV classes and Allow methods.",
+      "request": { "method": "OPTIONS", "target": "/dav/documents/report.txt" }
+    },
+    {
+      "name": "options-unmapped",
+      "description": "An unmapped file name's actual DAV classes and Allow methods.",
+      "request": { "method": "OPTIONS", "target": "/dav/documents/new.txt" }
+    },
+    {
+      "name": "mkcol-existing",
+      "description": "MKCOL on an existing collection observes the 405 and its Allow behavior.",
+      "request": { "method": "MKCOL", "target": "/dav/documents/" }
+    },
+    {
+      "name": "finite-depth",
+      "description": "A missing Depth implies infinity; DavDepthInfinity off produces 403 with an HTML explanation, rather than DocVault's DAV:error element.",
+      "request": {
+        "method": "PROPFIND",
+        "target": "/dav/documents/",
+        "headers": [["Content-Type", "application/xml; charset=utf-8"]],
+        "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>"
+      }
+    },
+    {
+      "name": "get-document",
+      "description": "The fixed ASCII file's bytes, strong ETag and Last-Modified header.",
+      "request": { "method": "GET", "target": "/dav/documents/report.txt" }
+    },
+    {
+      "name": "get-not-modified-wildcard",
+      "description": "If-None-Match wildcard matches the existing file and returns 304 without content.",
+      "request": {
+        "method": "GET",
+        "target": "/dav/documents/report.txt",
+        "headers": [["If-None-Match", "*"]]
+      }
+    },
+    {
+      "name": "get-not-modified",
+      "description": "The exact strong ETag from the initial GET yields 304 without content.",
+      "request": {
+        "method": "GET",
+        "target": "/dav/documents/report.txt",
+        "headers": [["If-None-Match", "\"11-6103c9e4a1000\""]]
+      }
+    },
+    {
+      "name": "put-weak",
+      "description": "The current file's ETag in weak form cannot satisfy the strong If-Match comparison.",
+      "request": {
+        "method": "PUT",
+        "target": "/dav/documents/report.txt",
+        "headers": [
+          ["If-Match", "W/\"11-6103c9e4a1000\""],
+          ["Content-Type", "text/plain"]
+        ],
+        "body": "replacement\n"
+      }
+    },
+    {
+      "name": "put-stale",
+      "description": "A stale strong If-Match prevents replacement and returns 412.",
+      "request": {
+        "method": "PUT",
+        "target": "/dav/documents/report.txt",
+        "headers": [
+          ["If-Match", "\"stale\""],
+          ["Content-Type", "text/plain"]
+        ],
+        "body": "replacement\n"
+      }
+    }
+  ]
+}
