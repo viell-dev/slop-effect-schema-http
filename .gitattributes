@@ -1,7 +1,8 @@
 # Recorded HTTP exchanges are kept byte for byte, CRLF heads included, so Git never converts them.
 # What builds the recording containers keeps LF, which shells and Perl in the containers need.
 recordings/** text eol=lf
-recordings/**/*.http -text
+# CRLF is protocol data; a bodyless request ends at its empty header line.
+recordings/**/*.http -text whitespace=blank-at-eol,space-before-tab,cr-at-eol,-blank-at-eof
 # Hand-authored contract fixtures preserve encoding, BOMs, line endings and significant spaces.
 fixtures/**/*.DAT binary
 fixtures/**/*.csv binary

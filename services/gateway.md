@@ -283,12 +283,13 @@ trailer totals, or `ERROR|E_NOPERIOD|…` in 200.
 
 ## Recordings
 
-The XML-RPC endpoint, the audit endpoint and the old desktop path are held to recordings of the
-software this page names, or of its closest runnable successor
-([recordings/README.md](../recordings/README.md); catalogue EXT-6a to EXT-6c):
+The CGI query parser, the XML-RPC endpoint, the audit endpoint and the old desktop path are held to
+recordings of the software this page names, or of its closest runnable successor
+([recordings/README.md](../recordings/README.md); catalogue AUTH-2 and EXT-6a to EXT-6c):
 
 | Part             | Recorded from                                                        |
 | ---------------- | -------------------------------------------------------------------- |
+| CGI queries      | CGI.pm 4.55 on Perl 5.36, under HTTP::Daemon 6.16                    |
 | XML-RPC          | Frontier::RPC2 0.07b4 under Frontier::Daemon, and XMLRPC::Lite 0.717 |
 | the audit Digest | httpd 2.4.68's mod_auth_digest with `AuthDigestQop none`, and curl   |
 | the 301          | httpd 2.4.69's mod_alias `Redirect permanent`                        |
@@ -307,6 +308,18 @@ that change with every run, except where this page documents otherwise:
   `nextnonce` whose value starts with a stray comma when there is no `qop`.
 - The framing and connection lines of the suite's HTTP server, which differ the same way for every
   backend (recordings/README.md, "Comparing").
+
+The CGI query recordings (`recordings/cgi-pm-query`) send each request unchanged, with the same
+synthetic SSO token and account configured on the gateway. CGI.pm itself splits `&` and `;`, decodes
+plus signs and percent escapes, and selects the first repeated value in scalar context. The small
+recording handler supplies only the service's balance and session-error replies. The cases cover
+encoded and raw plus and semicolon, both separator forms together, repeated values in both orders,
+name-only and empty values, a literal equals within a value, and lowercase percent escapes. Every
+HTTP 200 status and pipe body matches byte for byte; only `Date` is masked. The pinned metadata
+differences are HTTP::Daemon's `Server: libwww-perl-daemon/6.16` in place of Apache 1.3's signature,
+its `Content-Length` in place of the gateway's `Transfer-Encoding: chunked`, and the gateway's
+explicit `Connection: close` where HTTP::Daemon sends no connection line. This records the current
+CGI.pm package's parsing conventions, not a historical CGI.pm release or Apache 1.3 transport.
 
 XMLRPC::Lite's replies carry the same values as the gateway's in its own spelling: `<int>`, base64
 on one line, raw UTF-8, `"` unescaped, `<data />` for an empty array, no white space between

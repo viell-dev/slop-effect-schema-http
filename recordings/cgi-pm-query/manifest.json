@@ -1,0 +1,132 @@
+{
+  "set": "cgi-pm-query",
+  "description": "CGI.pm 4.55 query parsing in a minimal HTTP::Daemon balance handler, using the gateway's documented synthetic session and account values.",
+  "recorded": "2026-11-01T03:59:27.435Z",
+  "images": [
+    "debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3"
+  ],
+  "built": "sha256:2632c2126a64399d90d8916ec5295ba2b69f0240573394554f89179f4d69fb25",
+  "versions": {
+    "perl": ["v5.36.0"],
+    "cgi": ["4.55"],
+    "packages": [
+      "libcgi-pm-perl\t4.55-1",
+      "libhttp-daemon-perl\t6.16-1+deb13u1~deb12u1",
+      "perl\t5.36.0-7+deb12u4"
+    ]
+  },
+  "substitutions": [
+    "The service describes CGI.pm scripts behind Apache 1.3 since 1995. This records CGI.pm 4.55 from Debian 12 on the same pinned Perl base as the XML-RPC sets, not an installation of Apache 1.3 or a historical CGI.pm release.",
+    "HTTP::Daemon supplies the HTTP transport and passes the query string to CGI.pm's constructor unchanged. query.pl reads parameters in scalar context so CGI.pm selects the first repeated value. Only the gateway's documented balance and session-error reply logic is supplied by the recording handler; no query parser is reimplemented."
+  ],
+  "client": "scripts/record.mjs: a raw TCP socket from the host to the published port; request targets are sent exactly as listed, with Connection: close.",
+  "commands": [
+    "docker build -t hostile-recording-cgi-pm-query recordings/cgi-pm-query",
+    "docker run -d --name hostile-recording-cgi-pm-query -p 127.0.0.1::8080 hostile-recording-cgi-pm-query",
+    "docker port hostile-recording-cgi-pm-query 8080/tcp",
+    "docker exec hostile-recording-cgi-pm-query perl -e print qq{$^V\\n}",
+    "docker exec hostile-recording-cgi-pm-query perl -MCGI -e print qq{$CGI::VERSION\\n}",
+    "docker exec hostile-recording-cgi-pm-query dpkg-query --show libcgi-pm-perl libhttp-daemon-perl perl"
+  ],
+  "exchanges": [
+    {
+      "name": "encoded-token",
+      "description": "Percent-encoded plus, semicolon and equals remain literal token characters.",
+      "method": "GET",
+      "target": "/cgi-bin/report.cgi?session=sso%2Bopaque%3B1%3D&report=balance&account=00012345",
+      "status": "HTTP/1.1 200 OK",
+      "request": "encoded-token.request.http",
+      "response": "encoded-token.response.http"
+    },
+    {
+      "name": "literal-plus",
+      "description": "A literal plus decodes to space and changes the accepted token.",
+      "method": "GET",
+      "target": "/cgi-bin/report.cgi?session=sso+opaque%3B1%3D&report=balance&account=00012345",
+      "status": "HTTP/1.1 200 OK",
+      "request": "literal-plus.request.http",
+      "response": "literal-plus.response.http"
+    },
+    {
+      "name": "literal-semicolon",
+      "description": "A literal semicolon splits parameters and truncates the token.",
+      "method": "GET",
+      "target": "/cgi-bin/report.cgi?session=sso%2Bopaque;1%3D&report=balance&account=00012345",
+      "status": "HTTP/1.1 200 OK",
+      "request": "literal-semicolon.request.http",
+      "response": "literal-semicolon.response.http"
+    },
+    {
+      "name": "semicolon-separators",
+      "description": "Semicolons separate the three parameters, before percent decoding their values.",
+      "method": "GET",
+      "target": "/cgi-bin/report.cgi?session=sso%2Bopaque%3B1%3D;report=balance;account=00012345",
+      "status": "HTTP/1.1 200 OK",
+      "request": "semicolon-separators.request.http",
+      "response": "semicolon-separators.response.http"
+    },
+    {
+      "name": "mixed-separators",
+      "description": "Ampersand and semicolon can both separate parameters in one query.",
+      "method": "GET",
+      "target": "/cgi-bin/report.cgi?session=sso%2Bopaque%3B1%3D;report=balance&account=00012345",
+      "status": "HTTP/1.1 200 OK",
+      "request": "mixed-separators.request.http",
+      "response": "mixed-separators.response.http"
+    },
+    {
+      "name": "first-value-valid",
+      "description": "The first repeated session value wins when it is valid.",
+      "method": "GET",
+      "target": "/cgi-bin/report.cgi?session=sso%2Bopaque%3B1%3D&session=revoked&report=balance&account=00012345",
+      "status": "HTTP/1.1 200 OK",
+      "request": "first-value-valid.request.http",
+      "response": "first-value-valid.response.http"
+    },
+    {
+      "name": "first-value-invalid",
+      "description": "A later valid session does not replace the first invalid value.",
+      "method": "GET",
+      "target": "/cgi-bin/report.cgi?session=revoked&session=sso%2Bopaque%3B1%3D&report=balance&account=00012345",
+      "status": "HTTP/1.1 200 OK",
+      "request": "first-value-invalid.request.http",
+      "response": "first-value-invalid.response.http"
+    },
+    {
+      "name": "name-only-session",
+      "description": "A parameter name without an equals sign has an empty value.",
+      "method": "GET",
+      "target": "/cgi-bin/report.cgi?session&report=balance&account=00012345",
+      "status": "HTTP/1.1 200 OK",
+      "request": "name-only-session.request.http",
+      "response": "name-only-session.response.http"
+    },
+    {
+      "name": "empty-session",
+      "description": "An explicit empty value is not an accepted session.",
+      "method": "GET",
+      "target": "/cgi-bin/report.cgi?session=&report=balance&account=00012345",
+      "status": "HTTP/1.1 200 OK",
+      "request": "empty-session.request.http",
+      "response": "empty-session.response.http"
+    },
+    {
+      "name": "literal-equals",
+      "description": "Only the first equals sign separates a name and value; an equals inside the token remains data.",
+      "method": "GET",
+      "target": "/cgi-bin/report.cgi?session=sso%2Bopaque%3B1=&report=balance&account=00012345",
+      "status": "HTTP/1.1 200 OK",
+      "request": "literal-equals.request.http",
+      "response": "literal-equals.response.http"
+    },
+    {
+      "name": "lowercase-escapes",
+      "description": "Lowercase hexadecimal percent escapes decode to the same accepted token.",
+      "method": "GET",
+      "target": "/cgi-bin/report.cgi?session=sso%2bopaque%3b1%3d&report=balance&account=00012345",
+      "status": "HTTP/1.1 200 OK",
+      "request": "lowercase-escapes.request.http",
+      "response": "lowercase-escapes.response.http"
+    }
+  ]
+}

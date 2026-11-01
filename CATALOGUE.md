@@ -479,6 +479,19 @@ query parameter` (the password `p+ss w&rd;1` arrives percent-encoded, so CGI.pm'
   - `[AUTH-2] a wrong password and an unknown session are ERROR lines inside 200`
   - `[AUTH-2] a blank user or a malformed account is refused before dispatch`
   - `[AUTH-2] the configured SSO token is accepted wherever a session is`
+  - Recorded referee (#47): CGI.pm 4.55 on the XML-RPC sets' pinned Debian/Perl base, with a small
+    HTTP::Daemon balance handler. Eleven raw targets pin plus/semicolon decoding and separators,
+    repeated first-value selection, empty/name-only session outcomes, equals and escape case.
+    Backend conformance compares exact status/body and pins every metadata difference, masking
+    only Date. `recordings/cgi-pm-query` and the service page state the substitutions and limits.
+  - Consumer checks replay all eleven real replies in both lanes/providers and separately run the
+    ordinary balance contract with CGI-sensitive token characters. Recorded raw queries use the
+    public native-request hook without structured query declarations, and the ledger verifies
+    their spelling. Name-only and empty sessions both mean a session error; no parser-internal
+    distinction is inferred from those replies.
+  - Mutation controls: disabling semicolon splitting fails three backend body comparisons;
+    replacing the consumer's token plus with a space fails the ordinary-contract replay because
+    its request target no longer matches. Both implementations are restored after the probes.
 - **AUTH-7** HTTP Digest in the 1997 form without `qop`: a 401 challenge as a declared response, an
   MD5 response, a single-use nonce, and `stale=true` on replay; the same cold request executed again
   with one added header. Status: tested.

@@ -2,9 +2,9 @@
 
 Several of the suite's quirks come from server software rather than from the platform: Perl's
 XML-RPC encoders, Apache's Digest and redirects, a servlet container's `Location`, a SOAP stack's
-faults. The backends imitate them in TypeScript. The recordings here are what the real software
-writes, byte for byte, so that the imitations, and the consumer reading them, are held to that
-software instead of to one author's reading of it
+faults, and CGI.pm's query parser. The backends imitate them in TypeScript. The recordings here are
+what the real software writes, byte for byte, so that the imitations, and the consumer reading them,
+are held to that software instead of to one author's reading of it
 ([#32](https://github.com/viell-dev/slop-effect-schema-http/issues/32)).
 
 Each recording is synthetic data served by real software in a disposable Docker container. The
@@ -20,12 +20,22 @@ recordings are checked in and made on demand, never in CI.
 | `httpd-redirect`   | httpd 2.4.69, `mod_alias` `Redirect permanent`                   | the gateway's `/cgi-bin/rpt.exe`        | EXT-6c    |
 | `tomcat7-redirect` | Tomcat 7.0.109 on OpenJDK 8, defaults and `useRelativeRedirects` | the business API's `POST /v1/customers` | EXT-6d    |
 | `jaxws-faults`     | the JAX-WS reference implementation in JDK 8 (Temurin)           | the SOAP store's `LockDocument`         | EXT-6e    |
+| `cgi-pm-query`     | CGI.pm 4.55 on Perl 5.36, HTTP::Daemon 6.16 (Debian)             | the gateway's CGI query handling        | AUTH-2    |
 
 Each set's `manifest.json` names its base images by digest, the software versions as the software
 reports them, the date of the recording, the exact commands, and every exchange. Its `set.json`
 lists the substitutions made, such as httpd 2.4 for Apache 1.3, and why. What each recording
 showed, and how each backend answers it, is in the backend's service page under "Recordings" and
-in the catalogue's EXT-6 entries.
+in the catalogue's entries.
+
+The CGI.pm set uses the same digest-pinned Debian/Perl base as the XML-RPC sets. Its small balance
+handler passes the raw query to CGI.pm and reads parameters in scalar context, so CGI.pm owns
+splitting, percent decoding and first-value selection. Only the documented synthetic report and
+session-error replies are supplied by the handler. Eleven targets exercise plus and semicolon as
+data or separators, repeated and empty/name-only sessions, equals signs and lowercase escapes.
+These recordings hold query outcomes to CGI.pm 4.55, not to a historical CGI.pm or Apache 1.3
+installation. Name-only and empty sessions both produce the service's session-error outcome;
+those replies do not distinguish an absent value from an empty one inside the parser.
 
 ## Files
 
@@ -39,7 +49,8 @@ A set's directory holds:
 - `set.json`: the description, the `Host` the requests carry, the server's port, a probe request,
   the commands that report versions, the substitutions, and the exchanges in order.
 - `<name>.request.http` and `<name>.response.http`: one exchange exactly as the bytes crossed the
-  connection, CRLF and chunked framing included. `.gitattributes` keeps Git from converting them.
+  connection, CRLF and chunked framing included. `.gitattributes` keeps Git from converting them
+  and permits their CRLF and terminating blank header lines in whitespace checks.
 - `manifest.json`, written by the recorder.
 
 ## Making a recording
@@ -74,7 +85,7 @@ software or the set, and the conformance tests show whether the backends still a
 - **The replay backend** ([services/replay.md](../services/replay.md)) serves recorded responses
   over a real socket, so consumer tests decode the real software's bytes in both lanes:
   `src/scenarios/recordings.test.ts` runs the consumer's own operations against them (catalogue
-  entries EXT-8a to EXT-8d).
+  entries EXT-8a to EXT-8d); `src/scenarios/cgi-query.test.ts` checks the CGI.pm set (AUTH-2).
 - **The conformance tests** in `src/conformance/` send each recorded request to the backend that
   imitates the software, over a raw socket, and compare the reply with the recorded response. They
   are backend-side code, kept apart from the consumer side by `scripts/boundaries.mjs`.
@@ -105,12 +116,16 @@ backend keeps it: an imitation of older software that no recording can reach, su
 
 ## Not recorded
 
-The issue declines four recordings; the affected catalogue entries say so:
+The original recording issue declined these sets; the affected catalogue entries explain their
+limits. [#47](https://github.com/viell-dev/slop-effect-schema-http/issues/47) supplements the first
+two with hand-authored contract references:
 
 - **German Excel's CSV** (PAY-5): Excel cannot run in a disposable container, and LibreOffice would
-  stand in for different software.
-- **The fixed-width extract** (PAY-4c): its layout uses only unsigned, zero-padded fields, so a
-  COBOL writer would add nothing the suite's writer lacks.
+  stand in for different software. The [hand-made CSV](../fixtures/gateway/german-accounts.md)
+  checks the documented bytes and meanings without claiming a real Excel save.
+- **The fixed-width extract** (PAY-4c): the [hand-made file](../fixtures/gateway/README.md) checks
+  the documented unsigned, zero-padded layout. No mainframe or COBOL recording establishes that a
+  real installation emits this layout.
 - **WCF's `jsonerror` responses and the `d` wrapper** (the portal facade in APP-2): hosting WCF
   needs .NET Framework and an HTTP.sys URL reservation on the host, not a container.
 - **Apache 1.3's error pages** (STAT-10, AUTH-7, PAY-3b): no maintained image exists, and building
