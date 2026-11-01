@@ -1,0 +1,4 @@
+GET /cgi-bin/report.cgi?session=sso%2Bopaque%3B1%3D&report=balance&account=00012345 HTTP/1.1
+Host: gateway.example
+Connection: close
+
