@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+// #region imports
 import { Effect, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
+// #endregion imports
 
 // #region contract
 const getUser = Operation.make(
@@ -19,8 +21,9 @@ const getUser = Operation.make(
 // #endregion contract
 
 // #region synthetic
+let dispatchedUrl = "";
 const synthetic = HttpClient.make((request, url) => {
-  assert.equal(url.href, "https://api.example.test/users/42");
+  dispatchedUrl = url.href;
   return Effect.succeed(
     HttpClientResponse.fromWeb(
       request,
@@ -38,6 +41,7 @@ const user = await Effect.runPromise(
 console.log(user); // { id: 42, name: 'Ada' }
 // #endregion synthetic
 
+assert.equal(dispatchedUrl, "https://api.example.test/users/42");
 assert.deepEqual(user, { id: 42, name: "Ada" });
 
 // #region fetch
