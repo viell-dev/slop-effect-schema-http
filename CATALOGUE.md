@@ -741,6 +741,7 @@ The service is documented in [services/notifications.md](./services/notification
   Status: tested, in both lanes unless marked Node.
   - `[AUTH-5] fetches the token first and echoes it, with the cookie carried by the transport's own cookie handling`
   - `[AUTH-5] a SameSite=Lax cookie never returns to a cross-site page, while Node's explicit jar ignores SameSite`
+  - `[AUTH-5] Node's explicit jar withholds Secure cookies over HTTP; Chromium accepts them on loopback with credentials included`
   - `[AUTH-5] a Cookie header set by hand reaches the service from Node and is dropped by the browser`
   - `[AUTH-5] echoing the cookie's percent-encoded spelling instead of the body token is refused as incorrect`
   - Node: `[AUTH-5] the lines provider sends a hand-set Cookie line verbatim and keeps no cookies; a pair the service never issued is refused`
@@ -979,7 +980,7 @@ call is cross-origin and cross-site.
   (Node: the `lines` and `fetch` providers; Chromium: `fetch`).
   - `[TRN-1] default credentials through ${provider}: the XSRF cookie does not come back, so the POST is refused as cookie-missing`
   - `[TRN-1] credentials: "include" through FetchHttpClient.RequestInit: Chromium stores and returns the SameSite=None cookie but never the Lax ones; Node's fetch keeps none`
-  - `[TRN-1] HttpClient.withCookiesRef, one jar for every service: Node's jar keeps every cookie and sends each service's cookies to the other; in Chromium it never sees one`
+  - `[TRN-1] HttpClient.withCookiesRef shares cookies between Node services on the same host; in Chromium the jar never sees one`
   - `[TRN-1] a Cookie header set by hand through ${provider}: Node sends it verbatim; Chromium drops it without an error and, under credentials: "include", sends its own stored cookie`
   - Chromium: `[TRN-1] through the proxy, Fetch's default credentials carry a SameSite=Lax cookie, which is first-party to the page`
   - Each test records the provider, Fetch's credentials mode (read from
@@ -987,10 +988,11 @@ call is cross-origin and cross-site.
     as a `transport` test annotation before its cookie assertions.
   - Node, as observed: neither provider keeps cookies, and both show `Set-Cookie`, so response
     metadata carries the parsed cookies. `credentials: "include"` is accepted and changes nothing.
-    A hand-set `Cookie` is sent verbatim. `HttpClient.withCookiesRef` keeps every cookie whatever
-    its `SameSite` or `HttpOnly`, and sends the whole jar to every origin: one jar shared by two
-    services sends the identity provider's session cookies to the notification service, and the
-    XSRF cookie back to the identity provider.
+    A hand-set `Cookie` is sent verbatim. Effect 4.1's `HttpClient.withCookiesRef` scopes cookies
+    by host, path, expiry and Secure, but ignores `SameSite` and `HttpOnly`. In this test, both Node
+    services use the same host and Path=/, so one jar sends their cookies to both services across
+    different ports. This does not establish cross-host behavior. Node's other positive CSRF tests
+    use Lax cookies: the jar withholds Secure cookies over the fixtures' plain HTTP.
   - Chromium, as observed: `Set-Cookie` is hidden from scripts even when
     `Access-Control-Expose-Headers` lists it, so response metadata has no cookies and a
     `withCookiesRef` jar stays empty. Under Fetch's default credentials (`same-origin`) a
