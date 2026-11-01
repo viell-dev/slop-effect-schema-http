@@ -47,12 +47,12 @@ follow-up.
 
 ### Behavior tests
 
-Tests sit beside their module as `src/**/*.test.ts` and use `@effect/vitest`. Shared fixtures live
-in `test/support.ts`. Its synthetic provider builds an `HttpClient` with `HttpClient.make`, records
-each dispatch (request, composed URL, header lines, abort signal), and answers with Web `Response`
-objects. Tests therefore run through Effect's real client wrapper without a network. Use `it.effect`
-with `TestClock` for retry delays and timeouts. Use deferreds or explicit start signals, not sleeps,
-to order concurrent work.
+Module tests sit beside their module as `src/**/*.test.ts` and use `@effect/vitest`. Shared fixtures
+live in `test/support.ts`. Its synthetic provider builds an `HttpClient` with `HttpClient.make`,
+records each dispatch (request, composed URL, header lines, abort signal), and answers with Web
+`Response` objects. Tests therefore run through Effect's real client wrapper without a network. Use
+`it.effect` with `TestClock` for retry delays and timeouts. Use deferreds or explicit start signals,
+not sleeps, to order concurrent work.
 
 Write tests against documented intent: the doc comments in the source and
 [docs/design.md](./docs/design.md). A change to a design decision updates that page in the same pull
@@ -70,10 +70,30 @@ If the intended behavior is a design question, write only the "currently …" pi
 discussion issue. Do not encode the answer as a test. Pin a type-level limitation with
 `@ts-expect-error` and a linked issue. Do not weaken an assertion to make a test pass.
 
-The tests on `main` cover every module, including request encoding, response selection and decoding,
+The module tests cover every module, including request encoding, response selection and decoding,
 retry policies, timeouts, cancellation, and interactions. They check the library's own header-line
 normalization and Effect's parsing of synthetic responses. They do not exercise Fetch, browsers,
 real servers, or packaged installation.
+
+### Socket regressions
+
+`src/http/Operation.socket.test.ts` runs in the ordinary `npm test` command and required CI. It
+checks Node Fetch's followed/manual redirects, cookies with and without an explicit Effect jar,
+multipart boundary/body agreement, repeated request and response lines through a small `node:http`
+provider, and socket closure when an in-progress buffered or stream body read is interrupted.
+
+`test/socket.ts` starts fresh servers on ephemeral `127.0.0.1` ports and closes their connections at
+scope exit. Its line-preserving client is a GET-only test control, not a supported transport. Tests
+use `it.live`, explicit body-read and peer-close signals, and bounded deadlines. The peer must close
+before server cleanup runs; cleanup cannot satisfy the interruption assertion. No external service,
+credentials, sleeps, or browser installation is needed.
+
+These small transport regressions test the current library commit on every pull request. The
+separate hostile suite retains service formats, realistic workflows and browser policy. Run its
+relevant source lanes against the task commit when changing URL/header handling, body codecs,
+response selection, client middleware, attempt scopes, retries, or Effect versions. Run the packed
+lane for package/export/build changes and the app lane for bundled-browser integration changes.
+Before a release, run all its lanes against the exact candidate commit and record their results.
 
 ### Packed-package verification
 
