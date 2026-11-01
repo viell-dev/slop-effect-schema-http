@@ -133,6 +133,23 @@ describe("Body.text", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/27
+  it.effect(
+    "uses lenient UTF-8 decoding even when Content-Type names another charset",
+    () =>
+      Effect.gen(function* () {
+        const input = new Uint8Array([0xef, 0xbb, 0xbf, 0x41, 0xe4, 0xff]);
+        expect(
+          yield* Body.text.decode(
+            reply(input, "text/plain; charset=iso-8859-1"),
+          ),
+        ).toBe("A\ufffd\ufffd");
+        expect(Array.from(yield* Body.bytes.decode(reply(input)))).toEqual(
+          Array.from(input),
+        );
+      }),
+  );
+
   it("advertises text/plain", () => {
     expect(Body.text.mediaType).toBe("text/plain");
   });

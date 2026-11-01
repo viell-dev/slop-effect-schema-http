@@ -2,7 +2,10 @@ import { Cause, Duration, Result, Schedule } from "effect";
 import { Headers, HttpClientError } from "effect/http";
 import type * as Response from "./Response.js";
 
-/** What a completed attempt produced. Reasons hold no live body or transport resource. */
+/**
+ * What a completed attempt produced. Reasons hold no live body or transport resource and expose no
+ * request-method or decoded-result field. A classifier can close over the operation's known method.
+ */
 export type Reason =
   | { readonly _tag: "Response"; readonly metadata: Response.Metadata }
   | {
@@ -35,7 +38,11 @@ const isTransientError = (error: unknown): boolean =>
       (error.reason._tag === "StatusCodeError" &&
         isTransientStatus(error.reason.response.status))));
 
-/** The classification of `HttpClient.retryTransient`: timeouts, transport failures and transient statuses. */
+/**
+ * The classification of `HttpClient.retryTransient`: timeouts, transport failures and transient statuses.
+ * It does not check the request method or idempotency. A declared, successfully decoded response with a
+ * transient status is still retryable. A transport failure does not prove the server took no action.
+ */
 export const transient = (reason: Reason): boolean => {
   if (
     reason.metadata !== undefined &&
@@ -48,7 +55,12 @@ export const transient = (reason: Reason): boolean => {
   );
 };
 
-/** Opt into retries. `while` replaces the {@link transient} classifier; `Retry-After` is honoured by default. */
+/**
+ * Opt into retries. The default {@link transient} classifier can repeat non-idempotent requests and
+ * declared transient responses; supply `while` for the operation's repeat semantics, or use {@link none}
+ * for one attempt. `while` receives metadata and failures, not the request method or decoded result.
+ * `Retry-After` is honoured by default.
+ */
 export const make = <Out, E = never, R = never>(
   schedule: Schedule.Schedule<Out, Reason, E, R>,
   options?: {

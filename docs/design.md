@@ -87,6 +87,13 @@ These are different things and the library keeps them different:
 - a header value that contains commas and several header lines;
 - the order of entries, including across names.
 
+These distinctions describe the request the library materializes. Client middleware can change them
+afterwards: Effect appends native URL parameters through
+[`URLSearchParams`](https://url.spec.whatwg.org/#interface-urlsearchparams), which serializes the
+whole query as form data. Appending `key=abc` to `?wsdl&q=a%20b` that way produces
+`?wsdl=&q=a+b&key=abc`. Put parameters in `Request` combinators to use the library's encoding. If
+middleware must add a parameter, preserve the existing URL text and encode the new entry explicitly.
+
 Native client middleware sees the normalized `Headers` view: lowercase names, with repeated lines
 joined by `, `. The original lines are available to a provider that can send them, through
 `Transport.HeaderLines` and `Transport.headerLines`. Lines changed by middleware replace the
@@ -117,6 +124,15 @@ for a value that `JSON.stringify` omits, such as `undefined` or a function: it e
 `application/json` body. `Body.jsonSchema` is the validated path; it encodes through the schema's
 canonical JSON codec (`Schema.toCodecJson`), and a struct schema never produces `undefined`.
 
+`Body.text` delegates incoming decoding to the provider's `response.text`. Fetch-backed providers
+decode UTF-8 regardless of a `Content-Type` charset, strip a leading UTF-8 byte-order mark, and
+replace malformed bytes with U+FFFD without failing. Use `Body.bytes` with a schema or custom
+decoder when the format needs strict decoding, another encoding, or the original bytes. Web
+`TextDecoder` labels follow the [Encoding
+Standard](https://encoding.spec.whatwg.org/#names-and-labels): `iso-8859-1` selects windows-1252, so
+bytes 0x80–0x9F differ from exact Latin-1. A format that requires exact Latin-1 needs its own byte
+mapping.
+
 The body codec owns the request's `Content-Type` and `Content-Length`. Multipart form data leaves
 both to the transport, so it can add the boundary. A header declaration describes a header; it does
 not relabel an encoded body. A protocol that needs a parameterized content type gets it from a
@@ -127,7 +143,11 @@ A GET or HEAD request with a body fails with `Request.InvalidRequest` before dis
 ### Request transforms
 
 `Request.mapInput` adapts the invocation argument. `Request.mapEffect` edits the native request
-effectfully, for example to sign it, once per evaluation before any attempt.
+effectfully, once per evaluation before any attempt. It sees the preparation steps before it, but
+the base URL has not been joined and query entries are still separate parameters: the URL is not
+final. URL-dependent signing belongs in client middleware through `Operation.make`'s
+`transformClient`, after any request edits the signature must cover. It runs per attempt, after the
+library renders the base URL and query. The provider's own URL normalization still applies.
 
 ## Responses
 
@@ -150,6 +170,25 @@ optional provider lines. Selection happens before any body byte is read.
 
 The media types of the declared decoders form the operation's automatic `Accept` header, unless the
 request declares one.
+
+### In a browser
+
+The HTTP provider and browser determine which response facts are visible. In a Fetch-backed browser
+client:
+
+- `Set-Cookie` is hidden from response metadata even if CORS lists it as exposed. The browser
+  manages cookies according to its credentials and cookie policy; a hand-set `Cookie` request header
+  is dropped.
+- A cross-origin header that CORS does not expose is absent. A response rule cannot select on a
+  hidden value, and a selected header schema that requires it fails with `Response.DecodeError`.
+- With `redirect: "manual"`, a redirect becomes an opaque redirect response with status 0 and no
+  visible headers. A declared 301 case cannot match the original status.
+- A refused preflight and a request whose answer is withheld by CORS both surface as transport
+  failures. The latter may already have changed server state, so retrying can repeat an action.
+
+These are [Fetch platform limits](https://fetch.spec.whatwg.org/), outside the library. A schema or
+response rule cannot recover hidden metadata. Do not infer browser cookie, redirect, header or CORS
+behavior from a Node run.
 
 ## Execution
 
@@ -178,6 +217,15 @@ Retries follow a `Policy`:
   unrepresentable values request no delay.
 - `attemptTimeout` limits each attempt; a timed-out attempt is transient. A limit on the whole
   operation is an ordinary `Effect.timeout` applied by the caller.
+
+The transient classifier checks status or failure alone. It does not check the request method or
+idempotency, and even a declared response that decoded successfully is retried when its status is
+transient. A POST that returns a declared HTTP 500 can therefore run several times when retries are
+enabled. A transport error can also follow a request the server already acted on; it does not prove
+that nothing was sent. Use `Policy.none` for a single attempt, or supply a `while` classifier suited
+to the operation's repeat semantics. Its `Reason` contains metadata and failures, not the request
+method or decoded result; the method can be captured from the operation's known configuration.
+Decisions that need the decoded value belong in the consumer's composition outside this classifier.
 
 Failures and services are typed and kept separate. Input schema errors, `InvalidRequest`, transport
 errors, `DecodeError`, `UnexpectedResponse`, `TimeoutError`, and the schedule's error are distinct

@@ -377,7 +377,10 @@ export const mapInput =
     );
 
 /**
- * Effectful preparation of the native request, such as signing. Runs once per evaluation, before any attempt.
+ * Effectful preparation of the native request. Runs once per evaluation, before any attempt, before the
+ * base URL is joined and separate query parameters are rendered. It sees the preparation steps before it.
+ * For signing a materialized URL, use client middleware through `Operation.make`'s `transformClient` option;
+ * it runs per attempt. The provider's own URL normalization still applies.
  *
  * The transform applies to any request whose input includes what `f` reads. One that ignores its input can be
  * created once and reused on every request; an inline transform in `pipe` has `input` inferred from the request.
