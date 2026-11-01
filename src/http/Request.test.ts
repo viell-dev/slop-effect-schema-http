@@ -168,6 +168,25 @@ describe("Request.make", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/66
+  it.effect.each([
+    ["?key=value", "%3Fkey=value"],
+    ["a=1&?key=value", "a=1&%3Fkey=value"],
+    ["??key", "%3F%3Fkey"],
+    ["a=1&?", "a=1&%3F"],
+    ["?key=", "%3Fkey="],
+    ["%3Fkey=value", "%3Fkey=value"],
+    ["a=?value", "a=%3Fvalue"],
+  ] as const)(
+    "preserves question-mark data in query case %$",
+    ([input, output]) =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(Request.get(`https://api.test/s?${input}`), undefined),
+        ).toBe(`https://api.test/s?${output}`);
+      }),
+  );
+
   it.effect("keeps opaque query text supplied by native URL preparation", () =>
     Effect.gen(function* () {
       const query = "q=a+b&&tag=%7e;item=b=c";

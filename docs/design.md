@@ -7,8 +7,8 @@ comments, not against whatever the implementation happens to do. Where the imple
 from them, the deviation is a defect, tracked in the [issue
 tracker](https://github.com/viell-dev/slop-effect-schema-http/issues?q=is%3Aissue+label%3A%22Type%3A+Bug%22).
 
-The project is an unreleased prototype; these decisions can still change, and a change is recorded
-here.
+These decisions define the `0.1.0` release goal. Changes are recorded here and follow the
+[compatibility policy](./versions.md#compatibility-policy).
 
 ## Principles
 

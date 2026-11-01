@@ -7,6 +7,7 @@ export default tseslint.config(
   {
     ignores: [
       "dist",
+      "artifacts",
       "coverage",
       "docs/.vitepress/cache",
       "docs/.vitepress/dist",

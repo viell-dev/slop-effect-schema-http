@@ -6,6 +6,7 @@
   },
   "ignorePatterns": [
     "dist/**",
+    "artifacts/**",
     "docs/.vitepress/cache/**",
     "docs/.vitepress/dist/**"
   ],

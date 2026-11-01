@@ -84,7 +84,8 @@ export const make = (method: string, url: string): Request<unknown> => {
   const query: Array<readonly [string, string | null]> = [];
   if (start >= 0) {
     for (const segment of withoutHash.slice(start + 1).split("&")) {
-      for (const [key, value] of new URLSearchParams(segment))
+      // URLSearchParams strips one leading query marker; a marker in the key is data.
+      for (const [key, value] of new URLSearchParams(`?${segment}`))
         query.push([key, segment.includes("=") ? value : null]);
     }
   }

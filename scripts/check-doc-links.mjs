@@ -99,16 +99,27 @@ assert.equal(
   base,
   "Package homepage and site base must agree",
 );
-assert.equal(
-  manifest.private,
-  true,
-  "Update the prototype documentation policy before publishing a package",
-);
+assert.notEqual(manifest.private, true, "Release packages must be publishable");
 assert.match(
   manifest.version,
-  /-alpha\./,
-  "Update the alpha documentation status for this release stage",
+  /^0\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$/,
+  "Expected the documented pre-1.0 version policy",
 );
+const lock = JSON.parse(read("package-lock.json"));
+assert.equal(lock.version, manifest.version);
+assert.equal(lock.packages[""].version, manifest.version);
+for (const file of [
+  "README.md",
+  "docs/index.md",
+  "docs/versions.md",
+  "docs/api.md",
+  "docs/changelog.md",
+]) {
+  assert.ok(
+    read(file).includes(manifest.version),
+    `Update the release version in ${file}`,
+  );
+}
 const effect = JSON.parse(read("node_modules/effect/package.json"));
 const gettingStarted = read("docs/getting-started.md");
 assert.ok(

@@ -1,8 +1,8 @@
 # Describe and execute a request
 
 The complete [quickstart
-source](https://github.com/viell-dev/slop-effect-schema-http/blob/main/examples/quickstart.ts) is
-type-checked and executed in CI. The snippets on this page are imported from that file.
+source](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/examples/quickstart.ts)
+is type-checked and executed in CI. The snippets on this page are imported from that file.
 
 ## Define the consumer's contract
 
