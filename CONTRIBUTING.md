@@ -194,7 +194,9 @@ onboarding, also copy its displayed snippets into a fresh consumer of the publis
 the documented commands without a checkout. `docs:build` builds the static site, fails on VitePress
 dead links or missing snippets, and checks rendered internal pages, assets, anchors and package
 facts. External links are reviewed separately. `docs:dev` starts the local development server;
-`docs:preview` serves the production build. Keep both on loopback.
+`docs:preview` serves the production build on `127.0.0.1`. It uses the Vite preview server shipped
+with VitePress because this pinned VitePress version's own preview command ignores the host option.
+Keep development and preview servers on loopback.
 
 Required pull-request CI runs the example and site build with read-only permissions. Main pushes
 verify changes without deploying unreleased documentation. The separate `pages.yml` workflow
