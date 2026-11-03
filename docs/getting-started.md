@@ -8,23 +8,19 @@ answers in memory, so you need no server, account or credentials.
 Use Node.js 24 and npm. The package is named `viell-effect-schema-http`; it is ESM and includes
 TypeScript declarations. Effect is a peer dependency, supplied by your application.
 
-`0.1.0-rc.1` is distributed as a GitHub tarball and is not yet on npm. Download the tarball and
-`SHA256SUMS` from the [release
-page](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1). Compare its
-SHA-256 with the listed checksum using `Get-FileHash -Algorithm SHA256` in PowerShell or `sha256sum`
-on Linux.
-
-For a new example project, create an empty directory, put the downloaded tarball there, and run:
+`0.1.0-rc.1` is a published release candidate. For a new example project, create an empty directory
+and run:
 
 ```sh
 npm init -y
-npm install --ignore-scripts ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.1.1
+npm install --ignore-scripts viell-effect-schema-http@0.1.0-rc.1 effect@4.1.1
 ```
 
 In an existing project, use only the install command. This adds the library and Effect to that
 project; no clone or library build is required. See
 [compatibility](./limits.md#compatibility-and-scope) for supported environments and tested
-peer/compiler versions.
+peer/compiler versions. Use the explicit candidate version rather than relying on the registry's
+default tag before stable publication.
 
 ## Define the request and response
 
@@ -86,11 +82,24 @@ your normal build toolchain; the `.mts` shortcut is just for running this exampl
 
 ## Candidate verification
 
-The release also provides `release-check.mjs`, an executable check of successful decoding, invalid
-input and invalid response data. Download it beside the installed package and run
-`node release-check.mjs`. It prints the three outcomes and `Candidate check passed`. The [candidate
-usability request](https://github.com/viell-dev/slop-effect-schema-http/issues/67) collects feedback
-before stable publication.
+The [GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1)
+also provides `release-check.mjs`, an executable check of successful decoding, invalid input and
+invalid response data. Download it beside the installed package and run `node release-check.mjs`. It
+prints the three outcomes and `Candidate check passed`. The [candidate documentation
+review](https://github.com/viell-dev/slop-effect-schema-http/issues/67) collects feedback before
+stable publication.
+
+### Install the same candidate from a tarball
+
+For a verified download instead of a registry installation, obtain
+`viell-effect-schema-http-0.1.0-rc.1.tgz` and `SHA256SUMS` from that release. Compare the tarball's
+SHA-256 using `Get-FileHash -Algorithm SHA256` in PowerShell or `sha256sum` on Linux, then install:
+
+```sh
+npm install --ignore-scripts ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.1.1
+```
+
+The GitHub and npm RC tarballs contain the same bytes. Both installations use the same examples.
 
 ## Develop from source
 

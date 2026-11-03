@@ -126,6 +126,12 @@ assert.ok(
   gettingStarted.includes(`${manifest.name}-${manifest.version}.tgz`),
   "Update the documented tarball filename for this package version",
 );
+for (const file of ["README.md", "docs/getting-started.md"]) {
+  assert.ok(
+    read(file).includes(`${manifest.name}@${manifest.version}`),
+    `Update the explicit npm installation version in ${file}`,
+  );
+}
 assert.ok(
   gettingStarted.includes(`effect@${effect.version}`),
   "Update the documented tested Effect version",

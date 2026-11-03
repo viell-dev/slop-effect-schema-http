@@ -3,8 +3,12 @@ import { Headers, HttpClientError } from "effect/http";
 import type * as Response from "./Response.js";
 
 /**
- * What a completed attempt produced. Reasons hold no live body or transport resource and expose no
- * request-method or decoded-result field. A classifier can close over the operation's known method.
+ * The completed attempt's response metadata or failure cause, used to decide whether to retry.
+ *
+ * @remarks
+ * Contains no live transport resource, request method or decoded result. A failure includes
+ * metadata when a response was available, such as a decoding failure or a middleware rejection.
+ * Capture the operation's method or repeat-safety decision in the classifier's closure.
  */
 export type Reason =
   | { readonly _tag: "Response"; readonly metadata: Response.Metadata }
@@ -15,11 +19,21 @@ export type Reason =
       readonly metadata?: Response.Metadata | undefined;
     };
 
-/** Attempt retries for one operation evaluation. One schedule owns the budget across every retry reason. */
+/**
+ * A retry schedule, outcome classifier and optional timeout for an operation.
+ *
+ * @remarks
+ * The classifier and schedule must both permit another attempt. One schedule owns the retry
+ * budget across all reasons for that evaluation.
+ */
 export interface Policy<out E = never, out R = never> {
+  /** Supplies each retry delay and the shared retry budget for one evaluation. */
   readonly schedule: Schedule.Schedule<unknown, Reason, E, R>;
+  /** Classifies a completed outcome as eligible for retry; the schedule must also permit it. */
   readonly while: (reason: Reason) => boolean;
+  /** Bounds client execution and body decoding per attempt. `undefined` imposes no timeout. */
   readonly attemptTimeout: Duration.Input | undefined;
+  /** Whether `Retry-After` supplies a minimum delay in addition to the schedule. */
   readonly retryAfter: boolean;
 }
 
@@ -39,9 +53,12 @@ const isTransientError = (error: unknown): boolean =>
         isTransientStatus(error.reason.response.status))));
 
 /**
- * The classification of `HttpClient.retryTransient`: timeouts, transport failures and transient statuses.
- * It does not check the request method or idempotency. A declared, successfully decoded response with a
- * transient status is still retryable. A transport failure does not prove the server took no action.
+ * Recognize timeouts, transport failures and transient HTTP statuses.
+ *
+ * @remarks
+ * The statuses are 408, 429, 500, 502, 503 and 504, matching Effect's transient classification.
+ * A declared response with one of these statuses is eligible even when decoding succeeded.
+ * This does not check the method or whether repeating a remote action is safe.
  */
 export const transient = (reason: Reason): boolean => {
   if (
@@ -56,10 +73,22 @@ export const transient = (reason: Reason): boolean => {
 };
 
 /**
- * Opt into retries. The default {@link transient} classifier can repeat non-idempotent requests and
- * declared transient responses; supply `while` for the operation's repeat semantics, or use {@link none}
- * for one attempt. `while` receives metadata and failures, not the request method or decoded result.
- * `Retry-After` is honoured by default.
+ * Create a retry policy from an Effect schedule and optional settings.
+ *
+ * @example
+ * ```ts
+ * import { Schedule } from "effect";
+ * import { Policy } from "viell-effect-schema-http";
+ * const retryRead = Policy.make(Schedule.recurs(2), { attemptTimeout: "5 seconds" });
+ * // At most three attempts; repeat only operations your service permits you to repeat.
+ * ```
+ *
+ * @remarks
+ * `Schedule.recurs(n)` permits up to `n` retries after the first attempt. Defaults to
+ * {@link transient}, honoring `Retry-After`, and no attempt timeout. Enable retries only when
+ * repeating the service action is acceptable; transport failure does not prove it was unapplied.
+ * The attempt timeout covers client execution and decoding, not initial request preparation or
+ * retry delays. Apply `Effect.timeout` around the operation for an overall limit.
  */
 export const make = <Out, E = never, R = never>(
   schedule: Schedule.Schedule<Out, Reason, E, R>,
@@ -75,12 +104,18 @@ export const make = <Out, E = never, R = never>(
   retryAfter: options?.retryAfter ?? true,
 });
 
-/** A single attempt. */
+/**
+ * One attempt, with no retry and no library-imposed timeout.
+ */
 export const none: Policy = make(Schedule.recurs(0));
 
 /**
- * The minimum delay a response requests through `Retry-After` (delay seconds or an HTTP date). Absent,
- * malformed, or unrepresentable values request no delay.
+ * Read the minimum retry delay requested by a response's `Retry-After` header.
+ *
+ * @remarks
+ * `now` is milliseconds since the Unix epoch. Accepts delay seconds or an HTTP date. Missing,
+ * malformed or unrepresentable values produce zero. An operation takes the larger of this delay
+ * and its scheduled delay; this helper does not decide whether another attempt is allowed.
  */
 export const retryAfterDelay = (
   metadata: Response.Metadata,

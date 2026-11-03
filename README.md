@@ -41,17 +41,18 @@ in-memory example you can run without a server or credentials.
 
 ## Install
 
-Use Node.js 24 and an ESM project. `0.1.0-rc.1` is available as a [GitHub release
-tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1), with SHA-256
-checksums. It is not yet published to npm. Download and verify the tarball, then install it with
-Effect:
+Use Node.js 24 and an ESM project. Install the published release candidate and its Effect peer:
 
 ```sh
-npm install --ignore-scripts ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.1.1
+npm install --ignore-scripts viell-effect-schema-http@0.1.0-rc.1 effect@4.1.1
 ```
 
-TypeScript declarations are included. The supported environments are Node 24 on Windows/Linux and
-browser Fetch in Chromium. See [compatibility and
+`0.1.0-rc.1` is a prerelease. Use the explicit version while preparing for stable; the same package
+is available as a checksummed [GitHub release
+tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1).
+
+TypeScript declarations and editor documentation are included. The supported environments are Node
+24 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
 limits](https://viell-dev.github.io/slop-effect-schema-http/limits) for tested Effect/compiler
 versions and provider boundaries.
 

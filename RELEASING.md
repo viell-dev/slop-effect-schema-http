@@ -5,8 +5,12 @@ Fetch with Effect 4. [Issue #2](https://github.com/viell-dev/slop-effect-schema-
 records the owner's release direction and qualification. Compatible fixes use `0.1.x`; breaking API
 changes require `0.2.0` and migration guidance. Tags have no `v` prefix.
 
-`0.1.0-rc.1` is a GitHub-only candidate. No command in CI or the qualification workflow publishes
-anything. Removing `private` makes the artifact publishable; it does not authorize npm publication.
+`0.1.0-rc.1` is published on GitHub and npm. Routine CI and release qualification publish nothing;
+publication is a separate, authorized step. The first stable release keeps the candidate's current
+API and behavior, with documentation and release metadata updates. Its final owner documentation
+review is tracked in [#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67), and
+publication setup and authorization in
+[#68](https://github.com/viell-dev/slop-effect-schema-http/issues/68).
 
 ## Prepare a candidate
 
@@ -43,7 +47,7 @@ anything. Removing `private` makes the artifact publishable; it does not authori
 6. Run **Release qualification** (`release.yml`) on `main` with the exact version:
 
    ```sh
-   gh workflow run release.yml --ref main -f version=0.1.0-rc.1
+   gh workflow run release.yml --ref main -f version=0.1.0
    ```
 
    Require the whole run to succeed at the exact merged commit. It repeats candidate preparation on
@@ -63,22 +67,25 @@ anything. Removing `private` makes the artifact publishable; it does not authori
 
 Create the release at the qualified full commit SHA with the tested assets and the changelog entry
 as release notes. Supply explicit version, target and prerelease state. The notes link the
-qualification PR/run, remaining limits and any pending human test. For the initial RC:
+qualification PR/run, remaining limits and any pending review. After stable qualification and
+authorization, for example:
 
 ```sh
-gh release create 0.1.0-rc.1 ./artifacts/0.1.0-rc.1/* --target COMMIT \
-  --title 0.1.0-rc.1 --prerelease --latest=false --notes-file release-notes.md
+gh release create 0.1.0 ./artifacts/0.1.0/* --target COMMIT \
+  --title 0.1.0 --prerelease=false --latest --notes-file release-notes.md
 ```
 
-Before the command, verify that neither the tag nor release exists. `gh release create` uploads the
-assets to a draft before publishing them. Never replace published assets or move a published tag. No
-repository immutability setting is required by this procedure.
+Replace COMMIT with the qualified full SHA. For a prerelease, use its version and set
+`--prerelease --latest=false`. Before creating a release, verify that neither its tag nor release
+exists. `gh release create` uploads the assets to a draft before publishing them. Never replace
+published assets or move a published tag. No repository immutability setting is required by this
+procedure.
 
 Download the public assets into a fresh directory and verify their checksums, version and manifest.
 From the matching checkout, verify the downloaded tarball directly:
 
 ```sh
-npm run test:package -- --tarball /absolute/path/to/viell-effect-schema-http-0.1.0-rc.1.tgz
+npm run test:package -- --tarball /absolute/path/to/viell-effect-schema-http-0.1.0.tgz
 ```
 
 The command checks the exact downloaded bytes, declarations, exports and runnable example. Record
@@ -86,61 +93,84 @@ the release URL, tag target and checksum. Deploy the release documentation below
 
 ## First npm publication and trusted publishing
 
-The recommended bootstrap is to publish the **verified RC tarball**, under the explicit npm `rc`
-tag, once the owner chooses to do so. The package must exist before npm accepts a trusted publisher
-([npm prerequisites](https://docs.npmjs.com/cli/v11/commands/npm-trust/#prerequisites)). Do not
-publish a placeholder package or use `latest` for a prerelease. Inspect the actual dist-tags after
-bootstrap; `rc` should identify the candidate, with `latest` reserved for stable publication.
+The RC bootstrap and trusted-publisher setup are complete. [Issue
+#68](https://github.com/viell-dev/slop-effect-schema-http/issues/68) records the owner's
+confirmation and the verified registry installation. Do not upload `0.1.0-rc.1` again. Its `rc` and
+`latest` tags are intentionally unchanged during bootstrap; stable publication advances `latest`.
 
-The owner signs in to their npm account with 2FA and publishes the downloaded, verified artifact:
+### Publish a qualified version
 
-```sh
-npm login
-npm publish ./viell-effect-schema-http-0.1.0-rc.1.tgz --ignore-scripts --access public --tag rc
-npm dist-tag ls viell-effect-schema-http
-```
+Use **Publish qualified npm package** (`publish.yml`) on `main`. Supply the successful qualification
+run for that exact current commit. The workflow downloads the already-tested Linux tarball, checks
+its manifest and checksums, and chooses `rc`/`beta`/`alpha` for a prerelease or `latest` for stable.
+It never rebuilds the package.
 
-This local bootstrap has no GitHub OIDC provenance; checksum and registry integrity verification
-still apply. Do not request a long-lived npm secret in GitHub. After bootstrap, the owner configures
-the package's trusted publisher with GitHub owner `viell-dev`, repository `slop-effect-schema-http`,
-workflow **`publish.yml`**, environment **`npm-release`**, and direct publish permission. These
-names differ from Markdown Tools' workflow. Enable package 2FA and disallow bypass-2FA tokens.
-Follow [npm's current instructions](https://docs.npmjs.com/trusted-publishers/).
+First dispatch with `publish=false` to verify the producer and dry-run publication. This publishes
+nothing and does not prove that OIDC authentication works. An existing version may be rejected even
+in npm's dry run; never treat that as permission to replace it.
 
-Agents configure `npm-release` to allow only the named `main` branch and keep
-`NPM_PUBLISH_ENABLED=false` until trust and the owner request are resolved. The first stable also
-requires [the human usability
-report](https://github.com/viell-dev/slop-effect-schema-http/issues/67).
+Before actual publication, resolve the release review in #67 and the authorization in #68. The
+repository variable `NPM_PUBLISH_ENABLED` must then be `true`; dispatch with `publish=true`. The
+workflow publishes through OIDC with provenance and verifies registry integrity and provenance
+against the artifact, commit and workflow. It does not create a GitHub release or deploy docs.
 
-After those prerequisites, **Publish qualified npm package** (`publish.yml`) can publish routine
-authorized versions. Supply the successful qualification run ID for the exact current `main` commit.
-Leave `publish=false` first to validate the producer, download and checksum the existing Linux
-artifact, and dry-run npm publication. This publishes nothing. An already published version may be
-rejected even in npm's dry run; do not treat that as permission to replace it.
+Install the published exact version in a fresh empty-cache consumer. Run the release's
+`release-check.mjs` and `npm audit signatures`, inspect dist-tags, and compare registry integrity
+with the manifest. Signature verification complements the workflow's provenance-content check.
+Finish the GitHub release and documentation deployment for the same commit.
 
-For actual publication, set the repository variable to `true` and dispatch with `publish=true`. The
-workflow uses OIDC to publish the tested tarball with provenance, selects `rc`/`beta`/`alpha` from a
-prerelease version or `latest` from a stable one, and checks registry integrity and provenance
-against the tarball, commit and workflow. It does not create a GitHub release or deploy docs.
+### Maintain the trust configuration
 
-After npm publication, install the published exact version in a fresh empty-cache consumer and run
-the downloaded `release-check.mjs` and `npm audit signatures`. Check dist-tags and compare registry
-integrity with the manifest. This cryptographic verification complements the workflow's provenance
-content check. Then finish the GitHub release and documentation steps for the same commit.
+The npm trusted publisher must match these values:
 
-The bootstrap/trust pattern and artifact checks are informed by [Markdown Tools' release
+| Setting           | Required value                          |
+| ----------------- | --------------------------------------- |
+| Provider          | GitHub Actions on GitHub-hosted runners |
+| Owner             | `viell-dev`                             |
+| Repository        | `slop-effect-schema-http`               |
+| Workflow filename | `publish.yml`                           |
+| Environment       | `npm-release`                           |
+| Permission        | Direct publication with `npm publish`   |
+
+Keep the GitHub environment restricted to the named `main` branch. Use the repository's pinned
+Node/npm versions, package 2FA, and no bypass-2FA tokens. Do not add a long-lived npm token to
+GitHub. See [npm's trusted-publishing guide](https://docs.npmjs.com/trusted-publishers/) when
+changing the account configuration; the owner performs changes requiring their identity or second
+factor.
+
+### Bootstrap reference
+
+For a new registry package, npm requires the package to exist before its trusted publisher can be
+configured. Bootstrap by having the owner publish the verified candidate tarball interactively under
+an explicit prerelease tag, then configure trust and verify registry bytes and installation. A local
+upload has no GitHub OIDC provenance. This step is already complete for this package; its commands
+and evidence are retained in #68.
+
+The exact-artifact and trust approach follows [Markdown Tools' release
 guide](https://github.com/viell-dev/slop-markdown-tools/blob/main/RELEASING.md#publication-prerequisites).
-Its immutable-release setting, product-specific test matrix and human-testing exception do not apply
-here.
+Its workflow filename, immutable-release setting and product-specific test matrix are not this
+project's configuration. This project's release-review scope is recorded in #67.
 
 ## Promote RC to stable
 
-The candidate is intended to contain the final public API and behavior. Once publication setup and
-the human report are complete, `0.1.0` should need only a version, status, installation/channel and
-changelog update. Record the RC-to-stable diff and why the human evidence remains representative.
-Re-run exact-commit qualification for the stable artifact; a version bump produces different bytes.
-If new blockers require behavior changes, fix and requalify them, and publish a new RC when needed.
-Do not re-label the RC tarball as stable or move its tag.
+The candidate contains the intended public API and behavior. Complete the documentation work and the
+owner's final read-through in #67 before proceeding. That is the owner-selected human checkpoint for
+this first release; no human runtime testing or code review is claimed.
+[CONTRIBUTING](./CONTRIBUTING.md#before-a-release) records its scope and the automated evidence.
+
+For `0.1.0`, update package and lockfile versions, the changelog, README and site installation
+commands, release status, source links, and any versioned examples together. Move the Unreleased
+documentation entry into the stable entry and retain the RC's publication history. Replace
+bootstrap-specific tag guidance with the stable channel's actual state. Keep the version prerelease
+until the review prerequisites are satisfied.
+
+Record the RC-to-stable diff and reuse independent implementation review only where its assumptions
+still hold. Run fresh exact-commit qualification: the stable package, documentation comments and
+release metadata produce different bytes. Do not relabel the RC tarball or move its tag.
+
+Documentation-only improvements do not require another RC. If a correctness fix changes behavior or
+the public API, fix and requalify it and use another RC when needed. Evaluate ergonomic additions
+for a later release rather than expanding this candidate's feature set.
 
 ## Release documentation and corrections
 
