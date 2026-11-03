@@ -142,7 +142,7 @@ use the release's exact bytes when verifying a published candidate.
 ### Verify a published candidate
 
 For release verification, download the tarball, `SHA256SUMS` and `release-check.mjs` from the
-[GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1). The
+[GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0). The
 [Versions guide](./docs/versions.md#install-a-github-release-tarball) gives complete checksum
 comparisons. On Linux, its command checks both downloaded assets; in PowerShell, run its comparison
 once for the tarball and once with `$archive = "release-check.mjs"`.
@@ -151,13 +151,13 @@ In an empty directory with those verified files, run:
 
 ```sh
 npm init -y
-npm install --ignore-scripts ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.1.1
+npm install --ignore-scripts ./viell-effect-schema-http-0.1.0.tgz effect@4.1.1
 node release-check.mjs
 ```
 
 The checker prints successful decoding, invalid input rejected before dispatch, invalid response
-data reported as `DecodeError`, and `Candidate check passed`. The disabled install scripts follow
-the verification policy above. This checks a supplied artifact without building from source; the
+data reported as `DecodeError`, and `Release check passed`. The disabled install scripts follow the
+verification policy above. This checks a supplied artifact without building from source; the
 [release procedure](./RELEASING.md) owns the full qualification and publication workflow.
 
 ### Hostile-server integration tests
@@ -274,8 +274,8 @@ depends on the answer. Blocked work links its dependency. The catalog in
 Follow [RELEASING.md](./RELEASING.md). The agreed `0.1.0` goal is the existing finite-body API, ESM,
 Node 24 on Windows/Linux and Chromium Fetch with Effect 4. The [release
 tracker](https://github.com/viell-dev/slop-effect-schema-http/issues/2) owns evidence and remaining
-work. `0.1.0-rc.1` is published on GitHub and npm. Stable publication is a separate release with its
-own qualification; a publishable package does not establish release readiness.
+work. `0.1.0` is the first stable release. Every subsequent publication needs its own qualification;
+a publishable package does not establish release readiness.
 
 Every release needs exact-commit checks, isolated installation, all hostile lanes, an independent
 deep review, verified artifacts and public documentation. A release may use prior review evidence
@@ -286,13 +286,12 @@ Agents own functional verification and investigation of reproducible defects. Th
 checkpoint assesses whether the documentation and workflow are understandable; it is not a request
 to find bugs missed by tests or agent review.
 
-For the first `0.1.0` release, the owner chose a final documentation read-through as that
-checkpoint, recorded in [#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67). It
-replaces this release's earlier hands-on request. This does not establish human runtime testing or
-code review; the substitute functional evidence is the automated consumer, package, socket and
-hostile-suite qualification plus independent agent review. Keep #67 open until the read-through is
-reported and resulting blockers are resolved. Ergonomic feature suggestions are evaluated for a
-later release.
+For the first `0.1.0` release, the owner chose and completed a final documentation read-through as
+that checkpoint on 2026-11-04, recorded in
+[#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67). It replaced the earlier
+hands-on request. This does not establish human runtime testing or code review; the substitute
+functional evidence is automated consumer, package, socket and hostile-suite qualification plus
+independent agent review. Ergonomic feature suggestions remain work for later releases.
 
 This scope decision applies only to `0.1.0`. Substantial later changes to the API or main workflow
 require a focused human use pass unless the owner explicitly sets another scope. Routine fixes may

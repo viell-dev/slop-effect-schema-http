@@ -1,6 +1,11 @@
 # Change history
 
-## Unreleased
+## 0.1.0 — 2026-11-04
+
+First stable release, retaining the API and runtime behavior of `0.1.0-rc.1`. Existing candidate
+consumers can update without code changes. Read [What's in
+0.1](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.1) for the consumer
+introduction.
 
 - Give the opening guides distinct GET, POST, PATCH and DELETE examples, separate consumer and
   maintainer documentation, add complete checksum comparisons and introduce a consumer release
@@ -11,12 +16,16 @@
   ([#75](https://github.com/viell-dev/slop-effect-schema-http/issues/75)).
 - Document every public export in the source and generated declarations; check docblock and Markdown
   TypeScript examples, and align request composition, failure explanations and publication guidance.
+- Promote package metadata, unversioned install commands and source/release links together. The
+  owner completed the final documentation review in
+  [#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67); qualification and
+  publication are recorded in [#2](https://github.com/viell-dev/slop-effect-schema-http/issues/2).
 
 ## 0.1.0-rc.1 npm availability — 2026-11-03
 
 Published the existing candidate to npm with the same tarball as the GitHub release. Both `rc` and
-`latest` identify this prerelease during bootstrap. No API or behavior changes; use the explicit
-candidate version when installing.
+`latest` identified this prerelease during bootstrap. No API or behavior changes; use the explicit
+candidate version when installing that historical release.
 
 ## 0.1.0-rc.1 — 2026-11-01
 

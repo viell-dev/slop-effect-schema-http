@@ -172,5 +172,5 @@ returns the header lines a supporting provider can send. The exported `Declarati
 constructing them.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/src/http/Request.ts)
-for all types and overloads.
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0/src/http/Request.ts) for
+all types and overloads.

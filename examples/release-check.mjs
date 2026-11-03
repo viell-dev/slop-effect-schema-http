@@ -57,4 +57,4 @@ const error = Cause.findErrorOption(invalidResponse.cause);
 assert.equal(error._tag, "Some");
 assert.equal(error.value._tag, "DecodeError");
 console.log("Invalid response: DecodeError after dispatch.");
-console.log("Candidate check passed. Read and adapt getUser to try the API.");
+console.log("Release check passed.");

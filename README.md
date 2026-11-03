@@ -41,15 +41,14 @@ in-memory example you can run without a server or credentials.
 
 ## Install
 
-In an existing Node.js 24 ESM project with Effect `^4.0.7`, add the published release candidate:
+In an existing Node.js 24 ESM project with Effect `^4.0.7`, add the library:
 
 ```sh
-npm install viell-effect-schema-http@0.1.0-rc.1
+npm install viell-effect-schema-http
 ```
 
-`0.1.0-rc.1` is a prerelease. Use the explicit version while preparing for stable; the same package
-is available as a checksummed [GitHub release
-tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1).
+`0.1.0` is the first stable release. The same package is available as a checksummed [GitHub release
+tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0).
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
@@ -80,8 +79,8 @@ guarantees.
 
 Agents write and maintain this project. Its code is not human-reviewed. The source is
 [MIT-licensed](./LICENSE). The [release
-tracker](https://github.com/viell-dev/slop-effect-schema-http/issues/2) owns remaining
-stable-publication prerequisites.
+tracker](https://github.com/viell-dev/slop-effect-schema-http/issues/2) records the first stable
+release's qualification and publication.
 
 Use [CONTRIBUTING.md](./CONTRIBUTING.md) for checkout setup, verification and pull requests. [Report
 a defect](https://github.com/viell-dev/slop-effect-schema-http/issues) with a small synthetic

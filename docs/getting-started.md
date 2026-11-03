@@ -12,21 +12,21 @@ requires Effect `^4.0.7`. Keep your application's compatible Effect dependency.
 ::: code-group
 
 ```sh [npm]
-npm install viell-effect-schema-http@0.1.0-rc.1
+npm install viell-effect-schema-http
 ```
 
 ```sh [pnpm]
-pnpm add viell-effect-schema-http@0.1.0-rc.1
+pnpm add viell-effect-schema-http
 ```
 
 ```sh [Yarn]
-yarn add viell-effect-schema-http@0.1.0-rc.1
+yarn add viell-effect-schema-http
 ```
 
 :::
 
-`0.1.0-rc.1` is a published release candidate; use the explicit version while evaluating it.
-[Compatibility](./limits.md#compatibility-and-scope) covers other application environments.
+[Compatibility](./limits.md#compatibility-and-scope) covers application environments and tested
+versions.
 
 ## Describe a POST request
 

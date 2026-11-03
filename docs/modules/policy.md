@@ -94,5 +94,5 @@ fields, and `Request.mapEffect` are not rerun for a retry. Use [client
 middleware](./operation.md#client-middleware) for per-attempt data.
 
 See the [execution contract](../design.md#execution) and [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/src/http/Policy.ts)
-for the complete reason and policy types.
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0/src/http/Policy.ts) for
+the complete reason and policy types.
