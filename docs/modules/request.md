@@ -17,8 +17,24 @@ is useful for inspecting a request without sending it. A request with no bound i
 `undefined`.
 
 The method helpers are `get`, `post`, `put`, `patch`, `del`, `head`, and `options`.
-`Request.make(method, url)` accepts another method string. `Request.baseUrl` lets several requests
-share an origin and path prefix, as in the next example.
+`Request.make(method, url)` accepts another method string.
+
+## Share an API base and defaults
+
+Define the origin and any fixed prefix once, then reuse that transformation across endpoints:
+
+<<< ../../examples/modules/request.ts#shared-base
+
+`api` applies the base URL to a request. It works with any method, and the base can include a long
+hostname and a prefix such as `/api/v1`. Each endpoint only needs its own path.
+
+Use Effect's `flow` to combine reusable transformations. Requests are immutable, so deriving one
+with a different header leaves the original intact:
+
+<<< ../../examples/modules/request.ts#shared-defaults
+
+This helper supplies raw headers before any header schema is bound. A header schema owns its whole
+group; [schema ownership](#a-schema-owns-its-whole-field-group) explains that boundary.
 
 ## Bind application input
 
@@ -33,8 +49,9 @@ This request accepts a numeric user ID and a JSON body:
 
 `Schema.NumberFromString` has an application side of `number` and an encoded side of `string`.
 Requests use the encoding direction: `42` becomes `"42"`. The path renderer receives that encoded
-string; `encode(id)` escapes it as a path value. Return the complete request path from the renderer.
-The base URL is joined afterwards.
+string; `encode(id)` escapes it as a path value. The renderer supplies the whole request path and
+replaces the path passed to `Request.patch`, so the example starts with `""`. The base URL is joined
+afterwards. It does not need to be repeated inside the renderer.
 
 `Request.body` accepts a [body encoder](./body.md). `Body.jsonSchema` validates the body and encodes
 JSON, including its content type. The two bindings combine, so execution needs both `path` and
@@ -80,6 +97,29 @@ A value can be a string or a function evaluated during request preparation. `und
 Query values also accept `null` for a bare key such as `?preview`; `""` produces `?preview=`. Header
 names compare without case; query names compare with case.
 
+## Compose nested resource paths
+
+When endpoints share several parent resource IDs, reuse schema fields and a path-rendering function.
+Each endpoint binds one complete path schema. The calendar endpoint and its event endpoint can share
+the same parent path:
+
+<<< ../../examples/modules/request.ts#nested-paths
+
+The event call supplies all five IDs. Each value is escaped separately, so an ID containing `/`
+stays one path value:
+
+<<< ../../examples/modules/request.ts#nested-input
+
+Pass these request descriptions to `Operation.make` with the responses each endpoint accepts. The
+shared `calendarPath` function defines the parent structure once; a new child endpoint only adds its
+own suffix. Use the supplied `encode` function for each dynamic value, leaving the path separators
+themselves unescaped.
+
+This is ordinary function composition in your application. The library has no combinator that joins
+two `Request` values or appends a typed path binding to another. Repeating `Request.path` replaces
+the rendered path instead of adding a child. A single shared `Request.baseUrl` handles the fixed
+prefix; reusable renderers handle the variable resource hierarchy.
+
 ## Advanced behavior
 
 ### A schema owns its whole field group
@@ -104,6 +144,10 @@ signatures that must change per attempt. Input encoding and computed raw fields 
 only once per evaluation.
 
 ### URL and method limits
+
+`Request.baseUrl` sets one base URL; calling it again replaces that base rather than extending it.
+With the default URL encoding, an absolute request URL bypasses the base. A relative path is
+appended to the base; a leading `/` does not discard the base's path prefix.
 
 The library renders URLs through [UrlEncoding](./url-encoding.md). Its defaults preserve entry
 order, repetition, bare keys, and empty values. The HTTP provider can still normalize URLs; see [URL

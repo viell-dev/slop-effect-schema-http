@@ -13,12 +13,12 @@ import { Effect, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 
+const api = Request.baseUrl("https://api.example.test");
+
 const getUser = Operation.make(
-  Request.get("https://api.example.test/users").pipe(
-    Request.path(
-      Schema.NumberFromString,
-      (id, encode) => `https://api.example.test/users/${encode(id)}`,
-    ),
+  Request.get("").pipe(
+    api,
+    Request.path(Schema.NumberFromString, (id, encode) => `/users/${encode(id)}`),
   ),
   Response.status(
     200,
@@ -32,10 +32,12 @@ const program = getUser
 // Replace the example endpoint with your service, then: await Effect.runPromise(program).
 ```
 
-The path schema encodes the number as URL text. The response schema validates the returned JSON.
-Constructing `program` sends nothing; evaluating it produces a typed user or an Effect failure.
-[Getting started](https://viell-dev.github.io/slop-effect-schema-http/getting-started) supplies a
-complete in-memory example you can run without a server or credentials.
+Reuse `api` across requests to share the base URL. The path renderer supplies `/users/42`, which is
+joined to that base; it replaces the empty path passed to `Request.get`. The path schema encodes the
+number as URL text. The response schema validates the returned JSON. Constructing `program` sends
+nothing; evaluating it produces a typed user or an Effect failure. [Getting
+started](https://viell-dev.github.io/slop-effect-schema-http/getting-started) supplies a complete
+in-memory example you can run without a server or credentials.
 
 ## Install
 
