@@ -28,6 +28,13 @@ npm uninstall viell-effect-schema-http
 
 Remove `effect` only if the project no longer uses it elsewhere.
 
+### A newly published version is unavailable
+
+Package managers can delay installing recent releases. For example, Yarn may report that a version
+is "quarantined" under its [minimum release
+age](https://yarnpkg.com/configuration/yarnrc#npmMinimalAgeGate) policy. Wait until the version
+meets your project's policy, then retry the install command.
+
 ## Install a GitHub release tarball
 
 The [GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1)

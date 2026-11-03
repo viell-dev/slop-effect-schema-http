@@ -4,7 +4,8 @@
 
 - Give the opening guides distinct GET, POST, PATCH and DELETE examples, separate consumer and
   maintainer documentation, add complete checksum comparisons and introduce a consumer release
-  article.
+  article. Assume an existing Effect project, offer package-manager tabs, and explain named path
+  inputs and operation input inference.
 - Add module guides with executable examples, a complete installed-package quickstart, clearer
   navigation, and common-use explanations before advanced behavior
   ([#75](https://github.com/viell-dev/slop-effect-schema-http/issues/75)).

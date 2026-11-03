@@ -28,6 +28,8 @@ import * as Transport from "./Transport.js";
  * @remarks
  * `execute(input)` returns a cold Effect: work starts when it is evaluated, and each evaluation
  * runs again. `Operation.make` supplies HTTP execution; `fromEffect` adapts an existing function.
+ * With `make`, the request bindings determine `I`. Extract an operation's input type with
+ * `Parameters<typeof operation.execute>[0]`.
  */
 export interface Operation<in I, out A, out E = never, out R = never>
   extends Pipeable.Pipeable {

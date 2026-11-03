@@ -451,6 +451,10 @@ export const query = <
  * ```
  *
  * @remarks
+ * The value under `path` has the schema's application type. A scalar schema takes a scalar;
+ * `Schema.Struct({ userId: Schema.NumberFromString })` takes `{ userId: number }`. Use a struct
+ * to name one path value or group several. Renderer parameter names do not affect the input type.
+ *
  * The renderer receives the schema-encoded value and the active path-value encoder. Escape each
  * dynamic value with that encoder. The returned path replaces the constructor's path; it does
  * not append to it. The shared base URL is joined afterwards. Reuse renderer functions for

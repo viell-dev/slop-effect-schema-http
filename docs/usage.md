@@ -14,9 +14,9 @@ Start a new ES module (`users.mts` for the Node example) with these imports and 
 
 <<< ../examples/usage.ts#shared
 
-`api` supplies the origin. `userPath` converts a numeric ID into URL text and escapes it as a path
-value. `userBody` describes the user JSON your application understands. These are ordinary reusable
-values, not an API-wide configuration object.
+`api` supplies the origin. `userPath` accepts an object with a numeric `userId`, converts the ID
+into URL text and escapes it as a path value. `userBody` describes the user JSON your application
+understands. These are ordinary reusable values, not an API-wide configuration object.
 
 ## Update a user with PATCH
 
@@ -24,9 +24,9 @@ Combine the shared path with a request body containing the changed name:
 
 <<< ../examples/usage.ts#update
 
-This operation takes two inputs: `path` selects the user and `body` supplies the update. In this
-service's contract, PATCH returns HTTP 200 with the updated user. Describe the status and body your
-actual service returns; another service might return 204 with no body.
+This operation takes one object: `path.userId` selects the user and `body.name` supplies the update.
+In this service's contract, PATCH returns HTTP 200 with the updated user. Describe the status and
+body your actual service returns; another service might return 204 with no body.
 
 The pieces now have distinct roles:
 
@@ -42,6 +42,26 @@ The pieces now have distinct roles:
 which joins to `https://api.example.test`. The [Request
 guide](./modules/request.md#share-an-api-base-and-defaults) adds shared headers and [nested resource
 paths](./modules/request.md#compose-nested-resource-paths).
+
+### Understand the input type
+
+`execute` infers its input from the request bindings. Your editor can show the required fields and
+their types, and TypeScript checks calls against them. Extract the type when another function needs
+to accept the same input:
+
+<<< ../examples/usage.ts#input-type
+
+The `&` combines the two required groups into one object. `path` and `body` are the library's
+binding names; `userId` and `name` come from your schemas. `Schema.NumberFromString` accepts a
+number here and encodes it to a string for the path renderer.
+
+The path input does not have to be an object. Binding `Schema.NumberFromString` directly would
+instead require `{ path: 42 }`; naming the renderer's parameter `userId` would not give that number
+a field name or a distinct user-ID type. Using `Schema.Struct` makes names visible at the call site.
+For several path values, define fields such as `teamId` and `userId` in that schema and call with
+`path: { teamId: 7, userId: 42 }`. The [nested-path
+example](./modules/request.md#compose-nested-resource-paths) shows a complete contract with several
+IDs.
 
 ## Remove a user with DELETE
 

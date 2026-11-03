@@ -121,22 +121,24 @@ for (const file of [
     `Update the release version in ${file}`,
   );
 }
-const effect = JSON.parse(read("node_modules/effect/package.json"));
-const gettingStarted = read("docs/getting-started.md");
 assert.ok(
   read("docs/versions.md").includes(`${manifest.name}-${manifest.version}.tgz`),
   "Update the documented tarball filename for this package version",
 );
+const installSpecifier = manifest.version.includes("-")
+  ? `${manifest.name}@${manifest.version}`
+  : manifest.name;
 for (const file of ["README.md", "docs/getting-started.md"]) {
+  assert.equal(
+    /^npm install (\S+)/m.exec(read(file))?.[1],
+    installSpecifier,
+    `Use the explicit prerelease or unversioned stable npm install command in ${file}`,
+  );
   assert.ok(
-    read(file).includes(`${manifest.name}@${manifest.version}`),
-    `Update the explicit npm installation version in ${file}`,
+    read(file).includes(manifest.peerDependencies.effect),
+    `Update the documented Effect peer range in ${file}`,
   );
 }
-assert.ok(
-  gettingStarted.includes(`effect@${effect.version}`),
-  "Update the documented tested Effect version",
-);
 const api = read("docs/api.md");
 for (const subpath of Object.keys(manifest.exports)) {
   if (subpath !== "." && !subpath.endsWith(".json")) {
