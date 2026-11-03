@@ -36,7 +36,9 @@ file an ES module. Node 24 can run this example directly, without a separate Typ
 <<< ../examples/quickstart.ts#contract
 
 The call will take `{ path: 42 }`. The path schema turns the number into text for the URL. A
-successful HTTP 200 answer must contain a JSON object with a numeric `id` and string `name`.
+successful HTTP 200 answer must contain a JSON object with a numeric `id` and string `name`. Reuse
+`api` for other endpoints. The path renderer supplies `/users/42`; the library joins it to that
+shared base URL. `Request.get("")` starts empty because the renderer supplies the whole path.
 
 ## Supply a client and run it
 

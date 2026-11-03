@@ -27,6 +27,11 @@ The input is `{ path: number }`; the successful output is the user object. `Requ
 renderer the schema-encoded string and a function that escapes a path value. This is why the
 renderer calls `encode(id)` rather than inserting unchecked URL text.
 
+`api` is a reusable base URL transformation. The renderer supplies `/users/42`, which joins to
+`https://api.example.test`. `Request.path` replaces the constructor's path, so the example uses
+`Request.get("")`. The [Request guide](./modules/request.md#share-an-api-base-and-defaults) shows
+shared defaults and [nested resource paths](./modules/request.md#compose-nested-resource-paths).
+
 ## Supply an HTTP client and run the effect
 
 The operation needs the `HttpClient` service. A service is a dependency supplied to an Effect;
