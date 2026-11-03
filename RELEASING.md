@@ -5,12 +5,12 @@ Fetch with Effect 4. [Issue #2](https://github.com/viell-dev/slop-effect-schema-
 records the owner's release direction and qualification. Compatible fixes use `0.1.x`; breaking API
 changes require `0.2.0` and migration guidance. Tags have no `v` prefix.
 
-`0.1.0-rc.1` is published on GitHub and npm. Routine CI and release qualification publish nothing;
-publication is a separate, authorized step. The first stable release keeps the candidate's current
-API and behavior, with documentation and release metadata updates. Its final owner documentation
-review is tracked in [#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67), and
-publication setup and authorization in
-[#68](https://github.com/viell-dev/slop-effect-schema-http/issues/68).
+`0.1.0` is the first stable release, retaining the candidate's API and behavior with completed
+documentation and release metadata. Routine CI and release qualification publish nothing;
+publication is a separate, authorized step. The owner completed the final documentation review and
+authorized continuation on 2026-11-04 in
+[#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67). Publication setup and
+execution are recorded in [#68](https://github.com/viell-dev/slop-effect-schema-http/issues/68).
 
 ## Prepare a candidate
 
@@ -100,8 +100,8 @@ the release URL, tag target and checksum. Deploy the release documentation below
 
 The RC bootstrap and trusted-publisher setup are complete. [Issue
 #68](https://github.com/viell-dev/slop-effect-schema-http/issues/68) records the owner's
-confirmation and the verified registry installation. Do not upload `0.1.0-rc.1` again. Its `rc` and
-`latest` tags are intentionally unchanged during bootstrap; stable publication advances `latest`.
+confirmation and the verified registry installation. Do not upload `0.1.0-rc.1` again. The `rc` tag
+retains that candidate; stable publication advances `latest` to `0.1.0`.
 
 ### Publish a qualified version
 
@@ -114,10 +114,11 @@ First dispatch with `publish=false` to verify the producer and dry-run publicati
 nothing and does not prove that OIDC authentication works. An existing version may be rejected even
 in npm's dry run; never treat that as permission to replace it.
 
-Before actual publication, resolve the release review in #67 and the authorization in #68. The
-repository variable `NPM_PUBLISH_ENABLED` must then be `true`; dispatch with `publish=true`. The
-workflow publishes through OIDC with provenance and verifies registry integrity and provenance
-against the artifact, commit and workflow. It does not create a GitHub release or deploy docs.
+Before actual publication, verify that the release review and authorization are recorded; #67 and
+#68 contain the first stable release's decisions. The repository variable `NPM_PUBLISH_ENABLED` must
+be `true`; dispatch with `publish=true`. The workflow publishes through OIDC with provenance and
+verifies registry integrity and provenance against the artifact, commit and workflow. It does not
+create a GitHub release or deploy docs.
 
 Install the published exact version in a fresh empty-cache consumer. Run the release's
 `release-check.mjs` and `npm audit signatures`, inspect dist-tags, and compare registry integrity
@@ -158,10 +159,11 @@ project's configuration. This project's release-review scope is recorded in #67.
 
 ## Promote RC to stable
 
-The candidate contains the intended public API and behavior. Complete the documentation work and the
-owner's final read-through in #67 before proceeding. That is the owner-selected human checkpoint for
-this first release; no human runtime testing or code review is claimed.
-[CONTRIBUTING](./CONTRIBUTING.md#before-a-release) records its scope and the automated evidence.
+The candidate contains the intended public API and behavior. For `0.1.0`, the documentation work and
+owner's final read-through are complete in #67. This was the owner-selected human checkpoint for the
+first release; no human runtime testing or code review is claimed.
+[CONTRIBUTING](./CONTRIBUTING.md#before-a-release) records its scope and the requirements for later
+releases.
 
 For `0.1.0`, update package and lockfile versions, the changelog, README and site installation
 commands, release status, source links, and any versioned examples together. Move the Unreleased
