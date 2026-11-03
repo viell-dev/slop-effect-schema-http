@@ -133,9 +133,19 @@ assert.ok(
 const api = read("docs/api.md");
 for (const subpath of Object.keys(manifest.exports)) {
   if (subpath !== "." && !subpath.endsWith(".json")) {
+    const name = subpath.slice(2);
     assert.ok(
-      api.includes(`[${subpath.slice(2)}](`),
+      api.includes(`[${name}](`),
       `Missing API module documentation: ${subpath}`,
+    );
+    const slug = name.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
+    const guide = read(`docs/modules/${slug}.md`);
+    const source = manifest.exports[subpath].types
+      .replace("./dist/", "src/")
+      .replace(/\.d\.ts$/, ".ts");
+    assert.ok(
+      guide.includes(`/blob/${manifest.version}/${source}`),
+      `Update the version-pinned source reference in the ${name} guide`,
     );
   }
 }

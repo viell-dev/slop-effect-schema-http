@@ -1,5 +1,11 @@
 # Change history
 
+## Unreleased
+
+- Add module guides with executable examples, a complete installed-package quickstart, clearer
+  navigation, and common-use explanations before advanced behavior
+  ([#75](https://github.com/viell-dev/slop-effect-schema-http/issues/75)).
+
 ## 0.1.0-rc.1 — 2026-11-01
 
 First installable candidate for `0.1.0`, distributed through GitHub Releases only. No npm package

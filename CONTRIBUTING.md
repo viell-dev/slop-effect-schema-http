@@ -6,6 +6,13 @@ maintenance cost; a filed request is not a commitment to implement it.
 
 ## Development and verification
 
+Clone the repository for source development:
+
+```sh
+git clone https://github.com/viell-dev/slop-effect-schema-http.git
+cd slop-effect-schema-http
+```
+
 Use the Node.js version in [.nvmrc](./.nvmrc) with the npm it bundles. From the checkout, select it
 with `fnm use` or `nvm use`. [package.json](./package.json) declares the required npm version and
 available scripts. Install with `npm ci`, which installs exactly what `package-lock.json` records,
@@ -121,6 +128,11 @@ runtime, then executes a schema-backed operation through a synthetic client. The
 its path for diagnosis. This checks Node ESM consumption at the selected versions, not a published
 registry install, bundler, browser, or compatibility matrix.
 
+For a manual installation in another project, run `npm pack` after the build and install the printed
+tarball filename with npm in that project, together with a compatible Effect peer. Rebuild, repack
+and reinstall after source changes. A local build is distinct from a checksummed release artifact;
+use the release's exact bytes when verifying a published candidate.
+
 ### Hostile-server integration tests
 
 The separate [`hostile-servers-test`
@@ -140,6 +152,19 @@ the package separately from that suite.
 
 ## Documentation site
 
+User pages teach the installed package: explain what a feature does, show the smallest useful
+example and its result, then add common options and composition. Put advanced behavior and edge
+cases under named subheadings after the common path. Define terms when first needed and link Effect
+concepts to its v4 guides. Each public module has a guide under `docs/modules/`; source signature
+links supplement those guides. Keep existing page addresses usable when reorganizing.
+
+README provides purpose, a small example, installation and navigation. The site describes the
+behavior of the version it documents; history and migration steps belong in the changelog or
+dedicated upgrade guidance. Keep compatibility requirements and versioned install commands where
+readers need them. This guide owns development and verification procedures; RELEASING owns
+publication and deployment; issues and PRs own investigations and delivery evidence. Do not copy
+those procedures or progress narratives into user pages or AGENTS.md.
+
 VitePress `2.0.0-alpha.21` is pinned exactly; it is a prerelease. The public default site describes
 the newest stable installable release, or the newest GitHub candidate before stable. See the public
 [version policy](./docs/versions.md) and [release procedure](./RELEASING.md) for deployment and
@@ -153,12 +178,15 @@ npm run docs:build
 npm run docs:dev
 ```
 
-The first command type-checks `examples/quickstart.ts` without `skipLibCheck`, then executes it
-through the built package's public entry point. The usage page imports its code regions directly.
-The example uses a synthetic client and makes no external request. `docs:build` builds the static
-site, fails on VitePress dead links or missing snippets, and checks rendered internal pages, assets,
-anchors and package facts. External links are reviewed separately. `docs:dev` starts the local
-development server; `docs:preview` serves the production build. Keep both on loopback.
+The first command type-checks `examples/**/*.ts` without `skipLibCheck`, then executes the
+quickstart and all eight module examples through the built package's public entry points. The pages
+import their code regions directly. Examples use synthetic clients and make no external requests;
+runtime assertions verify the shown results. When changing onboarding, also copy its displayed
+snippets into a fresh consumer with the release tarball and run the documented commands without a
+checkout. `docs:build` builds the static site, fails on VitePress dead links or missing snippets,
+and checks rendered internal pages, assets, anchors and package facts. External links are reviewed
+separately. `docs:dev` starts the local development server; `docs:preview` serves the production
+build. Keep both on loopback.
 
 Required pull-request CI runs the example and site build with read-only permissions. Main pushes
 verify changes without deploying unreleased documentation. The separate `pages.yml` workflow

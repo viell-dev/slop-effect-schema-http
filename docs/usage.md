@@ -1,57 +1,97 @@
 # Describe and execute a request
 
-The complete [quickstart
-source](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/examples/quickstart.ts)
-is type-checked and executed in CI. The snippets on this page are imported from that file.
+An operation combines three descriptions: what to send, how to read the body, and which responses
+are meaningful to your application. This guide explains the [getting-started
+example](./getting-started.md) and then connects it to a real HTTP client.
 
 ## Define the consumer's contract
+
+A **contract** states the input your application accepts and the output it expects from the service.
+It lives in the consumer application; the external service need not share its implementation.
 
 <<< ../examples/quickstart.ts#imports
 
 <<< ../examples/quickstart.ts#contract
 
-The path schema accepts an application number and encodes it as a string. `Request.path` supplies
-the path renderer with that encoded string and the active path encoder. The response contract
-selects HTTP 200 and validates its JSON body. The operation's input is `{ path: number }`; its
-successful output has a numeric `id` and a string `name`.
+The pieces have distinct jobs:
 
-Other request bindings follow the same shape: `Request.body` adds `{ body }`, `Request.query` adds
-`{ query }`, and `Request.headers` adds `{ headers }`. Input is encoded once per evaluation. Raw
-setters such as `Request.setQuery` are useful for fixed fields; a schema owns its entire group once
-bound. [Design](./design.md#fields-and-schemas) gives the ownership and encoding rules.
+| Piece                     | In this example                                               |
+| ------------------------- | ------------------------------------------------------------- |
+| `Request`                 | GET a URL with a user ID supplied at execution                |
+| `Schema.NumberFromString` | Encode an application number as path text                     |
+| `Body.jsonSchema`         | Read JSON and validate `{ id: number, name: string }`         |
+| `Response.status`         | Use that decoder for HTTP 200                                 |
+| `Operation.make`          | Combine the request and response into an executable operation |
+
+The input is `{ path: number }`; the successful output is the user object. `Request.path` gives its
+renderer the schema-encoded string and a function that escapes a path value. This is why the
+renderer calls `encode(id)` rather than inserting unchecked URL text.
 
 ## Supply an HTTP client and run the effect
 
+The operation needs the `HttpClient` service. A service is a dependency supplied to an Effect;
+providing a different client lets the same contract run against a real server or an in-memory
+fixture.
+
 <<< ../examples/quickstart.ts#synthetic
 
-The synthetic client is an evaluation fixture. It still passes through Effect's client wrapper, but
-answers in memory. `Effect.runPromise` evaluates the operation; constructing it sends nothing.
+`execute` returns a **cold Effect**, a description of work that does not run until evaluated.
+`Effect.runPromise` evaluates it here and produces `{ id: 42, name: 'Ada' }`. Each evaluation is a
+new operation; construction alone sends nothing.
 
-For an application using Fetch, provide Effect's Fetch layer:
+## Use an HTTP client for your service
+
+To send a request with Fetch, replace the example endpoint with your service's address and supply
+Effect's Fetch layer:
 
 <<< ../examples/quickstart.ts#fetch
 
-Replace the reserved example endpoint with your service's address before evaluating that effect.
-Fetch's redirect, cookie and browser policies still apply. See the [browser
-limits](./design.md#in-a-browser).
+A **layer** constructs services needed by an Effect. After choosing the real endpoint, evaluate
+`overFetch` with `Effect.runPromise(overFetch)` or `yield*` it in your application's Effect program.
+In a browser, Fetch's credentials, CORS and redirect policies still apply.
 
-## Choose response and retry behavior
+## Add input and response choices
 
-Declare the responses your application understands with `Response.status` or `Response.when`, then
-compose alternatives with `Response.orElse`. Declaration order is priority. Once a decoder is
-selected, a decoding failure is final; it does not fall through to another case. A payload that
-varies under identical metadata belongs in a schema union within that case.
+Start with the part your service needs:
 
-An operation makes one attempt by default. Opt into retries with `Policy.make` and an Effect
-schedule. Its default transient classifier checks status or failure, including successfully decoded
-transient responses; it does not decide whether repeating your operation is safe. Choose the
-classifier for the operation's semantics. [Execution](./design.md#execution) explains timeouts,
-retry budgets, `Retry-After`, cancellation, and which data a classifier receives.
+- [Request bindings](./modules/request.md#bind-application-input) add `{ query }`, `{ headers }` or
+  `{ body }`, and combine them with path input.
+- [Body formats](./modules/body.md#choose-a-representation) cover text, bytes, forms and JSON.
+- [Response alternatives](./modules/response.md#handle-several-outcomes) describe multiple statuses
+  and return tagged values when the caller needs to distinguish them.
+- [Operation composition](./modules/operation.md#transform-a-successful-result) maps a successful
+  value or turns a recognized response into an application error.
 
-## Coordinate an interaction
+The defaults send one attempt and decode the first matching response case. Learn the ordinary
+contract first; add the controls below when your workflow needs them.
 
-`Interaction.make` acquires one interaction in a scope, capturing its services. Equal input joins
-active work or reuses a retained success; changed input supersedes active work. A caller can force
-fresh work, and closing the interaction waits for its owned work to finish releasing resources. The
-application controls presentation state. See [Interactions](./design.md#interactions) and the [API
-module](./api.md).
+## Control repeated work
+
+### Choose response and retry behavior
+
+Use a [Policy](./modules/policy.md) to opt into retries, delay them, and set an attempt timeout. The
+application decides whether repeating the action is safe. A transient failure does not prove that
+the server did nothing.
+
+### Coordinate an interaction
+
+Use [Interaction](./modules/interaction.md) when equal calls should share work or a retained result,
+while changed input replaces active work. For example, one interaction can own the current search
+request for one search field. Your application owns loading indicators and other presentation state.
+
+## Advanced behavior and terminology
+
+**Materialization** is the step that converts a request description and application input into a
+native HTTP request. It happens once per operation evaluation, before any retry attempts. Each
+**attempt** then owns a **scope**, the lifetime in which the client response is read and released.
+The [Operation guide](./modules/operation.md#advanced-execution) explains where middleware and
+cancellation fit.
+
+A schema-bound header or query group owns the whole group. A selected response decoder's failure
+never falls through to another case. These rules are covered after the common examples in the
+[Request](./modules/request.md#advanced-behavior) and
+[Response](./modules/response.md#advanced-response-behavior) guides.
+
+Use [limits and recovery](./limits.md) to diagnose a failure, and [Design](./design.md) for exact
+behavior guarantees. Effect's [v4 guides](https://effect.website/docs/v4/getting-started) explain
+its underlying Schema, service, layer and scope concepts in more depth.

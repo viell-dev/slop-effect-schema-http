@@ -33,20 +33,62 @@ export default defineConfig({
   ],
   themeConfig: {
     nav: [
-      { text: "Get started", link: "/getting-started" },
-      { text: "Usage", link: "/usage" },
-      { text: "API", link: "/api" },
+      {
+        text: "Guide",
+        items: [
+          { text: "Getting started", link: "/getting-started" },
+          { text: "Describe and execute a request", link: "/usage" },
+          { text: "Limits and recovery", link: "/limits" },
+        ],
+      },
+      {
+        text: "Modules",
+        items: [
+          { text: "Overview", link: "/api" },
+          { text: "Request", link: "/modules/request" },
+          { text: "Body", link: "/modules/body" },
+          { text: "Response", link: "/modules/response" },
+          { text: "Operation", link: "/modules/operation" },
+          { text: "Policy", link: "/modules/policy" },
+          { text: "Interaction", link: "/modules/interaction" },
+          { text: "UrlEncoding", link: "/modules/url-encoding" },
+          { text: "Transport", link: "/modules/transport" },
+        ],
+      },
       { text: manifest.version, link: "/versions" },
     ],
     sidebar: [
-      { text: "Overview", link: "/" },
-      { text: "Install and get started", link: "/getting-started" },
-      { text: "Describe and execute a request", link: "/usage" },
-      { text: "API modules", link: "/api" },
-      { text: "Design", link: "/design" },
-      { text: "Limits and recovery", link: "/limits" },
-      { text: "Change history", link: "/changelog" },
-      { text: "Versions and contributing", link: "/versions" },
+      {
+        text: "Guide",
+        items: [
+          { text: "Overview", link: "/" },
+          { text: "Getting started", link: "/getting-started" },
+          { text: "Describe and execute a request", link: "/usage" },
+          { text: "Limits and recovery", link: "/limits" },
+        ],
+      },
+      {
+        text: "Modules",
+        items: [
+          { text: "Overview", link: "/api" },
+          { text: "Request", link: "/modules/request" },
+          { text: "Body", link: "/modules/body" },
+          { text: "Response", link: "/modules/response" },
+          { text: "Operation", link: "/modules/operation" },
+          { text: "Policy", link: "/modules/policy" },
+          { text: "Interaction", link: "/modules/interaction" },
+          { text: "UrlEncoding", link: "/modules/url-encoding" },
+          { text: "Transport", link: "/modules/transport" },
+        ],
+      },
+      {
+        text: "About",
+        items: [
+          { text: "Design contract", link: "/design" },
+          { text: "Versions", link: "/versions" },
+          { text: "Change history", link: "/changelog" },
+        ],
+      },
     ],
     search: { provider: "local" },
     socialLinks: [{ icon: "github", link: repository }],

@@ -2,23 +2,33 @@
 
 ## Compatibility and scope
 
-The initial supported scope is ESM with Node.js 24 on Windows/Linux, or browser Fetch in Chromium.
-Qualification uses Node 24.21.0 and Effect 4.1.1. Isolated package consumers also check the Effect
-4.0.7 peer floor and TypeScript 6.0.3/7.0.2. `package.json` accepts Effect `^4.0.7`; its HTTP
-modules are marked unstable upstream and can change across minor versions. The tested versions
-establish the current compatibility evidence. Review Effect's release notes and retain a known-good
-lockfile when upgrading, including any application-owned client middleware. Report regressions with
-the exact dependency version.
+Use the ESM package in Node.js 24 on Windows/Linux or with browser Fetch in Chromium.
 
-The hostile source, Chromium, packed-package and built-app lanes exercise real loopback servers.
-Their browser is pinned by Playwright 1.64.1. The release's qualification run records its exact
-platforms and browser. Other Node majors, macOS, Firefox, Safari, Deno, Bun and CommonJS are outside
-the initial qualification scope. Browser support does not imply support for every bundler or browser
-configuration; provider behavior and browser policy still apply.
+| Component  | Compatibility evidence                                      |
+| ---------- | ----------------------------------------------------------- |
+| Node.js    | 24.21.0 on Windows and Linux                                |
+| Effect     | 4.1.1, with isolated package checks at the 4.0.7 peer floor |
+| TypeScript | Strict package consumers with 6.0.3 and 7.0.2               |
+| Browser    | Chromium supplied by Playwright 1.64.1                      |
+
+`package.json` accepts Effect `^4.0.7`; its HTTP modules are marked unstable upstream and can change
+across minor versions. The tested versions establish the current compatibility evidence. Review
+Effect's release notes and retain a known-good lockfile when upgrading, including any
+application-owned client middleware. Report regressions with the exact dependency version.
+
+Other Node majors, macOS, Firefox, Safari, Deno, Bun and CommonJS are outside the initial
+qualification scope. Browser support does not imply support for every bundler or browser
+configuration; provider behavior and browser policy still apply. The [verification
+guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md#hostile-server-integration-tests)
+explains the coverage and how it is checked.
+
+## Supported behavior
 
 Bodies are finite. Streaming bodies are deferred. The library does not provide a transport, server
 generation, runtime, configuration system, or general cache. `Interaction` retains one success for
 one interaction. Read [Design](./design.md) for the precise behavior and delegated policies.
+
+### Slow or unusual responses
 
 Unmatched responses are drained before `UnexpectedResponse` is returned. A server that never ends
 that body can hold the attempt open; set a policy `attemptTimeout` or the caller's whole-operation
@@ -56,3 +66,7 @@ For sensitive security reports, use [GitHub private vulnerability
 reporting](https://github.com/viell-dev/slop-effect-schema-http/security/advisories/new). For
 changes to the project, follow the public [contribution
 guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md).
+
+For confusing documentation, [open a documentation
+issue](https://github.com/viell-dev/slop-effect-schema-http/issues/new?labels=Type%3A%20Documentation).
+Link the page and section, say what you were trying to do, and describe what you expected to learn.

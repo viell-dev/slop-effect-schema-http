@@ -1,21 +1,50 @@
-# API modules
+# Modules
 
-This reference describes the `0.1.0-rc.1` candidate. The public package root exports the eight
-namespaces below. Each also has a subpath export, such as `viell-effect-schema-http/Request`. The
-linked source and its TypeScript doc comments own the detailed signatures.
+The guides below describe the public API of `0.1.0-rc.1`. Start with the four modules that make one
+HTTP operation: `Request` describes what to send, `Body` reads and writes its payload, `Response`
+describes the answers, and `Operation` executes them together.
 
-| Module                                                                                                             | Purpose                                                                    |
-| ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| [Body](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/src/http/Body.ts)                      | Finite encoders and decoders; schema validation and transformations.       |
-| [Request](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/src/http/Request.ts)                | Pure request descriptions, fields, schema bindings and native preparation. |
-| [Response](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/src/http/Response.ts)              | Metadata-based decoder selection, tagging and typed decoding failures.     |
-| [Operation](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/src/http/Operation.ts)            | Pair a request and response, then execute a cold Effect.                   |
-| [Policy](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/src/http/Policy.ts)                  | Retry classification, schedule budget, attempt timeout and retry delay.    |
-| [Transport](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/src/http/Transport.ts)            | Header-line interoperability with native HTTP providers.                   |
-| [UrlEncoding](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/src/http/UrlEncoding.ts)        | Replaceable path, query and base-URL rendering policy.                     |
-| [Interaction](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/src/concurrency/Interaction.ts) | Scoped coordination of one active execution and one retained success.      |
+## Build and execute a contract
 
-`Request.compile` materializes a request without dispatch. `Operation.make` composes execution with
-the application's `HttpClient`; the library supplies no transport or runtime. Error types and
-required services remain part of the returned Effect's type. [Design](./design.md) is the contract
-behind these functions, and [the runnable example](./usage.md) shows the main workflow.
+| Module                              | What you can do                                                                           |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- |
+| [Request](./modules/request.md)     | Set a method and URL, bind path/query/header/body input, and inspect the prepared request |
+| [Body](./modules/body.md)           | Read and write JSON, text, bytes and forms; validate and transform with schemas           |
+| [Response](./modules/response.md)   | Select by status or headers, tag alternatives, and handle decoding failures               |
+| [Operation](./modules/operation.md) | Supply an HTTP client, execute the contract, and compose results and errors               |
+
+## Control repeated work
+
+| Module                                  | What you can do                                                                |
+| --------------------------------------- | ------------------------------------------------------------------------------ |
+| [Policy](./modules/policy.md)           | Set retries, delays, attempt timeouts, and outcome classification              |
+| [Interaction](./modules/interaction.md) | Share equal work, refresh a result, and replace superseded work within a scope |
+
+## Integrate service-specific behavior
+
+These are extension points when ordinary request composition is insufficient:
+
+| Module                                   | What you can do                                                     |
+| ---------------------------------------- | ------------------------------------------------------------------- |
+| [UrlEncoding](./modules/url-encoding.md) | Change path/query encoding or base-URL joining                      |
+| [Transport](./modules/transport.md)      | Preserve individual header lines through a supporting HTTP provider |
+
+## Imports and types
+
+Import namespaces from the package root, or import a module through its subpath:
+
+```ts
+import { Request, Response } from "viell-effect-schema-http";
+// Alternatively, in a file using only Request:
+import * as HttpRequest from "viell-effect-schema-http/Request";
+```
+
+The package is ESM and includes TypeScript declarations. Your editor shows inferred input, result,
+error and service types. Each module guide starts with an example, covers ordinary composition, then
+explains advanced behavior. Links to source signatures remain at the end for exact overloads and
+generic types.
+
+Use the [end-to-end guide](./usage.md) to see the pieces together and the [design
+contract](./design.md) for their precise guarantees. Effect's [v4
+documentation](https://effect.website/docs/v4/getting-started) covers the underlying Effect, Schema,
+Layer and Scope APIs.

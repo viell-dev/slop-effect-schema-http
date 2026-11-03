@@ -1,92 +1,102 @@
-# Install and try the candidate
+# Getting started
 
-`0.1.0-rc.1` is available as a GitHub release candidate, with no npm registry publication. Download
-the tarball, `SHA256SUMS`, and `release-check.mjs` from the [release
-page](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1). Use an empty
-directory and Node.js 24. The example uses synthetic values and makes no network call.
+Install the library, define a typed request and response, and run one operation. This example
+answers in memory, so you need no server, account or credentials.
+
+## Install
+
+Use Node.js 24 and npm. The package is named `viell-effect-schema-http`; it is ESM and includes
+TypeScript declarations. Effect is a peer dependency, supplied by your application.
+
+`0.1.0-rc.1` is distributed as a GitHub tarball and is not yet on npm. Download the tarball and
+`SHA256SUMS` from the [release
+page](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1). Compare its
+SHA-256 with the listed checksum using `Get-FileHash -Algorithm SHA256` in PowerShell or `sha256sum`
+on Linux.
+
+For a new example project, create an empty directory, put the downloaded tarball there, and run:
 
 ```sh
 npm init -y
 npm install --ignore-scripts ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.1.1
-node release-check.mjs
 ```
 
-The example prints `{ id: 42, name: 'Ada' }`, confirms invalid input fails before dispatch, and
-confirms a response-schema mismatch produces `DecodeError` after dispatch. Read and adapt the
-example alongside [the usage guide](./usage.md). TypeScript declarations are included; the package
-and all its subpaths are ESM.
+In an existing project, use only the install command. This adds the library and Effect to that
+project; no clone or library build is required. See
+[compatibility](./limits.md#compatibility-and-scope) for supported environments and tested
+peer/compiler versions.
 
-Check the tarball's SHA-256 against `SHA256SUMS` with `Get-FileHash -Algorithm SHA256` in PowerShell
-or `sha256sum` on Linux. The [human candidate
-check](https://github.com/viell-dev/slop-effect-schema-http/issues/67) gives a short practical
-journey and asks for feedback before stable publication.
+## Define the request and response
+
+Create `quickstart.mts` and copy these imports and operation into it. The `.mts` extension makes the
+file an ES module. Node 24 can run this example directly, without a separate TypeScript build.
+
+<<< ../examples/quickstart.ts#imports
+
+<<< ../examples/quickstart.ts#contract
+
+The call will take `{ path: 42 }`. The path schema turns the number into text for the URL. A
+successful HTTP 200 answer must contain a JSON object with a numeric `id` and string `name`.
+
+## Supply a client and run it
+
+Append this code to the same file. It supplies an Effect HTTP client that returns a synthetic user:
+
+<<< ../examples/quickstart.ts#synthetic
+
+Run the file from your example directory:
+
+```sh
+node quickstart.mts
+```
+
+Expected output:
+
+```text
+{ id: 42, name: 'Ada' }
+```
+
+The operation constructs and decodes an HTTP response through the client you supplied. This client
+does not send network traffic. [The usage guide](./usage.md#use-an-http-client-for-your-service)
+shows how to supply Fetch for a real service.
+
+## Change the contract
+
+Add a string field to both the `Schema.Struct` response schema and the synthetic JSON response, then
+run the example again. The decoded result includes the new field.
+
+Next, make the synthetic `id` a string while leaving its schema as `Schema.Number`. The run fails
+with `DecodeError`: a response arrived but did not fit the contract. Restore the number to recover.
+Passing a string as the operation's `path` instead fails input encoding before dispatch. A
+TypeScript checker also rejects that call; Node's direct TypeScript execution strips types without
+checking them.
+
+For application type checking, enable TypeScript `strict` and an ESM-compatible module setup. Keep
+your normal build toolchain; the `.mts` shortcut is just for running this example.
+
+## Where to go next
+
+- [Describe and execute a request](./usage.md) explains the pieces and connects them to Fetch.
+- [Module guides](./api.md) cover input bindings, body formats, response alternatives, retries and
+  interactions, from basic examples to advanced behavior.
+- [Limits and recovery](./limits.md) helps distinguish an input, transport or response failure.
+- [Versions](./versions.md#update-or-remove-an-installation) covers updates and removal.
+
+## Candidate verification
+
+The release also provides `release-check.mjs`, an executable check of successful decoding, invalid
+input and invalid response data. Download it beside the installed package and run
+`node release-check.mjs`. It prints the three outcomes and `Candidate check passed`. The [candidate
+usability request](https://github.com/viell-dev/slop-effect-schema-http/issues/67) collects feedback
+before stable publication.
 
 ## Develop from source
 
-Use the Node.js version in
-[.nvmrc](https://github.com/viell-dev/slop-effect-schema-http/blob/main/.nvmrc) and the npm version
-declared in
-[package.json](https://github.com/viell-dev/slop-effect-schema-http/blob/main/package.json). Select
-Node explicitly with `fnm use` on Windows or `nvm use` where nvm is installed.
-
-```sh
-git clone https://github.com/viell-dev/slop-effect-schema-http.git
-cd slop-effect-schema-http
-git checkout 0.1.0-rc.1
-fnm use
-npm ci
-npm run build
-npm run docs:examples
-```
-
-The example prints a user with id `42` and name `Ada`. It imports the built package through its
-public entry point, uses a typed path and response schema, and supplies a synthetic `HttpClient`.
-[The usage guide](./usage.md) shows the same checked source.
-
-Dependencies' install scripts are disabled by `.npmrc`. The current setup works with that policy; do
-not enable lifecycle scripts to work around an unrelated error.
+For checkout setup, builds and tests, use the [contributor
+guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md#development-and-verification).
 
 ## Verify a locally built tarball
 
-```sh
-npm run test:package
-npm pack
-```
-
-The first command installs the built tarball in an isolated temporary consumer, checks declarations
-without `skipLibCheck`, imports every export, and executes synthetic operations. Successful runs
-remove the temporary consumer; failures print its retained path. `npm pack` then writes a tarball in
-the checkout. A local build is distinct from the checksummed release download.
-
-To try that artifact in a separate project, copy the tarball there and install it with the tested
-Effect peer:
-
-```sh
-npm install ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.1.1
-```
-
-Use the actual filename printed by `npm pack`; metadata in `package.json` owns the version and peer
-range. The sample command names the candidate artifact, not a registry release. The library is ESM;
-TypeScript declarations are included.
-
-## Update or remove an installation
-
-For a release installation, download the chosen newer version's tarball, verify its checksum, read
-the [change history](./changelog.md), and install the new file with npm. There is no automatic
-registry update channel for this candidate.
-
-For source development, inspect local changes, switch back to your development branch, pull the
-desired work, then reinstall and rebuild:
-
-```sh
-git pull --rebase
-npm ci
-npm run build
-npm run docs:examples
-```
-
-Repack and reinstall the new tarball in any separate consumer. There is no automatic upgrade
-channel. A `0.1.x` fix preserves the public API; a breaking change requires `0.2.0` and migration
-guidance. Remove a tarball installation with `npm uninstall viell-effect-schema-http`; remove
-`effect` only if your project no longer uses it elsewhere. See [limits and recovery](./limits.md)
-when evaluation fails.
+The contributor guide also owns [isolated package
+verification](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md#packed-package-verification).
+A locally built package is distinct from the checksummed release download.

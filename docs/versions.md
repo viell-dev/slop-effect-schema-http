@@ -1,42 +1,52 @@
-# Versions and contributing
+# Versions
 
 ## Compatibility policy
 
-The agreed first-stable goal is `0.1.0`: the existing finite-body APIs documented in
-[Design](./design.md), with the [qualified environments and exclusions](./limits.md). Compatible
-fixes use `0.1.x`; a breaking public API change requires `0.2.0` and migration guidance. Release
-candidates are intended to become that stable version, subject to qualification and the outstanding
-publication checks.
+The supported API covers finite-body HTTP contracts, ESM, Node 24 on Windows/Linux and Chromium
+Fetch with Effect 4. See [compatibility and limits](./limits.md) for the tested versions and
+exclusions. Compatible fixes use `0.1.x`; a breaking public API change requires `0.2.0` and
+migration guidance.
 
-`0.1.0-rc.1` is a GitHub-only candidate. The npm package name is `viell-effect-schema-http`, but it
-is not yet available from the registry. Use the checksummed tarball in the [installation
-guide](./getting-started.md). [Release
-readiness](https://github.com/viell-dev/slop-effect-schema-http/issues/2) records the agreed scope,
-evidence and remaining gates.
+`0.1.0-rc.1` is a GitHub release candidate for `0.1.0`. The package is named
+`viell-effect-schema-http` and is not yet available from npm. Use the checksummed tarball in
+[Getting started](./getting-started.md). [Release
+readiness](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks qualification and
+the remaining publication prerequisites.
+
+## Update or remove an installation
+
+Read the [change history](./changelog.md) before updating. For a tarball installation, download the
+chosen newer version from [GitHub
+Releases](https://github.com/viell-dev/slop-effect-schema-http/releases), verify its checksum, and
+install the new file with npm as in Getting started. The filename contains the selected version.
+There is no automatic registry update channel for this candidate.
+
+Commit your application's lockfile so deployments use the dependency versions you tested. Review
+Effect updates too: its HTTP modules are unstable upstream, and behavior can change across minor
+versions even within the declared peer range.
+
+Remove the library with:
+
+```sh
+npm uninstall viell-effect-schema-http
+```
+
+Remove `effect` only if the project no longer uses it elsewhere.
 
 ## Documentation version policy
 
-The public default site describes the newest stable installable release. Until the first stable
-release, it describes the newest GitHub candidate. Unreleased changes on `main` do not automatically
-deploy. The navigation reads the package version, and each page records `library-version` and
-`documentation-commit` metadata. A local build with uncommitted edits carries `-dirty`.
+The default site describes the newest stable installable release, or the newest GitHub candidate
+before the first stable release. The navigation and footer show that version. Documentation on
+`main` can describe work awaiting release; it does not automatically replace the public site.
 
-The documentation workflow builds a published release tag, or a documentation-only correction
-descending from that tag. The correction must retain the package version and may change only
-`docs/`. Correct documentation through a pull request, then redeploy and record the documentation
-commit. Software tags and package bytes stay fixed. The next release replaces those corrections with
-its own documentation. A documentation deployment does not publish a package.
+A current-release documentation correction keeps the software version unchanged. Each page's
+`library-version` and `documentation-commit` metadata identifies what it describes and where it was
+built. History belongs in the changelog; upgrade instructions accompany releases that need them.
 
 ## Contribute or verify a change
 
-The [contribution
-guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md) owns setup,
-tests, labels and review. Required pull-request checks build the library and this site, run the
-typed executable example, validate internal links and anchors, and exercise behavior, sockets and
-isolated installation.
+Use the [contributor
+guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md) for checkout
+setup, tests, documentation editing and pull requests.
 [Releasing](https://github.com/viell-dev/slop-effect-schema-http/blob/main/RELEASING.md) owns
-complete candidate qualification, artifact publication and recovery.
-
-Documentation source is excluded from the package. VitePress 2 is a prerelease pinned exactly.
-Dependency install scripts remain disabled. For API changes, explain the consumer problem and
-compare it with [Design](./design.md).
+qualification, publication, documentation deployment and current-release corrections.
