@@ -1,27 +1,47 @@
 # Effect Schema HTTP
 
-Describe an external service from your application's perspective, encode its request with Effect
-Schema, and execute it through Effect's HTTP client. The contract belongs to the consumer: it states
-what the service accepts and how your application interprets the response.
+Define what your application sends to an HTTP service and what it expects back. Effect Schema
+validates and transforms the values; your Effect HTTP client sends the request. The contract lives
+in your application, so you can describe an external service without controlling its server.
 
-::: warning Release candidate
-`0.1.0-rc.1` is a GitHub-only candidate for the first stable release. Install the release tarball;
-there is no npm registry publication yet. Stable publication awaits the release tracker's remaining
-prerequisites.
-:::
+## Make one typed operation
 
-Start with [installation](./getting-started.md), then [describe and execute a request](./usage.md).
-The example runs against a synthetic HTTP client, so it needs no account, credentials, or external
-service.
+A request, a body codec and a response case form an operation:
 
-The library provides finite request and response body codecs, typed input and output contracts,
-ordered response selection, execution policies, and interaction coordination. It composes Effect;
-the application supplies its HTTP provider and runtime.
+<<< ../examples/quickstart.ts#contract
 
-- [API modules](./api.md) link the public entry points to their current source and doc comments.
-- [Design](./design.md) explains the contract, encoding, execution, and resource-lifetime rules.
-- [Limits and recovery](./limits.md) distinguish validation, transport and decoding failures.
-- [Versions and contributing](./versions.md) explain release documentation and maintenance.
+`getUser.execute({ path: 42 })` returns an Effect. Provide an HTTP client and run it to get a
+validated `{ id: number, name: string }`. Constructing the operation sends nothing.
 
-Agents write and maintain the project. Its code is not human-reviewed. The source is
+[Get started](./getting-started.md) has the imports, installation commands, an in-memory client and
+the expected output. [The usage guide](./usage.md) explains the example and connects it to Fetch.
+
+## Choose your next task
+
+| Task                                               | Guide                                   |
+| -------------------------------------------------- | --------------------------------------- |
+| Add a path, query, headers or request body         | [Request](./modules/request.md)         |
+| Read or write JSON, text, bytes or forms           | [Body](./modules/body.md)               |
+| Handle success, missing data and other responses   | [Response](./modules/response.md)       |
+| Supply a client and handle results or failures     | [Operation](./modules/operation.md)     |
+| Set retry and timeout behavior                     | [Policy](./modules/policy.md)           |
+| Share, refresh or replace work for one interaction | [Interaction](./modules/interaction.md) |
+
+[All modules](./api.md) also covers custom URL encoding and header-line interoperability. [Limits
+and recovery](./limits.md) describes compatibility and failure diagnosis. [Design](./design.md)
+records the detailed behavior contract.
+
+## Installation and scope
+
+`0.1.0-rc.1` is available as a [GitHub
+release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1) with an
+installable tarball. It is not yet published to npm. Follow the [installation
+guide](./getting-started.md).
+
+The library supports finite request and response bodies, typed input and output, ordered response
+selection, retries and scoped interaction coordination. Your application supplies its HTTP provider
+and runtime. Streaming, server generation and a general cache are outside its scope.
+
+Agents write and maintain the project; its code is not human-reviewed. The source is
 [MIT-licensed](https://github.com/viell-dev/slop-effect-schema-http/blob/main/LICENSE).
+[Versions](./versions.md) explains compatibility and which release this site describes.

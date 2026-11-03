@@ -1,14 +1,20 @@
 # Design
 
-This page records the decisions behind Effect Schema HTTP: what the library promises and what it
-deliberately leaves to the consumer, to Effect, or to the transport. Doc comments in the source give
-the details of each function. Tests and proposed changes are judged against this page and those
-comments, not against whatever the implementation happens to do. Where the implementation deviates
-from them, the deviation is a defect, tracked in the [issue
-tracker](https://github.com/viell-dev/slop-effect-schema-http/issues?q=is%3Aissue+label%3A%22Type%3A+Bug%22).
+This page defines the library's behavior contract: what it promises and what it delegates to the
+application, Effect, or the HTTP provider. Start with [Getting started](./getting-started.md) and
+the [module guides](./api.md) for examples; use this page when you need precise rules. Changes to
+these guarantees follow the [compatibility policy](./versions.md#compatibility-policy).
 
-These decisions define the `0.1.0` release goal. Changes are recorded here and follow the
-[compatibility policy](./versions.md#compatibility-policy).
+## The main workflow
+
+1. Describe application input with `Request` and body encoders.
+2. Describe accepted responses with `Response` and body decoders.
+3. Pair them with `Operation.make`, supply an Effect HTTP client, and evaluate `execute(input)`.
+4. Receive a validated value or a typed failure. Add a retry policy or interaction only when needed.
+
+Request encoding is **materialization**: turning a description and input into the native request. An
+**attempt** sends that request and decodes its answer. A **scope** owns the resources that must be
+released when an attempt ends. The sections below refine those steps.
 
 ## Principles
 
@@ -35,6 +41,63 @@ must not foreclose them.
 A `Request` is a pure description of an HTTP request and of the input needed to send it.
 Constructing one evaluates nothing; materialization happens when an operation runs or when
 `Request.compile` is evaluated.
+
+### Fields and schemas
+
+Use raw fields for fixed headers or query parameters, and bind a schema for values supplied by the
+caller. Path, query, header and body bindings contribute their corresponding input properties; see
+the [Request examples](./modules/request.md#bind-application-input).
+
+Raw declarations (`setHeader`, `appendHeader`, `removeHeader`, and the query equivalents) take a
+value or a computation. A computation runs once per materialization, and `undefined` omits the
+field. Header names are case-insensitive; query keys are not.
+
+Schemas are optional to choose and binding when chosen. `Request.headers` and `Request.query` take a
+schema whose encoded side fits the representation (`Transport.HeaderInput` or
+`UrlEncoding.QueryInput`); its application side can be any shape. Once a schema owns the header or
+query group, it replaces the raw declarations, the raw setters disappear from the request's type,
+and the group cannot be bound a second time. `Request.path` and `Request.body` add their input to
+the request instead, so each can be combined with the other bindings.
+
+### Bodies
+
+For typed JSON, `Body.jsonSchema` validates application values in both directions. Use another codec
+when the service sends text, bytes or forms; the [Body guide](./modules/body.md) starts with these
+common choices.
+
+A body needs an encoder or a decoder, not necessarily a schema. `Body.json`, `Body.text`,
+`Body.bytes`, `Body.formData`, `Body.urlEncoded`, and `Body.empty` cover the finite representations,
+and `Body.encodeSchema`, `Body.schema`, and `Body.jsonSchema` add validation.
+
+`Body.json` is untyped and encodes exactly as `HttpBody.json` does. That includes Effect's choice
+for a value that `JSON.stringify` omits, such as `undefined` or a function: it encodes as an empty
+`application/json` body. `Body.jsonSchema` is the validated path; it encodes through the schema's
+canonical JSON codec (`Schema.toCodecJson`), and a struct schema never produces `undefined`.
+
+`Body.text` delegates incoming decoding to the provider's `response.text`. Fetch-backed providers
+decode UTF-8 regardless of a `Content-Type` charset, strip a leading UTF-8 byte-order mark, and
+replace malformed bytes with U+FFFD without failing. Use `Body.bytes` with a schema or custom
+decoder when the format needs strict decoding, another encoding, or the original bytes. Web
+`TextDecoder` labels follow the [Encoding
+Standard](https://encoding.spec.whatwg.org/#names-and-labels): `iso-8859-1` selects windows-1252, so
+bytes 0x80–0x9F differ from exact Latin-1. A format that requires exact Latin-1 needs its own byte
+mapping.
+
+The body codec owns the request's `Content-Type` and `Content-Length`. Multipart form data leaves
+both to the transport, so it can add the boundary. A header declaration describes a header; it does
+not relabel an encoded body. A protocol that needs a parameterized content type gets it from a
+custom codec. `Request.mapEffect` remains available to edit the native request deliberately.
+
+A GET or HEAD request with a body fails with `Request.InvalidRequest` before dispatch.
+
+### Request transforms
+
+`Request.mapInput` adapts the invocation argument. `Request.mapEffect` edits the native request
+effectfully, once per evaluation before any attempt. It sees the preparation steps before it, but
+the base URL has not been joined and query entries are still separate parameters: the URL is not
+final. URL-dependent signing belongs in client middleware through `Operation.make`'s
+`transformClient`, after any request edits the signature must cover. It runs per attempt, after the
+library renders the base URL and query. The provider's own URL normalization still applies.
 
 ### URLs are made sendable, not normalized
 
@@ -78,13 +141,10 @@ as a space, and decodes percent escapes. It keeps a bare key (`?wsdl`) distinct 
 during materialization: `?q=a+b` becomes `?q=a%20b`, and `?a=%41` becomes `?a=A`.
 
 This treats a declared query as structured fields that `setQuery`, `removeQuery`, and query schemas
-can edit uniformly. The [decision in
-#14](https://github.com/viell-dev/slop-effect-schema-http/issues/14) keeps one query representation
-and rendering policy, avoiding a second path for untouched literal segments. A custom
-`UrlEncoding.query` receives the decoded entries; the original spelling is already gone. To supply
-opaque query text, start with a request without query declarations and set the native URL text
-through `Request.mapEffect`. Base-URL joining still runs afterwards, and client or provider URL
-processing still applies.
+can edit uniformly. A custom `UrlEncoding.query` receives the decoded entries; the original spelling
+is already gone. To supply opaque query text, start with a request without query declarations and
+set the native URL text through `Request.mapEffect`. Base-URL joining still runs afterwards, and
+client or provider URL processing still applies.
 
 A URL that cannot be rendered or encoded fails with `Request.InvalidRequest`.
 
@@ -110,59 +170,17 @@ joined by `, `. The original lines are available to a provider that can send the
 original lines of that field only. On responses, provider-observed lines are an `Option`, and `None`
 means the provider supplied none. The library never splits a combined value or invents lines.
 
-### Fields and schemas
-
-Raw declarations (`setHeader`, `appendHeader`, `removeHeader`, and the query equivalents) take a
-value or a computation. A computation runs once per materialization, and `undefined` omits the
-field. Header names are case-insensitive; query keys are not.
-
-Schemas are optional to choose and binding when chosen. `Request.headers` and `Request.query` take a
-schema whose encoded side fits the representation (`Transport.HeaderInput` or
-`UrlEncoding.QueryInput`); its application side can be any shape. Once a schema owns the header or
-query group, it replaces the raw declarations, the raw setters disappear from the request's type,
-and the group cannot be bound a second time. `Request.path` and `Request.body` add their input to
-the request instead, so each can be combined with the other bindings.
-
-### Bodies
-
-A body needs an encoder or a decoder, not necessarily a schema. `Body.json`, `Body.text`,
-`Body.bytes`, `Body.formData`, `Body.urlEncoded`, and `Body.empty` cover the finite representations,
-and `Body.encodeSchema`, `Body.schema`, and `Body.jsonSchema` add validation.
-
-`Body.json` is untyped and encodes exactly as `HttpBody.json` does. That includes Effect's choice
-for a value that `JSON.stringify` omits, such as `undefined` or a function: it encodes as an empty
-`application/json` body. `Body.jsonSchema` is the validated path; it encodes through the schema's
-canonical JSON codec (`Schema.toCodecJson`), and a struct schema never produces `undefined`.
-
-`Body.text` delegates incoming decoding to the provider's `response.text`. Fetch-backed providers
-decode UTF-8 regardless of a `Content-Type` charset, strip a leading UTF-8 byte-order mark, and
-replace malformed bytes with U+FFFD without failing. Use `Body.bytes` with a schema or custom
-decoder when the format needs strict decoding, another encoding, or the original bytes. Web
-`TextDecoder` labels follow the [Encoding
-Standard](https://encoding.spec.whatwg.org/#names-and-labels): `iso-8859-1` selects windows-1252, so
-bytes 0x80–0x9F differ from exact Latin-1. A format that requires exact Latin-1 needs its own byte
-mapping.
-
-The body codec owns the request's `Content-Type` and `Content-Length`. Multipart form data leaves
-both to the transport, so it can add the boundary. A header declaration describes a header; it does
-not relabel an encoded body. A protocol that needs a parameterized content type gets it from a
-custom codec. `Request.mapEffect` remains available to edit the native request deliberately.
-
-A GET or HEAD request with a body fails with `Request.InvalidRequest` before dispatch.
-
-### Request transforms
-
-`Request.mapInput` adapts the invocation argument. `Request.mapEffect` edits the native request
-effectfully, once per evaluation before any attempt. It sees the preparation steps before it, but
-the base URL has not been joined and query entries are still separate parameters: the URL is not
-final. URL-dependent signing belongs in client middleware through `Operation.make`'s
-`transformClient`, after any request edits the signature must cover. It runs per attempt, after the
-library renders the base URL and query. The provider's own URL normalization still applies.
-
 ## Responses
 
 A `Response` selects a decoder from transport metadata only: status, headers, cookies, and the
 optional provider lines. Selection happens before any body byte is read.
+
+Use `Response.status(200, decoder)` for one expected status and add alternatives with
+`Response.orElse`. A matched response returns the decoder's value, even when the declared status
+represents an application-level failure such as 404. The [Response guide](./modules/response.md)
+shows how to tag and interpret those outcomes.
+
+### Selection and decoding rules
 
 - Declaration order is priority. `Response.orElse` consults its fallback only when no earlier case
   matches; there is no ranking by specificity.
@@ -205,6 +223,12 @@ behavior from a Node run.
 `Operation.make` pairs a request with a response contract. Construction is pure, and executing it
 returns an ordinary cold `Effect`.
 
+By default an evaluation makes one attempt. The application supplies `HttpClient` and decides when
+to run the Effect. See [Operation](./modules/operation.md) for execution and error handling, then
+[Policy](./modules/policy.md) for retries and timeouts.
+
+### Preparation and attempt lifetime
+
 Each evaluation materializes the request once: computed fields run and input is encoded a single
 time, so credentials stay the same across retries. Anything that must differ per attempt, such as a
 nonce or a signature over the attempt, belongs in client middleware through the `transformClient`
@@ -213,6 +237,8 @@ option.
 Each attempt owns a `Scope` that covers dispatch and decoding. The scope closes, aborting the
 attempt's request if it is still in flight, before the outcome is classified or a retry delay
 begins.
+
+### Retry rules
 
 Retries follow a `Policy`:
 
@@ -237,6 +263,8 @@ to the operation's repeat semantics. Its `Reason` contains metadata and failures
 method or decoded result; the method can be captured from the operation's known configuration.
 Decisions that need the decoded value belong in the consumer's composition outside this classifier.
 
+### Error and service types
+
 Failures and services are typed and kept separate. Input schema errors, `InvalidRequest`, transport
 errors, `DecodeError`, `UnexpectedResponse`, `TimeoutError`, and the schedule's error are distinct
 members of the operation's error type. A request schema contributes its encoding services and a
@@ -256,6 +284,12 @@ personal data. At Effect's default minimum log level, nothing is emitted.
 
 An `Interaction` serves one user-facing interaction, such as a search box, with at most one active
 execution and one retained success.
+
+Acquire it with `Interaction.make(execute)` inside a scope, then call `run(input)`. The [Interaction
+guide](./modules/interaction.md) starts with sequential reuse before covering refresh and
+cancellation.
+
+### Reuse, replacement and lifetime rules
 
 - Equal input joins the active execution or reuses the retained success. Input is compared with
   `Equal.equals` by default, which compares plain objects and arrays structurally.

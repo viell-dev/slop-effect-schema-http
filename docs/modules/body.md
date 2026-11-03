@@ -1,0 +1,102 @@
+# Body
+
+`Body` reads and writes finite HTTP bodies. An **encoder** turns an application value into an
+outgoing body. A **decoder** reads an incoming body into an application value. A **codec** combines
+both directions. Use encoders with [Request](./request.md) and decoders with
+[Response](./response.md).
+
+## Start with JSON and a schema
+
+`Body.jsonSchema` checks values against an Effect schema in both directions:
+
+<<< ../../examples/modules/body.ts#imports
+
+<<< ../../examples/modules/body.ts#json
+
+Pass the request and response to `Operation.make` to execute them. Invalid request input fails
+before dispatch. Invalid response data fails during decoding and is returned by the operation as
+`Response.DecodeError`.
+
+## Choose a representation
+
+Use the codec that matches what the service sends or accepts:
+
+| Codec                     | Application value               | Media type                          |
+| ------------------------- | ------------------------------- | ----------------------------------- |
+| `Body.jsonSchema(schema)` | The schema's application type   | `application/json`                  |
+| `Body.json`               | `unknown`; no schema validation | `application/json`                  |
+| `Body.text`               | `string`                        | `text/plain`                        |
+| `Body.bytes`              | `Uint8Array`                    | `application/octet-stream`          |
+| `Body.formData`           | Web `FormData`                  | `multipart/form-data`               |
+| `Body.urlEncoded`         | Effect `UrlParams.UrlParams`    | `application/x-www-form-urlencoded` |
+| `Body.empty`              | `void`                          | None                                |
+
+For `Body.urlEncoded`, construct values with `UrlParams.fromInput` from `effect/http`. `Body.empty`
+sends no body and discards incoming bytes. It is useful for responses whose body your application
+does not need, such as a successful deletion.
+
+## Validate and transform another representation
+
+### Add a schema to text
+
+A service may return a number as plain text. Add a schema in the direction you need:
+
+<<< ../../examples/modules/body.ts#text-schema
+
+`Body.schema` validates and transforms the decoded value. `Body.encodeSchema` validates and encodes
+application input before passing it to the underlying encoder. Each returns only that direction;
+adding a decoding transform does not invent an inverse encoder.
+
+`Body.jsonSchema` uses the schema's canonical JSON codec (`Schema.toCodecJson`). Use the text/bytes
+combinators when your service needs another representation. Effect's [Schema
+guide](https://effect.website/docs/v4/schema/introduction) explains application and encoded types.
+
+### Map decoded values
+
+Use `Body.map` for a pure transformation:
+
+<<< ../../examples/modules/body.ts#map
+
+Use `Body.mapEffect` when the transformation can fail or requires a service. Decoder errors and
+required services remain in the resulting types. Both transformations preserve the decoder's media
+type, which contributes to the operation's automatic `Accept` header.
+
+## Advanced codecs and body behavior
+
+### Custom encoders and decoders
+
+`Body.encoder(encode)` takes a function returning an `Effect` of Effect's `HttpBody`.
+`Body.decoder(decode, mediaType?)` takes a function that reads an Effect `HttpClientResponse` and
+returns an `Effect` of the decoded value. `Body.make({ encode, decode, mediaType })` combines both
+directions. These are the extension points for service-specific formats.
+
+Return decoding failures through the Effect error channel so the operation can wrap them in
+`Response.DecodeError`. A thrown exception is an Effect defect. Read the finite body within the
+decoder; the operation releases the attempt's resources before returning its result.
+
+### Body metadata
+
+The encoder determines outgoing `Content-Type` and `Content-Length`. Multipart form data delegates
+both to the HTTP transport, which supplies the boundary. Setting a request header does not change
+the bytes a codec produced. Use a custom encoder for a format requiring another content type or
+parameters, or deliberately edit the native request with `Request.mapEffect`.
+
+A decoder's `mediaType` contributes to `Accept`; it does not itself check the response's
+`Content-Type`. If that header determines how to read the answer, select a decoder with
+[`Response.when`](./response.md#select-by-headers-or-other-metadata).
+
+### Text, JSON, and finite-body limits
+
+Fetch-backed `Body.text` decoding is lenient UTF-8: malformed bytes become replacement characters,
+and charset parameters do not select another encoding. Use `Body.bytes` with an appropriate decoder
+for strict or non-UTF-8 data.
+
+`Body.json` follows Effect's JSON encoding, including an empty outgoing body for values that
+`JSON.stringify` omits. An empty incoming body is a JSON decoding error. Choose `Body.jsonSchema` to
+validate the application shape, or `Body.empty` for a response with no useful body.
+
+Bodies are finite; streaming is outside the supported API. Even discarding an unmatched body can
+wait forever if the server never ends it. Set a [timeout](./policy.md#bound-execution-time) when
+completion is not guaranteed. See the [body contract](../design.md#bodies) and [source
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0-rc.1/src/http/Body.ts)
+for precise behavior and generic types.
