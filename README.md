@@ -41,10 +41,10 @@ in-memory example you can run without a server or credentials.
 
 ## Install
 
-Use Node.js 24 and an ESM project. Install the published release candidate and its Effect peer:
+In an existing Node.js 24 ESM project with Effect `^4.0.7`, add the published release candidate:
 
 ```sh
-npm install viell-effect-schema-http@0.1.0-rc.1 effect@4.1.1
+npm install viell-effect-schema-http@0.1.0-rc.1
 ```
 
 `0.1.0-rc.1` is a prerelease. Use the explicit version while preparing for stable; the same package

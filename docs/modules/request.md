@@ -57,6 +57,12 @@ afterwards. It does not need to be repeated inside the renderer.
 JSON, including its content type. The two bindings combine, so execution needs both `path` and
 `body`.
 
+The path schema determines the value under `path`. A scalar schema gives `path: 42`; a
+`Schema.Struct({ userId: Schema.NumberFromString })` gives `path: { userId: 42 }`. The renderer's
+parameter name does not change that input type. Use a struct to name a single ID or group several
+path values. The [usage guide](../usage.md#understand-the-input-type) shows the inferred operation
+input; [nested resource paths](#compose-nested-resource-paths) demonstrate several named values.
+
 ### Query parameters and headers
 
 Use schemas when the caller supplies a query or header group:

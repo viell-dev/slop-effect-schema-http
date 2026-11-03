@@ -6,18 +6,26 @@ server, account or credentials.
 
 ## Install
 
-For this example, use Node.js 24 and npm. The package is ESM and includes TypeScript declarations.
-Effect is a peer dependency, supplied by your application.
+Add the library to your existing Effect project. It is ESM, includes TypeScript declarations, and
+requires Effect `^4.0.7`. Keep your application's compatible Effect dependency.
 
-Create an empty directory and run:
+::: code-group
 
-```sh
-npm init -y
-npm install viell-effect-schema-http@0.1.0-rc.1 effect@4.1.1
+```sh [npm]
+npm install viell-effect-schema-http@0.1.0-rc.1
 ```
 
-In an existing project, use only the install command. No clone or library build is required.
-`0.1.0-rc.1` is a published release candidate; use that explicit version while evaluating it.
+```sh [pnpm]
+pnpm add viell-effect-schema-http@0.1.0-rc.1
+```
+
+```sh [Yarn]
+yarn add viell-effect-schema-http@0.1.0-rc.1
+```
+
+:::
+
+`0.1.0-rc.1` is a published release candidate; use the explicit version while evaluating it.
 [Compatibility](./limits.md#compatibility-and-scope) covers other application environments.
 
 ## Describe a POST request
@@ -46,9 +54,21 @@ client dependency; `Effect.runPromise` runs it and returns the decoded value.
 
 Run the file:
 
-```sh
+::: code-group
+
+```sh [npm]
 node quickstart.mts
 ```
+
+```sh [pnpm]
+pnpm exec node quickstart.mts
+```
+
+```sh [Yarn]
+yarn node quickstart.mts
+```
+
+:::
 
 Expected output:
 

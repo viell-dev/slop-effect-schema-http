@@ -7,8 +7,8 @@ import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 
 const api = Request.baseUrl("https://api.example.test");
 const userPath = Request.path(
-  Schema.NumberFromString,
-  (id, encode) => `/users/${encode(id)}`,
+  Schema.Struct({ userId: Schema.NumberFromString }),
+  ({ userId }, encode) => `/users/${encode(userId)}`,
 );
 const userBody = Body.jsonSchema(
   Schema.Struct({ id: Schema.Number, name: Schema.String }),
@@ -25,10 +25,19 @@ const updateUser = Operation.make(
   Response.status(200, userBody),
 );
 
-const rename = updateUser.execute({ path: 42, body: { name: "Grace" } });
+const rename = updateUser.execute({
+  path: { userId: 42 },
+  body: { name: "Grace" },
+});
 // PATCH https://api.example.test/users/42 with JSON { "name": "Grace" }
 // Result: { id: number, name: string }
 // #endregion update
+
+// #region input-type
+export type UpdateUserInput = Parameters<typeof updateUser.execute>[0];
+// { readonly path: { readonly userId: number } }
+// & { readonly body: { readonly name: string } }
+// #endregion input-type
 
 // #region remove
 const deleteUser = Operation.make(
@@ -36,7 +45,7 @@ const deleteUser = Operation.make(
   Response.status(204, Body.empty),
 );
 
-const remove = deleteUser.execute({ path: 42 });
+const remove = deleteUser.execute({ path: { userId: 42 } });
 // DELETE https://api.example.test/users/42
 // Result: undefined after an HTTP 204 response with an empty body.
 // #endregion remove

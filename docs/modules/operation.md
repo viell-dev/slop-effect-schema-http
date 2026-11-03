@@ -13,8 +13,10 @@ This operation reads a service's health endpoint as text:
 <<< ../../examples/modules/operation.ts#simple
 
 `undefined` is the input for a request with no bindings. A request with a path, query, headers or
-body binding instead requires the corresponding properties. See the [end-to-end
-example](../usage.md).
+body binding instead requires the corresponding properties. Their value types come from the request
+schemas. Hover over `execute` in your editor, or use TypeScript's
+`Parameters<typeof operation.execute>[0]` to extract the input type. The [end-to-end
+example](../usage.md#understand-the-input-type) shows named path input and a JSON body.
 
 An Effect is a description of work. It is **cold**: creating it does not execute it. Each evaluation
 with `Effect.runPromise`, or with `yield*` inside another Effect, executes the operation again.

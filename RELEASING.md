@@ -167,7 +167,10 @@ For `0.1.0`, update package and lockfile versions, the changelog, README and sit
 commands, release status, source links, and any versioned examples together. Move the Unreleased
 documentation entry into the stable entry and retain the RC's publication history. Replace
 bootstrap-specific tag guidance with the stable channel's actual state. Keep the version prerelease
-until the review prerequisites are satisfied.
+until the review prerequisites are satisfied. For stable onboarding, use unversioned installation
+commands such as `npm install viell-effect-schema-http`, updating every package-manager tab. Stable
+publication advances `latest`; retain exact versions in artifact verification and historical release
+instructions. The user guides assume an existing project with a compatible Effect peer.
 
 Record the RC-to-stable diff and reuse independent implementation review only where its assumptions
 still hold. Run fresh exact-commit qualification: the stable package, documentation comments and
