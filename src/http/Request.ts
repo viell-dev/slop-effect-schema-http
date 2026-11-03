@@ -10,16 +10,34 @@ import * as Fields from "./internal/fields.js";
 import * as Transport from "./Transport.js";
 import * as UrlEncoding from "./UrlEncoding.js";
 
-/** Request fields could not be materialized, the URL could not be encoded, or a GET/HEAD request has a body. */
+/**
+ * Request preparation failed before dispatch.
+ *
+ * @remarks
+ * Covers computed-field failures, URL-rendering exceptions, and a GET/HEAD body other than
+ * `HttpBody.empty`. Schema encoding failures remain separate `SchemaError` values.
+ */
 export class InvalidRequest extends Data.TaggedError("InvalidRequest")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
 
-/** A header or query value, or a computation evaluated once per materialization. `undefined` omits it. */
+/**
+ * A fixed header or query value, or a function that supplies it during preparation.
+ *
+ * @remarks
+ * A function runs once each time the request is compiled, not once per retry. `undefined` omits
+ * the field. Query fields also accept `null` for a bare key.
+ */
 export type FieldValue<A = string> = Fields.Value<A>;
 
-/** Raw declarations, materialized before input preparation. */
+/**
+ * The method, URL and raw fields from which request preparation starts.
+ *
+ * @remarks
+ * This is a low-level extension type. Prefer {@link make} and the request combinators.
+ * `H` and `Q` record whether a schema owns each field group.
+ */
 export interface Declaration<
   H extends boolean = boolean,
   Q extends boolean = boolean,
@@ -35,24 +53,38 @@ export interface Declaration<
   readonly queryBound: Q;
 }
 
-/** A query parameter of a native request, compared by identity to recognize bare keys. */
+/**
+ * One entry in Effect's native query collection.
+ *
+ * @remarks
+ * Drafts use entry identity to distinguish bare keys from empty values.
+ */
 export type UrlParam = UrlParams.UrlParams["params"][number];
 
-/** The request during input preparation. */
+/**
+ * The native request and representation details available during input preparation.
+ *
+ * @remarks
+ * The base URL and final query text are applied after preparation. Prefer public combinators
+ * unless implementing a low-level extension.
+ */
 export interface Draft {
   /** Method, path or URL, query parameters, normalized headers and body. */
   readonly request: HttpClientRequest.HttpClientRequest;
   /** The authoritative header lines; compilation reconciles them with the native headers. */
   readonly headerLines: Transport.Lines;
-  /** The parameters of `request.urlParams` that render as bare keys. Native edits replace them. */
+  /** Native query entries that render as bare keys. Replacing an entry loses its identity marker. */
   readonly bareKeys: ReadonlySet<UrlParam>;
 }
 
 /**
- * A pure description of an HTTP request and the application input it requires. `I` is the complete
- * invocation argument; `H` and `Q` record whether schemas own the header and query groups.
+ * An immutable HTTP request description with typed application input.
  *
- * `declaration` and `prepare` are low-level extension points. Prefer the combinators of this module.
+ * @remarks
+ * Construction sends nothing. {@link compile} prepares it; `Operation.make` prepares and sends it.
+ * `I` is the complete input, `E` its preparation errors, and `R` its required services.
+ * `H` and `Q` record whether schemas own the header and query groups.
+ * `declaration` and `prepare` are low-level extension points.
  */
 export interface Request<
   in I,
@@ -72,10 +104,16 @@ const construct = <I, E, R, H extends boolean, Q extends boolean>(
 ): Request<I, E, R, H, Q> => ({ ...Pipeable.Prototype, declaration, prepare });
 
 /**
- * A request with no required input; execute it with `undefined`. A query string in `url` becomes raw query
- * declarations through form decoding: `+` is a space, percent escapes are decoded, and empty `&` segments
- * are dropped. Bare keys stay distinct from empty values. Materialization renders the decoded entries
- * through `UrlEncoding.query`. A fragment is discarded. Custom method strings pass through unchanged.
+ * Describe a request with a method and URL, without sending it.
+ *
+ * @remarks
+ * Use `undefined` as input until a binding adds required fields. A relative path can be combined
+ * with {@link baseUrl}; {@link path} can supply the complete path from typed input.
+ * Custom method strings pass through unchanged.
+ *
+ * A constructor query is parsed as form data: `+` becomes a space, percent escapes are decoded,
+ * and empty `&` segments are dropped. Bare keys remain distinct from empty values. Compilation
+ * renders these entries through `UrlEncoding.query`; a constructor fragment is discarded.
  */
 export const make = (method: string, url: string): Request<unknown> => {
   const hash = url.indexOf("#");
@@ -103,15 +141,59 @@ export const make = (method: string, url: string): Request<unknown> => {
   );
 };
 
+/**
+ * Describe a GET request. Use {@link baseUrl} for a shared origin or path prefix.
+ *
+ * @example
+ * ```ts
+ * import { Request } from "viell-effect-schema-http";
+ * const users = Request.get("/users").pipe(
+ *   Request.baseUrl("https://api.example.test/api/v1"),
+ * );
+ * ```
+ */
 export const get = (url: string): Request<unknown> => make("GET", url);
+/**
+ * Describe a POST request. Add typed input with {@link body}, {@link path} or other bindings.
+ */
 export const post = (url: string): Request<unknown> => make("POST", url);
+/**
+ * Describe a PUT request. Add an outgoing representation with {@link body}.
+ */
 export const put = (url: string): Request<unknown> => make("PUT", url);
+/**
+ * Describe a PATCH request. Add an outgoing representation with {@link body}.
+ */
 export const patch = (url: string): Request<unknown> => make("PATCH", url);
+/**
+ * Describe a DELETE request. A response contract decides which deletion outcomes to accept.
+ */
 export const del = (url: string): Request<unknown> => make("DELETE", url);
+/**
+ * Describe a HEAD request. Its outgoing body must remain `HttpBody.empty`.
+ */
 export const head = (url: string): Request<unknown> => make("HEAD", url);
+/**
+ * Describe an OPTIONS request. The HTTP provider still controls browser preflight behavior.
+ */
 export const options = (url: string): Request<unknown> => make("OPTIONS", url);
 
-/** Replace the base URL joined with the request URL during materialization. */
+/**
+ * Set the shared origin and fixed path prefix for a request.
+ *
+ * @example
+ * ```ts
+ * import { Request } from "viell-effect-schema-http";
+ * const api = Request.baseUrl("https://api.example.test/api/v1");
+ * const users = Request.get("/users").pipe(api);
+ * const teams = Request.get("/teams").pipe(api);
+ * ```
+ *
+ * @remarks
+ * The base is joined after path preparation. With the default URL policy, an absolute request
+ * URL bypasses it; a leading `/` on a relative path keeps the base's prefix. Calling this again
+ * replaces the base, rather than appending to it. Keep query fields in request combinators.
+ */
 export const baseUrl =
   (url: string) =>
   <I, E, R, H extends boolean, Q extends boolean>(
@@ -143,27 +225,62 @@ const editQuery =
       self.prepare,
     );
 
-/** Replace every line of a header. Names are case-insensitive. */
+/**
+ * Set a raw header, replacing every existing line with that name.
+ *
+ * @remarks
+ * Names compare without case and are stored lowercase. Unavailable after a header schema is
+ * bound. The body encoder owns `Content-Type` and `Content-Length`.
+ */
 export const setHeader = (name: string, value: FieldValue) =>
   editHeaders((fields) => Fields.set(fields, name.toLowerCase(), value));
 
-/** Add a header line after the existing lines. */
+/**
+ * Add a raw header line after the existing lines, preserving repetition.
+ *
+ * @remarks
+ * Names are stored lowercase. Unavailable after a header schema is bound. Sending separate
+ * lines requires a provider that supports them; Fetch may combine or restrict headers.
+ */
 export const appendHeader = (name: string, value: FieldValue) =>
   editHeaders((fields) => Fields.append(fields, name.toLowerCase(), value));
 
-/** Remove a header, or only its static lines equal to `value`. Computations are never evaluated to compare. */
+/**
+ * Remove a raw header, or only its declarations with the supplied fixed value.
+ *
+ * @remarks
+ * Names compare without case. Value functions are never evaluated to compare with `value`.
+ * Unavailable after a header schema is bound.
+ */
 export const removeHeader = (name: string, value?: string) =>
   editHeaders((fields) => Fields.remove(fields, name.toLowerCase(), value));
 
-/** Replace every entry of a query key. `null` is a bare key. */
+/**
+ * Set a raw query field, replacing entries with the same case-sensitive name.
+ *
+ * @remarks
+ * `null` produces a bare key, `""` an empty value, and `undefined` omits the entry.
+ * Unavailable after a query schema is bound.
+ */
 export const setQuery = (name: string, value: FieldValue<string | null>) =>
   editQuery((fields) => Fields.set(fields, name, value));
 
-/** Add a query entry after the existing entries. */
+/**
+ * Append a raw query entry, preserving order and repeated names.
+ *
+ * @remarks
+ * Uses the same value rules as {@link setQuery}. Unavailable after a query schema is bound.
+ */
 export const appendQuery = (name: string, value: FieldValue<string | null>) =>
   editQuery((fields) => Fields.append(fields, name, value));
 
-/** Remove a query key, or only its static entries equal to `value`. */
+/**
+ * Remove a raw query field, or only declarations with the supplied fixed value.
+ *
+ * @remarks
+ * Names compare with case. Value functions are not evaluated for comparison.
+ * Unavailable after a query schema is bound.
+ */
 export const removeQuery = (name: string, value?: string | null) =>
   editQuery((fields) => Fields.remove(fields, name, value));
 
@@ -211,12 +328,14 @@ const keepBodyFields = (
   }, headers);
 
 /**
- * Require `{ headers }` input, encoded by a schema into ordered lines. The schema replaces the raw header
- * declarations and owns the group.
+ * Bind a schema to the call's `{ headers }` input.
  *
- * When the request has a body, Content-Type and Content-Length keep the values that the body codec, or a
- * native edit, gave them, whichever order the combinators are applied in. Without a body, the schema's
- * values apply; a `Request.body` applied after this, including `Body.empty`, replaces them as its codec does.
+ * @remarks
+ * Encoding produces ordered header lines. The schema replaces raw header declarations and owns
+ * the group: later raw setters or another header schema are unavailable.
+ * When a body is present, its `Content-Type` and `Content-Length` take precedence, regardless of
+ * binding order. Without a body, the schema values apply; a later body binding, including
+ * `Body.empty`, replaces those fields according to its encoder.
  */
 export const headers = <
   S extends Schema.ConstraintCodec<
@@ -267,8 +386,22 @@ export const headers = <
 };
 
 /**
- * Require `{ query }` input, encoded by a schema into ordered entries. The schema replaces the raw query
- * declarations and owns the group.
+ * Bind a schema to the call's `{ query }` input.
+ *
+ * @example
+ * ```ts
+ * import { Schema } from "effect";
+ * import { Request } from "viell-effect-schema-http";
+ * const search = Request.get("https://api.example.test/users").pipe(
+ *   Request.query(Schema.Struct({ page: Schema.NumberFromString })),
+ * );
+ * // Input: { query: { page: 2 } }; URL query: ?page=2
+ * ```
+ *
+ * @remarks
+ * The schema encodes to `UrlEncoding.QueryInput`. It replaces raw query declarations, including
+ * the constructor's query string, and owns the group. Later raw setters or another query schema
+ * are unavailable. Use {@link mapInput} to supply application defaults.
  */
 export const query = <
   S extends Schema.ConstraintCodec<
@@ -304,9 +437,26 @@ export const query = <
 };
 
 /**
- * Require `{ path }` input. `render` receives the schema-encoded value and the current path encoder. A
- * value the encoder cannot encode fails with `InvalidRequest`. Any other exception thrown by `render`
- * fails the same way, as an exception from a replaced `UrlEncoding` service does.
+ * Bind a schema to `{ path }` input and render the complete request path.
+ *
+ * @example
+ * ```ts
+ * import { Schema } from "effect";
+ * import { Request } from "viell-effect-schema-http";
+ * const user = Request.get("").pipe(
+ *   Request.baseUrl("https://api.example.test"),
+ *   Request.path(Schema.NumberFromString, (id, encode) => `/users/${encode(id)}`),
+ * );
+ * // Input: { path: 42 }; URL: https://api.example.test/users/42
+ * ```
+ *
+ * @remarks
+ * The renderer receives the schema-encoded value and the active path-value encoder. Escape each
+ * dynamic value with that encoder. The returned path replaces the constructor's path; it does
+ * not append to it. The shared base URL is joined afterwards. Reuse renderer functions for
+ * nested resources rather than stacking path bindings.
+ * Renderer or path-encoding exceptions become {@link InvalidRequest}; schema failures remain
+ * `SchemaError` values.
  */
 export const path = <S extends Schema.Constraint>(
   contract: S,
@@ -347,7 +497,13 @@ export const path = <S extends Schema.Constraint>(
     );
 };
 
-/** Require `{ body }` input, encoded once per evaluation. The encoded body sets Content-Type. */
+/**
+ * Bind an encoder to the call's `{ body }` input.
+ *
+ * @remarks
+ * The body is encoded once per operation evaluation. Its encoder determines `Content-Type` and
+ * `Content-Length`; multipart metadata is supplied by the transport.
+ */
 export const body =
   <A, E2, R2>(codec: Body.Encoder<A, E2, R2>) =>
   <I, E, R, H extends boolean, Q extends boolean>(
@@ -368,7 +524,13 @@ export const body =
       }),
     );
 
-/** Adapt the invocation argument without weakening its contract, including application-selected defaults. */
+/**
+ * Adapt your application's argument to this request's required input.
+ *
+ * @remarks
+ * Use it to rename fields or supply defaults while preserving schema validation. The mapping
+ * runs during preparation; a thrown exception is a defect.
+ */
 export const mapInput =
   <I, I2>(f: (input: I2) => I) =>
   <E, R, H extends boolean, Q extends boolean>(
@@ -379,13 +541,16 @@ export const mapInput =
     );
 
 /**
- * Effectful preparation of the native request. Runs once per evaluation, before any attempt, before the
- * base URL is joined and separate query parameters are rendered. It sees the preparation steps before it.
- * For signing a materialized URL, use client middleware through `Operation.make`'s `transformClient` option;
- * it runs per attempt. The provider's own URL normalization still applies.
+ * Edit the native request with an Effect during preparation.
  *
- * The transform applies to any request whose input includes what `f` reads. One that ignores its input can be
- * created once and reused on every request; an inline transform in `pipe` has `input` inferred from the request.
+ * @remarks
+ * Runs once per evaluation, before attempts, after preceding preparation steps. The base URL
+ * and separate query parameters are not yet rendered. Use `Operation.make`'s `transformClient`
+ * for per-attempt credentials or signing the materialized URL. Provider normalization still
+ * applies afterwards.
+ *
+ * A transform can be reused on requests whose input contains what its function reads. Inline
+ * callbacks in `pipe` infer their input from the request.
  */
 export const mapEffect =
   <I, E2, R2>(
@@ -406,7 +571,9 @@ export const mapEffect =
       ),
     );
 
-/** A materialized request with the header lines a supporting provider can send. */
+/**
+ * A prepared native request and the header lines a supporting provider can send.
+ */
 export interface Compiled {
   readonly request: HttpClientRequest.HttpClientRequest;
   readonly headerLines: Transport.Lines;
@@ -463,8 +630,22 @@ const finalize = (
 };
 
 /**
- * Materialize the native request and its header lines without sending it. Computed fields are evaluated
- * and input is encoded once per evaluation of the returned Effect.
+ * Prepare a request and its header lines without sending it.
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect";
+ * import { Request } from "viell-effect-schema-http";
+ * const result = await Effect.runPromise(
+ *   Request.compile(Request.get("https://api.example.test/health"), undefined),
+ * );
+ * // result.request.url === "https://api.example.test/health"
+ * ```
+ *
+ * @remarks
+ * Each evaluation resolves computed fields and encodes input once. The returned Effect requires
+ * any services used by the input schemas or preparation. Use {@link materialize} when only the
+ * native request is needed.
  */
 export const compile = Effect.fnUntraced(function* <
   I,
@@ -502,7 +683,12 @@ export const compile = Effect.fnUntraced(function* <
   });
 });
 
-/** Materialize only the native request. Use {@link compile} when a provider sends header lines. */
+/**
+ * Prepare only the native request, without sending it.
+ *
+ * @remarks
+ * Use {@link compile} to retain the original header-line representation as well.
+ */
 export const materialize = <I, E, R, H extends boolean, Q extends boolean>(
   self: Request<I, E, R, H, Q>,
   input: I,

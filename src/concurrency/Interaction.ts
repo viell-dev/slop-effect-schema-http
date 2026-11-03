@@ -11,15 +11,29 @@ import {
   Semaphore,
 } from "effect";
 
-/** The interaction was closed; it admits no further work. */
+/**
+ * A call tried to start work after the interaction had permanently closed.
+ *
+ * @remarks
+ * The error's `_tag` is `"InteractionClosed"`.
+ */
 export class Closed extends Data.TaggedError("InteractionClosed") {}
 
+/**
+ * Options for one call to an interaction.
+ */
 export interface RunOptions {
   /** Start fresh work, superseding active work and bypassing the retained result. */
   readonly force?: boolean | undefined;
 }
 
-/** One user-facing interaction: at most one active execution and one retained success. */
+/**
+ * Coordinate one active execution and one retained successful result.
+ *
+ * @remarks
+ * Use for one user-facing activity, such as a search field. Equal input shares work or reuses a
+ * success; different input supersedes active work. This is not a cache of all previous inputs.
+ */
 export interface Interaction<in I, out A, out E = never> {
   /** Equal input joins active work or reuses the retained success; different input supersedes active work. */
   readonly run: (
@@ -30,10 +44,13 @@ export interface Interaction<in I, out A, out E = never> {
   readonly close: Effect.Effect<void>;
 }
 
+/**
+ * Choose how inputs compare and which successful results are retained.
+ */
 export interface Options<I, A> {
   /** Defaults to `Equal.equals`, which compares plain objects and arrays structurally. */
   readonly equivalence?: Equivalence.Equivalence<I> | undefined;
-  /** Whether a successful result is retained for reuse. The result is returned either way. */
+  /** Whether to retain a success. Defaults to retaining; the result is returned either way. */
   readonly retain?: ((value: A, input: I) => boolean) | undefined;
 }
 
@@ -44,9 +61,25 @@ interface Flight<I, A, E> {
 }
 
 /**
- * Acquire an interaction in the current Scope. Services are captured at acquisition, like a Layer. Every
- * execution belongs to the interaction rather than to a caller, and runs in its own child Scope, so
- * interrupting one waiter never cancels work another waiter shares.
+ * Acquire a scoped interaction around an Effect-returning function.
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect";
+ * import { Interaction } from "viell-effect-schema-http";
+ * const program = Effect.scoped(Effect.gen(function* () {
+ *   const lookup = yield* Interaction.make((id: number) => Effect.succeed({ id }));
+ *   const first = yield* lookup.run(42);
+ *   const reused = yield* lookup.run(42);
+ *   return [first, reused];
+ * }));
+ * ```
+ *
+ * @remarks
+ * Keep the acquiring scope alive while calls should be accepted. Required services are captured
+ * at acquisition. Each execution belongs to the interaction in its own child scope; cancelling
+ * one waiter does not cancel shared work. Closing the acquiring scope closes the interaction
+ * and waits for all owned cleanup.
  */
 export const make = Effect.fnUntraced(function* <I, A, E, R>(
   execute: (input: I) => Effect.Effect<A, E, R>,

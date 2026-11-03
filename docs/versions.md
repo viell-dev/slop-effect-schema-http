@@ -7,19 +7,24 @@ Fetch with Effect 4. See [compatibility and limits](./limits.md) for the tested 
 exclusions. Compatible fixes use `0.1.x`; a breaking public API change requires `0.2.0` and
 migration guidance.
 
-`0.1.0-rc.1` is a GitHub release candidate for `0.1.0`. The package is named
-`viell-effect-schema-http` and is not yet available from npm. Use the checksummed tarball in
-[Getting started](./getting-started.md). [Release
-readiness](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks qualification and
-the remaining publication prerequisites.
+`0.1.0-rc.1` is a release candidate for `0.1.0`, available from npm and GitHub. Install the explicit
+`viell-effect-schema-http@0.1.0-rc.1` version as shown in [Getting started](./getting-started.md).
+[Release readiness](https://github.com/viell-dev/slop-effect-schema-http/issues/2) tracks
+qualification and the remaining publication prerequisites.
 
 ## Update or remove an installation
 
-Read the [change history](./changelog.md) before updating. For a tarball installation, download the
-chosen newer version from [GitHub
+Read the [change history](./changelog.md) before updating. Install your chosen published version
+with `npm install viell-effect-schema-http@VERSION`, replacing `VERSION` with that release's number.
+An explicit version makes the choice clear even when moving from a local tarball to npm.
+
+The `rc` tag selects a candidate. During this first-release bootstrap, `latest` also identifies
+`0.1.0-rc.1`; it is not evidence of a stable release. The first stable publication will move
+`latest` to `0.1.0`. Use the explicit version while evaluating the candidate.
+
+For a tarball installation, download the chosen version from [GitHub
 Releases](https://github.com/viell-dev/slop-effect-schema-http/releases), verify its checksum, and
-install the new file with npm as in Getting started. The filename contains the selected version.
-There is no automatic registry update channel for this candidate.
+install the file as in Getting started.
 
 Commit your application's lockfile so deployments use the dependency versions you tested. Review
 Effect updates too: its HTTP modules are unstable upstream, and behavior can change across minor

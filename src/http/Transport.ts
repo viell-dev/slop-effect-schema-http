@@ -5,13 +5,29 @@ import {
   type HttpClientResponse,
 } from "effect/http";
 
-/** Physical header lines in order, with their original spelling and repetition. */
+/**
+ * Ordered header name/value pairs, preserving supplied spelling and repeated lines.
+ *
+ * @remarks
+ * These are declarations or provider observations. Sending separate lines requires provider
+ * support; normalized headers cannot reveal their original line boundaries.
+ */
 export type Lines = ReadonlyArray<readonly [string, string]>;
 
-/** The header collections accepted by `effect/http`, expanded here without combining repeated values. */
+/**
+ * The header collection shapes accepted by Effect's `Headers.Input`.
+ *
+ * @remarks
+ * Use {@link entries} to expand them without combining repeated values.
+ */
 export type HeaderInput = Headers.Input;
 
-/** Expand a header collection into ordered lines. Array values become repeated lines. */
+/**
+ * Expand a supported header collection into ordered name/value lines.
+ *
+ * @remarks
+ * Record array values become repeated lines; `undefined` fields are omitted.
+ */
 export const entries = (input: HeaderInput): Lines =>
   Symbol.iterator in input
     ? Array.from(input, ([name, value]) => [name, value] as const)
@@ -24,7 +40,13 @@ export const entries = (input: HeaderInput): Lines =>
               : value.map((line) => [name, line]),
       );
 
-/** The normalized view used by native middleware: lowercase names, repeated values joined with `, `. */
+/**
+ * Produce Effect's normalized header view from ordered lines.
+ *
+ * @remarks
+ * Names become lowercase and repeated values are joined with `, `. This loses line boundaries;
+ * keep the original lines when a provider can send them.
+ */
 export const toHeaders = (lines: Lines): Headers.Headers => {
   const grouped = new Map<string, Array<string>>();
   for (const [name, value] of lines) {
@@ -39,8 +61,12 @@ export const toHeaders = (lines: Lines): Headers.Headers => {
 };
 
 /**
- * Keep the original lines of every field whose normalized value is unchanged; changed or added native
- * fields replace them field by field.
+ * Preserve original header lines where native middleware left the normalized value unchanged.
+ *
+ * @remarks
+ * Changed or added native fields replace those fields' original lines. Removed fields disappear.
+ * For a provider handling an operation, prefer {@link headerLines} to obtain the original lines
+ * from the current Effect context.
  */
 export const reconcile = (lines: Lines, headers: Headers.Headers): Lines => {
   const original = toHeaders(lines);
@@ -53,13 +79,25 @@ export const reconcile = (lines: Lines, headers: Headers.Headers): Lines => {
   ];
 };
 
-/** The request header lines of the current operation evaluation. Operations provide it to each attempt. */
+/**
+ * The original request header lines available during an operation's attempt.
+ *
+ * @remarks
+ * Operations supply this context reference to the client. It defaults to an empty array outside
+ * that context. Providers should read it through {@link headerLines}.
+ */
 export const HeaderLines: Context.Reference<Lines> = Context.Reference<Lines>(
   "viell-effect-schema-http/Transport/HeaderLines",
   { defaultValue: () => [] },
 );
 
-/** For custom HttpClient providers: the lines to send, reconciled with the request after native middleware. */
+/**
+ * Get the header lines a custom provider should send after native middleware edits.
+ *
+ * @remarks
+ * Reads {@link HeaderLines} and reconciles it with the native request. Fetch does not gain
+ * separate-line support from this helper.
+ */
 export const headerLines = (
   request: HttpClientRequest.HttpClientRequest,
 ): Effect.Effect<Lines> =>
@@ -70,8 +108,12 @@ const ResponseHeaderLines = Symbol.for(
 );
 
 /**
- * For custom HttpClient providers: attach a snapshot of the observed response lines before returning the
- * response. Native headers are unchanged.
+ * Attach the header lines a custom provider observed to its native response.
+ *
+ * @remarks
+ * Copies the supplied lines, mutates the response with that snapshot, and returns the same
+ * response object. Normalized headers and received bytes are unchanged. Attach only information
+ * the provider actually observed; do not split normalized values to guess original lines.
  */
 export const withResponseHeaders = (
   response: HttpClientResponse.HttpClientResponse,
@@ -84,7 +126,13 @@ export const withResponseHeaders = (
   return response;
 };
 
-/** The provider-attached response lines. `None` means none were supplied; normalized values are never split. */
+/**
+ * Read the original response lines attached by a supporting provider.
+ *
+ * @remarks
+ * Returns `None` when none were supplied, not when the response necessarily has no headers.
+ * Normalized header values are never split to reconstruct lines.
+ */
 export const responseHeaderLines = (
   response: HttpClientResponse.HttpClientResponse,
 ): Option.Option<Lines> =>

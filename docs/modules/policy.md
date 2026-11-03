@@ -40,7 +40,8 @@ when you also need an overall deadline:
 
 Pass `oneAttempt` as the operation's `policy` to use it. An attempt timeout covers dispatch and
 decoding. The outer timeout also covers preparation, retry delays, and all attempts together. A
-timeout stops waiting; it cannot undo an action the server already performed.
+timeout interrupts the work and waits for its cleanup; it cannot undo an action the server already
+performed. Cleanup can delay when the caller receives the timeout failure.
 
 ## Choose which outcomes retry
 

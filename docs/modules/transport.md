@@ -45,8 +45,9 @@ with the decoded result. `None` means the provider supplied no line information.
 the response had no headers.
 
 Normalized response headers remain available independently. `withResponseHeaders` attaches a
-snapshot of lines to the supplied response object; it does not rewrite its normalized headers or
-alter the bytes received.
+snapshot of lines to the supplied response object and returns that same object. This mutates the
+response's attached metadata; it does not rewrite its normalized headers or alter the bytes
+received.
 
 ## Advanced interoperability
 

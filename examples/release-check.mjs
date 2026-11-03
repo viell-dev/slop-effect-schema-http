@@ -20,11 +20,13 @@ const client = HttpClient.make((request, url) => {
     ),
   );
 });
+const api = Request.baseUrl("https://api.example.test");
 const getUser = Operation.make(
-  Request.get("https://api.example.test/users").pipe(
+  Request.get("").pipe(
+    api,
     Request.path(
       Schema.NumberFromString,
-      (id, encode) => `https://api.example.test/users/${encode(id)}`,
+      (id, encode) => `/users/${encode(id)}`,
     ),
   ),
   Response.status(

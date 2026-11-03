@@ -158,6 +158,13 @@ cases under named subheadings after the common path. Define terms when first nee
 concepts to its v4 guides. Each public module has a guide under `docs/modules/`; source signature
 links supplement those guides. Keep existing page addresses usable when reorganizing.
 
+Apply the same progression to public API docblocks: a useful one-sentence summary, a small
+`@example` where it teaches usage, then detailed behavior under `@remarks`. Document every public
+export, including package-root namespaces. Write examples with public package imports so the checks
+exercise the installed API. The build retains these comments in TypeScript declarations for editor
+help. Keep source comments, module guides, README, examples and the design contract consistent;
+changing a comment does not silently change the API's promised behavior.
+
 README provides purpose, a small example, installation and navigation. The site describes the
 behavior of the version it documents; history and migration steps belong in the changelog or
 dedicated upgrade guidance. Keep compatibility requirements and versioned install commands where
@@ -178,15 +185,16 @@ npm run docs:build
 npm run docs:dev
 ```
 
-The first command type-checks `examples/**/*.ts` without `skipLibCheck`, then executes the
-quickstart and all eight module examples through the built package's public entry points. The pages
-import their code regions directly. Examples use synthetic clients and make no external requests;
-runtime assertions verify the shown results. When changing onboarding, also copy its displayed
-snippets into a fresh consumer with the release tarball and run the documented commands without a
-checkout. `docs:build` builds the static site, fails on VitePress dead links or missing snippets,
-and checks rendered internal pages, assets, anchors and package facts. External links are reviewed
-separately. `docs:dev` starts the local development server; `docs:preview` serves the production
-build. Keep both on loopback.
+The first command type-checks `examples/**/*.ts` without `skipLibCheck`, checks public summaries
+against generated declarations, and type-checks every `@example` and standalone Markdown TypeScript
+block. It then executes the quickstart and all eight module examples through the built package's
+public entry points. The pages import their code regions directly. Examples use synthetic clients
+and make no external requests; runtime assertions verify the shown results. When changing
+onboarding, also copy its displayed snippets into a fresh consumer of the published version and run
+the documented commands without a checkout. `docs:build` builds the static site, fails on VitePress
+dead links or missing snippets, and checks rendered internal pages, assets, anchors and package
+facts. External links are reviewed separately. `docs:dev` starts the local development server;
+`docs:preview` serves the production build. Keep both on loopback.
 
 Required pull-request CI runs the example and site build with read-only permissions. Main pushes
 verify changes without deploying unreleased documentation. The separate `pages.yml` workflow
@@ -225,17 +233,26 @@ depends on the answer. Blocked work links its dependency. The catalog in
 Follow [RELEASING.md](./RELEASING.md). The agreed `0.1.0` goal is the existing finite-body API, ESM,
 Node 24 on Windows/Linux and Chromium Fetch with Effect 4. The [release
 tracker](https://github.com/viell-dev/slop-effect-schema-http/issues/2) owns evidence and remaining
-work. `0.1.0-rc.1` is a GitHub-only candidate; removing `private` is not an instruction to publish
-on npm.
+work. `0.1.0-rc.1` is published on GitHub and npm. Stable publication is a separate release with its
+own qualification; a publishable package does not establish release readiness.
 
 Every release needs exact-commit checks, isolated installation, all hostile lanes, an independent
 deep review, verified artifacts and public documentation. A release may use prior review evidence
 for unchanged code, with scope and limits recorded. Fix material findings and independently review
 the affected changes; no review substitutes for required checks.
 
-Before the first stable release, a person must install a representative candidate and try the main
-library workflow. Agents supply the build, synthetic inputs and numbered tasks in an assigned issue.
-Stable publication waits for the actual usability report and resolution of blockers. Repeat a
-focused human pass after substantial API or workflow changes. Automated consumer tests and agent
-reviews cannot satisfy this gate. The candidate request is
-[#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67).
+Agents own functional verification and investigation of reproducible defects. The human release
+checkpoint assesses whether the documentation and workflow are understandable; it is not a request
+to find bugs missed by tests or agent review.
+
+For the first `0.1.0` release, the owner chose a final documentation read-through as that
+checkpoint, recorded in [#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67). It
+replaces this release's earlier hands-on request. This does not establish human runtime testing or
+code review; the substitute functional evidence is the automated consumer, package, socket and
+hostile-suite qualification plus independent agent review. Keep #67 open until the read-through is
+reported and resulting blockers are resolved. Ergonomic feature suggestions are evaluated for a
+later release.
+
+This scope decision applies only to `0.1.0`. Substantial later changes to the API or main workflow
+require a focused human use pass unless the owner explicitly sets another scope. Routine fixes may
+reuse relevant evidence, with its limits recorded. No review changes the required automated gates.

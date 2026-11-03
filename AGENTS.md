@@ -12,5 +12,8 @@ prerequisites.
   version.
 - Keep public documentation self-contained. Put reproducible evidence, material decisions, and
   remaining work in issues and pull requests.
+- Follow CONTRIBUTING's documentation rules across API docblocks, examples, README, module guides
+  and release instructions. Check the whole affected reader journey when an API or release fact
+  changes.
 - Review the complete diff after required checks pass. Separate agent review is proportionate to
   risk; an ordinary documentation or repository setup change can use deliberate author review.

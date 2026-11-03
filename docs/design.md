@@ -88,7 +88,8 @@ both to the transport, so it can add the boundary. A header declaration describe
 not relabel an encoded body. A protocol that needs a parameterized content type gets it from a
 custom codec. `Request.mapEffect` remains available to edit the native request deliberately.
 
-A GET or HEAD request with a body fails with `Request.InvalidRequest` before dispatch.
+A GET or HEAD request requires `HttpBody.empty`, as produced by `Body.empty`. Even a zero-length
+text or byte body fails with `Request.InvalidRequest` before dispatch.
 
 ### Request transforms
 
@@ -100,6 +101,11 @@ final. URL-dependent signing belongs in client middleware through `Operation.mak
 library renders the base URL and query. The provider's own URL normalization still applies.
 
 ### URLs are made sendable, not normalized
+
+`Request.baseUrl` supplies a shared origin and fixed prefix. `Request.path` renders the complete
+request path from schema-encoded input, replacing the constructor's path; it does not append to it.
+The base is joined afterwards. Reuse application renderers for variable parent paths; the library
+does not join two Request values or incrementally merge typed path bindings.
 
 The `UrlEncoding` service renders path values, query entries, and the final URL. Its defaults
 percent-encode path values and query entries with `encodeURIComponent`, and join the base URL and
@@ -121,6 +127,8 @@ the base URL ends up before the joined path. Put parameters that every request n
 transform:
 
 ```ts
+import { Request } from "viell-effect-schema-http";
+
 const service = <I, E, R, H extends boolean>(
   request: Request.Request<I, E, R, H, false>,
 ) =>
@@ -208,7 +216,7 @@ client:
   manages cookies according to its credentials and cookie policy; a hand-set `Cookie` request header
   is dropped.
 - A cross-origin header that CORS does not expose is absent. A response rule cannot select on a
-  hidden value, and a selected header schema that requires it fails with `Response.DecodeError`.
+  hidden value. A custom decoder that requires it can fail with `Response.DecodeError`.
 - With `redirect: "manual"`, a redirect becomes an opaque redirect response with status 0 and no
   visible headers. A declared 301 case cannot match the original status.
 - A refused preflight and a request whose answer is withheld by CORS both surface as transport

@@ -39,10 +39,10 @@ import { Request, Response } from "viell-effect-schema-http";
 import * as HttpRequest from "viell-effect-schema-http/Request";
 ```
 
-The package is ESM and includes TypeScript declarations. Your editor shows inferred input, result,
-error and service types. Each module guide starts with an example, covers ordinary composition, then
-explains advanced behavior. Links to source signatures remain at the end for exact overloads and
-generic types.
+The package is ESM and includes TypeScript declarations with public API documentation and examples.
+Your editor shows inferred input, result, error and service types. Each module guide starts with an
+example, covers ordinary composition, then explains advanced behavior. Links to source signatures
+remain at the end for exact overloads and generic types.
 
 Use the [end-to-end guide](./usage.md) to see the pieces together and the [design
 contract](./design.md) for their precise guarantees. Effect's [v4
