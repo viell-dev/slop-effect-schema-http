@@ -44,7 +44,7 @@ in-memory example you can run without a server or credentials.
 Use Node.js 24 and an ESM project. Install the published release candidate and its Effect peer:
 
 ```sh
-npm install --ignore-scripts viell-effect-schema-http@0.1.0-rc.1 effect@4.1.1
+npm install viell-effect-schema-http@0.1.0-rc.1 effect@4.1.1
 ```
 
 `0.1.0-rc.1` is a prerelease. Use the explicit version while preparing for stable; the same package
@@ -60,15 +60,15 @@ versions and provider boundaries.
 
 - [Getting started](https://viell-dev.github.io/slop-effect-schema-http/getting-started):
   installation, a runnable example and the expected output.
-- [Usage](https://viell-dev.github.io/slop-effect-schema-http/usage): compose a contract and connect
-  it to your HTTP client.
+- [Usage](https://viell-dev.github.io/slop-effect-schema-http/usage): add PATCH and DELETE actions,
+  share URL descriptions and connect an operation to your HTTP client.
 - [Module guides](https://viell-dev.github.io/slop-effect-schema-http/api): Request, Body, Response,
   Operation, Policy, Interaction, UrlEncoding and Transport, from basic use to advanced behavior.
 - [Limits and recovery](https://viell-dev.github.io/slop-effect-schema-http/limits): compatibility,
   failure stages and bug reporting.
-- [Versions](https://viell-dev.github.io/slop-effect-schema-http/versions) and [change
-  history](https://viell-dev.github.io/slop-effect-schema-http/changelog): updates and compatibility
-  policy.
+- [What's in 0.1](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.1) introduces
+  the release; [Versions](https://viell-dev.github.io/slop-effect-schema-http/versions) covers
+  updates and compatibility policy. [CHANGELOG.md](./CHANGELOG.md) records the detailed history.
 
 The library provides finite-body codecs, typed contracts, ordered response selection, retry policies
 and scoped interaction coordination. It uses the application's HTTP transport and Effect runtime.

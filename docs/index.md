@@ -6,15 +6,17 @@ in your application, so you can describe an external service without controlling
 
 ## Make one typed operation
 
-A request, a body codec and a response case form an operation:
+Describe a GET request and the JSON you expect back:
 
-<<< ../examples/quickstart.ts#contract
+<<< ../examples/overview.ts#contract
 
-`getUser.execute({ path: 42 })` returns an Effect. Provide an HTTP client and run it to get a
-validated `{ id: number, name: string }`. Constructing the operation sends nothing.
+`getUser.execute(undefined)` returns an Effect. This fixed URL needs no input. Provide an HTTP
+client and run it to get a validated `{ id: number, name: string }`. Constructing the operation
+sends nothing.
 
-[Get started](./getting-started.md) has the imports, installation commands, an in-memory client and
-the expected output. [The usage guide](./usage.md) explains the example and connects it to Fetch.
+[Get started](./getting-started.md) installs the package and runs a POST operation that creates a
+user. [The usage guide](./usage.md) then adds PATCH and DELETE actions with a shared API base and
+path, and connects an operation to Fetch.
 
 ## Choose your next task
 

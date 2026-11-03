@@ -1,102 +1,95 @@
 # Describe and execute a request
 
-An operation combines three descriptions: what to send, how to read the body, and which responses
-are meaningful to your application. This guide explains the [getting-started
-example](./getting-started.md) and then connects it to a real HTTP client.
+The [first example](./getting-started.md) created a user with POST. An application also needs to
+change and remove users. This guide adds those actions, shares their URL configuration, and connects
+an operation to a real HTTP client.
 
 ## Define the consumer's contract
 
 A **contract** states the input your application accepts and the output it expects from the service.
-It lives in the consumer application; the external service need not share its implementation.
+Reuse the parts shared by several actions: an API base, a user path and the returned user
+representation.
 
-<<< ../examples/quickstart.ts#imports
+Start a new ES module (`users.mts` for the Node example) with these imports and shared descriptions:
 
-<<< ../examples/quickstart.ts#contract
+<<< ../examples/usage.ts#shared
 
-The pieces have distinct jobs:
+`api` supplies the origin. `userPath` converts a numeric ID into URL text and escapes it as a path
+value. `userBody` describes the user JSON your application understands. These are ordinary reusable
+values, not an API-wide configuration object.
 
-| Piece                     | In this example                                               |
-| ------------------------- | ------------------------------------------------------------- |
-| `Request`                 | GET a URL with a user ID supplied at execution                |
-| `Schema.NumberFromString` | Encode an application number as path text                     |
-| `Body.jsonSchema`         | Read JSON and validate `{ id: number, name: string }`         |
-| `Response.status`         | Use that decoder for HTTP 200                                 |
-| `Operation.make`          | Combine the request and response into an executable operation |
+## Update a user with PATCH
 
-The input is `{ path: number }`; the successful output is the user object. `Request.path` gives its
-renderer the schema-encoded string and a function that escapes a path value. This is why the
-renderer calls `encode(id)` rather than inserting unchecked URL text.
+Combine the shared path with a request body containing the changed name:
 
-`api` is a reusable base URL transformation. The renderer supplies `/users/42`, which joins to
-`https://api.example.test`. `Request.path` replaces the constructor's path, so the example uses
-`Request.get("")`. The [Request guide](./modules/request.md#share-an-api-base-and-defaults) shows
-shared defaults and [nested resource paths](./modules/request.md#compose-nested-resource-paths).
+<<< ../examples/usage.ts#update
 
-## Supply an HTTP client and run the effect
+This operation takes two inputs: `path` selects the user and `body` supplies the update. In this
+service's contract, PATCH returns HTTP 200 with the updated user. Describe the status and body your
+actual service returns; another service might return 204 with no body.
 
-The operation needs the `HttpClient` service. A service is a dependency supplied to an Effect;
-providing a different client lets the same contract run against a real server or an in-memory
-fixture.
+The pieces now have distinct roles:
 
-<<< ../examples/quickstart.ts#synthetic
+| Piece                            | Role                                                    |
+| -------------------------------- | ------------------------------------------------------- |
+| `Request.patch`                  | Choose the HTTP method                                  |
+| `api` and `userPath`             | Build the URL from a shared base and the supplied ID    |
+| `Request.body`                   | Encode the application's update as JSON                 |
+| `Response.status(200, userBody)` | Select HTTP 200 and decode the updated user             |
+| `Operation.make`                 | Combine these descriptions into an executable operation |
 
-`execute` returns a **cold Effect**, a description of work that does not run until evaluated.
-`Effect.runPromise` evaluates it here and produces `{ id: 42, name: 'Ada' }`. Each evaluation is a
-new operation; construction alone sends nothing.
+`Request.path` supplies the whole path, so the constructor starts with `""`. It renders `/users/42`,
+which joins to `https://api.example.test`. The [Request
+guide](./modules/request.md#share-an-api-base-and-defaults) adds shared headers and [nested resource
+paths](./modules/request.md#compose-nested-resource-paths).
+
+## Remove a user with DELETE
+
+Reuse the same base and path while choosing a different method and response:
+
+<<< ../examples/usage.ts#remove
+
+There is no request body. `Body.empty` consumes the response without returning its contents, so the
+result is `undefined`. A completed Effect tells the caller that the described deletion response was
+received.
+
+Together with the previous pages, these operations cover the resource's actions:
+
+| Action | Request                      | Expected result                          |
+| ------ | ---------------------------- | ---------------------------------------- |
+| Read   | GET /users/42                | HTTP 200 and a user                      |
+| Create | POST /users with a name      | HTTP 201 and a user with its assigned ID |
+| Update | PATCH /users/:id with a name | HTTP 200 and the updated user            |
+| Remove | DELETE /users/:id            | HTTP 204 with no body                    |
+
+Each operation owns its request and response contract; only the common descriptions are shared.
 
 ## Use an HTTP client for your service
 
-To send a request with Fetch, replace the example endpoint with your service's address and supply
-Effect's Fetch layer:
+`rename` and `remove` are **cold Effects**: constructing them sends nothing. Evaluate the one your
+application needs, supplying an HTTP client. To run the rename with Fetch, first change the base URL
+to your service, then provide Effect's Fetch layer:
 
-<<< ../examples/quickstart.ts#fetch
+<<< ../examples/usage.ts#fetch
 
-A **layer** constructs services needed by an Effect. After choosing the real endpoint, evaluate
-`overFetch` with `Effect.runPromise(overFetch)` or `yield*` it in your application's Effect program.
-In a browser, Fetch's credentials, CORS and redirect policies still apply.
+A **layer** constructs dependencies needed by an Effect. `Effect.runPromise(overFetch)` runs the
+PATCH request; inside an Effect program, use `yield* overFetch`. Each evaluation sends a new
+operation. The deletion is a separate Effect and is not run by this code.
 
-## Add input and response choices
+The [Operation guide](./modules/operation.md#supply-an-http-client) covers client setup in more
+detail. In a browser, Fetch's credentials, CORS and redirect policies still apply.
 
-Start with the part your service needs:
+## Extend the contract when needed
 
-- [Request bindings](./modules/request.md#bind-application-input) add `{ query }`, `{ headers }` or
-  `{ body }`, and combine them with path input.
+The default sends one attempt and decodes the first matching response case. Add features as the
+service and application require them:
+
+- [Request bindings](./modules/request.md#bind-application-input) add query and header input.
 - [Body formats](./modules/body.md#choose-a-representation) cover text, bytes, forms and JSON.
-- [Response alternatives](./modules/response.md#handle-several-outcomes) describe multiple statuses
-  and return tagged values when the caller needs to distinguish them.
-- [Operation composition](./modules/operation.md#transform-a-successful-result) maps a successful
-  value or turns a recognized response into an application error.
+- [Response alternatives](./modules/response.md#handle-several-outcomes) describe several outcomes,
+  such as an updated user or a missing record.
+- [Policy](./modules/policy.md) adds retries and timeouts when repeating the action is safe.
+- [Interaction](./modules/interaction.md) coordinates shared or superseded work.
 
-The defaults send one attempt and decode the first matching response case. Learn the ordinary
-contract first; add the controls below when your workflow needs them.
-
-## Control repeated work
-
-### Choose response and retry behavior
-
-Use a [Policy](./modules/policy.md) to opt into retries, delay them, and set an attempt timeout. The
-application decides whether repeating the action is safe. A transient failure does not prove that
-the server did nothing.
-
-### Coordinate an interaction
-
-Use [Interaction](./modules/interaction.md) when equal calls should share work or a retained result,
-while changed input replaces active work. For example, one interaction can own the current search
-request for one search field. Your application owns loading indicators and other presentation state.
-
-## Advanced behavior and terminology
-
-**Materialization** is the step that converts a request description and application input into a
-native HTTP request. It happens once per operation evaluation, before any retry attempts. Each
-**attempt** then owns a **scope**, the lifetime in which the client response is read and released.
-The [Operation guide](./modules/operation.md#advanced-execution) explains where middleware and
-cancellation fit.
-
-A schema-bound header or query group owns the whole group. A selected response decoder's failure
-never falls through to another case. These rules are covered after the common examples in the
-[Request](./modules/request.md#advanced-behavior) and
-[Response](./modules/response.md#advanced-response-behavior) guides.
-
-Use [limits and recovery](./limits.md) to diagnose a failure, and [Design](./design.md) for exact
-behavior guarantees. Effect's [v4 guides](https://effect.website/docs/v4/getting-started) explain
-its underlying Schema, service, layer and scope concepts in more depth.
+Continue to the [module overview](./api.md) for the API. [Limits and recovery](./limits.md) and
+[Design](./design.md) cover failure diagnosis and detailed behavior after the module guides.

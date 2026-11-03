@@ -113,7 +113,8 @@ for (const file of [
   "docs/index.md",
   "docs/versions.md",
   "docs/api.md",
-  "docs/changelog.md",
+  "CHANGELOG.md",
+  `docs/release-notes/${manifest.version.split(".").slice(0, 2).join(".")}.md`,
 ]) {
   assert.ok(
     read(file).includes(manifest.version),
@@ -123,7 +124,7 @@ for (const file of [
 const effect = JSON.parse(read("node_modules/effect/package.json"));
 const gettingStarted = read("docs/getting-started.md");
 assert.ok(
-  gettingStarted.includes(`${manifest.name}-${manifest.version}.tgz`),
+  read("docs/versions.md").includes(`${manifest.name}-${manifest.version}.tgz`),
   "Update the documented tarball filename for this package version",
 );
 for (const file of ["README.md", "docs/getting-started.md"]) {

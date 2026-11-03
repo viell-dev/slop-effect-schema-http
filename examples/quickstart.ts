@@ -1,58 +1,59 @@
 import assert from "node:assert/strict";
-// #region imports
-import { Effect, Schema } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
-import { Body, Operation, Request, Response } from "viell-effect-schema-http";
-// #endregion imports
-
 // #region contract
-const api = Request.baseUrl("https://api.example.test");
+import { Effect, Schema } from "effect";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 
-const getUser = Operation.make(
-  Request.get("").pipe(
-    api,
-    Request.path(
-      Schema.NumberFromString,
-      (id, encode) => `/users/${encode(id)}`,
-    ),
+const createUser = Operation.make(
+  Request.post("https://api.example.test/users").pipe(
+    Request.body(Body.jsonSchema(Schema.Struct({ name: Schema.String }))),
   ),
   Response.status(
-    200,
+    201,
     Body.jsonSchema(Schema.Struct({ id: Schema.Number, name: Schema.String })),
   ),
 );
 // #endregion contract
 
 // #region synthetic
-let dispatchedUrl = "";
-const synthetic = HttpClient.make((request, url) => {
-  dispatchedUrl = url.href;
-  return Effect.succeed(
+const synthetic = HttpClient.make((request) =>
+  Effect.succeed(
     HttpClientResponse.fromWeb(
       request,
       new globalThis.Response(JSON.stringify({ id: 42, name: "Ada" }), {
+        status: 201,
         headers: { "content-type": "application/json" },
       }),
     ),
-  );
-});
+  ),
+);
+
 const user = await Effect.runPromise(
-  getUser
-    .execute({ path: 42 })
+  createUser
+    .execute({ body: { name: "Ada" } })
     .pipe(Effect.provideService(HttpClient.HttpClient, synthetic)),
 );
 console.log(user); // { id: 42, name: 'Ada' }
 // #endregion synthetic
 
-assert.equal(dispatchedUrl, "https://api.example.test/users/42");
 assert.deepEqual(user, { id: 42, name: "Ada" });
-
-// #region fetch
-const overFetch = getUser
-  .execute({ path: 42 })
-  .pipe(Effect.provide(FetchHttpClient.layer));
-// Evaluate with Effect.runPromise(overFetch) after replacing the example endpoint with a real service.
-// #endregion fetch
-
-// Construction stays cold: the example executes only the synthetic client above.
-assert.ok(Effect.isEffect(overFetch));
+const inspected = synthetic.pipe(
+  HttpClient.mapRequest((request) => {
+    assert.equal(request.method, "POST");
+    assert.equal(request.url, "https://api.example.test/users");
+    assert.equal(request.headers["content-type"], "application/json");
+    assert.equal(request.body._tag, "Uint8Array");
+    if (request.body._tag === "Uint8Array") {
+      assert.deepEqual(
+        JSON.parse(new TextDecoder().decode(request.body.body)),
+        { name: "Ada" },
+      );
+    }
+    return request;
+  }),
+);
+await Effect.runPromise(
+  createUser
+    .execute({ body: { name: "Ada" } })
+    .pipe(Effect.provideService(HttpClient.HttpClient, inspected)),
+);

@@ -38,7 +38,6 @@ export default defineConfig({
         items: [
           { text: "Getting started", link: "/getting-started" },
           { text: "Describe and execute a request", link: "/usage" },
-          { text: "Limits and recovery", link: "/limits" },
         ],
       },
       {
@@ -53,6 +52,13 @@ export default defineConfig({
           { text: "Interaction", link: "/modules/interaction" },
           { text: "UrlEncoding", link: "/modules/url-encoding" },
           { text: "Transport", link: "/modules/transport" },
+        ],
+      },
+      {
+        text: "Details",
+        items: [
+          { text: "Limits and recovery", link: "/limits" },
+          { text: "Design contract", link: "/design" },
         ],
       },
       { text: manifest.version, link: "/versions" },
@@ -64,7 +70,6 @@ export default defineConfig({
           { text: "Overview", link: "/" },
           { text: "Getting started", link: "/getting-started" },
           { text: "Describe and execute a request", link: "/usage" },
-          { text: "Limits and recovery", link: "/limits" },
         ],
       },
       {
@@ -82,11 +87,19 @@ export default defineConfig({
         ],
       },
       {
-        text: "About",
+        text: "Details",
         items: [
+          { text: "Limits and recovery", link: "/limits" },
           { text: "Design contract", link: "/design" },
+        ],
+      },
+      {
+        text: "Releases and project",
+        items: [
           { text: "Versions", link: "/versions" },
-          { text: "Change history", link: "/changelog" },
+          { text: "What's in 0.1", link: "/release-notes/0.1" },
+          { text: "Detailed changelog", link: "/changelog" },
+          { text: "Development and source", link: "/development" },
         ],
       },
     ],

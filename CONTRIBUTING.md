@@ -46,6 +46,12 @@ does before an exception is added. The setting also skips `pre` and `post` scrip
 those to `package.json`. Add or update a dependency with `npm install`, commit `package-lock.json`
 with `package.json`, and check that `npm ci` still succeeds from a clean checkout.
 
+Disabling install scripts is this repository's development and verification policy, not a library
+installation requirement. Consumer commands use ordinary `npm install`; the library needs no
+installation script. See npm's [ignore-scripts
+documentation](https://docs.npmjs.com/cli/v11/using-npm/config#ignore-scripts) for the option's
+behavior.
+
 The root `overrides` entry replaces minimatch 10 with 11.0.1 in development tools to address
 [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249). It crosses the tools'
 declared major-version range; the required checks validate this repository's usage. Remove it when
@@ -133,6 +139,27 @@ tarball filename with npm in that project, together with a compatible Effect pee
 and reinstall after source changes. A local build is distinct from a checksummed release artifact;
 use the release's exact bytes when verifying a published candidate.
 
+### Verify a published candidate
+
+For release verification, download the tarball, `SHA256SUMS` and `release-check.mjs` from the
+[GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0-rc.1). The
+[Versions guide](./docs/versions.md#install-a-github-release-tarball) gives complete checksum
+comparisons. On Linux, its command checks both downloaded assets; in PowerShell, run its comparison
+once for the tarball and once with `$archive = "release-check.mjs"`.
+
+In an empty directory with those verified files, run:
+
+```sh
+npm init -y
+npm install --ignore-scripts ./viell-effect-schema-http-0.1.0-rc.1.tgz effect@4.1.1
+node release-check.mjs
+```
+
+The checker prints successful decoding, invalid input rejected before dispatch, invalid response
+data reported as `DecodeError`, and `Candidate check passed`. The disabled install scripts follow
+the verification policy above. This checks a supplied artifact without building from source; the
+[release procedure](./RELEASING.md) owns the full qualification and publication workflow.
+
 ### Hostile-server integration tests
 
 The separate [`hostile-servers-test`
@@ -150,6 +177,11 @@ commit, provider, and lane; do not extrapolate cookie, redirect, header, or CORS
 platforms. The packed lane uses the suite's dependencies; the isolated consumer check above verifies
 the package separately from that suite.
 
+The current release matrix uses Node.js 24.21.0 on Windows/Linux, Effect 4.0.7 and 4.1.1, TypeScript
+6.0.3 and 7.0.2 consumers, and Chromium supplied by Playwright 1.64.1. Playwright is test
+infrastructure, not a consumer dependency. The checked-out suite lockfile and release workflow own
+the exact tool versions; record them with qualification evidence when updating the matrix.
+
 ## Documentation site
 
 User pages teach the installed package: explain what a feature does, show the smallest useful
@@ -157,6 +189,11 @@ example and its result, then add common options and composition. Put advanced be
 cases under named subheadings after the common path. Define terms when first needed and link Effect
 concepts to its v4 guides. Each public module has a guide under `docs/modules/`; source signature
 links supplement those guides. Keep existing page addresses usable when reorganizing.
+
+Read the guides in sidebar order, including their next-page links. Each successive introduction
+should teach a new task instead of replaying the same example. Put user tasks first, modules next,
+then limits and detailed behavior, followed by versions, release articles and development links.
+Keep candidate verification and source-build procedures here rather than in onboarding.
 
 Apply the same progression to public API docblocks: a useful one-sentence summary, a small
 `@example` where it teaches usage, then detailed behavior under `@remarks`. Document every public
@@ -166,11 +203,13 @@ help. Keep source comments, module guides, README, examples and the design contr
 changing a comment does not silently change the API's promised behavior.
 
 README provides purpose, a small example, installation and navigation. The site describes the
-behavior of the version it documents; history and migration steps belong in the changelog or
-dedicated upgrade guidance. Keep compatibility requirements and versioned install commands where
-readers need them. This guide owns development and verification procedures; RELEASING owns
-publication and deployment; issues and PRs own investigations and delivery evidence. Do not copy
-those procedures or progress narratives into user pages or AGENTS.md.
+behavior of the version it documents. Release articles under `docs/release-notes/` explain what
+changes for consumers, with examples and migration links where useful. `CHANGELOG.md` records the
+complete history, including maintenance, and `docs/changelog.md` includes that one source. Keep
+compatibility requirements and versioned install commands where readers need them. This guide owns
+development and verification procedures; RELEASING owns publication and deployment; issues and PRs
+own investigations and delivery evidence. Do not copy those procedures or progress narratives into
+user pages or AGENTS.md.
 
 VitePress `2.0.0-alpha.21` is pinned exactly; it is a prerelease. The public default site describes
 the newest stable installable release, or the newest GitHub candidate before stable. See the public
@@ -187,16 +226,16 @@ npm run docs:dev
 
 The first command type-checks `examples/**/*.ts` without `skipLibCheck`, checks public summaries
 against generated declarations, and type-checks every `@example` and standalone Markdown TypeScript
-block. It then executes the quickstart and all eight module examples through the built package's
-public entry points. The pages import their code regions directly. Examples use synthetic clients
-and make no external requests; runtime assertions verify the shown results. When changing
-onboarding, also copy its displayed snippets into a fresh consumer of the published version and run
-the documented commands without a checkout. `docs:build` builds the static site, fails on VitePress
-dead links or missing snippets, and checks rendered internal pages, assets, anchors and package
-facts. External links are reviewed separately. `docs:dev` starts the local development server;
-`docs:preview` serves the production build on `127.0.0.1`. It uses the Vite preview server shipped
-with VitePress because this pinned VitePress version's own preview command ignores the host option.
-Keep development and preview servers on loopback.
+block. It then executes all three introductory guides and all eight module examples through the
+built package's public entry points. The pages import their code regions directly. Examples use
+synthetic clients and make no external requests; runtime assertions verify the shown results. When
+changing onboarding, also copy its displayed snippets into a fresh consumer of the published version
+and run the documented commands without a checkout. `docs:build` builds the static site, fails on
+VitePress dead links or missing snippets, and checks rendered internal pages, assets, anchors and
+package facts. External links are reviewed separately. `docs:dev` starts the local development
+server; `docs:preview` serves the production build on `127.0.0.1`. It uses the Vite preview server
+shipped with VitePress because this pinned VitePress version's own preview command ignores the host
+option. Keep development and preview servers on loopback.
 
 Required pull-request CI runs the example and site build with read-only permissions. Main pushes
 verify changes without deploying unreleased documentation. The separate `pages.yml` workflow

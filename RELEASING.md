@@ -18,9 +18,13 @@ publication setup and authorization in
    overview](https://github.com/viell-dev/slop-effect-schema-http/issues/41). Reproduce reported
    defects and record their dispositions. Keep required checks intact.
 2. In a task branch, set the same version in `package.json` and both root entries of
-   `package-lock.json`. Update the matching section in `docs/changelog.md`, release status and
+   `package-lock.json`. Update the matching section in `CHANGELOG.md`, release status and
    installation commands in README and the documentation, and version-pinned API/example links.
-   `scripts/check-doc-links.mjs` checks version agreement. Keep `private` absent.
+   `scripts/check-doc-links.mjs` checks version agreement. Keep `private` absent. For a new minor
+   release, write or update `docs/release-notes/X.Y.md` with the capabilities and changes consumers
+   will notice, examples and any migration steps. Patch releases update that article when they
+   change the consumer experience. Keep maintenance details in the changelog and link the release
+   article from its version entry; do not publish a draft as a completed release.
 3. Run the ordinary checks in CONTRIBUTING, then review the complete diff. Obtain an independent
    deep review covering the implementation, changes since the previous release, compatibility,
    package, examples, docs, release tooling and remaining defects. Record the reviewed commit,
@@ -65,9 +69,10 @@ publication setup and authorization in
 
 ## Publish on GitHub
 
-Create the release at the qualified full commit SHA with the tested assets and the changelog entry
-as release notes. Supply explicit version, target and prerelease state. The notes link the
-qualification PR/run, remaining limits and any pending review. After stable qualification and
+Create the release at the qualified full commit SHA with the tested assets and consumer release
+notes introducing the release article and relevant changes. Link the detailed changelog rather than
+copying its maintenance log. Supply explicit version, target and prerelease state. The notes link
+the qualification PR/run, remaining limits and any pending review. After stable qualification and
 authorization, for example:
 
 ```sh

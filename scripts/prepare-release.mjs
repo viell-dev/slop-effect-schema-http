@@ -29,7 +29,7 @@ assert.notEqual(manifest.private, true);
 assert.equal(manifest.version, lock.version);
 assert.equal(manifest.version, lock.packages[""].version);
 assert.ok(
-  readFileSync("docs/changelog.md", "utf8").includes(`## ${manifest.version}`),
+  readFileSync("CHANGELOG.md", "utf8").includes(`## ${manifest.version}`),
 );
 const commit = git("rev-parse", "HEAD");
 const output = join("artifacts", manifest.version);
