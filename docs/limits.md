@@ -2,19 +2,30 @@
 
 ## Compatibility and scope
 
-Use the ESM package in Node.js 24 on Windows/Linux or with browser Fetch in Chromium.
+Your application needs the ESM package, a compatible Effect peer and an Effect HTTP client. Choose
+the runtime that fits the application:
 
-| Component  | Compatibility evidence                                      |
-| ---------- | ----------------------------------------------------------- |
-| Node.js    | 24.21.0 on Windows and Linux                                |
-| Effect     | 4.1.1, with isolated package checks at the 4.0.7 peer floor |
-| TypeScript | Strict package consumers with 6.0.3 and 7.0.2               |
-| Browser    | Chromium supplied by Playwright 1.64.1                      |
+| Application environment | Supported setup                                               |
+| ----------------------- | ------------------------------------------------------------- |
+| Node.js application     | Node.js 24 on Windows or Linux                                |
+| Browser application     | Chromium with Fetch, using your application's ESM build setup |
+| Effect dependency       | `^4.0.7`, provided by your application                        |
 
-`package.json` accepts Effect `^4.0.7`; its HTTP modules are marked unstable upstream and can change
-across minor versions. The tested versions establish the current compatibility evidence. Review
-Effect's release notes and retain a known-good lockfile when upgrading, including any
-application-owned client middleware. Report regressions with the exact dependency version.
+JavaScript consumers need no TypeScript compiler. TypeScript consumers should enable `strict` and
+use an ESM-compatible module setup. Browser applications do not need Playwright; it is a tool used
+by this project's tests.
+
+### Tested configurations
+
+The release checks ran on Node.js 24.21.0, with Effect 4.0.7 and 4.1.1 and strict TypeScript
+consumers using 6.0.3 and 7.0.2. These are verification results, not additional packages to install.
+The [contributor
+guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md#hostile-server-integration-tests)
+records the browser test tooling and how the environments are checked.
+
+Effect's HTTP modules are marked unstable upstream and can change across minor versions. Review its
+release notes and retain a known-good lockfile when upgrading, including any application-owned
+client middleware. Report regressions with the exact dependency version.
 
 Other Node majors, macOS, Firefox, Safari, Deno, Bun and CommonJS are outside the initial
 qualification scope. Browser support does not imply support for every bundler or browser
