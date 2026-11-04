@@ -32,7 +32,9 @@ npm run test:package
 - `npm run lint`: Oxlint, ESLint, and Markdown linting.
 - `npm run build`: JavaScript and declaration output in `dist/`.
 - `npm test`: Vitest behavior tests.
-- `npm run test:release`: reject mismatched, pending or failed release qualification producers.
+- `npm run test:release`: reject invalid qualification producers/artifacts, exercise bounded
+  registry visibility recovery and terminal integrity/provenance failures, and check the read-only
+  workflow.
 - `npm run test:package`: verify the built tarball in an isolated consumer; run the build first.
 - `npm run format`: apply the configured formatters.
 

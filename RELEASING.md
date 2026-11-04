@@ -110,6 +110,11 @@ run for that exact current commit. The workflow downloads the already-tested Lin
 its manifest and checksums, and chooses `rc`/`beta`/`alpha` for a prerelease or `latest` for stable.
 It never rebuilds the package.
 
+Registry verification waits up to three minutes for HTTP 404 visibility delays from the version or
+attestation endpoint, sharing one deadline. Requests have a ten-second timeout capped by the
+remaining deadline. Other HTTP failures, malformed responses and integrity/provenance mismatches
+fail immediately. A successful upload followed by a verification failure must never be republished.
+
 First dispatch with `publish=false` to verify the producer and dry-run publication. This publishes
 nothing and does not prove that OIDC authentication works. An existing version may be rejected even
 in npm's dry run; never treat that as permission to replace it.
@@ -201,11 +206,24 @@ tag. Use the same procedure for another correction; the next release deploys its
 - A preparation failure publishes nothing. Preserve failed logs, fix the cause, and qualify anew.
 - A draft GitHub release can be completed at the verified target. If publication succeeded, do not
   rerun creation or replace bytes. Download and verify the existing assets.
-- If npm succeeded but verification failed, run only
-  `node scripts/verify-registry.mjs artifacts/VERSION/manifest.json` and the fresh-consumer checks.
-  In GitHub, preserve `GITHUB_ACTIONS=true` and `GITHUB_REPOSITORY` to require provenance too. Never
-  rerun the publish step for an existing version. A temporary registry propagation delay is handled
-  by rerunning verification, not another upload.
+- If npm succeeded but verification failed, dispatch **Verify existing npm publication**
+  (`verify-publication.yml`) on `main`, supplying the original successful `qualification_run` and
+  full `source_commit`. For example, the first stable release can be verified with:
+
+  ```sh
+  gh workflow run verify-publication.yml --ref main \
+    -f qualification_run=41742659434 \
+    -f source_commit=506562e81589bb6624963bb08d95a19207021455
+  ```
+
+  This read-only workflow checks that the commit belongs to main's history, validates the original
+  qualification producer, downloads its exact Linux artifact, checks identity and checksums, then
+  verifies registry integrity and provenance. It supports an older qualified commit after main has
+  advanced. It contains no publication step or write/OIDC permission. Expired qualification
+  artifacts make this path fail; do not substitute rebuilt bytes. Locally, verify the retained
+  qualified artifact with `node scripts/verify-registry.mjs artifacts/VERSION/manifest.json`; set
+  `GITHUB_ACTIONS=true` and `GITHUB_REPOSITORY` to require provenance too. Complete fresh-consumer
+  and `npm audit signatures` checks separately. Never rerun the publish job for an existing version.
 - If npm succeeded but GitHub failed, recover the original qualified artifact from Actions, verify
   registry integrity, and finish only GitHub and Pages. If published bytes are wrong, release a new
   version; never edit a published tarball, move its tag, or make update versions go backwards.

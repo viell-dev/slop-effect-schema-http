@@ -1,5 +1,11 @@
 # Change history
 
+## Unreleased
+
+- Wait for npm version/attestation visibility after publication and provide a read-only recovery
+  workflow that verifies the original qualification artifact without another upload
+  ([#78](https://github.com/viell-dev/slop-effect-schema-http/issues/78)).
+
 ## 0.1.0 — 2026-11-04
 
 First stable release, retaining the API and runtime behavior of `0.1.0-rc.1`. Existing candidate
