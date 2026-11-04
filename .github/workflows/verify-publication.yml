@@ -1,0 +1,51 @@
+name: Verify existing npm publication
+
+on:
+  workflow_dispatch:
+    inputs:
+      qualification_run:
+        description: Successful Release qualification run that produced the published package
+        required: true
+        type: string
+      source_commit:
+        description: Full qualified main commit SHA (may precede current main)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Verify original qualification producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUALIFICATION_RUN: ${{ inputs.qualification_run }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          node --input-type=module -e "import assert from 'node:assert/strict'; assert.match(process.env.QUALIFICATION_RUN, /^[0-9]+$/); assert.match(process.env.SOURCE_COMMIT, /^[0-9a-f]{40}$/);"
+          git merge-base --is-ancestor "$SOURCE_COMMIT" HEAD
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUALIFICATION_RUN" > /tmp/qualification.json
+          GITHUB_SHA="$SOURCE_COMMIT" node scripts/check-qualification.mjs /tmp/qualification.json
+          gh run download "$QUALIFICATION_RUN" --repo "$GITHUB_REPOSITORY" --name candidate-ubuntu-latest --dir artifacts
+      - name: Verify original artifact and registry provenance
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          node scripts/check-verification-artifact.mjs artifacts > /tmp/manifest-path
+          MANIFEST=$(cat /tmp/manifest-path)
+          (cd "$(dirname "$MANIFEST")" && sha256sum --check SHA256SUMS)
+          node scripts/verify-registry.mjs "$MANIFEST"

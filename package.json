@@ -81,7 +81,7 @@
     "lint:mdrefine": "mdrefine lint",
     "test": "vitest run",
     "test:package": "node scripts/check-package.mjs",
-    "test:release": "node --test scripts/release.test.mjs",
+    "test:release": "node --test scripts/release.test.mjs scripts/registry.test.mjs",
     "release:prepare": "node scripts/prepare-release.mjs",
     "test:watch": "vitest",
     "docs:dev": "vitepress dev docs",
