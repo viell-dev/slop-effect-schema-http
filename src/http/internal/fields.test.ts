@@ -24,11 +24,25 @@ describe("Fields.set", () => {
     ]);
   });
 
-  // Header combinators lowercase names before calling this; query keys are case-sensitive.
-  it("compares names exactly", () => {
+  // Query keys are case-sensitive; header combinators supply a fold.
+  it("compares names exactly by default", () => {
     expect(Fields.set([["A", "1"]], "a", "2")).toEqual([
       ["A", "1"],
       ["a", "2"],
+    ]);
+  });
+
+  it("compares folded names and takes the spelling it was given", () => {
+    const fields: Fields.Fields = [
+      ["X-A", "1"],
+      ["b", "2"],
+      ["x-a", "3"],
+    ];
+    expect(
+      Fields.set(fields, "X-a", "new", (name) => name.toLowerCase()),
+    ).toEqual([
+      ["X-a", "new"],
+      ["b", "2"],
     ]);
   });
 
@@ -97,6 +111,24 @@ describe("Fields.remove", () => {
 
   it("removes computed entries when removing the whole name", () => {
     expect(Fields.remove([["a", () => "1"]], "a")).toEqual([]);
+  });
+
+  it("compares folded names, with or without a value", () => {
+    const mixed: Fields.Fields = [
+      ["X-A", "1"],
+      ["x-a", "2"],
+      ["b", "3"],
+    ];
+    const fold = (name: string) => name.toLowerCase();
+    expect(Fields.remove(mixed, "x-A", undefined, fold)).toEqual([["b", "3"]]);
+    expect(Fields.remove(mixed, "x-A", "1", fold)).toEqual([
+      ["x-a", "2"],
+      ["b", "3"],
+    ]);
+  });
+
+  it("compares names exactly by default", () => {
+    expect(Fields.remove([["A", "1"]], "a")).toEqual([["A", "1"]]);
   });
 
   it("matches a null value against bare query entries only", () => {

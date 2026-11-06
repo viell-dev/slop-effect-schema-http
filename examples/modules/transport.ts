@@ -56,10 +56,10 @@ const reply = await Effect.runPromise(
 // reply.metadata.headerLines is Some([["X-Reply", "one"], ["X-Reply", "two"]]).
 // #endregion provider
 assert.deepEqual(
-  observed.filter(([name]) => name === "x-tag"),
+  observed.filter(([name]) => name === "X-Tag"),
   [
-    ["x-tag", "math"],
-    ["x-tag", "computing"],
+    ["X-Tag", "math"],
+    ["X-Tag", "computing"],
   ],
 );
 assert.deepEqual(Option.getOrThrow(reply.metadata.headerLines), [

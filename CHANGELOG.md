@@ -23,6 +23,12 @@
   It now reaches the client in the `hash` field, exactly as written, and wins over a fragment in
   path output or a base URL. `fetch` still does not send a fragment
   ([#93](https://github.com/viell-dev/slop-effect-schema-http/issues/93)).
+- Keep the spelling of header names. `Request.setHeader` and `Request.appendHeader` used to
+  lowercase a name, so a provider that sends header lines could not deliver `X-API-Key`. Lines now
+  keep the spelling they were written with, and comparing names still folds case, so `setHeader`
+  replaces a line spelled differently and takes the new spelling. Client middleware still sees
+  lowercase `Headers`, and `fetch` still sends lowercase names
+  ([#101](https://github.com/viell-dev/slop-effect-schema-http/issues/101)).
 
 ## 0.1.0 — 2026-11-04
 

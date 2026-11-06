@@ -50,7 +50,8 @@ the [Request examples](./modules/request.md#bind-application-input).
 
 Raw declarations (`setHeader`, `appendHeader`, `removeHeader`, and the query equivalents) take a
 value or a computation. A computation runs once per materialization, and `undefined` omits the
-field. Header names are case-insensitive; query keys are not.
+field. Header names compare without case and keep the spelling they were written with, so a
+`setHeader` that replaces an earlier line also replaces its spelling. Query keys compare exactly.
 
 Schemas are optional to choose and binding when chosen. `Request.headers` and `Request.query` take a
 schema whose encoded side fits the representation (`Transport.HeaderInput` or
@@ -200,10 +201,11 @@ whole query as form data. Appending `key=abc` to `?wsdl&q=a%20b` that way produc
 middleware must add a parameter, preserve the existing URL text and encode the new entry explicitly.
 
 Native client middleware sees the normalized `Headers` view: lowercase names, with repeated lines
-joined by `, `. The original lines are available to a provider that can send them, through
-`Transport.HeaderLines` and `Transport.headerLines`. Lines changed by middleware replace the
-original lines of that field only. On responses, provider-observed lines are an `Option`, and `None`
-means the provider supplied none. The library never splits a combined value or invents lines.
+joined by `, `. The original lines, with their spelling, are available to a provider that can send
+them, through `Transport.HeaderLines` and `Transport.headerLines`. Lines changed by middleware
+replace the original lines of that field only. On responses, provider-observed lines are an
+`Option`, and `None` means the provider supplied none. The library never splits a combined value or
+invents lines.
 
 ## Responses
 
