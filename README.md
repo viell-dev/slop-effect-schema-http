@@ -7,6 +7,12 @@ document store, a JSON business API, a CGI reporting gateway, and a notification
 carries decades of plausible historical accidents. The suite checks that one consumer can talk to
 all of them through the library's public API, without escaping it.
 
+Real APIs are where the suite starts, not where it stops. Its purpose is to cover every odd, bad or
+insane case anyone can think of, including things some strange server probably relies on for
+reasons nobody can know, so that the library holds up against whatever is thrown at it. A case needs
+no known real-world example to belong here. Where a backend carries such a case, its service page
+gives it a plausible history like any other quirk.
+
 Agents write and maintain this suite. Its code is not human-reviewed.
 
 ## Why a separate branch
