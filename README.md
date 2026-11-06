@@ -27,7 +27,7 @@ declares the required npm version. Select Node from this checkout with `fnm use`
 Development uses TypeScript 6.0.3: the import-boundary checker needs its programmatic API, which
 TypeScript 7 does not provide. The library's release qualification separately tests TypeScript 7
 package consumers. See [#69](https://github.com/viell-dev/slop-effect-schema-http/issues/69) for the
-upgrade evidence and reconsideration trigger. The suite uses Effect 4.1.1, including its scoped
+upgrade evidence and reconsideration trigger. The suite uses Effect 4.1.2, including its scoped
 cookie-jar API; transport assertions describe that pinned version's behavior.
 
 ```sh
