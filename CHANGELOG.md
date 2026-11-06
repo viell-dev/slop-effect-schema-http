@@ -19,6 +19,10 @@
   fragment in its `hash` field rather than its URL text, and a custom `UrlEncoding.join` receives
   the base and path without fragments. A provider built with `HttpClient.makeWith` has to read
   `request.hash` ([#83](https://github.com/viell-dev/slop-effect-schema-http/issues/83)).
+- Keep a fragment written in the constructor. `Request.make` and its shortcuts used to discard it.
+  It now reaches the client in the `hash` field, exactly as written, and wins over a fragment in
+  path output or a base URL. `fetch` still does not send a fragment
+  ([#93](https://github.com/viell-dev/slop-effect-schema-http/issues/93)).
 
 ## 0.1.0 — 2026-11-04
 

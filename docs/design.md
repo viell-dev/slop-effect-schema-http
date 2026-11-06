@@ -165,11 +165,15 @@ there too, and client middleware can use `HttpClientRequest.setHash` and `remove
 that renders `/users/1#top` with the query `f=xml` compiles to the URL `/users/1?f=xml` and the hash
 `top`.
 
+A fragment written in the constructor survives `Request.path` and query edits, as a constructor
+query does. `Request.mapEffect` sees it in `request.hash`, and `HttpClientRequest.removeHash` there
+removes it.
+
 Compilation takes any fragment off the base URL and off the request's URL before joining them, so a
 custom `UrlEncoding.join` receives neither. When several places supply a fragment, the first of
 these wins:
 
-1. the native `hash`, which `HttpClientRequest.setHash` sets;
+1. the native `hash`, which the constructor or `HttpClientRequest.setHash` sets;
 2. the request's URL, such as `Request.path` output;
 3. the base URL, even when an absolute request URL bypassed it;
 4. text that a custom `UrlEncoding.join` returned.
