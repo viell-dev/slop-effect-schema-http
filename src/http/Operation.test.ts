@@ -239,6 +239,28 @@ describe("Operation.make", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/93
+  it.effect.each([
+    ["a?b=1#top", "https://api.test/a?b=1#top", "top"],
+    ["a#b c", "https://api.test/a#b%20c", "b c"],
+    ["a#", "https://api.test/a", ""],
+  ] as const)(
+    "gives a client a constructor fragment, %s",
+    ([url, href, hash]) =>
+      Effect.gen(function* () {
+        const server = synthetic(() => empty(204));
+        yield* Operation.make(
+          Request.get(`https://api.test/${url}`),
+          Response.status(204, Body.empty),
+        )
+          .execute(undefined)
+          .pipe(Effect.provide(server.layer));
+        const exchange = server.exchanges[0]!;
+        expect(exchange.href).toBe(href);
+        expect(exchange.request.hash).toStrictEqual(Option.some(hash));
+      }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/83
   it.effect("leaves the fragment text to a client built with makeWith", () =>
     Effect.gen(function* () {

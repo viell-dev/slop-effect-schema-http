@@ -207,6 +207,32 @@ describe("Operation over real loopback sockets", () => {
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/93
+  it.live("Fetch does not send a fragment the library passed on", () =>
+    Effect.gen(function* () {
+      const targets: Array<string | undefined> = [];
+      const { origin } = yield* listen((request, response) => {
+        targets.push(request.url);
+        response.end("ok");
+      });
+      const seen: Array<Option.Option<string>> = [];
+      yield* Operation.make(
+        Request.get(`${origin}/a?q=1#top`),
+        Response.status(200, Body.text),
+        {
+          transformClient: HttpClient.mapRequest((request) => {
+            seen.push(request.hash);
+            return request;
+          }),
+        },
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(FetchHttpClient.layer));
+      expect(seen).toStrictEqual([Option.some("top")]);
+      expect(targets).toEqual(["/a?q=1"]);
+    }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/96
   it.live("Fetch refuses a GET body the library passed on", () =>
     Effect.gen(function* () {

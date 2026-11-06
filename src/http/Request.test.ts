@@ -105,14 +105,15 @@ describe("Request.make", () => {
     }),
   );
 
-  it.effect("discards a fragment", () =>
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/93
+  it.effect("keeps a fragment on the request, out of the URL text", () =>
     Effect.gen(function* () {
       const { request } = yield* compile(
         Request.get("https://api.test/page?x=1#section"),
         undefined,
       );
       expect(request.url).toBe("https://api.test/page?x=1");
-      expect(request.hash).toStrictEqual(Option.none());
+      expect(request.hash).toStrictEqual(Option.some("section"));
     }),
   );
 
@@ -437,6 +438,110 @@ describe("fragments in the URL", () => {
       ).toEqual({ url: "https://x.test/u?q=1", hash: "joined?x" });
     }),
   );
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/93
+describe("constructor fragments", () => {
+  it.effect.each([
+    ["a question mark", "b?c"],
+    ["a query-like text", "b?c=1&d"],
+    ["another hash", "b#c"],
+    ["spaces and escapes", "b c%20d"],
+    ["nothing", ""],
+  ] as const)("keeps a fragment that contains %s", ([, hash]) =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(Request.get(`https://x.test/a#${hash}`), undefined),
+      ).toEqual({ url: "https://x.test/a", hash });
+    }),
+  );
+
+  it.effect("reads a question mark after the fragment as fragment text", () =>
+    Effect.gen(function* () {
+      const request = Request.get("https://x.test/a#b?c=1");
+      expect(request.declaration.query).toEqual([]);
+      expect(
+        yield* targetOf(request.pipe(Request.setQuery("q", "1")), undefined),
+      ).toEqual({ url: "https://x.test/a?q=1", hash: "b?c=1" });
+    }),
+  );
+
+  it.effect("survives query edits and a path binding", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("https://x.test/a?q=1#top").pipe(
+            Request.setQuery("r", "2"),
+            Request.path(Schema.String, (id) => `https://x.test/${id}`),
+          ),
+          { path: "b" },
+        ),
+      ).toEqual({ url: "https://x.test/b?q=1&r=2", hash: "top" });
+    }),
+  );
+
+  it.effect("stays on a relative URL joined to a base", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("/u?q=1#top").pipe(Request.baseUrl("https://x.test/a")),
+          undefined,
+        ),
+      ).toEqual({ url: "https://x.test/a/u?q=1", hash: "top" });
+    }),
+  );
+
+  it.effect("wins over path output and the base URL", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("#constructor").pipe(
+            Request.baseUrl("https://x.test#base"),
+            Request.path(Schema.String, (path) => path),
+          ),
+          { path: "/a#path" },
+        ),
+      ).toEqual({ url: "https://x.test/a", hash: "constructor" });
+    }),
+  );
+
+  it.effect("counts as a fragment even when it is empty", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("/a#").pipe(Request.baseUrl("https://x.test#base")),
+          undefined,
+        ),
+      ).toEqual({ url: "https://x.test/a", hash: "" });
+    }),
+  );
+
+  it.effect("is visible to Request.mapEffect, which can remove it", () =>
+    Effect.gen(function* () {
+      const seen: Array<Option.Option<string>> = [];
+      expect(
+        yield* targetOf(
+          Request.get("https://x.test/a#top").pipe(
+            Request.mapEffect((request) => {
+              seen.push(request.hash);
+              return Effect.succeed(HttpClientRequest.removeHash(request));
+            }),
+          ),
+          undefined,
+        ),
+      ).toEqual({ url: "https://x.test/a", hash: undefined });
+      expect(seen).toStrictEqual([Option.some("top")]);
+    }),
+  );
+
+  it("records the fragment on the declaration", () => {
+    expectTypeOf(Request.get("/").declaration.hash).toEqualTypeOf<
+      string | undefined
+    >();
+    expect(Request.get("/a#b?c").declaration.hash).toBe("b?c");
+    expect(Request.get("/a#").declaration.hash).toBe("");
+    expect(Request.get("/a").declaration.hash).toBeUndefined();
+  });
 });
 
 describe("raw headers", () => {

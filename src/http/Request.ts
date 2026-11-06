@@ -44,6 +44,8 @@ export interface Declaration<
 > {
   readonly method: string;
   readonly url: string;
+  /** The fragment written in the constructor, without its `#`. */
+  readonly hash: string | undefined;
   readonly baseUrl: string;
   readonly headers: Fields.Fields;
   readonly query: Fields.Fields<string | null>;
@@ -103,6 +105,14 @@ const construct = <I, E, R, H extends boolean, Q extends boolean>(
   prepare: (input: I, draft: Draft) => Effect.Effect<Draft, E, R>,
 ): Request<I, E, R, H, Q> => ({ ...Pipeable.Prototype, declaration, prepare });
 
+/** Split URL text at its first `#`, which ends the path and query. */
+const splitFragment = (url: string): readonly [string, string | undefined] => {
+  const position = url.indexOf("#");
+  return position < 0
+    ? [url, undefined]
+    : [url.slice(0, position), url.slice(position + 1)];
+};
+
 /**
  * Describe a request with a method and URL, without sending it.
  *
@@ -113,11 +123,14 @@ const construct = <I, E, R, H extends boolean, Q extends boolean>(
  *
  * A constructor query is parsed as form data: `+` becomes a space, percent escapes are decoded,
  * and empty `&` segments are dropped. Bare keys remain distinct from empty values. Compilation
- * renders these entries through `UrlEncoding.query`; a constructor fragment is discarded.
+ * renders these entries through `UrlEncoding.query`.
+ *
+ * A fragment stays on the request, exactly as written, in the native request's `hash` field. It
+ * survives {@link path} and query edits, and wins over a fragment in path output or a base URL.
+ * Whether it goes out is up to the client; `fetch` does not send one.
  */
 export const make = (method: string, url: string): Request<unknown> => {
-  const hash = url.indexOf("#");
-  const withoutHash = hash < 0 ? url : url.slice(0, hash);
+  const [withoutHash, hash] = splitFragment(url);
   const start = withoutHash.indexOf("?");
   const query: Array<readonly [string, string | null]> = [];
   if (start >= 0) {
@@ -131,6 +144,7 @@ export const make = (method: string, url: string): Request<unknown> => {
     {
       method,
       url: start < 0 ? withoutHash : withoutHash.slice(0, start),
+      hash,
       baseUrl: "",
       headers: [],
       query,
@@ -600,7 +614,10 @@ const initialDraft = (declaration: Declaration): Draft => {
   return replaceQuery(
     {
       request: HttpClientRequest.setHeaders(
-        native,
+        // An empty fragment counts, and the options of `make` would skip it.
+        declaration.hash === undefined
+          ? native
+          : HttpClientRequest.setHash(native, declaration.hash),
         Transport.toHeaders(headerLines),
       ),
       headerLines,
@@ -608,14 +625,6 @@ const initialDraft = (declaration: Declaration): Draft => {
     },
     Fields.resolve(declaration.query),
   );
-};
-
-/** Split URL text at its first `#`, which ends the path and query. */
-const splitFragment = (url: string): readonly [string, string | undefined] => {
-  const position = url.indexOf("#");
-  return position < 0
-    ? [url, undefined]
-    : [url.slice(0, position), url.slice(position + 1)];
 };
 
 const finalize = (
