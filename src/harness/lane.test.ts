@@ -25,6 +25,31 @@ describe(`lane harness (${lane.name})`, () => {
     );
 
   it.live(
+    "a backend behind the socket listener answers, and the ledger holds each request's head",
+    () =>
+      Effect.gen(function* () {
+        const echo = yield* lane.backend("echo", undefined, {
+          listener: "socket",
+        });
+        const text = yield* Operation.make(
+          Request.get(`${echo.origin}/text`),
+          Response.status(200, Body.text),
+        )
+          .execute(undefined)
+          .pipe(Effect.provide(lane.fetchClient));
+        expect(text).toBe("ok");
+        const [received, ...rest] = yield* echo.ledger;
+        expect(rest).toEqual([]);
+        expect(received?.target).toBe("/text");
+        expect(received?.head).toMatch(/^GET \/text HTTP\/1\.1\r\n/);
+      }),
+  );
+
+  it("offers the raw provider in the Node lane only", () => {
+    expect(lane.rawClient === undefined).toBe(lane.name === "browser");
+  });
+
+  it.live(
     "joins repeated request lines through fetch, so the strict server rejects them",
     () =>
       Effect.gen(function* () {

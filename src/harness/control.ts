@@ -3,7 +3,13 @@ import type { AddressInfo } from "node:net";
 import { Effect, Exit, Scope } from "effect";
 import type { Json, Recorded } from "./lane.js";
 import { loadHandler } from "./registry.js";
-import { type Handler, type Received, type Server, serve } from "./server.js";
+import {
+  type Handler,
+  type Listener,
+  type Received,
+  type Server,
+  serve,
+} from "./server.js";
 
 /**
  * The Node-side control server of the browser lane. Browser tests cannot open sockets, so they ask
@@ -95,6 +101,7 @@ const recorded = (running: Running): ReadonlyArray<Recorded> =>
       method: received.method,
       target: received.target,
       lines: received.lines,
+      head: received.head,
       body: received.body,
       aborted: received.aborted(),
     }));
@@ -119,13 +126,14 @@ export const startControl = (): Promise<Control> => {
     name: string,
     options: Json | undefined,
     cors: "harness" | "backend",
+    listener: Listener,
   ) => {
     const id = String(++next);
     const scope = await Effect.runPromise(Scope.make());
     const inner = await loadHandler(name, options);
     const handler = cors === "harness" ? withHarnessCors(inner) : inner;
     const server = await Effect.runPromise(
-      serve(handler, hostFor(Number(id))).pipe(Scope.provide(scope)),
+      serve(handler, hostFor(Number(id)), listener).pipe(Scope.provide(scope)),
     );
     const include =
       cors === "harness"
@@ -167,10 +175,16 @@ export const startControl = (): Promise<Control> => {
             readonly name: string;
             readonly options?: Json;
             readonly cors?: "harness" | "backend";
+            readonly listener?: Listener;
           };
           return reply(
             200,
-            await start(body.name, body.options, body.cors ?? "harness"),
+            await start(
+              body.name,
+              body.options,
+              body.cors ?? "harness",
+              body.listener ?? "http",
+            ),
           );
         }
         const entry = match === null ? undefined : running.get(match[1]!);

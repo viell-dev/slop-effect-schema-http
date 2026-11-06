@@ -58,9 +58,13 @@ tree into `.library/` using Git alone, and the suite imports the library from th
 a different commit, branch or tag, set `LIBRARY_REF` for both `npm run library` and `npm test`. A
 run refuses to start if `.library/` holds a different ref, and it prints the commit it tests.
 
-The backends are `node:http` servers on ephemeral loopback ports, started for each test. They need
-no accounts, network access beyond loopback, secrets or private data, and they are black boxes:
-the consumer reaches them only over HTTP. `npm run check` runs `scripts/boundaries.mjs`, which
+The backends are `node:http` servers on ephemeral loopback ports, started for each test. `node:http`
+refuses or reshapes some requests before a backend sees them, so a test can start any backend with
+`{ listener: "socket" }` instead. That plain socket listener refuses nothing, serves one request per
+connection and records each request's raw `head` in the ledger, and its replies are the same apart
+from `Connection: close`. The backends need no accounts, network access beyond loopback, secrets or
+private data, and they are black boxes: the consumer reaches them only over HTTP. `npm run check`
+runs `scripts/boundaries.mjs`, which
 resolves every import, following `package.json` `imports` and `tsconfig.json` `paths` aliases: a
 backend may import only Node built-ins, other backend modules and the harness's server and router,
 consumer code may import neither a backend nor a Node-side harness module, and the backend-side
@@ -116,7 +120,11 @@ providers are:
 
 - Effect's Fetch provider, over Node's global `fetch` or the browser's;
 - in the Node lane, a custom `node:http` provider in `src/harness/providers.ts`, which sends the
-  library's original header lines and reports observed response lines.
+  library's original header lines and reports observed response lines;
+- in the Node lane, a raw provider beside it, for the requests no standard client sends. It writes
+  the composed URL and header lines to a socket with no URL parsing of its own, so a dot segment, a
+  fragment or `*` goes out as written. It needs the origin to connect to, because a target such as
+  `*` names none: `lane.rawClient(backend.origin)`.
 
 [CATALOGUE.md](./CATALOGUE.md) maps each scenario to its tests or to a recorded limit.
 `npm run check` verifies it against the test sources: every entry has a status, and every entry

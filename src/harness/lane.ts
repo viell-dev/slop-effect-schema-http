@@ -19,10 +19,18 @@ export type Json =
 /** One request as the backend's socket received it. */
 export interface Recorded {
   readonly method: string;
-  /** The request target as sent: path and query, not decoded. */
+  /**
+   * The request target as sent, not decoded, one character per byte: normally the path and query,
+   * and anything else the client wrote there, such as a fragment, `*` or a whole URL.
+   */
   readonly target: string;
   /** Header lines in order, with their original spelling and repetition. */
   readonly lines: ReadonlyArray<readonly [string, string]>;
+  /**
+   * The request line and header lines as they arrived, one character per byte, up to the blank line
+   * that ends them. Only a backend started with `listener: "socket"` has this.
+   */
+  readonly head?: string | undefined;
   /**
    * The body bytes received when the ledger was read. A request is recorded as its head arrives, so
    * an upload still in progress, or cut off by a disconnect, shows the bytes that had arrived.
@@ -57,6 +65,13 @@ export interface StartOptions {
    * leaves CORS entirely to the backend, for scenarios about its CORS behaviour.
    */
   readonly cors?: "harness" | "backend";
+  /**
+   * Both lanes. `"http"` (the default) is `node:http`, which refuses or reshapes some requests before
+   * a backend sees them. `"socket"` is a plain socket listener that refuses nothing, serves one
+   * request per connection and records each request's `head`. Its reply is the same as under
+   * `node:http`, except `Connection: close`. A body needs `Content-Length`, or it is ignored.
+   */
+  readonly listener?: "http" | "socket";
 }
 
 export interface Lane {
@@ -75,6 +90,16 @@ export interface Lane {
   readonly fetchClient: Layer.Layer<HttpClient.HttpClient>;
   /** The line-preserving `node:http` provider, in the Node lane only. */
   readonly linesClient: Layer.Layer<HttpClient.HttpClient> | undefined;
+  /**
+   * The raw provider for the server at `origin`, in the Node lane only: it writes the request as
+   * written to a socket of its own, with no URL parsing, so it reaches that one origin alone. Its
+   * target is `request.url` without `origin`, then `#` and `request.hash` when there is a hash; a URL
+   * that does not start with `origin`, such as `*`, goes on the request line whole. Its header lines
+   * are `Transport.headerLines`, with `Host` and `Content-Length` added only when the request has
+   * none and they apply. `src/harness/providers.ts` gives the details.
+   */
+  readonly rawClient:
+    ((origin: string) => Layer.Layer<HttpClient.HttpClient>) | undefined;
 }
 
 /** Text of a recorded body. */
@@ -103,6 +128,6 @@ export const headerValues = (
 export const queryOf = (recorded: Recorded): URLSearchParams =>
   new URL(recorded.target, "http://placeholder").searchParams;
 
-/** The recorded path, not decoded. */
+/** The recorded path, not decoded: the target up to its query or fragment. */
 export const pathOf = (recorded: Recorded): string =>
-  recorded.target.split("?")[0] ?? "";
+  recorded.target.split(/[?#]/)[0] ?? "";
