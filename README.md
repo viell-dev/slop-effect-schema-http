@@ -41,7 +41,7 @@ in-memory example you can run without a server or credentials.
 
 ## Install
 
-In an existing Node.js 24 ESM project with Effect `^4.0.7`, add the library:
+In an existing Node.js 24 or 26 ESM project with Effect `^4.0.7`, add the library:
 
 ```sh
 npm install viell-effect-schema-http

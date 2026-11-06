@@ -1,0 +1,41 @@
+version: 2
+
+# Monthly and grouped, so routine updates stay cheap. They get no release of their own.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    target-branch: main
+    schedule:
+      interval: monthly
+    groups:
+      npm:
+        patterns: ["*"]
+    ignore:
+      # typescript-eslint 8 requires TypeScript below 6.1, and TypeScript 7 lacks its programmatic
+      # API. Remove this once typescript-eslint supports a newer compiler (#69).
+      - dependency-name: typescript
+        versions: [">=6.1.0"]
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: main
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /
+    target-branch: hostile-servers-test
+    schedule:
+      interval: monthly
+    groups:
+      npm:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: hostile-servers-test
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

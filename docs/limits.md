@@ -7,7 +7,7 @@ the runtime that fits the application:
 
 | Application environment | Supported setup                                               |
 | ----------------------- | ------------------------------------------------------------- |
-| Node.js application     | Node.js 24 on Windows or Linux                                |
+| Node.js application     | Node.js 24 or 26 on Windows or Linux                          |
 | Browser application     | Chromium with Fetch, using your application's ESM build setup |
 | Effect dependency       | `^4.0.7`, provided by your application                        |
 
@@ -17,9 +17,9 @@ by this project's tests.
 
 ### Tested configurations
 
-The release checks ran on Node.js 24.21.0, with Effect 4.0.7 and 4.1.1 and strict TypeScript
-consumers using 6.0.3 and 7.0.2. These are verification results, not additional packages to install.
-The [contributor
+The release checks run on Node.js 24.22.2 and the newest Node.js 26, with Effect 4.0.7 and 4.1.2 and
+strict TypeScript consumers using 6.0.3 and 7.0.2. These are verification results, not additional
+packages to install. The [contributor
 guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md#hostile-server-integration-tests)
 records the browser test tooling and how the environments are checked.
 

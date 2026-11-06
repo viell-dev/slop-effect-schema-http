@@ -153,7 +153,7 @@ In an empty directory with those verified files, run:
 
 ```sh
 npm init -y
-npm install --ignore-scripts ./viell-effect-schema-http-0.1.0.tgz effect@4.1.1
+npm install --ignore-scripts ./viell-effect-schema-http-0.1.0.tgz effect@4.1.2
 node release-check.mjs
 ```
 
@@ -179,10 +179,11 @@ commit, provider, and lane; do not extrapolate cookie, redirect, header, or CORS
 platforms. The packed lane uses the suite's dependencies; the isolated consumer check above verifies
 the package separately from that suite.
 
-The current release matrix uses Node.js 24.21.0 on Windows/Linux, Effect 4.0.7 and 4.1.1, TypeScript
-6.0.3 and 7.0.2 consumers, and Chromium supplied by Playwright 1.64.1. Playwright is test
-infrastructure, not a consumer dependency. The checked-out suite lockfile and release workflow own
-the exact tool versions; record them with qualification evidence when updating the matrix.
+The current release matrix uses Node.js 24.22.2 and the newest Node.js 26 on Windows/Linux, Effect
+4.0.7 and 4.1.2, TypeScript 6.0.3 and 7.0.2 consumers, and Chromium supplied by Playwright 1.64.1.
+Playwright is test infrastructure, not a consumer dependency. The checked-out suite lockfile and
+release workflow own the exact tool versions; record them with qualification evidence when updating
+the matrix.
 
 ## Documentation site
 
