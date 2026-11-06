@@ -556,7 +556,7 @@ describe("raw headers", () => {
         undefined,
       );
       expect(compiled.request.headers["x-scope"]).toBe("admin");
-      expect(compiled.headerLines).toEqual([["x-scope", "admin"]]);
+      expect(compiled.headerLines).toEqual([["X-SCOPE", "admin"]]);
     }),
   );
 
@@ -574,9 +574,9 @@ describe("raw headers", () => {
         );
         expect(compiled.request.headers["x-scope"]).toBe("read, write");
         expect(compiled.headerLines).toEqual([
-          ["x-scope", "read"],
-          ["accept", "text/xml"],
-          ["x-scope", "write"],
+          ["X-Scope", "read"],
+          ["Accept", "text/xml"],
+          ["X-Scope", "write"],
         ]);
       }),
   );
@@ -594,17 +594,99 @@ describe("raw headers", () => {
           base.pipe(Request.removeHeader("x-scope")),
           undefined,
         );
-        expect(all.headerLines).toEqual([["x-other", "1"]]);
+        expect(all.headerLines).toEqual([["X-Other", "1"]]);
         const one = yield* compile(
           base.pipe(Request.removeHeader("X-SCOPE", "read")),
           undefined,
         );
         expect(one.headerLines).toEqual([
-          ["x-scope", "write"],
-          ["x-other", "1"],
+          ["X-Scope", "write"],
+          ["X-Other", "1"],
         ]);
       }),
   );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/101
+  it.effect("keeps each line of a repeated name in its own spelling", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compile(
+        Request.get("https://api.test/").pipe(
+          Request.appendHeader("X-Tag", "a"),
+          Request.appendHeader("x-tag", "b"),
+          Request.appendHeader("X-TAG", "c"),
+        ),
+        undefined,
+      );
+      expect(compiled.headerLines).toEqual([
+        ["X-Tag", "a"],
+        ["x-tag", "b"],
+        ["X-TAG", "c"],
+      ]);
+      expect(compiled.request.headers["x-tag"]).toBe("a, b, c");
+      expect(compiled.request.headers["X-Tag"]).toBeUndefined();
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/101
+  it.effect("replaces at the first position and takes the new spelling", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compile(
+        Request.get("https://api.test/").pipe(
+          Request.appendHeader("x-thing", "old"),
+          Request.setHeader("X-Kept", "k"),
+          Request.appendHeader("X-THING", "older"),
+          Request.setHeader("X-Thing", "new"),
+        ),
+        undefined,
+      );
+      expect(compiled.headerLines).toEqual([
+        ["X-Thing", "new"],
+        ["X-Kept", "k"],
+      ]);
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/101
+  it.effect("removes across spellings, with or without a value", () =>
+    Effect.gen(function* () {
+      const base = Request.get("https://api.test/").pipe(
+        Request.appendHeader("X-Tag", "a"),
+        Request.appendHeader("x-tag", "b"),
+        Request.appendHeader("X-TAG", "a"),
+      );
+      const all = yield* compile(
+        base.pipe(Request.removeHeader("x-TaG")),
+        undefined,
+      );
+      expect(all.headerLines).toEqual([]);
+      const value = yield* compile(
+        base.pipe(Request.removeHeader("x-TaG", "a")),
+        undefined,
+      );
+      expect(value.headerLines).toEqual([["x-tag", "b"]]);
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/101
+  it.effect("keeps a spelling through a computed value", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compile(
+        Request.get("https://api.test/").pipe(
+          Request.setHeader("X-API-Key", () => "k"),
+        ),
+        undefined,
+      );
+      expect(compiled.headerLines).toEqual([["X-API-Key", "k"]]);
+      expect(compiled.request.headers["x-api-key"]).toBe("k");
+    }),
+  );
+
+  it("records the spelling on the declaration", () => {
+    expect(
+      Request.get("/").pipe(Request.setHeader("X-Thing", "1")).declaration
+        .headers,
+    ).toEqual([["X-Thing", "1"]]);
+  });
 
   it.effect("evaluates computed values once per compilation", () =>
     Effect.gen(function* () {

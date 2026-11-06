@@ -103,6 +103,9 @@ A value can be a string or a function evaluated during request preparation. `und
 Query values also accept `null` for a bare key such as `?preview`; `""` produces `?preview=`. Header
 names compare without case; query names compare with case.
 
+A header keeps the spelling you wrote, and a `setHeader` that replaces a line takes the new
+spelling. A provider that sends header lines receives that spelling; `fetch` sends lowercase names.
+
 ## Compose nested resource paths
 
 When endpoints share several parent resource IDs, reuse schema fields and a path-rendering function.

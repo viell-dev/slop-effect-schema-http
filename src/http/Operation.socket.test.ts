@@ -207,6 +207,33 @@ describe("Operation over real loopback sockets", () => {
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/101
+  it.live("a line-preserving provider sends a name as it was written", () =>
+    Effect.gen(function* () {
+      for (const preserve of [false, true]) {
+        const received: Array<string> = [];
+        const { origin } = yield* listen((request, response) => {
+          for (let index = 0; index < request.rawHeaders.length; index += 2) {
+            if (request.rawHeaders[index]!.toLowerCase() === "x-api-key")
+              received.push(request.rawHeaders[index]!);
+          }
+          response.end("ok");
+        });
+        yield* Operation.make(
+          Request.get(origin).pipe(Request.setHeader("X-API-Key", "k")),
+          Response.status(200, Body.text),
+        )
+          .execute(undefined)
+          .pipe(
+            preserve
+              ? Effect.provideService(HttpClient.HttpClient, linesClient)
+              : Effect.provide(FetchHttpClient.layer),
+          );
+        expect(received).toEqual([preserve ? "X-API-Key" : "x-api-key"]);
+      }
+    }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/93
   it.live("Fetch does not send a fragment the library passed on", () =>
     Effect.gen(function* () {

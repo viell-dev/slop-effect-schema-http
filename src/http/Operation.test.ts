@@ -363,12 +363,69 @@ describe("Operation.make", () => {
             Effect.provideService(HttpClient.TracerPropagationEnabled, true),
           );
         const lines = server.exchanges[0]!.headerLines;
-        expect(lines.filter(([name]) => name === "x-scope")).toEqual([
-          ["x-scope", "read"],
-          ["x-scope", "write"],
+        expect(lines.filter(([name]) => name === "X-Scope")).toEqual([
+          ["X-Scope", "read"],
+          ["X-Scope", "write"],
         ]);
         expect(lines.map(([name]) => name)).toContain("traceparent");
       }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/101
+  it.effect(
+    "gives middleware lowercase headers and a provider the written lines",
+    () =>
+      Effect.gen(function* () {
+        const server = synthetic(() => empty(204));
+        const seen: Array<Readonly<Record<string, string>>> = [];
+        yield* Operation.make(
+          Request.get("https://api.test/").pipe(
+            Request.setHeader("X-API-Key", "k"),
+            Request.appendHeader("X-Tag", "a"),
+            Request.appendHeader("x-tag", "b"),
+          ),
+          Response.status(204, Body.empty),
+          {
+            transformClient: HttpClient.mapRequest((request) => {
+              seen.push({ ...request.headers });
+              return request;
+            }),
+          },
+        )
+          .execute(undefined)
+          .pipe(Effect.provide(server.layer));
+        expect(seen).toEqual([{ "x-api-key": "k", "x-tag": "a, b" }]);
+        expect(server.exchanges[0]?.headerLines).toEqual([
+          ["X-API-Key", "k"],
+          ["X-Tag", "a"],
+          ["x-tag", "b"],
+        ]);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/101
+  it.effect("replaces a spelled line when middleware changes its value", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(204));
+      yield* Operation.make(
+        Request.get("https://api.test/").pipe(
+          Request.setHeader("X-API-Key", "k"),
+          Request.setHeader("X-Kept", "1"),
+        ),
+        Response.status(204, Body.empty),
+        {
+          transformClient: HttpClient.mapRequest(
+            HttpClientRequest.setHeader("x-api-key", "rotated"),
+          ),
+        },
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer));
+      expect(server.exchanges[0]?.headerLines).toEqual([
+        ["X-Kept", "1"],
+        ["x-api-key", "rotated"],
+      ]);
+    }),
   );
 
   it.effect("exposes provider-attached response lines in metadata", () =>

@@ -240,25 +240,28 @@ const editQuery =
       self.prepare,
     );
 
+/** Header names compare without case; each line keeps the spelling it was given. */
+const foldHeader: Fields.Fold = (name) => name.toLowerCase();
+
 /**
  * Set a raw header, replacing every existing line with that name.
  *
  * @remarks
- * Names compare without case and are stored lowercase. Unavailable after a header schema is
- * bound. The body encoder owns `Content-Type` and `Content-Length`.
+ * Names compare without case, and the new line keeps the spelling of this call. Unavailable after
+ * a header schema is bound. The body encoder owns `Content-Type` and `Content-Length`.
  */
 export const setHeader = (name: string, value: FieldValue) =>
-  editHeaders((fields) => Fields.set(fields, name.toLowerCase(), value));
+  editHeaders((fields) => Fields.set(fields, name, value, foldHeader));
 
 /**
  * Add a raw header line after the existing lines, preserving repetition.
  *
  * @remarks
- * Names are stored lowercase. Unavailable after a header schema is bound. Sending separate
- * lines requires a provider that supports them; Fetch may combine or restrict headers.
+ * Each line keeps the spelling of its call. Unavailable after a header schema is bound. Sending
+ * separate lines requires a provider that supports them; Fetch may combine or restrict headers.
  */
 export const appendHeader = (name: string, value: FieldValue) =>
-  editHeaders((fields) => Fields.append(fields, name.toLowerCase(), value));
+  editHeaders((fields) => Fields.append(fields, name, value));
 
 /**
  * Remove a raw header, or only its declarations with the supplied fixed value.
@@ -268,7 +271,7 @@ export const appendHeader = (name: string, value: FieldValue) =>
  * Unavailable after a header schema is bound.
  */
 export const removeHeader = (name: string, value?: string) =>
-  editHeaders((fields) => Fields.remove(fields, name.toLowerCase(), value));
+  editHeaders((fields) => Fields.remove(fields, name, value, foldHeader));
 
 /**
  * Set a raw query field, replacing entries with the same case-sensitive name.
