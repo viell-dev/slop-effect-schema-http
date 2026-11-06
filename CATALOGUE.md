@@ -1350,3 +1350,263 @@ around it keep the layer's` (provider; in the Node lane's `lines` run, the repla
   - No fix was needed: UTF-8 under a charset, the `S` prefix with codes resolved by namespace,
     `<?xml version="1.0" ?>`, chunked framing, the unused `xmlns:ns4`, and no detail element for
     the missing-owner fault all decode.
+
+### Requests no standard client sends
+
+The entries above cover strange responses. EXT-9 to EXT-11 cover strange requests, which neither
+standard client can send, tracked in
+[#95](https://github.com/viell-dev/slop-effect-schema-http/issues/95) and
+[#98](https://github.com/viell-dev/slop-effect-schema-http/issues/98). They rest on a provider that
+sends a request exactly as written, `lane.rawClient(backend.origin)`, called the raw client below,
+and on a plain socket listener; [AGENTS.md](./AGENTS.md) describes both, and
+`src/harness/raw.node.test.ts` tests them without any hostile backend. `fetch` below means
+`lane.fetchClient`.
+
+An entry marked pending names the tests that make it tested; the entry changes to tested with them.
+The tests of entries marked limit or defect are still owed, as each entry lists: those statuses
+record what was observed, and a test pins it.
+
+Each entry gives the request as a consumer declares it. "The client received" means the request a
+`HttpClient.tapRequest` sees when it is applied last in `transformClient`, after any other
+middleware: its `method`, `url` and `hash`. A test through `fetch` asserts that as well as the
+ledger, because a browser cannot send these shapes, and a regression that lost one only in a browser
+would otherwise go unseen. A `fetch` test runs in both lanes unless its entry says otherwise, and
+asserts each lane's own result where they differ.
+
+The results below were measured on 2026-11-07 with the library at the commit in `library-ref`,
+Effect 4.1.2, Node.js 24.22.2 and Chromium 158, except where an entry says otherwise. Issues #95 and
+#98 hold the first measurements, with published `0.1.0`.
+
+#### Fragments
+
+EXT-9a to EXT-9g send a URL fragment. A standard client never sends one, but a client that writes
+its own request line can, and a server can read it, as the gateway's
+[help topics](./services/gateway.md#the-help-topics-1998) do. `node:http` passes a fragment through,
+so these start the gateway with `lane.backend("gateway")` and its default listener. The tests that
+need the raw client are in `src/scenarios/fragments.node.test.ts`, because only Node can send a
+fragment; the others are in `src/scenarios/fragments.test.ts`, in both lanes. `<help>` below is
+`/cgi-bin/help.cgi/accounts`. Its whole topic is the `opening` and `closing` lines, and the
+`closing` line alone is the section.
+
+- **EXT-9a** A fragment in a base URL or in path output, through the raw client: the server reads it
+  and answers one section. Declared as `Request.get("")` with
+  `Request.baseUrl("${origin}<help>#closing")`, and as `Request.get("")` with
+  `Request.path(Schema.String, (path) => path)`, `Request.baseUrl(origin)` and the input
+  `{ path: "<help>#closing" }`. The client received `${origin}<help>#closing`, with no `hash`. The
+  target is `<help>#closing`. Status: pending, tested with these tests.
+  - `[EXT-9a] a fragment in the base URL reaches help.cgi, which answers that section`
+  - `[EXT-9a] a fragment in path output reaches help.cgi, which answers that section`
+- **EXT-9b** A fragment set in client middleware, with a query, through the raw client. Declared as
+  `Request.get("${origin}<help>")` with `Request.setQuery("lang", "de")` and
+  `transformClient: HttpClient.mapRequest(HttpClientRequest.setHash("closing"))`. The client
+  received `${origin}<help>?lang=de` with the `hash` `closing`. The target is
+  `<help>?lang=de#closing`, and the answer is the `closing` line in German. Status: pending, tested
+  with this test.
+  - `[EXT-9b] setHash in transformClient puts the fragment after the query, and help.cgi answers that section in German`
+- **EXT-9c** A fragment in the constructor, through the raw client: the library removes it, so no
+  client can send it. Declared as `Request.get("${origin}<help>#closing")`. The client received
+  `${origin}<help>` with no `hash`, the target is `<help>`, and the answer is the whole topic.
+  Status: defect, [#93](https://github.com/viell-dev/slop-effect-schema-http/issues/93).
+  - `[EXT-9c] currently, the constructor removes a fragment before the client sees it, so help.cgi answers the whole topic`
+  - When #93 is fixed, this test and EXT-9e's constructor case change to the fixed behaviour in the
+    same step as `library-ref` moves, and this entry to tested.
+- **EXT-9d** A fragment in path output with a query, through the raw client: the library writes the
+  query after the fragment, so the query lands inside it. Declared as EXT-9a's path output with
+  `Request.setQuery("lang", "de")`. The client received `${origin}<help>#closing?lang=de`, and that
+  target arrives, with no query as the URL standard reads it. `help.cgi` looks up a section called
+  `closing?lang=de` and answers `ERROR|E_SECTION|no section closing?lang=de`. Status: defect,
+  [#83](https://github.com/viell-dev/slop-effect-schema-http/issues/83).
+  - `[EXT-9d] currently, a query goes after a fragment in path output, so help.cgi reads it as part of the section name`
+  - When #83 is fixed, this test and EXT-9e's case of path output with a query change to the fixed
+    behaviour in the same step as `library-ref` moves, and this entry to tested.
+- **EXT-9e** The declarations of EXT-9a to EXT-9d through every provider of the lane: the platform
+  drops the fragment. Each client received what the raw client received in that entry. The targets
+  are `<help>` for the base URL, the path output and the constructor; `<help>?lang=de` for
+  `setHash`, whose answer is the whole topic in German; and `<help>` for path output with a query,
+  because the query is inside the fragment, so it goes too. Every other answer is the whole topic
+  in English. The same in both lanes, and for `fetch` and `lines` in Node. Status: limit.
+  - `[EXT-9e] ${provider} drops a fragment from ${declaration}, and help.cgi answers without it`
+    (provider)
+- **EXT-9f** A redirect whose `Location` carries a fragment, through the raw client with
+  `transformClient: (client) => HttpClient.followRedirects(client)`. Declared as
+  `Request.get("${origin}/cgi-bin/go.cgi")` with `Request.setQuery("section", "closing")`, and the
+  gateway answers 302 with `Location: ${origin}<help>#closing`. Effect's redirect handling moves the
+  fragment into the next request's `hash`, and the raw client writes it. The ledger holds
+  `/cgi-bin/go.cgi?section=closing`, then `<help>#closing`, and the answer is the section.
+  Status: pending, tested with this test.
+  - `[EXT-9f] followRedirects moves a Location's fragment into the hash, and the raw client sends it to help.cgi`
+- **EXT-9g** The redirect of EXT-9f through `fetch`, which follows it by itself: the platform drops
+  the `Location`'s fragment. The ledger holds `/cgi-bin/go.cgi?section=closing`, then `<help>`, and
+  the answer is the whole topic. Measured with a plain `fetch` in Node, and in Chromium across
+  origins with a preflight, against a stand-in server rather than the gateway. Status: limit.
+  - `[EXT-9g] fetch follows go.cgi's redirect without the Location's fragment, and help.cgi answers the whole topic`
+
+#### Request shapes
+
+EXT-10a to EXT-10v send odd request shapes through the raw client, in
+`src/scenarios/request-shapes.node.test.ts`, which needs Node because only Node has that client.
+EXT-11a to EXT-11v send the same shapes through `fetch`, in `src/scenarios/request-shapes.test.ts`,
+in both lanes. The letters match: EXT-11c is EXT-10c's shape.
+
+The server's answer is not the point of these, so each test starts the neutral helper, with
+`lane.backend("echo", undefined, { listener: "socket" })`. The socket listener is needed because
+`node:http` stops a raw space, tab or non-ASCII byte in the target, a lower-case or unknown method
+and a broken request line with 400 before a handler runs, and closes the connection on `CONNECT`.
+`echo` answers 404 with the text `Not Found` for any path but `/text`, `/scopes` and `/hold`, so
+each test uses another path and declares `Response.status(404, Body.text)`. `origin` below is
+`backend.origin`, and `<host>` the same without `http://`.
+
+For the raw client, the ledger's `head` is the proof. Unless an entry says otherwise, it is the
+entry's request line, then `host: <host>`, then `accept: text/plain`. The client received the URL
+as declared in every entry, whatever the provider then does with it.
+
+- **EXT-10a** Dot segments in a path: `Request.get("${origin}/a/../b")`. Sent as
+  `GET /a/../b HTTP/1.1`. Status: pending, tested with this test.
+  - `[EXT-10a] the raw client sends /a/../b with its dot segments`
+- **EXT-10b** Percent-encoded dot segments: `Request.get("${origin}/a/%2e%2e/b")`. Sent as
+  `GET /a/%2e%2e/b HTTP/1.1`. Status: pending, tested with this test.
+  - `[EXT-10b] the raw client sends /a/%2e%2e/b unchanged`
+- **EXT-10c** A backslash in a path: ``Request.get(`${origin}/a\\b`)``, one backslash on the wire.
+  Sent as `GET /a\b HTTP/1.1`. Status: pending, tested with this test.
+  - `[EXT-10c] the raw client sends a backslash in a path unchanged`
+- **EXT-10d** A space in a path: `Request.get("${origin}/a b")`. Sent as `GET /a b HTTP/1.1`, and
+  the ledger's target is `/a b`. Status: pending, tested with this test.
+  - `[EXT-10d] the raw client sends a raw space in a path`
+- **EXT-10e** A non-ASCII path: `Request.get("${origin}/ä")`. The raw client writes a target as
+  UTF-8, and the ledger reads bytes as characters one for one, so the target is `/` and the two
+  characters U+00C3 and U+00A4, for the bytes `C3 A4`. Status: pending, tested with this test.
+  - `[EXT-10e] the raw client sends /ä as its raw UTF-8 bytes`
+- **EXT-10f** A tab in a path: ``Request.get(`${origin}/a\tb`)``. Sent with the tab, and the
+  ledger's target is `/a\tb`. Status: pending, tested with this test.
+  - `[EXT-10f] the raw client sends a tab in a path`
+- **EXT-10g** Path spellings no client changes: `/a//b`, `/a;v=1/b` and `/a%2Fb`, each through
+  `Request.get`. Each is sent unchanged. Status: pending, tested with this test.
+  - `[EXT-10g] the raw client sends ${path} unchanged`
+- **EXT-10h** A lower-case method: `Request.make("get", "${origin}/shape")`. Sent as
+  `get /shape HTTP/1.1`, and the ledger's method is `get`. Status: pending, tested with this test.
+  - `[EXT-10h] the raw client sends the method get in lower case`
+- **EXT-10i** The method `patch`, which `fetch` leaves in lower case:
+  `Request.make("patch", "${origin}/shape")`. Sent as `patch /shape HTTP/1.1`. Status: pending,
+  tested with this test.
+  - `[EXT-10i] the raw client sends the method patch in lower case`
+- **EXT-10j** `TRACE` and `CONNECT`: `Request.make("TRACE", "${origin}/shape")`, and the same with
+  `CONNECT`. Sent as `TRACE /shape HTTP/1.1` and `CONNECT /shape HTTP/1.1`. Status: pending, tested
+  with this test.
+  - `[EXT-10j] the raw client sends ${method}`
+- **EXT-10k** A method with a space: `Request.make("BAD METHOD", "${origin}/shape")`. Sent as
+  `BAD METHOD /shape HTTP/1.1`. A server splits that at the first space, so the ledger's method is
+  `BAD` and its target `METHOD /shape`; `head` shows what was sent. Status: pending, tested with
+  this test.
+  - `[EXT-10k] the raw client sends the method BAD METHOD, which the server splits at its space`
+- **EXT-10l** `OPTIONS` on a path of `*`: `Request.options("${origin}/*")`. Sent as
+  `OPTIONS /* HTTP/1.1`. Status: pending, tested with this test.
+  - `[EXT-10l] the raw client sends OPTIONS on the path /*`
+- **EXT-10m** A `host` header set by the request:
+  `Request.setHeader("host", "other.example:8080")` on `Request.get("${origin}/shape")`. `head` has
+  `host: other.example:8080` in place of `host: <host>`, and no other `host` line. Status: pending,
+  tested with this test.
+  - `[EXT-10m] the raw client sends the host header the request set`
+- **EXT-10n** An empty header value: `Request.setHeader("x-empty", "")`. `head` has `x-empty: ` as a
+  line, and the ledger's lines hold `["x-empty", ""]`. Status: pending, tested with this test.
+  - `[EXT-10n] the raw client sends an empty header value`
+- **EXT-10o** A Latin-1 header value: `Request.setHeader("x-name", "Müller")`. The raw client
+  writes a header line as Latin-1, so `ü` is the single byte `0xFC`, and the ledger's value reads
+  `Müller`.
+  Status: pending, tested with this test.
+  - `[EXT-10o] the raw client sends a Latin-1 header value as Latin-1 bytes`
+- **EXT-10p** A header value containing CR and LF: `Request.setHeader("x-name", "a\r\nx-added: b")`.
+  The library passes it on and the raw client refuses nothing, so it becomes two header lines,
+  `x-name: a` and `x-added: b`. This is why a provider that writes bytes itself must refuse CR and
+  LF: the library will not. Status: pending, tested with this test.
+  - `[EXT-10p] a header value with CR and LF becomes two header lines through the raw client`
+- **EXT-10q** A path containing CR and LF: `Request.get("${origin}/a\r\nb")`. It breaks the request
+  line: `head` starts `GET /a`, then `b HTTP/1.1`, then `host: <host>`. The ledger's method is
+  `GET`, its target `/a`, and its first line `["b HTTP/1.1", ""]`. Status: pending, tested with
+  this test.
+  - `[EXT-10q] a path with CR and LF breaks the request line through the raw client`
+- **EXT-10r** A URL with user info: `Request.get("http://user:pw@<host>/shape")`. The URL does not
+  start with the origin, so it goes on the request line whole, as an absolute-form target:
+  `GET http://user:pw@<host>/shape HTTP/1.1`, with `host: <host>` as usual. Status: pending, tested
+  with this test.
+  - `[EXT-10r] the raw client sends a URL with user info whole`
+- **EXT-10s** A DELETE with a body: `Request.del("${origin}/shape")` with `Request.body(Body.text)`
+  and the input `{ body: "gone" }`. `head` is `DELETE /shape HTTP/1.1`, `host: <host>`,
+  `content-type: text/plain`, `content-length: 4`, `accept: text/plain`, and the ledger's body is
+  `gone`. Status: pending, tested with this test.
+  - `[EXT-10s] the raw client sends a DELETE with its body`
+- **EXT-10t** A bare `*`, with no URL at all: `Request.options("*")`. `HttpClient.make` would fail
+  on it, but the raw client needs no valid URL. Sent as `OPTIONS * HTTP/1.1`. Status: pending,
+  tested with this test.
+  - `[EXT-10t] the raw client sends OPTIONS *`
+- **EXT-10u** A URL no parser accepts: `Request.get("http://[bad/x")`. Sent whole, as
+  `GET http://[bad/x HTTP/1.1`. Status: pending, tested with this test.
+  - `[EXT-10u] the raw client sends an unparseable URL whole`
+- **EXT-10v** Opaque query text, the route the design documents: `Request.get("${origin}/shape")`
+  with `Request.mapEffect` appending the text to the native request's URL through
+  `HttpClientRequest.setUrl`, for each of `?a=1;b=2`, `?a=1&&b=2`, a bare `?`, `?a=%2f` and
+  `?q=a|b[1]{x}`. Each arrives unchanged. Status: pending, tested with this test.
+  - `[EXT-10v] the raw client sends the opaque query ${query} unchanged`
+- **EXT-11a** Dot segments through `fetch`: the target is `/b`. Status: limit.
+  - `[EXT-11a] fetch resolves /a/../b to /b after the client received it as written`
+- **EXT-11b** Percent-encoded dot segments through `fetch`: the target is `/b`. Status: limit.
+  - `[EXT-11b] fetch resolves /a/%2e%2e/b to /b after the client received it as written`
+- **EXT-11c** A backslash through `fetch`: the target is `/a/b`. Status: limit.
+  - `[EXT-11c] fetch turns a backslash in a path into a slash after the client received it as written`
+- **EXT-11d** A space through `fetch`: the target is `/a%20b`. Status: limit.
+  - `[EXT-11d] fetch percent-encodes a space in a path after the client received it as written`
+- **EXT-11e** A non-ASCII path through `fetch`: the target is `/%C3%A4`. Status: limit.
+  - `[EXT-11e] fetch percent-encodes /ä after the client received it as written`
+- **EXT-11f** A tab through `fetch`: the tab is removed, and the target is `/ab`. Status: limit.
+  - `[EXT-11f] fetch removes a tab from a path after the client received it as written`
+- **EXT-11g** Path spellings no client changes, through `fetch`: `/a//b`, `/a;v=1/b` and `/a%2Fb`
+  each arrive unchanged. Status: pending, tested with this test.
+  - `[EXT-11g] fetch sends ${path} unchanged`
+- **EXT-11h** A lower-case `get` through `fetch`: the client received `get`, and the Fetch standard
+  normalizes it, so the ledger's method is `GET`. Status: limit.
+  - `[EXT-11h] fetch normalizes the method get to GET after the client received it as written`
+- **EXT-11i** The method `patch` through `fetch`: the Fetch standard normalizes only `DELETE`,
+  `GET`, `HEAD`, `OPTIONS`, `POST` and `PUT`, so the ledger's method is `patch`. Status: pending,
+  tested with this test.
+  - `[EXT-11i] fetch sends the method patch in lower case`
+- **EXT-11j** `TRACE` and `CONNECT` through `fetch`: refused, as `HttpClientError` with a
+  `TransportError` reason. The client received the request, and the ledger is empty. Status: limit.
+  - `[EXT-11j] fetch refuses ${method} as a transport error after the client received it`
+- **EXT-11k** A method with a space through `fetch`: refused the same way. Status: limit.
+  - `[EXT-11k] fetch refuses the method BAD METHOD as a transport error after the client received it`
+- **EXT-11l** `OPTIONS` on a path of `*` through `fetch`: the target is `/*`. Status: pending,
+  tested with this test.
+  - `[EXT-11l] fetch sends OPTIONS on the path /*`
+- **EXT-11m** A `host` header through `fetch`: ignored without an error, in both lanes. The ledger's
+  `Host` value is `<host>`. Status: limit.
+  - `[EXT-11m] fetch ignores the host header the request set`
+- **EXT-11n** An empty header value through `fetch`: sent, and the ledger's lines hold the name with
+  an empty value. Status: pending, tested with this test.
+  - `[EXT-11n] fetch sends an empty header value`
+- **EXT-11o** A Latin-1 header value through `fetch`: sent, and the ledger's value reads `Müller`.
+  Status: pending, tested with this test.
+  - `[EXT-11o] fetch sends a Latin-1 header value as Latin-1 bytes`
+- **EXT-11p** A header value containing CR and LF through `fetch`: refused, as `HttpClientError`
+  with a `TransportError` reason. The client received the request, and the ledger is empty.
+  Status: limit.
+  - `[EXT-11p] fetch refuses a header value with CR and LF as a transport error after the client received it`
+- **EXT-11q** A path containing CR and LF through `fetch`: the URL parser removes both, and the
+  target is `/ab`. Status: limit.
+  - `[EXT-11q] fetch removes CR and LF from a path after the client received it as written`
+- **EXT-11r** A URL with user info through `fetch`: refused, as `HttpClientError` with a
+  `TransportError` reason. The client received the request, and the ledger is empty. Status: limit.
+  - `[EXT-11r] fetch refuses a URL with user info as a transport error after the client received it`
+- **EXT-11s** A DELETE with a body through `fetch`: sent, and the ledger's body is `gone`. Status:
+  pending, tested with this test.
+  - `[EXT-11s] fetch sends a DELETE with its body`
+- **EXT-11t** A bare `*` through `fetch`: the lanes differ, because Effect resolves a relative URL
+  against the page. In Node there is no page, so it fails as `HttpClientError` with an
+  `InvalidUrlError` reason. In Chromium `*` becomes the page's own `/*`, so the request goes to the
+  page's server and the answer is an `UnexpectedResponse`; its status is the test server's own, 204
+  when measured, so a test does not pin it. The ledger is empty in both. Status: limit.
+  - `[EXT-11t] OPTIONS * never reaches the backend through fetch: Node refuses the URL, and Chromium sends it to the page's own origin`
+- **EXT-11u** A URL no parser accepts through `fetch`: fails as `HttpClientError` with an
+  `InvalidUrlError` reason, and the ledger is empty. Status: limit.
+  - `[EXT-11u] fetch refuses an unparseable URL as an invalid URL after the client received it`
+- **EXT-11v** Opaque query text through `fetch`: each spelling arrives unchanged. Status: pending,
+  tested with this test.
+  - `[EXT-11v] fetch sends the opaque query ${query} unchanged`
