@@ -11,6 +11,9 @@
 - Move to Effect 4.1.2 and Node.js 24.22.2, a Node.js security release, and refresh the development
   tools. Support Node.js 26, test it in CI and release qualification, and add monthly grouped
   dependency updates ([#106](https://github.com/viell-dev/slop-effect-schema-http/issues/106)).
+- **Breaking:** let any method carry a body. `Request.compile` no longer refuses a body on GET or
+  HEAD, so `fetch` users get a transport failure from the client where they used to get
+  `Request.InvalidRequest` ([#96](https://github.com/viell-dev/slop-effect-schema-http/issues/96)).
 
 ## 0.1.0 — 2026-11-04
 

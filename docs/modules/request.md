@@ -159,10 +159,12 @@ The library renders URLs through [UrlEncoding](./url-encoding.md). Its defaults 
 order, repetition, bare keys, and empty values. The HTTP provider can still normalize URLs; see [URL
 processing](./url-encoding.md#advanced-url-processing).
 
-Unrenderable URLs and unsupported body/method combinations fail with `Request.InvalidRequest`. GET
-and HEAD require the encoder to produce `HttpBody.empty`, as `Body.empty` does; even a zero-length
-text or byte body is rejected. Schema encoding errors remain distinct from `InvalidRequest` and
-occur before dispatch.
+Unrenderable URLs fail with `Request.InvalidRequest`. Schema encoding errors remain distinct from
+`InvalidRequest` and occur before dispatch.
+
+Any method can carry a body, including GET and HEAD. The library passes the request to the client
+without a check of its own. `fetch` refuses a body on GET or HEAD, which surfaces as a transport
+failure from the client. A service that needs one needs a provider that can send it.
 
 ### Lower-level preparation
 

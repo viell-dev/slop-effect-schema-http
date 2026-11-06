@@ -14,8 +14,8 @@ import * as UrlEncoding from "./UrlEncoding.js";
  * Request preparation failed before dispatch.
  *
  * @remarks
- * Covers computed-field failures, URL-rendering exceptions, and a GET/HEAD body other than
- * `HttpBody.empty`. Schema encoding failures remain separate `SchemaError` values.
+ * Covers computed-field failures and URL-rendering exceptions. Schema encoding failures remain
+ * separate `SchemaError` values.
  */
 export class InvalidRequest extends Data.TaggedError("InvalidRequest")<{
   readonly message: string;
@@ -170,7 +170,7 @@ export const patch = (url: string): Request<unknown> => make("PATCH", url);
  */
 export const del = (url: string): Request<unknown> => make("DELETE", url);
 /**
- * Describe a HEAD request. Its outgoing body must remain `HttpBody.empty`.
+ * Describe a HEAD request. A {@link body} is passed on as for any method; the client may refuse it.
  */
 export const head = (url: string): Request<unknown> => make("HEAD", url);
 /**
@@ -507,6 +507,9 @@ export const path = <S extends Schema.Constraint>(
  * @remarks
  * The body is encoded once per operation evaluation. Its encoder determines `Content-Type` and
  * `Content-Length`; multipart metadata is supplied by the transport.
+ *
+ * Any method can carry a body, and the library adds no check of its own. A client can refuse the
+ * request: `fetch` does so for GET and HEAD, which surfaces as a transport failure.
  */
 export const body =
   <A, E2, R2>(codec: Body.Encoder<A, E2, R2>) =>
@@ -671,15 +674,6 @@ export const compile = Effect.fnUntraced(function* <
       }),
   });
   const draft = yield* self.prepare(input, initial);
-  const { method } = draft.request;
-  if (
-    (method === "GET" || method === "HEAD") &&
-    draft.request.body._tag !== "Empty"
-  ) {
-    return yield* new InvalidRequest({
-      message: `${method} cannot carry a request body`,
-    });
-  }
   return yield* Effect.try({
     try: () => finalize(draft, self.declaration.baseUrl, encoding),
     catch: (cause) =>

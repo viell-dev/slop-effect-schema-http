@@ -358,17 +358,20 @@ describe("Operation failures", () => {
     }),
   );
 
-  it.effect("rejects a GET body as InvalidRequest before dispatch", () =>
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/96
+  it.effect("passes a GET body to the client", () =>
     Effect.gen(function* () {
-      const server = synthetic(() => json(200, {}));
-      const exit = yield* Operation.make(
+      const server = synthetic(() => text(200, "stored"));
+      const stored = yield* Operation.make(
         Request.get("https://soap.test/download").pipe(Request.body(Body.text)),
-        Response.status(200, Body.bytes),
+        Response.status(200, Body.text),
       )
         .execute({ body: "<Envelope/>" })
-        .pipe(Effect.provide(server.layer), Effect.exit);
-      expect(failureOf(exit)).toBeInstanceOf(Request.InvalidRequest);
-      expect(server.exchanges).toHaveLength(0);
+        .pipe(Effect.provide(server.layer));
+      expect(stored).toBe("stored");
+      expect(server.exchanges).toHaveLength(1);
+      expect(server.exchanges[0]?.request.method).toBe("GET");
+      expect(bodyText(server.exchanges[0]!.request)).toBe("<Envelope/>");
     }),
   );
 
