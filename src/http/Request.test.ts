@@ -117,7 +117,7 @@ describe("Request.make", () => {
     }),
   );
 
-  it.effect("re-encodes query values with the URL encoding policy", () =>
+  it.effect("keeps the percent escapes of a constructor query", () =>
     Effect.gen(function* () {
       expect(
         yield* urlOf(
@@ -128,42 +128,40 @@ describe("Request.make", () => {
     }),
   );
 
-  // A declared URL's query is shorthand for form-decoded fields, rendered by UrlEncoding.query.
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/14
-  it.effect("reads '+' in a declared query as a space", () =>
+  // A constructor query stays as written; form decoding only names its entries.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/102
+  it.effect("keeps '+' in a constructor query", () =>
     Effect.gen(function* () {
       expect(
         yield* urlOf(Request.get("https://api.test/s?q=a+b"), undefined),
-      ).toBe("https://api.test/s?q=a%20b");
+      ).toBe("https://api.test/s?q=a+b");
     }),
   );
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/14
-  it.effect("drops empty segments of a declared query", () =>
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/102
+  it.effect("keeps empty segments of a constructor query", () =>
     Effect.gen(function* () {
       expect(
         yield* urlOf(Request.get("https://api.test/s?&a=1&&b"), undefined),
-      ).toBe("https://api.test/s?a=1&b");
+      ).toBe("https://api.test/s?&a=1&&b");
     }),
   );
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/14
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/102
   it.effect.each([
-    ["a=1;b=2", "a=1%3Bb%3D2"],
-    ["a=b=c", "a=b%3Dc"],
-    ["a=%41", "a=A"],
-    ["a=%7e", "a=~"],
-    ["a=%zz", "a=%25zz"],
-    ["a=x%2By", "a=x%2By"],
-    ["%71=a+b", "q=a%20b"],
-  ] as const)(
-    "form-decodes and renders declared query case %$",
-    ([input, output]) =>
-      Effect.gen(function* () {
-        expect(
-          yield* urlOf(Request.get(`https://api.test/s?${input}`), undefined),
-        ).toBe(`https://api.test/s?${output}`);
-      }),
+    "a=1;b=2",
+    "a=b=c",
+    "a=%41",
+    "a=%7e",
+    "a=%zz",
+    "a=x%2By",
+    "%71=a+b",
+  ])("keeps constructor query text, case %s", (query) =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(Request.get(`https://api.test/s?${query}`), undefined),
+      ).toBe(`https://api.test/s?${query}`);
+    }),
   );
 
   it.effect("edits form-decoded query keys with the raw combinators", () =>
@@ -180,22 +178,36 @@ describe("Request.make", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/66
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/102
   it.effect.each([
-    ["?key=value", "%3Fkey=value"],
-    ["a=1&?key=value", "a=1&%3Fkey=value"],
-    ["??key", "%3F%3Fkey"],
-    ["a=1&?", "a=1&%3F"],
-    ["?key=", "%3Fkey="],
-    ["%3Fkey=value", "%3Fkey=value"],
-    ["a=?value", "a=%3Fvalue"],
-  ] as const)(
-    "preserves question-mark data in query case %$",
-    ([input, output]) =>
-      Effect.gen(function* () {
-        expect(
-          yield* urlOf(Request.get(`https://api.test/s?${input}`), undefined),
-        ).toBe(`https://api.test/s?${output}`);
-      }),
+    "?key=value",
+    "a=1&?key=value",
+    "??key",
+    "a=1&?",
+    "?key=",
+    "%3Fkey=value",
+    "a=?value",
+  ])("preserves question-mark data in query case %s", (query) =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(Request.get(`https://api.test/s?${query}`), undefined),
+      ).toBe(`https://api.test/s?${query}`);
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/66
+  it.effect.each([
+    ["?key=value", "?key", "value"],
+    ["??key", "??key", null],
+    ["%3Fkey=value", "?key", "value"],
+  ] as const)("names the question-mark entry in %s", ([query, name, value]) =>
+    Effect.gen(function* () {
+      const request = Request.get(`https://api.test/s?${query}&b=1`);
+      expect(request.declaration.query[0]?.slice(0, 2)).toEqual([name, value]);
+      expect(
+        yield* urlOf(request.pipe(Request.removeQuery(name)), undefined),
+      ).toBe("https://api.test/s?b=1");
+    }),
   );
 
   it.effect("keeps opaque query text supplied by native URL preparation", () =>
@@ -258,6 +270,408 @@ describe("Request.baseUrl", () => {
       ).toBe("https://legacy.test/cgi-bin/report");
     }),
   );
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/102
+describe("constructor query text", () => {
+  /** A policy that records each call and marks the text it renders. */
+  const recording = () => {
+    const calls: Array<UrlEncoding.Query> = [];
+    return {
+      calls,
+      layer: UrlEncoding.layer({
+        ...UrlEncoding.defaults,
+        query: (entries) => {
+          calls.push(entries);
+          return entries
+            .map(([key, value]) => `custom-${key}=${value}`)
+            .join("&");
+        },
+      }),
+    };
+  };
+
+  it.effect.each([
+    "/x?a=1;b=2",
+    "/x?a=1&&b=2",
+    "/x?",
+    "/x?q=a+b",
+    "/x?a=%41&wsdl",
+  ])("passes on %s as written", (url) =>
+    Effect.gen(function* () {
+      expect(yield* urlOf(Request.get(url), undefined)).toBe(url);
+    }),
+  );
+
+  it.effect("re-renders only the entry an edit touched", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?a=%41&b=1;2").pipe(
+            Request.setQuery("a", "new value"),
+          ),
+          undefined,
+        ),
+      ).toBe("/x?a=new%20value&b=1;2");
+    }),
+  );
+
+  it.effect("lets an added field replace a lone '?'", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?").pipe(Request.setQuery("b", "1")),
+          undefined,
+        ),
+      ).toBe("/x?b=1");
+    }),
+  );
+
+  it.effect("keeps a written empty segment when a field is added", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?a=1&").pipe(Request.setQuery("b", "1")),
+          undefined,
+        ),
+      ).toBe("/x?a=1&&b=1");
+    }),
+  );
+
+  it.effect.each(["/x?&", "/x?a=1&", "/x?&a=1", "/x?&&", "/x?=", "/x?=&="])(
+    "keeps the empty parts of %s",
+    (url) =>
+      Effect.gen(function* () {
+        expect(yield* urlOf(Request.get(url), undefined)).toBe(url);
+      }),
+  );
+
+  it.effect("keeps text the default policy would have escaped", () =>
+    Effect.gen(function* () {
+      const url = "/x?q=a b&n=\u00e4&s=" + loneSurrogate;
+      expect(yield* urlOf(Request.get(url), undefined)).toBe(url);
+    }),
+  );
+
+  it.effect("keeps a '?' after the first as text", () =>
+    Effect.gen(function* () {
+      expect(yield* urlOf(Request.get("/x?a?b=c?d"), undefined)).toBe(
+        "/x?a?b=c?d",
+      );
+    }),
+  );
+
+  it.effect("adds entries after the written text, in order", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?a=%41&a=b+c").pipe(
+            Request.appendQuery("a", "d e"),
+            Request.appendQuery("f", null),
+          ),
+          undefined,
+        ),
+      ).toBe("/x?a=%41&a=b+c&a=d%20e&f");
+    }),
+  );
+
+  it.effect("replaces every written entry of a name at the first", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?a=%41&b=c+d&a=e;f").pipe(Request.setQuery("a", "g")),
+          undefined,
+        ),
+      ).toBe("/x?a=g&b=c+d");
+    }),
+  );
+
+  it.effect("addresses an entry by its decoded name and value", () =>
+    Effect.gen(function* () {
+      const request = Request.get("/x?%71=a+b&q=c&r=a%20b");
+      expect(
+        yield* urlOf(request.pipe(Request.removeQuery("q", "a b")), undefined),
+      ).toBe("/x?q=c&r=a%20b");
+      expect(
+        yield* urlOf(request.pipe(Request.removeQuery("q")), undefined),
+      ).toBe("/x?r=a%20b");
+      expect(
+        yield* urlOf(request.pipe(Request.setQuery("r", "a b")), undefined),
+      ).toBe("/x?%71=a+b&q=c&r=a%20b");
+    }),
+  );
+
+  it.effect("removes an entry and keeps the text around it", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?a=%41&b=2;3&c=%43").pipe(Request.removeQuery("b")),
+          undefined,
+        ),
+      ).toBe("/x?a=%41&c=%43");
+    }),
+  );
+
+  it.effect("removes every written entry, leaving no '?'", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?a=%41").pipe(Request.removeQuery("a")),
+          undefined,
+        ),
+      ).toBe("/x");
+    }),
+  );
+
+  it.effect("names an empty segment with the empty string", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?a=1&&b=2").pipe(Request.removeQuery("")),
+          undefined,
+        ),
+      ).toBe("/x?a=1&b=2");
+    }),
+  );
+
+  it.effect("evaluates a computed value that replaces written text", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?a=%41&b=c+d").pipe(
+            Request.setQuery("a", () => "e f"),
+          ),
+          undefined,
+        ),
+      ).toBe("/x?a=e%20f&b=c+d");
+    }),
+  );
+
+  it.effect("omits an edited entry whose computed value is undefined", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?a=%41&b=c+d").pipe(
+            Request.setQuery("a", () => undefined),
+          ),
+          undefined,
+        ),
+      ).toBe("/x?b=c+d");
+    }),
+  );
+
+  it.effect("leaves the request it was derived from unchanged", () =>
+    Effect.gen(function* () {
+      const original = Request.get("/x?a=%41");
+      const variant = original.pipe(Request.setQuery("a", "b"));
+      expect(yield* urlOf(variant, undefined)).toBe("/x?a=b");
+      expect(yield* urlOf(original, undefined)).toBe("/x?a=%41");
+      expect(yield* urlOf(original, undefined)).toBe("/x?a=%41");
+    }),
+  );
+
+  it.effect("survives a path binding and a base URL", () =>
+    Effect.gen(function* () {
+      const rendered = (url: string) =>
+        urlOf(
+          Request.get(url).pipe(
+            Request.baseUrl("https://x.test/v1"),
+            Request.path(Schema.String, (id) => `/${id}`),
+          ),
+          { path: "y" },
+        );
+      expect(yield* rendered("/x?a=1;b=2")).toBe("https://x.test/v1/y?a=1;b=2");
+      expect(yield* rendered("/x?")).toBe("https://x.test/v1/y?");
+    }),
+  );
+
+  it.effect("goes before a fragment", () =>
+    Effect.gen(function* () {
+      expect(yield* targetOf(Request.get("/x?a=1;b#top"), undefined)).toEqual({
+        url: "/x?a=1;b",
+        hash: "top",
+      });
+      expect(yield* targetOf(Request.get("/x?#top"), undefined)).toEqual({
+        url: "/x?",
+        hash: "top",
+      });
+      expect(yield* targetOf(Request.get("/x#a?b"), undefined)).toEqual({
+        url: "/x",
+        hash: "a?b",
+      });
+    }),
+  );
+
+  it.effect("adds no marker to a URL that already has a query", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?").pipe(
+            Request.path(Schema.String, (query) => `/y?${query}`),
+          ),
+          { path: "z=1" },
+        ),
+      ).toBe("/y?z=1");
+    }),
+  );
+
+  it.effect("appends an entry to a rendered URL with '&'", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?a=%41").pipe(
+            Request.path(Schema.String, (query) => `/y?${query}`),
+          ),
+          { path: "z=1" },
+        ),
+      ).toBe("/y?z=1&a=%41");
+    }),
+  );
+
+  it.effect("gives a query schema the group, including a lone '?'", () =>
+    Effect.gen(function* () {
+      const Optional = Schema.Struct({ q: Schema.optional(Schema.String) });
+      expect(
+        yield* urlOf(Request.get("/x?a=%41").pipe(Request.query(Optional)), {
+          query: {},
+        }),
+      ).toBe("/x");
+      expect(
+        yield* urlOf(Request.get("/x?").pipe(Request.query(Optional)), {
+          query: {},
+        }),
+      ).toBe("/x");
+    }),
+  );
+
+  it.effect("keeps text when a native edit touches another entry", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/x?a=%41&b=c+d").pipe(
+            Request.mapEffect((request) =>
+              Effect.succeed(
+                request.pipe(
+                  HttpClientRequest.appendUrlParam("e", "f g"),
+                  HttpClientRequest.setUrlParam("b", "h i"),
+                ),
+              ),
+            ),
+          ),
+          undefined,
+        ),
+      ).toBe("/x?a=%41&e=f%20g&b=h%20i");
+    }),
+  );
+
+  it.effect("shows a native step the decoded entries", () =>
+    Effect.gen(function* () {
+      const seen: Array<unknown> = [];
+      yield* compile(
+        Request.get("/x?a=b+c&d").pipe(
+          Request.mapEffect((request) => {
+            seen.push(request.urlParams.params);
+            return Effect.succeed(request);
+          }),
+        ),
+        undefined,
+      );
+      expect(seen).toEqual([
+        [
+          ["a", "b c"],
+          ["d", ""],
+        ],
+      ]);
+    }),
+  );
+
+  it.effect("gives a custom encoder only entries not kept as written", () =>
+    Effect.gen(function* () {
+      const policy = recording();
+      const url = yield* urlOf(
+        Request.get("/x?a=%41&b=c+d").pipe(
+          Request.setQuery("a", "e f"),
+          Request.appendQuery("g", null),
+        ),
+        undefined,
+      ).pipe(Effect.provide(policy.layer));
+      expect(url).toBe("/x?custom-a=e f&b=c+d&custom-g=null");
+      expect(policy.calls).toEqual([[["a", "e f"]], [["g", null]]]);
+    }),
+  );
+
+  it.effect("gives a custom encoder an unbroken run in one call", () =>
+    Effect.gen(function* () {
+      const policy = recording();
+      const url = yield* urlOf(
+        Request.get("/x?a=%41").pipe(
+          Request.appendQuery("b", "1"),
+          Request.appendQuery("c", "2"),
+        ),
+        undefined,
+      ).pipe(Effect.provide(policy.layer));
+      expect(url).toBe("/x?a=%41&custom-b=1&custom-c=2");
+      expect(policy.calls).toEqual([
+        [
+          ["b", "1"],
+          ["c", "2"],
+        ],
+      ]);
+    }),
+  );
+
+  it.effect("does not call a custom encoder for written text", () =>
+    Effect.gen(function* () {
+      const policy = recording();
+      const url = yield* urlOf(Request.get("/x?a=%41&b"), undefined).pipe(
+        Effect.provide(policy.layer),
+      );
+      expect(url).toBe("/x?a=%41&b");
+      expect(policy.calls).toEqual([]);
+    }),
+  );
+
+  it.effect("still asks a custom encoder when there are no entries", () =>
+    Effect.gen(function* () {
+      const url = yield* urlOf(Request.get("/x"), undefined).pipe(
+        Effect.provide(
+          UrlEncoding.layer({
+            ...UrlEncoding.defaults,
+            query: (entries) =>
+              UrlEncoding.defaults.query([...entries, ["key", "abc"]]),
+          }),
+        ),
+      );
+      expect(url).toBe("/x?key=abc");
+    }),
+  );
+
+  it.effect("leaves no empty part for an encoder that renders nothing", () =>
+    Effect.gen(function* () {
+      const url = yield* urlOf(
+        Request.get("/x?a=%41").pipe(Request.appendQuery("b", "1")),
+        undefined,
+      ).pipe(
+        Effect.provide(
+          UrlEncoding.layer({ ...UrlEncoding.defaults, query: () => "" }),
+        ),
+      );
+      expect(url).toBe("/x?a=%41");
+    }),
+  );
+
+  it("records the marker and the written text in its types", () => {
+    expectTypeOf(
+      Request.get("/").declaration.emptyQuery,
+    ).toEqualTypeOf<boolean>();
+    expectTypeOf<Request.Draft["queryText"]>().toEqualTypeOf<
+      ReadonlyMap<Request.UrlParam, string>
+    >();
+    expect(Request.get("/x?").declaration.emptyQuery).toBe(true);
+    expect(Request.get("/x?#top").declaration.emptyQuery).toBe(true);
+    expect(Request.get("/x").declaration.emptyQuery).toBe(false);
+    expect(Request.get("/x?a").declaration.emptyQuery).toBe(false);
+  });
 });
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/83

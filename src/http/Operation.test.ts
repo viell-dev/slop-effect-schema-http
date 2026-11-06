@@ -219,6 +219,39 @@ describe("Operation.make", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/102
+  it.effect("gives a client constructor query text as written", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(204));
+      yield* Operation.make(
+        Request.get("https://api.test/x?a=1;b=2&&q=a+b&c=%41"),
+        Response.status(204, Body.empty),
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer));
+      const exchange = server.exchanges[0]!;
+      expect(exchange.url).toBe("https://api.test/x?a=1;b=2&&q=a+b&c=%41");
+      expect(exchange.href).toBe("https://api.test/x?a=1;b=2&&q=a+b&c=%41");
+    }),
+  );
+
+  // Text passes to the client as written; what the client then does with it is its own affair.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/102
+  it.effect("leaves normalizing written text to the client", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(204));
+      yield* Operation.make(
+        Request.get("https://api.test/x?q=a b"),
+        Response.status(204, Body.empty),
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer));
+      const exchange = server.exchanges[0]!;
+      expect(exchange.url).toBe("https://api.test/x?q=a b");
+      expect(exchange.href).toBe("https://api.test/x?q=a%20b");
+    }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/83
   it.effect("gives a client the query before the fragment", () =>
     Effect.gen(function* () {

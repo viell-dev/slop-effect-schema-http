@@ -159,18 +159,34 @@ const service = <I, E, R, H extends boolean>(
 const users = service(Request.get("users"));
 ```
 
-A query string in a URL passed to `Request.make` or a method helper such as `Request.get` becomes
-raw query declarations through form decoding. Parsing splits on `&`, drops empty segments, reads `+`
-as a space, and decodes percent escapes. It keeps a bare key (`?wsdl`) distinct from an empty value
-(`?wsdl=`). Semicolons and additional equals signs inside a value are data, so `?a=1;b=2` renders as
-`?a=1%3Bb%3D2` under the default policy. Every decoded entry is rendered through `UrlEncoding.query`
-during materialization: `?q=a+b` becomes `?q=a%20b`, and `?a=%41` becomes `?a=A`.
+A query string in a URL passed to `Request.make` or a method helper such as `Request.get` is passed
+to the client as written until something edits that entry:
 
-This treats a declared query as structured fields that `setQuery`, `removeQuery`, and query schemas
-can edit uniformly. A custom `UrlEncoding.query` receives the decoded entries; the original spelling
-is already gone. To supply opaque query text, start with a request without query declarations and
-set the native URL text through `Request.mapEffect`. Base-URL joining still runs afterwards, and
-client or provider URL processing still applies.
+| Written                                            | The client receives      |
+| -------------------------------------------------- | ------------------------ |
+| `/x?a=1;b=2`                                       | `/x?a=1;b=2`             |
+| `/x?a=1&&b=2`                                      | `/x?a=1&&b=2`            |
+| `/x?`                                              | `/x?`                    |
+| `/x?q=a+b`                                         | `/x?q=a+b`               |
+| `/x?a=%41&wsdl`                                    | `/x?a=%41&wsdl`          |
+| `/x?a=%41&b=1;2` with `setQuery("a", "new value")` | `/x?a=new%20value&b=1;2` |
+| `/x?` with `setQuery("b", "1")`                    | `/x?b=1`                 |
+| `/x?a=1&` with `setQuery("b", "1")`                | `/x?a=1&&b=1`            |
+
+Each segment between `&` signs is also an entry with a form-decoded name and value, so `setQuery`,
+`appendQuery` and `removeQuery` can edit one entry and leave the others alone. Decoding reads `+` as
+a space and decodes percent escapes. It keeps a bare key (`?wsdl`) distinct from an empty value
+(`?wsdl=`), and semicolons and further equals signs are data. It decides what an entry is called,
+not what the client receives. A written empty segment is text like any other, so `&&` survives an
+addition; its decoded name is the empty string. A lone `?` holds no entries and only records that
+the marker was written, so an added field reads `/x?b=1`.
+
+A value from `setQuery`, `appendQuery` or a schema goes through `UrlEncoding.query`, because it is
+data and not written URL text. A custom `UrlEncoding.query` receives only the entries that are not
+kept as written, in order. Written text standing between them splits them into separate calls, so
+the query keeps its order. Written text is what the author wrote, so the library neither re-encodes
+nor validates it. A query schema still replaces the constructor's query, as
+[above](#fields-and-schemas) describes.
 
 A URL that cannot be rendered or encoded fails with `Request.InvalidRequest`.
 

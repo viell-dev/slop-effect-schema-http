@@ -54,6 +54,28 @@ describe("Fields.set", () => {
   });
 });
 
+describe("written text", () => {
+  const written: Fields.Fields<string | null> = [
+    ["a", "b c", "a=b+c"],
+    ["d", "e", "d=%65"],
+  ];
+
+  it("falls away from an entry that set replaces", () => {
+    expect(Fields.set(written, "a", "new")).toEqual([
+      ["a", "new"],
+      ["d", "e", "d=%65"],
+    ]);
+  });
+
+  it("stays on entries that append and remove leave alone", () => {
+    expect(Fields.append(written, "a", "new")).toEqual([
+      ...written,
+      ["a", "new"],
+    ]);
+    expect(Fields.remove(written, "a")).toEqual([["d", "e", "d=%65"]]);
+  });
+});
+
 describe("Fields.append", () => {
   it("keeps existing entries and adds a repeated name at the end", () => {
     expect(

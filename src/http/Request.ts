@@ -49,6 +49,8 @@ export interface Declaration<
   readonly baseUrl: string;
   readonly headers: Fields.Fields;
   readonly query: Fields.Fields<string | null>;
+  /** The constructor wrote a `?` with nothing after it, which holds no entries. */
+  readonly emptyQuery: boolean;
   /** Lowercase header names the request removed, so the library adds no automatic value. */
   readonly removedHeaders: ReadonlySet<string>;
   /** Whether a schema owns the header group; raw header setters are then unavailable. */
@@ -61,7 +63,8 @@ export interface Declaration<
  * One entry in Effect's native query collection.
  *
  * @remarks
- * Drafts use entry identity to distinguish bare keys from empty values.
+ * Drafts use entry identity to distinguish bare keys from empty values, and to keep the text a
+ * constructor entry was written with.
  */
 export type UrlParam = UrlParams.UrlParams["params"][number];
 
@@ -79,6 +82,8 @@ export interface Draft {
   readonly headerLines: Transport.Lines;
   /** Native query entries that render as bare keys. Replacing an entry loses its identity marker. */
   readonly bareKeys: ReadonlySet<UrlParam>;
+  /** Native query entries that keep their written text. Replacing an entry loses that text. */
+  readonly queryText: ReadonlyMap<UrlParam, string>;
   /** Lowercase header names the request removed, so the library adds no automatic value. */
   readonly removedHeaders: ReadonlySet<string>;
 }
@@ -117,6 +122,13 @@ const splitFragment = (url: string): readonly [string, string | undefined] => {
     : [url.slice(0, position), url.slice(position + 1)];
 };
 
+/** Read one written query segment as an entry that keeps its text. */
+const readSegment = (segment: string): Fields.Field<string | null> => {
+  // URLSearchParams strips one leading query marker; a marker in the key is data.
+  const [[key, value] = ["", ""]] = new URLSearchParams(`?${segment}`);
+  return [key, segment.includes("=") ? value : null, segment];
+};
+
 /**
  * Describe a request with a method and URL, without sending it.
  *
@@ -125,9 +137,10 @@ const splitFragment = (url: string): readonly [string, string | undefined] => {
  * with {@link baseUrl}; {@link path} can supply the complete path from typed input.
  * Custom method strings pass through unchanged.
  *
- * A constructor query is parsed as form data: `+` becomes a space, percent escapes are decoded,
- * and empty `&` segments are dropped. Bare keys remain distinct from empty values. Compilation
- * renders these entries through `UrlEncoding.query`.
+ * A constructor query is passed to the client as written until something edits that entry, so
+ * `?a=1;b=2`, `?q=a+b` and `?a=%41` keep their spelling, as do empty `&` segments and a lone `?`.
+ * Each entry also has a form-decoded name and value, which {@link setQuery} and {@link removeQuery}
+ * compare against. An entry that is edited, or added, is rendered through `UrlEncoding.query`.
  *
  * A fragment stays on the request, exactly as written, in the native request's `hash` field. It
  * survives {@link path} and query edits, and wins over a fragment in path output or a base URL.
@@ -136,14 +149,7 @@ const splitFragment = (url: string): readonly [string, string | undefined] => {
 export const make = (method: string, url: string): Request<unknown> => {
   const [withoutHash, hash] = splitFragment(url);
   const start = withoutHash.indexOf("?");
-  const query: Array<readonly [string, string | null]> = [];
-  if (start >= 0) {
-    for (const segment of withoutHash.slice(start + 1).split("&")) {
-      // URLSearchParams strips one leading query marker; a marker in the key is data.
-      for (const [key, value] of new URLSearchParams(`?${segment}`))
-        query.push([key, segment.includes("=") ? value : null]);
-    }
-  }
+  const written = start < 0 ? "" : withoutHash.slice(start + 1);
   return construct(
     {
       method,
@@ -151,7 +157,8 @@ export const make = (method: string, url: string): Request<unknown> => {
       hash,
       baseUrl: "",
       headers: [],
-      query,
+      query: written === "" ? [] : written.split("&").map(readSegment),
+      emptyQuery: start >= 0 && written === "",
       removedHeaders: new Set(),
       headersBound: false,
       queryBound: false,
@@ -331,14 +338,23 @@ export const appendQuery = (name: string, value: FieldValue<string | null>) =>
 export const removeQuery = (name: string, value?: string | null) =>
   editQuery((fields) => Fields.remove(fields, name, value));
 
-const replaceQuery = (draft: Draft, entries: UrlEncoding.Query): Draft => {
+const replaceQuery = (
+  draft: Draft,
+  entries: ReadonlyArray<
+    readonly [string, string | null, written?: string | undefined]
+  >,
+): Draft => {
   const added = entries.map(([key, value]): UrlParam => [key, value ?? ""]);
   const keys = new Set(added.map(([key]) => key));
   const bareKeys = new Set(
     Array.from(draft.bareKeys).filter(([key]) => !keys.has(key)),
   );
-  entries.forEach(([, value], index) => {
+  const queryText = new Map(
+    Array.from(draft.queryText).filter(([[key]]) => !keys.has(key)),
+  );
+  entries.forEach(([, value, written], index) => {
     if (value === null) bareKeys.add(added[index]!);
+    if (written !== undefined) queryText.set(added[index]!, written);
   });
   const { request } = draft;
   const params = [
@@ -356,6 +372,7 @@ const replaceQuery = (draft: Draft, entries: UrlEncoding.Query): Draft => {
       request.body,
     ),
     bareKeys,
+    queryText,
   };
 };
 
@@ -473,7 +490,7 @@ export const query = <
     true
   > =>
     construct(
-      { ...self.declaration, query: [], queryBound: true },
+      { ...self.declaration, query: [], emptyQuery: false, queryBound: true },
       Effect.fnUntraced(function* (
         input: I & { readonly query: S["Type"] },
         draft: Draft,
@@ -663,34 +680,67 @@ const initialDraft = (declaration: Declaration): Draft => {
       ),
       headerLines,
       bareKeys: new Set(),
+      queryText: new Map(),
       removedHeaders: declaration.removedHeaders,
     },
-    Fields.resolve(declaration.query),
+    declaration.query.flatMap((field) =>
+      Fields.resolve([field]).map(
+        ([key, value]) => [key, value, field[2]] as const,
+      ),
+    ),
   );
+};
+
+/**
+ * Render query entries in order. Written text stays as it is, and each run of entries between it
+ * goes through the encoder. With no entries at all, the encoder still has its say.
+ */
+const renderQuery = (draft: Draft, encoding: UrlEncoding.Service): string => {
+  const parts: Array<string> = [];
+  let run: Array<readonly [string, string | null]> = [];
+  const endRun = () => {
+    const rendered = run.length === 0 ? "" : encoding.query(run);
+    if (rendered !== "") parts.push(rendered);
+    run = [];
+  };
+  for (const param of draft.request.urlParams.params) {
+    const written = draft.queryText.get(param);
+    if (written !== undefined) {
+      endRun();
+      parts.push(written);
+    } else {
+      run.push([
+        param[0],
+        draft.bareKeys.has(param)
+          ? null
+          : Redacted.isRedacted(param[1])
+            ? Redacted.value(param[1])
+            : param[1],
+      ]);
+    }
+  }
+  endRun();
+  return parts.length === 0 ? encoding.query([]) : parts.join("&");
 };
 
 const finalize = (
   draft: Draft,
-  baseUrl: string,
+  declaration: Declaration,
   encoding: UrlEncoding.Service,
 ): Compiled => {
   const { request } = draft;
-  const [base, baseFragment] = splitFragment(baseUrl);
+  const [base, baseFragment] = splitFragment(declaration.baseUrl);
   const [path, pathFragment] = splitFragment(request.url);
   const [url, joinFragment] = splitFragment(encoding.join(base, path));
-  const search = encoding.query(
-    request.urlParams.params.map((param) => [
-      param[0],
-      draft.bareKeys.has(param)
-        ? null
-        : Redacted.isRedacted(param[1])
-          ? Redacted.value(param[1])
-          : param[1],
-    ]),
-  );
+  const search = renderQuery(draft, encoding);
+  const separator = url.includes("?") ? "&" : "?";
   const compiled = HttpClientRequest.makeWith(
     request.method,
-    search === "" ? url : `${url}${url.includes("?") ? "&" : "?"}${search}`,
+    search !== ""
+      ? `${url}${separator}${search}`
+      : declaration.emptyQuery && separator === "?"
+        ? `${url}?`
+        : url,
     UrlParams.empty,
     Option.orElse(request.hash, () =>
       Option.fromUndefinedOr(pathFragment ?? baseFragment ?? joinFragment),
@@ -744,7 +794,7 @@ export const compile = Effect.fnUntraced(function* <
   });
   const draft = yield* self.prepare(input, initial);
   return yield* Effect.try({
-    try: () => finalize(draft, self.declaration.baseUrl, encoding),
+    try: () => finalize(draft, self.declaration, encoding),
     catch: (cause) =>
       new InvalidRequest({ message: "Failed to encode request URL", cause }),
   });

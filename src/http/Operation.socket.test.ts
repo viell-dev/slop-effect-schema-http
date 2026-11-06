@@ -234,6 +234,30 @@ describe("Operation over real loopback sockets", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/102
+  it.live.each([
+    "/x?a=1;b=2",
+    "/x?a=1&&b=2",
+    "/x?",
+    "/x?q=a+b",
+    "/x?a=%41&wsdl",
+  ])("Fetch delivers the constructor query of %s", (target) =>
+    Effect.gen(function* () {
+      const targets: Array<string | undefined> = [];
+      const { origin } = yield* listen((request, response) => {
+        targets.push(request.url);
+        response.end("ok");
+      });
+      yield* Operation.make(
+        Request.get(`${origin}${target}`),
+        Response.status(200, Body.text),
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(FetchHttpClient.layer));
+      expect(targets).toEqual([target]);
+    }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/100
   it.live("Fetch sends a declared Content-Type and honours a removal", () =>
     Effect.gen(function* () {

@@ -35,6 +35,13 @@
   now goes out. `Request.removeHeader(name)` now stops the automatic value, and `Request.Compiled`,
   `Draft` and `Declaration` gain `removedHeaders`
   ([#100](https://github.com/viell-dev/slop-effect-schema-http/issues/100)).
+- **Breaking:** pass a constructor query to the client as written until something edits that entry.
+  The library used to decode it and render it again, so `?a=1;b=2` became `?a=1%3Bb%3D2`, `?q=a+b`
+  became `?q=a%20b`, `?a=1&&b=2` lost a segment and a lone `?` disappeared. Each entry keeps its
+  text, stays editable by its decoded name, and goes through `UrlEncoding.query` once edited. A
+  custom `UrlEncoding.query` no longer receives entries kept as written, and text the library used
+  to escape, such as a space, is no longer escaped
+  ([#102](https://github.com/viell-dev/slop-effect-schema-http/issues/102)).
 
 ## 0.1.0 — 2026-11-04
 

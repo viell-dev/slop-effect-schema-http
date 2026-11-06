@@ -63,7 +63,14 @@ export const queryEntries = (input: QueryInput): Query => {
 export interface Service {
   /** Escape one dynamic path value; the renderer supplies separators between values. */
   readonly path: (value: string) => string;
-  /** Render ordered query entries without a leading `?`. */
+  /**
+   * Render ordered query entries without a leading `?`.
+   *
+   * @remarks
+   * Text written in a request's constructor stays as written and is not passed here. Where it
+   * stands between other entries, each run of them is rendered by a separate call, keeping the
+   * order of the query. A request with no entries gets one call with an empty array.
+   */
   readonly query: (entries: Query) => string;
   /**
    * Combine the base origin/prefix and the request's rendered path or absolute URL.
