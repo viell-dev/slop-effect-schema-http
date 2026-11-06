@@ -177,8 +177,8 @@ export const bytes: Codec<Uint8Array, never, HttpClientError.HttpClientError> =
  *
  * @remarks
  * The transport supplies the outgoing multipart boundary and its Content-Type. A Content-Type the
- * request declares replaces it, and without the boundary the body cannot be read. Decoding delegates
- * to the HTTP provider.
+ * request declares replaces it, and without the boundary the body cannot be read. Decoding
+ * delegates to the HTTP provider.
  */
 export const formData: Codec<FormData, never, HttpClientError.HttpClientError> =
   make({

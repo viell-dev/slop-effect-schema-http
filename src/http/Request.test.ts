@@ -803,6 +803,19 @@ describe("fragments in the URL", () => {
     }),
   );
 
+  it.effect("uses a base URL's fragment when an absolute URL bypasses it", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("https://y.test/z").pipe(
+            Request.baseUrl("https://x.test/a#top"),
+          ),
+          undefined,
+        ),
+      ).toEqual({ url: "https://y.test/z", hash: "top" });
+    }),
+  );
+
   it.effect("prefers a native hash to any fragment in the text", () =>
     Effect.gen(function* () {
       expect(

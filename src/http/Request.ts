@@ -124,7 +124,8 @@ const splitFragment = (url: string): readonly [string, string | undefined] => {
 
 /** Read one written query segment as an entry that keeps its text. */
 const readSegment = (segment: string): Fields.Field<string | null> => {
-  // URLSearchParams strips one leading query marker; a marker in the key is data.
+  // URLSearchParams strips one leading query marker; a marker in the key is data. An empty segment
+  // yields no pair, so its name is the empty string.
   const [[key, value] = ["", ""]] = new URLSearchParams(`?${segment}`);
   return [key, segment.includes("=") ? value : null, segment];
 };
