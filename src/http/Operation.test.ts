@@ -464,6 +464,147 @@ describe("Operation.make", () => {
   );
 });
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/100
+describe("automatic Accept", () => {
+  const get = Request.get("https://api.test/");
+  /** What a client receives for a request whose response declares JSON. */
+  const sent = <I, E, H extends boolean, Q extends boolean>(
+    request: Request.Request<I, E, never, H, Q>,
+    input: I,
+    options?: Operation.Options,
+  ) =>
+    Effect.gen(function* () {
+      const server = synthetic(() => json(200, {}));
+      yield* Operation.make(request, Response.status(200, Body.json), options)
+        .execute(input)
+        .pipe(Effect.provide(server.layer));
+      return server.exchanges[0]!;
+    });
+
+  it.effect("stops with removeHeader, in any spelling", () =>
+    Effect.gen(function* () {
+      for (const name of ["accept", "Accept", "ACCEPT"]) {
+        const exchange = yield* sent(
+          get.pipe(Request.removeHeader(name)),
+          undefined,
+        );
+        expect(exchange.request.headers.accept).toBeUndefined();
+        expect(exchange.headerLines).toEqual([]);
+      }
+    }),
+  );
+
+  it.effect("gives way to a raw value, keeping its spelling", () =>
+    Effect.gen(function* () {
+      const exchange = yield* sent(
+        get.pipe(Request.setHeader("Accept", "text/weird")),
+        undefined,
+      );
+      expect(exchange.request.headers.accept).toBe("text/weird");
+      expect(exchange.headerLines).toEqual([["Accept", "text/weird"]]);
+    }),
+  );
+
+  it.effect("gives way to an empty value", () =>
+    Effect.gen(function* () {
+      const exchange = yield* sent(
+        get.pipe(Request.setHeader("accept", "")),
+        undefined,
+      );
+      expect(exchange.request.headers.accept).toBe("");
+    }),
+  );
+
+  it.effect("removes a declaration and the automatic value together", () =>
+    Effect.gen(function* () {
+      const exchange = yield* sent(
+        get.pipe(
+          Request.setHeader("accept", "text/weird"),
+          Request.removeHeader("accept"),
+        ),
+        undefined,
+      );
+      expect(exchange.request.headers.accept).toBeUndefined();
+    }),
+  );
+
+  it.effect("returns after a removal limited to one value", () =>
+    Effect.gen(function* () {
+      const exchange = yield* sent(
+        get.pipe(
+          Request.setHeader("accept", "text/weird"),
+          Request.removeHeader("accept", "text/weird"),
+        ),
+        undefined,
+      );
+      expect(exchange.request.headers.accept).toBe("application/json");
+    }),
+  );
+
+  it.effect("lets a later declaration end a removal", () =>
+    Effect.gen(function* () {
+      const exchange = yield* sent(
+        get.pipe(
+          Request.removeHeader("accept"),
+          Request.setHeader("Accept", "text/weird"),
+        ),
+        undefined,
+      );
+      expect(exchange.request.headers.accept).toBe("text/weird");
+    }),
+  );
+
+  it.effect("sends what a native edit or a schema declares", () =>
+    Effect.gen(function* () {
+      const removed = get.pipe(Request.removeHeader("accept"));
+      const edited = yield* sent(
+        removed.pipe(
+          Request.mapEffect((request) =>
+            Effect.succeed(
+              HttpClientRequest.setHeader(request, "accept", "text/weird"),
+            ),
+          ),
+        ),
+        undefined,
+      );
+      expect(edited.request.headers.accept).toBe("text/weird");
+      const schema = yield* sent(
+        removed.pipe(Request.headers(Schema.Struct({ Accept: Schema.String }))),
+        { headers: { Accept: "text/weird" } },
+      );
+      expect(schema.headerLines).toEqual([["Accept", "text/weird"]]);
+    }),
+  );
+
+  it.effect("applies when an optional schema field is left out", () =>
+    Effect.gen(function* () {
+      const Optional = Schema.Struct({
+        Accept: Schema.optional(Schema.String),
+      });
+      const omitted = yield* sent(get.pipe(Request.headers(Optional)), {
+        headers: {},
+      });
+      expect(omitted.request.headers.accept).toBe("application/json");
+      const removed = yield* sent(
+        get.pipe(Request.removeHeader("accept"), Request.headers(Optional)),
+        { headers: {} },
+      );
+      expect(removed.request.headers.accept).toBeUndefined();
+    }),
+  );
+
+  it.effect("still gives way to client middleware", () =>
+    Effect.gen(function* () {
+      const exchange = yield* sent(get, undefined, {
+        transformClient: HttpClient.mapRequest(
+          HttpClientRequest.removeHeader("accept"),
+        ),
+      });
+      expect(exchange.request.headers.accept).toBeUndefined();
+    }),
+  );
+});
+
 describe("Operation failures", () => {
   it.effect("refuses invalid input before any dispatch", () =>
     Effect.gen(function* () {

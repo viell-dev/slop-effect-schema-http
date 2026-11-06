@@ -109,7 +109,8 @@ const outcome = (exit: Exit.Exit<unknown, unknown>): string =>
  * Each evaluation prepares input once. Each attempt then owns a scope covering client execution
  * and body decoding; cleanup completes before classification or a retry delay. Decoder and
  * client `Scope` requirements are supplied by the attempt. Interruption and defects never retry.
- * An automatic `Accept` header is added only when the request has none.
+ * An automatic `Accept` header is added only when the request declares none and has not removed
+ * it with `Request.removeHeader`.
  */
 export const make = <
   I,
@@ -147,7 +148,9 @@ export const make = <
     function* (input: I) {
       const compiled = yield* Request.compile(request, input);
       const prepared =
-        accept !== "" && compiled.request.headers.accept === undefined
+        accept !== "" &&
+        compiled.request.headers.accept === undefined &&
+        !compiled.removedHeaders.has("accept")
           ? HttpClientRequest.setHeader(compiled.request, "accept", accept)
           : compiled.request;
       const client = yield* HttpClient.HttpClient;

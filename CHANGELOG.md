@@ -29,6 +29,12 @@
   replaces a line spelled differently and takes the new spelling. Client middleware still sees
   lowercase `Headers`, and `fetch` still sends lowercase names
   ([#101](https://github.com/viell-dev/slop-effect-schema-http/issues/101)).
+- **Breaking:** let a request's own headers win over automatic ones. A declared `Accept`,
+  `Content-Type` or `Content-Length` now takes effect, from a raw setter or a header schema, before
+  or after the body, including on multipart and empty bodies. A declaration that used to be ignored
+  now goes out. `Request.removeHeader(name)` now stops the automatic value, and `Request.Compiled`,
+  `Draft` and `Declaration` gain `removedHeaders`
+  ([#100](https://github.com/viell-dev/slop-effect-schema-http/issues/100)).
 
 ## 0.1.0 — 2026-11-04
 

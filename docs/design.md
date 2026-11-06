@@ -84,10 +84,26 @@ Standard](https://encoding.spec.whatwg.org/#names-and-labels): `iso-8859-1` sele
 bytes 0x80–0x9F differ from exact Latin-1. A format that requires exact Latin-1 needs its own byte
 mapping.
 
-The body codec owns the request's `Content-Type` and `Content-Length`. Multipart form data leaves
-both to the transport, so it can add the boundary. A header declaration describes a header; it does
-not relabel an encoded body. A protocol that needs a parameterized content type gets it from a
-custom codec. `Request.mapEffect` remains available to edit the native request deliberately.
+The body codec supplies the request's `Content-Type` and `Content-Length`. Multipart form data
+leaves both to the transport, so it can add the boundary. These are automatic values: a request that
+declares nothing keeps them, and a request's own declaration wins.
+
+- A value from `setHeader`, `appendHeader` or a header schema wins over the automatic one, whether
+  it comes before or after the body. It keeps its lines and spelling.
+- An optional schema field the caller leaves out counts as nothing declared, so the automatic value
+  still applies.
+- `Request.removeHeader(name)` stops the automatic value: the request records the name, and the
+  library adds nothing for it. It stops only the library's own value. A later declaration, a header
+  schema's output or a `Request.mapEffect` edit still goes out, and the client may add its own.
+  `Request.removeHeader(name, value)` stops nothing, because the name may still be declared.
+- A declaration stays on a request with an empty body, including `Body.empty`.
+- On multipart form data, a declared `Content-Type` replaces the one the transport would supply.
+  That is the consumer's choice, and without the boundary the body cannot be read.
+
+A declaration describes a header and never changes the bytes a codec produced, so a declared
+`Content-Length` can disagree with the body. A client can refuse such a request. The body step
+applies these rules itself, so a later `Request.mapEffect` still has the last word on the native
+request, and one before the body sees its edit replaced unless the request removed that name.
 
 Any method can carry a body, including GET and HEAD. The library passes the request to the client
 and adds no check of its own. A client can still refuse it: `fetch` does so for GET and HEAD, which
@@ -233,8 +249,9 @@ shows how to tag and interpret those outcomes.
   middleware that rejected the response, includes the response object with any body it already read.
   Treat such errors as possibly containing response content.
 
-The media types of the declared decoders form the operation's automatic `Accept` header, unless the
-request declares one.
+The media types of the declared decoders form the operation's automatic `Accept` header. As with the
+[body fields](#bodies), a request's own declaration wins, an optional schema field left out counts
+as nothing declared, and `Request.removeHeader("accept")` stops the automatic value.
 
 ### In a browser
 

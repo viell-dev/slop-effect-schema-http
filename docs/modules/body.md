@@ -76,10 +76,15 @@ decoder; the operation releases the attempt's resources before returning its res
 
 ### Body metadata
 
-The encoder determines outgoing `Content-Type` and `Content-Length`. Multipart form data delegates
-both to the HTTP transport, which supplies the boundary. Setting a request header does not change
-the bytes a codec produced. Use a custom encoder for a format requiring another content type or
-parameters, or deliberately edit the native request with `Request.mapEffect`.
+The encoder supplies outgoing `Content-Type` and `Content-Length`. Multipart form data delegates
+both to the HTTP transport, which supplies the boundary. A request's own declaration wins over these
+automatic values, and `Request.removeHeader` stops them; see [declared
+headers](./request.md#a-request-s-own-headers-win).
+
+Neither changes the bytes a codec produced. A declared `Content-Type` on multipart form data
+replaces the transport's, and without the boundary the body cannot be read. A declared
+`Content-Length` that disagrees with the body is passed to the client as written, and the client may
+refuse it. Node Fetch does not deliver such a request: it fails it, or stalls until a timeout.
 
 A decoder's `mediaType` contributes to `Accept`; it does not itself check the response's
 `Content-Type`. If that header determines how to read the answer, select a decoder with

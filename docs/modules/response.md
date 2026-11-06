@@ -76,7 +76,8 @@ and keeps a contract mismatch visible.
 ### Accept headers and direct decoding
 
 The operation collects decoder media types into an automatic `Accept` header, in declaration order
-without duplicates. An explicitly declared request `Accept` takes precedence.
+without duplicates. An explicitly declared request `Accept` takes precedence, and
+`Request.removeHeader("accept")` stops the automatic value.
 
 `Response.metadata(nativeResponse)` reads the metadata of an Effect response.
 `Response.decode(contract, nativeResponse)` selects and runs its decoder directly. It is useful when

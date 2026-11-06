@@ -138,9 +138,33 @@ constructor URL. It does not merge them with the schema's output. The type syste
 setters or another schema from being applied to that group afterwards. Put any required fixed values
 in the schema input or adapt the invocation with `mapInput`.
 
-Path and body bindings add their own input properties. The body codec controls `Content-Type` and
-`Content-Length`; a header declaration cannot relabel a body. See [body
-metadata](./body.md#body-metadata).
+Path and body bindings add their own input properties.
+
+### A request's own headers win
+
+The library sets three headers by itself: `Accept` from the response contract, and `Content-Type`
+and `Content-Length` from the body encoder. A request that declares nothing keeps these automatic
+values. A request's own declaration wins, from a raw setter or a header schema, whether it comes
+before or after the body:
+
+```ts
+import { Body, Request } from "viell-effect-schema-http";
+
+const upload = Request.post("/upload").pipe(
+  Request.body(Body.text),
+  Request.setHeader("Content-Type", "application/vnd.example+text"),
+  Request.removeHeader("Accept"),
+);
+```
+
+`Request.removeHeader(name)` stops the automatic value. It stops only the library's own value: a
+later declaration, a header schema's output or a `Request.mapEffect` edit still goes out, and the
+client may add its own. With a value argument it removes matching declarations and stops nothing. An
+optional schema field the caller leaves out counts as nothing declared, so the automatic value still
+applies.
+
+A declaration does not change the bytes the encoder produced. See [body
+metadata](./body.md#body-metadata) for multipart and `Content-Length`.
 
 ### Effectful preparation and per-attempt changes
 
