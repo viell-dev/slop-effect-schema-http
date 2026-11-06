@@ -15,7 +15,7 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=24"
   },
   "exports": {
     ".": {
@@ -58,11 +58,11 @@
   },
   "main": "./dist/main.js",
   "types": "./dist/main.d.ts",
-  "packageManager": "npm@11.19.0",
+  "packageManager": "npm@11.19.1",
   "devEngines": {
     "packageManager": {
       "name": "npm",
-      "version": "^11.19.0",
+      "version": "^11.19.1",
       "onFail": "error"
     }
   },
@@ -108,20 +108,20 @@
     "minimatch@10": "11.0.1"
   },
   "devDependencies": {
-    "@effect/vitest": "^4.1.1",
+    "@effect/vitest": "^4.1.2",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.6",
-    "effect": "^4.1.1",
+    "effect": "^4.1.2",
     "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-oxlint": "^1.90.0",
-    "mdrefine": "^0.6.3",
+    "eslint-plugin-oxlint": "^1.92.0",
+    "mdrefine": "^0.7.1",
     "npm-run-all2": "^9.0.4",
-    "oxlint": "^1.90.0",
+    "oxlint": "^1.92.0",
     "prettier": "^3.9.10",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
     "vitepress": "2.0.0-alpha.21",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }

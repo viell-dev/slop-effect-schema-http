@@ -90,8 +90,8 @@ npm install ./viell-effect-schema-http-0.1.0.tgz
 
 ## Compatibility policy
 
-The supported API covers finite-body HTTP contracts, ESM, Node 24 on Windows/Linux and Chromium
-Fetch with Effect 4. [Limits and recovery](./limits.md#compatibility-and-scope) separates
+The supported API covers finite-body HTTP contracts, ESM, Node 24 or 26 on Windows/Linux and
+Chromium Fetch with Effect 4. [Limits and recovery](./limits.md#compatibility-and-scope) separates
 application requirements from tested configurations. Compatible fixes use `0.1.x`; a breaking public
 API change requires `0.2.0` and migration guidance.
 
