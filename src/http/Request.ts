@@ -49,6 +49,8 @@ export interface Declaration<
   readonly baseUrl: string;
   readonly headers: Fields.Fields;
   readonly query: Fields.Fields<string | null>;
+  /** Lowercase header names the request removed, so the library adds no automatic value. */
+  readonly removedHeaders: ReadonlySet<string>;
   /** Whether a schema owns the header group; raw header setters are then unavailable. */
   readonly headersBound: H;
   /** Whether a schema owns the query group; raw query setters are then unavailable. */
@@ -77,6 +79,8 @@ export interface Draft {
   readonly headerLines: Transport.Lines;
   /** Native query entries that render as bare keys. Replacing an entry loses its identity marker. */
   readonly bareKeys: ReadonlySet<UrlParam>;
+  /** Lowercase header names the request removed, so the library adds no automatic value. */
+  readonly removedHeaders: ReadonlySet<string>;
 }
 
 /**
@@ -148,6 +152,7 @@ export const make = (method: string, url: string): Request<unknown> => {
       baseUrl: "",
       headers: [],
       query,
+      removedHeaders: new Set(),
       headersBound: false,
       queryBound: false,
     },
@@ -216,15 +221,29 @@ export const baseUrl =
   ): Request<I, E, R, H, Q> =>
     construct({ ...self.declaration, baseUrl: url }, self.prepare);
 
+/** Header names compare without case; each line keeps the spelling it was given. */
+const foldHeader: Fields.Fold = (name) => name.toLowerCase();
+
 const editHeaders =
-  (edit: (fields: Fields.Fields) => Fields.Fields) =>
+  (
+    edit: (fields: Fields.Fields) => Fields.Fields,
+    removed: (names: ReadonlySet<string>) => ReadonlySet<string>,
+  ) =>
   <I, E, R, Q extends boolean>(
     self: Request<I, E, R, false, Q>,
   ): Request<I, E, R, false, Q> =>
     construct(
-      { ...self.declaration, headers: edit(self.declaration.headers) },
+      {
+        ...self.declaration,
+        headers: edit(self.declaration.headers),
+        removedHeaders: removed(self.declaration.removedHeaders),
+      },
       self.prepare,
     );
+
+/** Declaring a name ends an earlier removal of it. */
+const endRemoval = (name: string) => (names: ReadonlySet<string>) =>
+  new Set(Array.from(names).filter((entry) => entry !== foldHeader(name)));
 
 const editQuery =
   (
@@ -240,18 +259,19 @@ const editQuery =
       self.prepare,
     );
 
-/** Header names compare without case; each line keeps the spelling it was given. */
-const foldHeader: Fields.Fold = (name) => name.toLowerCase();
-
 /**
  * Set a raw header, replacing every existing line with that name.
  *
  * @remarks
- * Names compare without case, and the new line keeps the spelling of this call. Unavailable after
- * a header schema is bound. The body encoder owns `Content-Type` and `Content-Length`.
+ * Names compare without case, and the new line keeps the spelling of this call. A declared
+ * `Accept`, `Content-Type` or `Content-Length` replaces the automatic value, before or after the
+ * body. Unavailable after a header schema is bound.
  */
 export const setHeader = (name: string, value: FieldValue) =>
-  editHeaders((fields) => Fields.set(fields, name, value, foldHeader));
+  editHeaders(
+    (fields) => Fields.set(fields, name, value, foldHeader),
+    endRemoval(name),
+  );
 
 /**
  * Add a raw header line after the existing lines, preserving repetition.
@@ -261,7 +281,7 @@ export const setHeader = (name: string, value: FieldValue) =>
  * separate lines requires a provider that supports them; Fetch may combine or restrict headers.
  */
 export const appendHeader = (name: string, value: FieldValue) =>
-  editHeaders((fields) => Fields.append(fields, name, value));
+  editHeaders((fields) => Fields.append(fields, name, value), endRemoval(name));
 
 /**
  * Remove a raw header, or only its declarations with the supplied fixed value.
@@ -269,9 +289,18 @@ export const appendHeader = (name: string, value: FieldValue) =>
  * @remarks
  * Names compare without case. Value functions are never evaluated to compare with `value`.
  * Unavailable after a header schema is bound.
+ *
+ * Without a value, this also stops the library's automatic value for that name: an operation's
+ * `Accept`, or a body's `Content-Type` and `Content-Length`. It stops only that. A value that a
+ * later declaration, a header schema or {@link mapEffect} supplies still goes out, and the client
+ * may add its own. A removal limited to one value stops nothing, as the name may still be declared.
  */
 export const removeHeader = (name: string, value?: string) =>
-  editHeaders((fields) => Fields.remove(fields, name, value, foldHeader));
+  editHeaders(
+    (fields) => Fields.remove(fields, name, value, foldHeader),
+    (names) =>
+      value === undefined ? new Set([...names, foldHeader(name)]) : names,
+  );
 
 /**
  * Set a raw query field, replacing entries with the same case-sensitive name.
@@ -330,20 +359,28 @@ const replaceQuery = (draft: Draft, entries: UrlEncoding.Query): Draft => {
   };
 };
 
-/** Fields that describe the body itself rather than the request. */
+/** Fields a body's encoder supplies unless the request says otherwise. */
 const bodyFields = ["content-type", "content-length"] as const;
 
-/** Give the body fields their values from `before`, removing those it lacks. */
-const keepBodyFields = (
-  headers: Headers.Headers,
-  before: Headers.Headers,
-): Headers.Headers =>
-  bodyFields.reduce((result, name) => {
-    const value = before[name];
-    return value === undefined
-      ? Headers.remove(result, name)
-      : Headers.set(result, name, value);
-  }, headers);
+/** After an encoder set the body fields, apply what the request itself says about them. */
+const applyDeclaredBodyFields = (
+  encoded: HttpClientRequest.HttpClientRequest,
+  prepared: Draft,
+): HttpClientRequest.HttpClientRequest => {
+  const declared = Transport.toHeaders(prepared.headerLines);
+  return HttpClientRequest.updateHeaders(encoded, (fields) =>
+    bodyFields.reduce((result, name) => {
+      const value =
+        declared[name] ??
+        (prepared.removedHeaders.has(name)
+          ? prepared.request.headers[name]
+          : result[name]);
+      return value === undefined
+        ? Headers.remove(result, name)
+        : Headers.set(result, name, value);
+    }, fields),
+  );
+};
 
 /**
  * Bind a schema to the call's `{ headers }` input.
@@ -351,9 +388,10 @@ const keepBodyFields = (
  * @remarks
  * Encoding produces ordered header lines. The schema replaces raw header declarations and owns
  * the group: later raw setters or another header schema are unavailable.
- * When a body is present, its `Content-Type` and `Content-Length` take precedence, regardless of
- * binding order. Without a body, the schema values apply; a later body binding, including
- * `Body.empty`, replaces those fields according to its encoder.
+ *
+ * A field the schema produces wins over an automatic `Accept`, `Content-Type` or `Content-Length`,
+ * whether the schema is bound before or after the body. An optional field the caller leaves out
+ * declares nothing, so the automatic value still applies.
  */
 export const headers = <
   S extends Schema.ConstraintCodec<
@@ -384,19 +422,12 @@ export const headers = <
         const encoded = yield* encode(input.headers);
         const prepared = yield* self.prepare(input, draft);
         const headerLines = Transport.entries(encoded);
-        const merged = HttpClientRequest.setHeaders(
-          prepared.request,
-          Transport.toHeaders(headerLines),
-        );
-        // Compilation then drops the schema's lines for any body field whose value was kept.
         return {
           ...prepared,
-          request:
-            prepared.request.body._tag === "Empty"
-              ? merged
-              : HttpClientRequest.updateHeaders(merged, (fields) =>
-                  keepBodyFields(fields, prepared.request.headers),
-                ),
+          request: HttpClientRequest.setHeaders(
+            prepared.request,
+            Transport.toHeaders(headerLines),
+          ),
           headerLines,
         };
       }),
@@ -524,8 +555,10 @@ export const path = <S extends Schema.Constraint>(
  * Bind an encoder to the call's `{ body }` input.
  *
  * @remarks
- * The body is encoded once per operation evaluation. Its encoder determines `Content-Type` and
- * `Content-Length`; multipart metadata is supplied by the transport.
+ * The body is encoded once per operation evaluation. Its encoder supplies `Content-Type` and
+ * `Content-Length`; multipart metadata is supplied by the transport. A value the request declares
+ * for either field wins, before or after this binding, and {@link removeHeader} stops the automatic
+ * value. Neither changes the encoded bytes.
  *
  * Any method can carry a body, and the library adds no check of its own. A client can refuse the
  * request: `fetch` does so for GET and HEAD, which surfaces as a transport failure.
@@ -545,7 +578,10 @@ export const body =
         const prepared = yield* self.prepare(input, draft);
         return {
           ...prepared,
-          request: HttpClientRequest.setBody(prepared.request, encoded),
+          request: applyDeclaredBodyFields(
+            HttpClientRequest.setBody(prepared.request, encoded),
+            prepared,
+          ),
         };
       }),
     );
@@ -606,6 +642,8 @@ export const mapEffect =
 export interface Compiled {
   readonly request: HttpClientRequest.HttpClientRequest;
   readonly headerLines: Transport.Lines;
+  /** Lowercase header names the request removed, so the library adds no automatic value. */
+  readonly removedHeaders: ReadonlySet<string>;
 }
 
 const initialDraft = (declaration: Declaration): Draft => {
@@ -625,6 +663,7 @@ const initialDraft = (declaration: Declaration): Draft => {
       ),
       headerLines,
       bareKeys: new Set(),
+      removedHeaders: declaration.removedHeaders,
     },
     Fields.resolve(declaration.query),
   );
@@ -662,6 +701,7 @@ const finalize = (
   return {
     request: compiled,
     headerLines: Transport.reconcile(draft.headerLines, compiled.headers),
+    removedHeaders: draft.removedHeaders,
   };
 };
 

@@ -234,6 +234,33 @@ describe("Operation over real loopback sockets", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/100
+  it.live("Fetch sends a declared Content-Type and honours a removal", () =>
+    Effect.gen(function* () {
+      const received: Array<string | undefined> = [];
+      const { origin } = yield* listen((request, response) => {
+        received.push(request.headers["content-type"]);
+        request.resume();
+        request.once("end", () => response.end("ok"));
+      });
+      for (const request of [
+        Request.post(origin).pipe(
+          Request.setHeader("Content-Type", "application/weird"),
+          Request.body(Body.text),
+        ),
+        Request.post(origin).pipe(
+          Request.removeHeader("content-type"),
+          Request.body(Body.text),
+        ),
+      ]) {
+        yield* Operation.make(request, Response.status(200, Body.text))
+          .execute({ body: "hello" })
+          .pipe(Effect.provide(FetchHttpClient.layer));
+      }
+      expect(received).toEqual(["application/weird", undefined]);
+    }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/93
   it.live("Fetch does not send a fragment the library passed on", () =>
     Effect.gen(function* () {

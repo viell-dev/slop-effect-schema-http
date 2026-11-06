@@ -176,8 +176,9 @@ export const bytes: Codec<Uint8Array, never, HttpClientError.HttpClientError> =
  * Read and write Web `FormData` as multipart form data.
  *
  * @remarks
- * The transport supplies the outgoing multipart boundary and its Content-Type. Do not set a
- * boundary-less Content-Type manually. Decoding delegates to the HTTP provider.
+ * The transport supplies the outgoing multipart boundary and its Content-Type. A Content-Type the
+ * request declares replaces it, and without the boundary the body cannot be read. Decoding delegates
+ * to the HTTP provider.
  */
 export const formData: Codec<FormData, never, HttpClientError.HttpClientError> =
   make({
