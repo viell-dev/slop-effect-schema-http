@@ -313,8 +313,9 @@ export const removeHeader = (name: string, value?: string) =>
  * Set a raw query field, replacing entries with the same case-sensitive name.
  *
  * @remarks
- * `null` produces a bare key, `""` an empty value, and `undefined` omits the entry.
- * Unavailable after a query schema is bound.
+ * `null` produces a bare key, `""` an empty value, and `undefined` omits the entry. Names compare
+ * with an entry's decoded name, so this can replace an entry written in the constructor; other
+ * entries stay as written. Unavailable after a query schema is bound.
  */
 export const setQuery = (name: string, value: FieldValue<string | null>) =>
   editQuery((fields) => Fields.set(fields, name, value));
@@ -332,8 +333,8 @@ export const appendQuery = (name: string, value: FieldValue<string | null>) =>
  * Remove a raw query field, or only declarations with the supplied fixed value.
  *
  * @remarks
- * Names compare with case. Value functions are not evaluated for comparison.
- * Unavailable after a query schema is bound.
+ * Names compare with case, and both names and values compare with an entry's decoded form. Value
+ * functions are not evaluated for comparison. Unavailable after a query schema is bound.
  */
 export const removeQuery = (name: string, value?: string | null) =>
   editQuery((fields) => Fields.remove(fields, name, value));
@@ -730,8 +731,8 @@ const finalize = (
 ): Compiled => {
   const { request } = draft;
   const [base, baseFragment] = splitFragment(declaration.baseUrl);
-  const [path, pathFragment] = splitFragment(request.url);
-  const [url, joinFragment] = splitFragment(encoding.join(base, path));
+  const [target, targetFragment] = splitFragment(request.url);
+  const [url, joinFragment] = splitFragment(encoding.join(base, target));
   const search = renderQuery(draft, encoding);
   const separator = url.includes("?") ? "&" : "?";
   const compiled = HttpClientRequest.makeWith(
@@ -743,7 +744,7 @@ const finalize = (
         : url,
     UrlParams.empty,
     Option.orElse(request.hash, () =>
-      Option.fromUndefinedOr(pathFragment ?? baseFragment ?? joinFragment),
+      Option.fromUndefinedOr(targetFragment ?? baseFragment ?? joinFragment),
     ),
     request.headers,
     request.body,

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Fields from "./fields.js";
 
+const lowercase = (name: string) => name.toLowerCase();
+
 describe("Fields.set", () => {
   it("appends a new name", () => {
     expect(Fields.set([["a", "1"]], "b", "2")).toEqual([
@@ -38,9 +40,7 @@ describe("Fields.set", () => {
       ["b", "2"],
       ["x-a", "3"],
     ];
-    expect(
-      Fields.set(fields, "X-a", "new", (name) => name.toLowerCase()),
-    ).toEqual([
+    expect(Fields.set(fields, "X-a", "new", lowercase)).toEqual([
       ["X-a", "new"],
       ["b", "2"],
     ]);
@@ -141,9 +141,10 @@ describe("Fields.remove", () => {
       ["x-a", "2"],
       ["b", "3"],
     ];
-    const fold = (name: string) => name.toLowerCase();
-    expect(Fields.remove(mixed, "x-A", undefined, fold)).toEqual([["b", "3"]]);
-    expect(Fields.remove(mixed, "x-A", "1", fold)).toEqual([
+    expect(Fields.remove(mixed, "x-A", undefined, lowercase)).toEqual([
+      ["b", "3"],
+    ]);
+    expect(Fields.remove(mixed, "x-A", "1", lowercase)).toEqual([
       ["x-a", "2"],
       ["b", "3"],
     ]);
