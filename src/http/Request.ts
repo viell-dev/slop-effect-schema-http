@@ -1,4 +1,4 @@
-import { Data, Effect, Pipeable, Redacted, Schema } from "effect";
+import { Data, Effect, Option, Pipeable, Redacted, Schema } from "effect";
 import {
   Headers,
   HttpClientRequest,
@@ -193,6 +193,7 @@ export const options = (url: string): Request<unknown> => make("OPTIONS", url);
  * The base is joined after path preparation. With the default URL policy, an absolute request
  * URL bypasses it; a leading `/` on a relative path keeps the base's prefix. Calling this again
  * replaces the base, rather than appending to it. Keep query fields in request combinators.
+ * A fragment in the base is taken off before joining and used if the request has none of its own.
  */
 export const baseUrl =
   (url: string) =>
@@ -458,7 +459,8 @@ export const query = <
  * The renderer receives the schema-encoded value and the active path-value encoder. Escape each
  * dynamic value with that encoder. The returned path replaces the constructor's path; it does
  * not append to it. The shared base URL is joined afterwards. Reuse renderer functions for
- * nested resources rather than stacking path bindings.
+ * nested resources rather than stacking path bindings. A fragment in the returned path moves to
+ * the compiled request's `hash`, so the query still goes before it.
  * Renderer or path-encoding exceptions become {@link InvalidRequest}; schema failures remain
  * `SchemaError` values.
  */
@@ -580,6 +582,9 @@ export const mapEffect =
 
 /**
  * A prepared native request and the header lines a supporting provider can send.
+ *
+ * @remarks
+ * `request.url` holds the joined URL and its query. A fragment is in `request.hash`, as written.
  */
 export interface Compiled {
   readonly request: HttpClientRequest.HttpClientRequest;
@@ -605,13 +610,23 @@ const initialDraft = (declaration: Declaration): Draft => {
   );
 };
 
+/** Split URL text at its first `#`, which ends the path and query. */
+const splitFragment = (url: string): readonly [string, string | undefined] => {
+  const position = url.indexOf("#");
+  return position < 0
+    ? [url, undefined]
+    : [url.slice(0, position), url.slice(position + 1)];
+};
+
 const finalize = (
   draft: Draft,
-  base: string,
+  baseUrl: string,
   encoding: UrlEncoding.Service,
 ): Compiled => {
   const { request } = draft;
-  const url = encoding.join(base, request.url);
+  const [base, baseFragment] = splitFragment(baseUrl);
+  const [path, pathFragment] = splitFragment(request.url);
+  const [url, joinFragment] = splitFragment(encoding.join(base, path));
   const search = encoding.query(
     request.urlParams.params.map((param) => [
       param[0],
@@ -626,7 +641,9 @@ const finalize = (
     request.method,
     search === "" ? url : `${url}${url.includes("?") ? "&" : "?"}${search}`,
     UrlParams.empty,
-    request.hash,
+    Option.orElse(request.hash, () =>
+      Option.fromUndefinedOr(pathFragment ?? baseFragment ?? joinFragment),
+    ),
     request.headers,
     request.body,
   );

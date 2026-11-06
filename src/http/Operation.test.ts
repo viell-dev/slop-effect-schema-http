@@ -219,6 +219,53 @@ describe("Operation.make", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/83
+  it.effect("gives a client the query before the fragment", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(204));
+      yield* Operation.make(
+        Request.get("").pipe(
+          Request.path(Schema.String, (value) => `https://api.test/${value}`),
+          Request.setQuery("q", "1"),
+        ),
+        Response.status(204, Body.empty),
+      )
+        .execute({ path: "users#top" })
+        .pipe(Effect.provide(server.layer));
+      const exchange = server.exchanges[0]!;
+      expect(exchange.url).toBe("https://api.test/users?q=1");
+      expect(exchange.request.hash).toStrictEqual(Option.some("top"));
+      expect(exchange.href).toBe("https://api.test/users?q=1#top");
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/83
+  it.effect("leaves the fragment text to a client built with makeWith", () =>
+    Effect.gen(function* () {
+      const seen: Array<HttpClientRequest.HttpClientRequest> = [];
+      const raw = HttpClient.makeWith<
+        HttpClientError.HttpClientError,
+        never,
+        HttpClientError.HttpClientError,
+        never
+      >(
+        Effect.map((request: HttpClientRequest.HttpClientRequest) => {
+          seen.push(request);
+          return HttpClientResponse.fromWeb(request, empty(204));
+        }),
+        Effect.succeed,
+      );
+      yield* Operation.make(
+        Request.get("").pipe(Request.baseUrl("https://x.test/a#b c")),
+        Response.status(204, Body.empty),
+      )
+        .execute(undefined)
+        .pipe(Effect.provideService(HttpClient.HttpClient, raw));
+      expect(seen[0]?.url).toBe("https://x.test/a");
+      expect(seen[0]?.hash).toStrictEqual(Option.some("b c"));
+    }),
+  );
+
   it.effect("sends no Accept header when no case declares a media type", () =>
     Effect.gen(function* () {
       const server = synthetic(() => empty(204));

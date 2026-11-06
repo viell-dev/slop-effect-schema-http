@@ -29,6 +29,16 @@ const urlOf = <I, E, R, H extends boolean, Q extends boolean>(
   input: I,
 ) => Effect.map(compile(request, input), (compiled) => compiled.request.url);
 
+/** A compiled request's URL text and fragment, which are separate fields. */
+const targetOf = <I, E, R, H extends boolean, Q extends boolean>(
+  request: Request.Request<I, E, R, H, Q>,
+  input: I,
+) =>
+  Effect.map(compile(request, input), (compiled) => ({
+    url: compiled.request.url,
+    hash: Option.getOrUndefined(compiled.request.hash),
+  }));
+
 /** Read while encoding a header. */
 class Tenant extends Context.Service<Tenant, string>()("test/Tenant") {}
 
@@ -245,6 +255,186 @@ describe("Request.baseUrl", () => {
           undefined,
         ),
       ).toBe("https://legacy.test/cgi-bin/report");
+    }),
+  );
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/83
+describe("fragments in the URL", () => {
+  const rendered = (url: string) =>
+    Request.path(Schema.String, (value) => `${url}${value}`);
+
+  it.effect("puts the query before a fragment in path output", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("https://api.example.test/placeholder?f=xml").pipe(
+            rendered("https://api.example.test/users/"),
+          ),
+          { path: "1#top" },
+        ),
+      ).toEqual({ url: "https://api.example.test/users/1?f=xml", hash: "top" });
+    }),
+  );
+
+  it.effect("puts the query before a fragment in the base URL", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("").pipe(
+            Request.baseUrl("https://x.test/a#top"),
+            Request.setQuery("q", "1"),
+          ),
+          undefined,
+        ),
+      ).toEqual({ url: "https://x.test/a?q=1", hash: "top" });
+    }),
+  );
+
+  it.effect("joins the path to a base URL that has a fragment", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("/u").pipe(
+            Request.baseUrl("https://x.test/a#top"),
+            Request.setQuery("q", "1"),
+          ),
+          undefined,
+        ),
+      ).toEqual({ url: "https://x.test/a/u?q=1", hash: "top" });
+    }),
+  );
+
+  it.effect.each([
+    ["a question mark", "/a#b?c", "b?c"],
+    ["a query-like text", "/a#b?c=1&d", "b?c=1&d"],
+    ["another hash", "/a#b#c", "b#c"],
+    ["spaces and escapes", "/a#b c%20d", "b c%20d"],
+    ["nothing", "/a#", ""],
+  ] as const)("keeps a fragment that contains %s", ([, url, hash]) =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("").pipe(
+            Request.baseUrl("https://x.test"),
+            rendered(url),
+            Request.setQuery("q", "1"),
+          ),
+          { path: "" },
+        ),
+      ).toEqual({ url: "https://x.test/a?q=1", hash });
+    }),
+  );
+
+  it.effect("uses '&' only for a query before the fragment", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("").pipe(
+            rendered("https://x.test/a?b=1#c?d"),
+            Request.setQuery("q", "1"),
+          ),
+          { path: "" },
+        ),
+      ).toEqual({ url: "https://x.test/a?b=1&q=1", hash: "c?d" });
+    }),
+  );
+
+  it.effect("leaves a request with no fragment without a hash", () =>
+    Effect.gen(function* () {
+      const { request } = yield* compile(
+        Request.get("/u").pipe(Request.baseUrl("https://x.test")),
+        undefined,
+      );
+      expect(request.hash).toStrictEqual(Option.none());
+    }),
+  );
+
+  it.effect("prefers path output to the base URL, and either to a join", () =>
+    Effect.gen(function* () {
+      const join = (base: string, path: string) => `${base}${path}#from-join`;
+      const target = (base: string, path: string) =>
+        targetOf(Request.get("").pipe(Request.baseUrl(base), rendered("")), {
+          path,
+        }).pipe(
+          Effect.provide(UrlEncoding.layer({ ...UrlEncoding.defaults, join })),
+        );
+      expect(yield* target("https://x.test#base", "/a#path")).toEqual({
+        url: "https://x.test/a",
+        hash: "path",
+      });
+      expect(yield* target("https://x.test#base", "/a")).toEqual({
+        url: "https://x.test/a",
+        hash: "base",
+      });
+      expect(yield* target("https://x.test", "/a")).toEqual({
+        url: "https://x.test/a",
+        hash: "from-join",
+      });
+    }),
+  );
+
+  it.effect("prefers a native hash to any fragment in the text", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("").pipe(
+            Request.baseUrl("https://x.test#base"),
+            rendered("/a"),
+            Request.mapEffect((request) =>
+              Effect.succeed(HttpClientRequest.setHash(request, "native")),
+            ),
+          ),
+          { path: "#path" },
+        ),
+      ).toEqual({ url: "https://x.test/a", hash: "native" });
+    }),
+  );
+
+  it.effect("gives a custom join the base and path without fragments", () =>
+    Effect.gen(function* () {
+      const calls: Array<readonly [string, string]> = [];
+      const target = yield* targetOf(
+        Request.get("").pipe(
+          Request.baseUrl("https://x.test/a#base"),
+          rendered("/u#path"),
+          Request.setQuery("q", "1"),
+        ),
+        { path: "" },
+      ).pipe(
+        Effect.provide(
+          UrlEncoding.layer({
+            ...UrlEncoding.defaults,
+            join: (base, path) => {
+              calls.push([base, path]);
+              return UrlEncoding.defaults.join(base, path);
+            },
+          }),
+        ),
+      );
+      expect(calls).toEqual([["https://x.test/a", "/u"]]);
+      expect(target.url).toBe("https://x.test/a/u?q=1");
+    }),
+  );
+
+  it.effect("places the query before a fragment a custom join returned", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* targetOf(
+          Request.get("/u").pipe(
+            Request.baseUrl("https://x.test"),
+            Request.setQuery("q", "1"),
+          ),
+          undefined,
+        ).pipe(
+          Effect.provide(
+            UrlEncoding.layer({
+              ...UrlEncoding.defaults,
+              join: (base, path) => `${base}${path}#joined?x`,
+            }),
+          ),
+        ),
+      ).toEqual({ url: "https://x.test/u?q=1", hash: "joined?x" });
     }),
   );
 });

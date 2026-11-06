@@ -157,6 +157,28 @@ client or provider URL processing still applies.
 
 A URL that cannot be rendered or encoded fails with `Request.InvalidRequest`.
 
+### Fragments stay on the request
+
+A fragment ends a URL, so the query always goes before it. The compiled request keeps the fragment
+out of its URL text, in Effect's native `hash` field, exactly as written. Effect keeps a fragment
+there too, and client middleware can use `HttpClientRequest.setHash` and `removeHash` on it. A path
+that renders `/users/1#top` with the query `f=xml` compiles to the URL `/users/1?f=xml` and the hash
+`top`.
+
+Compilation takes any fragment off the base URL and off the request's URL before joining them, so a
+custom `UrlEncoding.join` receives neither. When several places supply a fragment, the first of
+these wins:
+
+1. the native `hash`, which `HttpClientRequest.setHash` sets;
+2. the request's URL, such as `Request.path` output;
+3. the base URL, even when an absolute request URL bypassed it;
+4. text that a custom `UrlEncoding.join` returned.
+
+What happens to a fragment afterwards is a property of the client. `HttpClient.make` puts it back on
+the `URL` it gives its runner, which percent-encodes some characters. A provider built with
+`HttpClient.makeWith` reads `request.url` directly, so it has to read `request.hash` as well.
+`fetch` does not send a fragment.
+
 ### Wire representations stay distinct
 
 These are different things and the library keeps them different:
