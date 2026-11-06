@@ -14,6 +14,11 @@
 - **Breaking:** let any method carry a body. `Request.compile` no longer refuses a body on GET or
   HEAD, so `fetch` users get a transport failure from the client where they used to get
   `Request.InvalidRequest` ([#96](https://github.com/viell-dev/slop-effect-schema-http/issues/96)).
+- Put a query before a fragment. A `#` in a base URL or in `Request.path` output used to take the
+  query into the fragment, where it never arrived as a query. The compiled request now keeps the
+  fragment in its `hash` field rather than its URL text, and a custom `UrlEncoding.join` receives
+  the base and path without fragments. A provider built with `HttpClient.makeWith` has to read
+  `request.hash` ([#83](https://github.com/viell-dev/slop-effect-schema-http/issues/83)).
 
 ## 0.1.0 — 2026-11-04
 

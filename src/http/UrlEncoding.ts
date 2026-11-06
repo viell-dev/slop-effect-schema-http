@@ -65,7 +65,12 @@ export interface Service {
   readonly path: (value: string) => string;
   /** Render ordered query entries without a leading `?`. */
   readonly query: (entries: Query) => string;
-  /** Combine the base origin/prefix and the request's rendered path or absolute URL. */
+  /**
+   * Combine the base origin/prefix and the request's rendered path or absolute URL.
+   *
+   * @remarks
+   * Both arrive without a fragment. A fragment in the result is moved after the query.
+   */
   readonly join: (base: string, path: string) => string;
 }
 

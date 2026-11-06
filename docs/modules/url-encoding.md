@@ -51,6 +51,10 @@ integration rather than one request at a time.
 `UrlEncoding.layer(service)` supplies a replacement. Exceptions from rendering become
 `Request.InvalidRequest`.
 
+`join` receives the base and the path without their fragments. The compiled request keeps a fragment
+in its `hash` field, so the query goes before it. See
+[fragments](../design.md#fragments-stay-on-the-request).
+
 ### Constructor URLs and opaque query text
 
 A query already in `Request.get("/search?q=Ada+Lovelace")` is parsed as form data. The `+` becomes a

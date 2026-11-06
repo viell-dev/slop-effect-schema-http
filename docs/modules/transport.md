@@ -37,6 +37,14 @@ This in-memory example shows both boundaries without sending a network request:
 Replace the fixture's transport work with your native HTTP implementation. It must actually be able
 to send and observe separate lines; adding metadata does not give Fetch that capability.
 
+### Read the whole target
+
+The compiled URL text holds no fragment, which stays in the native request's `hash` field. A
+provider built with `HttpClient.make` receives a `URL` with the fragment back in place. `URL`
+percent-encodes some characters, so read `request.hash` for the exact text. A provider built with
+`HttpClient.makeWith` reads `request.url` directly, so it has to read `request.hash` as well or the
+fragment is lost.
+
 ### Read response metadata
 
 `Transport.responseHeaderLines(nativeResponse)` returns an Effect `Option` of the attached lines.
