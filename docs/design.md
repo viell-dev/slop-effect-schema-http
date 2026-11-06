@@ -101,8 +101,10 @@ declares nothing keeps them, and a request's own declaration wins.
   still applies.
 - `Request.removeHeader(name)` stops the automatic value: the request records the name, and the
   library adds nothing for it. It stops only the library's own value. A later declaration, a header
-  schema's output or a `Request.mapEffect` edit still goes out, and the client may add its own.
-  `Request.removeHeader(name, value)` stops nothing, because the name may still be declared.
+  schema's output or a `Request.mapEffect` edit still goes out, and the client may add its own. A
+  header schema replaces raw declarations, but a removal made before it stays in force for a field
+  the schema leaves out. `Request.removeHeader(name, value)` stops nothing, because the name may
+  still be declared.
 - A declaration stays on a request with an empty body, including `Body.empty`.
 - On multipart form data, a declared `Content-Type` replaces the one the transport would supply.
   That is the consumer's choice, and without the boundary the body cannot be read.

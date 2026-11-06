@@ -161,7 +161,7 @@ const upload = Request.post("/upload").pipe(
 later declaration, a header schema's output or a `Request.mapEffect` edit still goes out, and the
 client may add its own. With a value argument it removes matching declarations and stops nothing. An
 optional schema field the caller leaves out counts as nothing declared, so the automatic value still
-applies.
+applies, unless a `removeHeader` before the schema stopped it.
 
 A declaration does not change the bytes the encoder produced. See [body
 metadata](./body.md#body-metadata) for multipart and `Content-Length`.
