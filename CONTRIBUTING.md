@@ -295,6 +295,14 @@ hands-on request. This does not establish human runtime testing or code review; 
 functional evidence is automated consumer, package, socket and hostile-suite qualification plus
 independent agent review. Ergonomic feature suggestions remain work for later releases.
 
-This scope decision applies only to `0.1.0`. Substantial later changes to the API or main workflow
-require a focused human use pass unless the owner explicitly sets another scope. Routine fixes may
-reuse relevant evidence, with its limits recorded. No review changes the required automated gates.
+That decision applies only to `0.1.0`. For later releases, the owner set the checkpoint on
+2026-11-06 in [#92](https://github.com/viell-dev/slop-effect-schema-http/issues/92): substantial
+changes to the API or main workflow get an agent usability review instead of a human use pass. A
+separate agent with fresh context works through the changed API and guides as a new user would and
+reports what is confusing or awkward. The release pull request records the result. This is not
+evidence of human use. The owner may still comment on what they notice while reading the
+documentation; treat those comments as consumer reports, not as a step a release waits for.
+Reconsider this scope when the owner has time to use the library themselves.
+
+Routine fixes may reuse relevant evidence, with its limits recorded. No review changes the required
+automated gates.

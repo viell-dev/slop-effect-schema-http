@@ -5,6 +5,9 @@
 - Wait for npm version/attestation visibility after publication and provide a read-only recovery
   workflow that verifies the original qualification artifact without another upload
   ([#78](https://github.com/viell-dev/slop-effect-schema-http/issues/78)).
+- Record the owner's decision that substantial API changes after `0.1.0` get an agent usability
+  review instead of a human use pass
+  ([#92](https://github.com/viell-dev/slop-effect-schema-http/issues/92)).
 
 ## 0.1.0 — 2026-11-04
 
