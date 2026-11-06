@@ -88,8 +88,9 @@ both to the transport, so it can add the boundary. A header declaration describe
 not relabel an encoded body. A protocol that needs a parameterized content type gets it from a
 custom codec. `Request.mapEffect` remains available to edit the native request deliberately.
 
-A GET or HEAD request requires `HttpBody.empty`, as produced by `Body.empty`. Even a zero-length
-text or byte body fails with `Request.InvalidRequest` before dispatch.
+Any method can carry a body, including GET and HEAD. The library passes the request to the client
+and adds no check of its own. A client can still refuse it: `fetch` does so for GET and HEAD, which
+surfaces as a transport failure from the client, not as `Request.InvalidRequest`.
 
 ### Request transforms
 

@@ -53,14 +53,14 @@ representations. `Body.text` is lenient UTF-8 through Fetch-backed providers. Th
 
 ## Identify the failure stage
 
-| Outcome                       | What to inspect                                                                                                                        |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Input schema error            | Check the application value against the request schema. Encoding failed before dispatch.                                               |
-| `Request.InvalidRequest`      | Check URL rendering, custom encoders, and body/method compatibility.                                                                   |
-| `HttpClientError`             | Check the provider, service reachability, and client middleware. A transport error alone does not prove the request was never applied. |
-| `Response.UnexpectedResponse` | Add an explicit case for metadata the application needs to handle. The unmatched body has already been drained.                        |
-| `Response.DecodeError`        | Inspect the selected contract, metadata and typed cause. Selection does not fall through after a decode failure.                       |
-| Timeout                       | Distinguish an attempt timeout from the caller's whole-operation limit; check whether repeating the action is safe.                    |
+| Outcome                       | What to inspect                                                                                                                                                                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input schema error            | Check the application value against the request schema. Encoding failed before dispatch.                                                                                                                                        |
+| `Request.InvalidRequest`      | Check URL rendering and custom encoders.                                                                                                                                                                                        |
+| `HttpClientError`             | Check the provider, service reachability, and client middleware. A client can refuse a request the library passed on, such as `fetch` with a body on GET. A transport error alone does not prove the request was never applied. |
+| `Response.UnexpectedResponse` | Add an explicit case for metadata the application needs to handle. The unmatched body has already been drained.                                                                                                                 |
+| `Response.DecodeError`        | Inspect the selected contract, metadata and typed cause. Selection does not fall through after a decode failure.                                                                                                                |
+| Timeout                       | Distinguish an attempt timeout from the caller's whole-operation limit; check whether repeating the action is safe.                                                                                                             |
 
 For unexpected text or encoding failures, read bytes and apply a decoder suited to the service's
 format. For a browser-only failure, reproduce under the same origin, credentials and CORS policy; a

@@ -1146,22 +1146,29 @@ describe("Request.body", () => {
     }),
   );
 
-  it.effect.each(["GET", "HEAD"])("rejects a body on %s", (method) =>
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/96
+  it.effect.each(["GET", "HEAD"])("keeps a body on %s", (method) =>
     Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        compile(
-          Request.make(method, "https://soap.test/download").pipe(
-            Request.body(Body.text),
-          ),
-          { body: "<Envelope/>" },
+      const { request } = yield* compile(
+        Request.make(method, "https://soap.test/download").pipe(
+          Request.body(Body.text),
         ),
+        { body: "<Envelope/>" },
       );
-      expect(error).toBeInstanceOf(Request.InvalidRequest);
-      expect(error).toMatchObject({
-        message: `${method} cannot carry a request body`,
-      });
+      expect(request.method).toBe(method);
+      expect(bodyText(request)).toBe("<Envelope/>");
+      expect(request.headers["content-type"]).toBe("text/plain");
+      expect(request.headers["content-length"]).toBe("11");
     }),
   );
+
+  it("takes a body as input on the GET and HEAD helpers", () => {
+    for (const helper of [Request.get, Request.head]) {
+      expectTypeOf(helper("/").pipe(Request.body(Body.text))).toEqualTypeOf<
+        Request.Request<{ readonly body: string }>
+      >();
+    }
+  });
 
   it.effect("allows a body on DELETE and custom methods", () =>
     Effect.gen(function* () {

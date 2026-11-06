@@ -11,7 +11,12 @@ import {
   Schedule,
   Stream,
 } from "effect";
-import { Cookies, FetchHttpClient, HttpClient } from "effect/http";
+import {
+  Cookies,
+  FetchHttpClient,
+  HttpClient,
+  HttpClientError,
+} from "effect/http";
 import { linesClient, listen } from "../../test/socket.js";
 import * as Body from "./Body.js";
 import * as Operation from "./Operation.js";
@@ -200,6 +205,26 @@ describe("Operation over real loopback sockets", () => {
           }
         }
       }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/96
+  it.live("Fetch refuses a GET body the library passed on", () =>
+    Effect.gen(function* () {
+      let requests = 0;
+      const { origin } = yield* listen((_, response) => {
+        requests++;
+        response.end("ok");
+      });
+      const error = yield* Operation.make(
+        Request.get(origin).pipe(Request.body(Body.text)),
+        Response.status(200, Body.text),
+      )
+        .execute({ body: "<Envelope/>" })
+        .pipe(Effect.provide(FetchHttpClient.layer), Effect.flip);
+      expect(error).toBeInstanceOf(HttpClientError.HttpClientError);
+      expect(error).toMatchObject({ reason: { _tag: "TransportError" } });
+      expect(requests).toBe(0);
+    }),
   );
 
   it.live(
