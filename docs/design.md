@@ -33,6 +33,13 @@ work without one. An unconventional path, header, method, or status code is not 
 it or to rewrite its meaning. Defaults that embody a policy can be replaced through ordinary Effect
 composition. For example, `UrlEncoding` is a context reference with a replacement layer.
 
+**As permissive as possible on its own end.** Everything in the library is meant to be composable,
+configurable or replaceable. It lets through as much as it can: it adds no refusals of its own and
+does not rewrite what a request declares. What a client or platform then does with the request is
+outside its promise. A client can rewrite or refuse a request the library passed on, and the library
+does not promise that an unusual request works. Where this page says the client receives something
+as written, it describes what the library hands over, not what reaches a server.
+
 **Finite bodies first.** Streaming request and response bodies are deferred. The finite-body design
 must not foreclose them.
 

@@ -46,6 +46,13 @@ percent-encodes some characters, so read `request.hash` for the exact text. A pr
 `HttpClient.makeWith` reads `request.url` directly, so it has to read `request.hash` as well or the
 fragment is lost.
 
+### Refuse CR and LF in a provider that writes bytes
+
+The library does not refuse a carriage return or line feed in a URL, a header name or a header
+value. It stays as permissive as possible on its own end, so this check belongs to the provider.
+`fetch` and `node:http` do not put them on the wire. A provider that writes bytes itself must refuse
+them: otherwise a value taken from user input can add a header or split a request.
+
 ### Read response metadata
 
 `Transport.responseHeaderLines(nativeResponse)` returns an Effect `Option` of the attached lines.

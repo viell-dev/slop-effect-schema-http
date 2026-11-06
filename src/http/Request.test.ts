@@ -39,6 +39,46 @@ const targetOf = <I, E, R, H extends boolean, Q extends boolean>(
     hash: Option.getOrUndefined(compiled.request.hash),
   }));
 
+/** A binding that renders the fixed text `url` followed by the input. */
+const rendered = (url: string) =>
+  Request.path(Schema.String, (value) => `${url}${value}`);
+
+/** The target of a request under a join that adds a fragment of its own. */
+const joinedTarget = (base: string, path: string) =>
+  targetOf(Request.get("").pipe(Request.baseUrl(base), rendered("")), {
+    path,
+  }).pipe(
+    Effect.provide(
+      UrlEncoding.layer({
+        ...UrlEncoding.defaults,
+        join: (start, end) => `${start}${end}#from-join`,
+      }),
+    ),
+  );
+
+/** A policy that records each query call and marks the text it renders. */
+const recording = () => {
+  const calls: Array<UrlEncoding.Query> = [];
+  return {
+    calls,
+    layer: UrlEncoding.layer({
+      ...UrlEncoding.defaults,
+      query: (entries) => {
+        calls.push(entries);
+        return entries
+          .map(([key, value]) => `custom-${key}=${value}`)
+          .join("&");
+      },
+    }),
+  };
+};
+
+/** The body fields of a compiled request. */
+const bodyFieldsOf = ({ request }: Request.Compiled) => ({
+  type: request.headers["content-type"],
+  length: request.headers["content-length"],
+});
+
 /** Read while encoding a header. */
 class Tenant extends Context.Service<Tenant, string>()("test/Tenant") {}
 
@@ -274,23 +314,6 @@ describe("Request.baseUrl", () => {
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/102
 describe("constructor query text", () => {
-  /** A policy that records each call and marks the text it renders. */
-  const recording = () => {
-    const calls: Array<UrlEncoding.Query> = [];
-    return {
-      calls,
-      layer: UrlEncoding.layer({
-        ...UrlEncoding.defaults,
-        query: (entries) => {
-          calls.push(entries);
-          return entries
-            .map(([key, value]) => `custom-${key}=${value}`)
-            .join("&");
-        },
-      }),
-    };
-  };
-
   it.effect.each([
     "/x?a=1;b=2",
     "/x?a=1&&b=2",
@@ -472,16 +495,17 @@ describe("constructor query text", () => {
 
   it.effect("survives a path binding and a base URL", () =>
     Effect.gen(function* () {
-      const rendered = (url: string) =>
-        urlOf(
-          Request.get(url).pipe(
-            Request.baseUrl("https://x.test/v1"),
-            Request.path(Schema.String, (id) => `/${id}`),
+      for (const query of ["?a=1;b=2", "?"]) {
+        expect(
+          yield* urlOf(
+            Request.get(`/x${query}`).pipe(
+              Request.baseUrl("https://x.test/v1"),
+              rendered("/"),
+            ),
+            { path: "y" },
           ),
-          { path: "y" },
-        );
-      expect(yield* rendered("/x?a=1;b=2")).toBe("https://x.test/v1/y?a=1;b=2");
-      expect(yield* rendered("/x?")).toBe("https://x.test/v1/y?");
+        ).toBe(`https://x.test/v1/y${query}`);
+      }
     }),
   );
 
@@ -676,9 +700,6 @@ describe("constructor query text", () => {
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/83
 describe("fragments in the URL", () => {
-  const rendered = (url: string) =>
-    Request.path(Schema.String, (value) => `${url}${value}`);
-
   it.effect("puts the query before a fragment in path output", () =>
     Effect.gen(function* () {
       expect(
@@ -767,22 +788,15 @@ describe("fragments in the URL", () => {
 
   it.effect("prefers path output to the base URL, and either to a join", () =>
     Effect.gen(function* () {
-      const join = (base: string, path: string) => `${base}${path}#from-join`;
-      const target = (base: string, path: string) =>
-        targetOf(Request.get("").pipe(Request.baseUrl(base), rendered("")), {
-          path,
-        }).pipe(
-          Effect.provide(UrlEncoding.layer({ ...UrlEncoding.defaults, join })),
-        );
-      expect(yield* target("https://x.test#base", "/a#path")).toEqual({
+      expect(yield* joinedTarget("https://x.test#base", "/a#path")).toEqual({
         url: "https://x.test/a",
         hash: "path",
       });
-      expect(yield* target("https://x.test#base", "/a")).toEqual({
+      expect(yield* joinedTarget("https://x.test#base", "/a")).toEqual({
         url: "https://x.test/a",
         hash: "base",
       });
-      expect(yield* target("https://x.test", "/a")).toEqual({
+      expect(yield* joinedTarget("https://x.test", "/a")).toEqual({
         url: "https://x.test/a",
         hash: "from-join",
       });
@@ -2012,10 +2026,6 @@ describe("automatic body fields", () => {
 
   const post = Request.post("https://api.test/items");
   const hello = { body: "hello" };
-  const fields = ({ request }: Request.Compiled) => ({
-    type: request.headers["content-type"],
-    length: request.headers["content-length"],
-  });
   /** A request with `edit` applied before the body, and one with it applied after. */
   const eitherOrder = (edit: Edit) => [
     post.pipe(edit, Request.body(Body.text)),
@@ -2028,7 +2038,10 @@ describe("automatic body fields", () => {
         post.pipe(Request.body(Body.text)),
         hello,
       );
-      expect(fields(compiled)).toEqual({ type: "text/plain", length: "5" });
+      expect(bodyFieldsOf(compiled)).toEqual({
+        type: "text/plain",
+        length: "5",
+      });
     }),
   );
 
@@ -2038,7 +2051,7 @@ describe("automatic body fields", () => {
         Request.setHeader("content-type", "application/weird"),
       )) {
         const compiled = yield* compile(request, hello);
-        expect(fields(compiled)).toEqual({
+        expect(bodyFieldsOf(compiled)).toEqual({
           type: "application/weird",
           length: "5",
         });
@@ -2052,7 +2065,10 @@ describe("automatic body fields", () => {
         Request.setHeader("content-length", "3"),
       )) {
         const compiled = yield* compile(request, hello);
-        expect(fields(compiled)).toEqual({ type: "text/plain", length: "3" });
+        expect(bodyFieldsOf(compiled)).toEqual({
+          type: "text/plain",
+          length: "3",
+        });
       }
     }),
   );
@@ -2063,7 +2079,7 @@ describe("automatic body fields", () => {
         Request.setHeader("content-type", ""),
       )) {
         const compiled = yield* compile(request, hello);
-        expect(fields(compiled)).toEqual({ type: "", length: "5" });
+        expect(bodyFieldsOf(compiled)).toEqual({ type: "", length: "5" });
       }
     }),
   );
@@ -2078,7 +2094,7 @@ describe("automatic body fields", () => {
         ),
         hello,
       );
-      expect(fields(compiled).type).toBe("computed-1");
+      expect(bodyFieldsOf(compiled).type).toBe("computed-1");
       expect(calls).toBe(1);
     }),
   );
@@ -2093,7 +2109,7 @@ describe("automatic body fields", () => {
         ),
         hello,
       );
-      expect(fields(compiled).type).toBe("a, b");
+      expect(bodyFieldsOf(compiled).type).toBe("a, b");
       expect(compiled.headerLines).toEqual([
         ["Content-Type", "a"],
         ["content-TYPE", "b"],
@@ -2106,14 +2122,17 @@ describe("automatic body fields", () => {
     Effect.gen(function* () {
       for (const request of eitherOrder(Request.removeHeader("Content-TYPE"))) {
         const compiled = yield* compile(request, hello);
-        expect(fields(compiled)).toEqual({ type: undefined, length: "5" });
+        expect(bodyFieldsOf(compiled)).toEqual({
+          type: undefined,
+          length: "5",
+        });
         expect(compiled.headerLines).toEqual([["content-length", "5"]]);
       }
       for (const request of eitherOrder(
         Request.removeHeader("content-length"),
       )) {
         const compiled = yield* compile(request, hello);
-        expect(fields(compiled)).toEqual({
+        expect(bodyFieldsOf(compiled)).toEqual({
           type: "text/plain",
           length: undefined,
         });
@@ -2131,7 +2150,7 @@ describe("automatic body fields", () => {
         ),
         hello,
       );
-      expect(fields(compiled).type).toBeUndefined();
+      expect(bodyFieldsOf(compiled).type).toBeUndefined();
     }),
   );
 
@@ -2145,7 +2164,7 @@ describe("automatic body fields", () => {
         ),
         hello,
       );
-      expect(fields(compiled).type).toBe("text/plain");
+      expect(bodyFieldsOf(compiled).type).toBe("text/plain");
       expect(compiled.removedHeaders).toEqual(new Set());
     }),
   );
@@ -2160,7 +2179,7 @@ describe("automatic body fields", () => {
         ),
         hello,
       );
-      expect(fields(compiled).type).toBeUndefined();
+      expect(bodyFieldsOf(compiled).type).toBeUndefined();
     }),
   );
 
@@ -2174,7 +2193,7 @@ describe("automatic body fields", () => {
         ),
         hello,
       );
-      expect(fields(set).type).toBe("application/weird");
+      expect(bodyFieldsOf(set).type).toBe("application/weird");
       const appended = yield* compile(
         post.pipe(
           Request.removeHeader("content-type"),
@@ -2183,7 +2202,7 @@ describe("automatic body fields", () => {
         ),
         hello,
       );
-      expect(fields(appended).type).toBe("application/weird");
+      expect(bodyFieldsOf(appended).type).toBe("application/weird");
       expect(appended.removedHeaders).toEqual(new Set());
     }),
   );
@@ -2197,7 +2216,7 @@ describe("automatic body fields", () => {
         ),
         hello,
       );
-      expect(fields(compiled).type).toBe("text/plain");
+      expect(bodyFieldsOf(compiled).type).toBe("text/plain");
     }),
   );
 
@@ -2214,7 +2233,7 @@ describe("automatic body fields", () => {
         removed.pipe(Request.body(Body.text), Request.headers(Type)),
       ]) {
         const compiled = yield* compile(request, input);
-        expect(fields(compiled).type).toBe("application/weird");
+        expect(bodyFieldsOf(compiled).type).toBe("application/weird");
       }
     }),
   );
@@ -2230,7 +2249,10 @@ describe("automatic body fields", () => {
         post.pipe(Request.body(Body.text), Request.headers(Type)),
       ]) {
         const compiled = yield* compile(request, input);
-        expect(fields(compiled)).toEqual({ type: "text/plain", length: "5" });
+        expect(bodyFieldsOf(compiled)).toEqual({
+          type: "text/plain",
+          length: "5",
+        });
       }
       const removed = yield* compile(
         post.pipe(
@@ -2240,7 +2262,7 @@ describe("automatic body fields", () => {
         ),
         input,
       );
-      expect(fields(removed).type).toBeUndefined();
+      expect(bodyFieldsOf(removed).type).toBeUndefined();
     }),
   );
 
@@ -2254,7 +2276,7 @@ describe("automatic body fields", () => {
         ),
         hello,
       );
-      expect(fields(declared).type).toBe("application/merge-patch+json");
+      expect(bodyFieldsOf(declared).type).toBe("application/merge-patch+json");
       const removed = yield* compile(
         post.pipe(
           Request.removeHeader("content-type"),
@@ -2263,7 +2285,7 @@ describe("automatic body fields", () => {
         ),
         hello,
       );
-      expect(fields(removed).type).toBe("application/merge-patch+json");
+      expect(bodyFieldsOf(removed).type).toBe("application/merge-patch+json");
     }),
   );
 
@@ -2273,7 +2295,7 @@ describe("automatic body fields", () => {
         post.pipe(relabel, Request.body(Body.text)),
         hello,
       );
-      expect(fields(replaced).type).toBe("text/plain");
+      expect(bodyFieldsOf(replaced).type).toBe("text/plain");
       const kept = yield* compile(
         post.pipe(
           Request.removeHeader("content-type"),
@@ -2282,7 +2304,7 @@ describe("automatic body fields", () => {
         ),
         hello,
       );
-      expect(fields(kept).type).toBe("application/merge-patch+json");
+      expect(bodyFieldsOf(kept).type).toBe("application/merge-patch+json");
     }),
   );
 
@@ -2300,7 +2322,7 @@ describe("automatic body fields", () => {
       ]) {
         const compiled = yield* compile(request, { body: undefined });
         expect(compiled.request.body._tag).toBe("Empty");
-        expect(fields(compiled)).toEqual({
+        expect(bodyFieldsOf(compiled)).toEqual({
           type: "application/weird",
           length: undefined,
         });
@@ -2335,8 +2357,10 @@ describe("automatic body fields", () => {
     Effect.gen(function* () {
       const original = post.pipe(Request.body(Body.text));
       const variant = original.pipe(Request.removeHeader("content-type"));
-      expect(fields(yield* compile(variant, hello)).type).toBeUndefined();
-      expect(fields(yield* compile(original, hello)).type).toBe("text/plain");
+      expect(bodyFieldsOf(yield* compile(variant, hello)).type).toBeUndefined();
+      expect(bodyFieldsOf(yield* compile(original, hello)).type).toBe(
+        "text/plain",
+      );
     }),
   );
 

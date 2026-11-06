@@ -21,8 +21,8 @@
   `request.hash` ([#83](https://github.com/viell-dev/slop-effect-schema-http/issues/83)).
 - Keep a fragment written in the constructor. `Request.make` and its shortcuts used to discard it.
   It now reaches the client in the `hash` field, exactly as written, and wins over a fragment in
-  path output or a base URL. `fetch` still does not send a fragment
-  ([#93](https://github.com/viell-dev/slop-effect-schema-http/issues/93)).
+  path output or a base URL. `fetch` still does not send a fragment. `Request.Declaration` gains
+  `hash` ([#93](https://github.com/viell-dev/slop-effect-schema-http/issues/93)).
 - Keep the spelling of header names. `Request.setHeader` and `Request.appendHeader` used to
   lowercase a name, so a provider that sends header lines could not deliver `X-API-Key`. Lines now
   keep the spelling they were written with, and comparing names still folds case, so `setHeader`
@@ -40,7 +40,8 @@
   became `?q=a%20b`, `?a=1&&b=2` lost a segment and a lone `?` disappeared. Each entry keeps its
   text, stays editable by its decoded name, and goes through `UrlEncoding.query` once edited. A
   custom `UrlEncoding.query` no longer receives entries kept as written, and text the library used
-  to escape, such as a space, is no longer escaped
+  to escape, such as a space, is no longer escaped. `Request.Declaration` gains `emptyQuery` and
+  `Draft` gains `queryText`
   ([#102](https://github.com/viell-dev/slop-effect-schema-http/issues/102)).
 
 ## 0.1.0 — 2026-11-04

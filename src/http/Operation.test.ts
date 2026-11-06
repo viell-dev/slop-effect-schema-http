@@ -497,22 +497,23 @@ describe("Operation.make", () => {
   );
 });
 
+/** What a client receives for a request whose response declares JSON. */
+const sent = <I, E, H extends boolean, Q extends boolean>(
+  request: Request.Request<I, E, never, H, Q>,
+  input: I,
+  options?: Operation.Options,
+) =>
+  Effect.gen(function* () {
+    const server = synthetic(() => json(200, {}));
+    yield* Operation.make(request, Response.status(200, Body.json), options)
+      .execute(input)
+      .pipe(Effect.provide(server.layer));
+    return server.exchanges[0]!;
+  });
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/100
 describe("automatic Accept", () => {
   const get = Request.get("https://api.test/");
-  /** What a client receives for a request whose response declares JSON. */
-  const sent = <I, E, H extends boolean, Q extends boolean>(
-    request: Request.Request<I, E, never, H, Q>,
-    input: I,
-    options?: Operation.Options,
-  ) =>
-    Effect.gen(function* () {
-      const server = synthetic(() => json(200, {}));
-      yield* Operation.make(request, Response.status(200, Body.json), options)
-        .execute(input)
-        .pipe(Effect.provide(server.layer));
-      return server.exchanges[0]!;
-    });
 
   it.effect("stops with removeHeader, in any spelling", () =>
     Effect.gen(function* () {
