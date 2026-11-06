@@ -101,11 +101,26 @@ the scenarios. The library's own design, which these tests are judged against, i
   scope, so each test gets fresh state. Do not replace the transport with an in-memory client.
 - **Assert the wire.** Check what the backend received from `yield* backend.ledger`: method, target, header
   lines, body bytes and request counts. Do not rely only on the decoded value.
+  - The ledger reads bytes as characters one for one, so UTF-8's `ä` in a target arrives as
+    the two characters U+00C3 and U+00A4.
+  - `node:http` refuses or reshapes some requests before a backend sees them. A test about those
+    starts the backend with `lane.backend(name, options, { listener: "socket" })`, in either lane.
+    That plain socket listener refuses nothing, serves one request per connection and frames a body
+    only by `Content-Length`. It adds each request's `head`, the request line and header lines as
+    they arrived. Its method runs to the first space, so `BAD METHOD /x` has the method `BAD` and
+    the target `METHOD /x`; assert `head` where the parts cannot show what was sent.
 - **Distinguish failures.** Pre-dispatch validation, server rejection, decode errors, timeouts,
   unexpected responses and explicit fallbacks are different outcomes; assert which one occurred.
 - **Providers.** `lane.clients` lists the providers available in the current lane.
   - `lane.linesClient` (Node lane only) preserves header lines, follows no redirects and keeps no
     cookies.
+  - `lane.rawClient` (Node lane only) is not in `lane.clients`, because it takes the origin to
+    connect to: `lane.rawClient(backend.origin)`. It sends a request exactly as written, for shapes
+    no standard client sends: `request.url` without that origin, or whole when the URL does not
+    start with it, then `#` and `request.hash`, and `Transport.headerLines`, with no URL parsing.
+    It adds `Host` and the body's framing only when the request has none, and refuses nothing. A
+    target goes out as UTF-8 and a header line as Latin-1, or as UTF-8 when it does not fit.
+    Add `HttpClient.followRedirects` to follow redirects, within that one origin.
   - `lane.fetchClient` is Effect's Fetch provider over the lane's own `fetch`.
   - When cookies, redirects or caching matter, state the provider and its settings in the test.
   - Do not assume behaviour carries over between Node and a browser.

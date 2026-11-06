@@ -1,20 +1,36 @@
+import { createServer, type IncomingMessage, ServerResponse } from "node:http";
 import {
-  createServer,
-  type IncomingMessage,
-  type ServerResponse,
-} from "node:http";
-import type { AddressInfo } from "node:net";
+  type AddressInfo,
+  createServer as createSocketServer,
+  type Server as NetServer,
+  type Socket,
+} from "node:net";
 import { Effect, type Scope } from "effect";
 
 /** Header lines in order, with their original spelling and repetition. */
 export type Lines = ReadonlyArray<readonly [string, string]>;
 
+/**
+ * What listens for a backend. `"http"`, the default, is `node:http`, whose parser refuses or reshapes
+ * some requests before any handler sees them. `"socket"` is a plain `node:net` listener that refuses
+ * nothing and reads the bytes itself; `socketListener` below gives its rules.
+ */
+export type Listener = "http" | "socket";
+
 /** One request exactly as the server's socket received it. */
 export interface Received {
   readonly method: string;
-  /** The request target as sent: path and query, not decoded. */
+  /**
+   * The request target as sent, not decoded, one character per byte: normally the path and query,
+   * and anything else the client wrote there, such as a fragment, `*` or a whole URL.
+   */
   readonly target: string;
   readonly lines: Lines;
+  /**
+   * The request line and header lines as they arrived, one character per byte, up to the blank line
+   * that ends them. Only the socket listener has this; `node:http` keeps only what it parsed.
+   */
+  readonly head?: string | undefined;
   /**
    * The body bytes received so far. A handler always sees the complete body; a request whose
    * client disconnected mid-body keeps the bytes that arrived.
@@ -83,9 +99,9 @@ export const text = (
 export const query = (received: Received): URLSearchParams =>
   new URL(received.target, "http://placeholder").searchParams;
 
-/** The received path, not decoded. */
+/** The received path, not decoded: the target up to its query or fragment. */
 export const path = (received: Received): string =>
-  received.target.split("?")[0] ?? "";
+  received.target.split(/[?#]/)[0] ?? "";
 
 const pairs = (raw: ReadonlyArray<string>): Lines => {
   const lines: Array<readonly [string, string]> = [];
@@ -112,14 +128,172 @@ const write = (response: ServerResponse, reply: Reply): void => {
   response.end(reply.body);
 };
 
+/** What a listener needs from `serve`. */
+interface Exchange {
+  /** Put a request on the ledger, as soon as its head has arrived. */
+  readonly record: (received: Received) => void;
+  /** Run the handler on a complete request, and pass on its reply unless the client has gone. */
+  readonly answer: (
+    received: Received,
+    signal: AbortSignal,
+    reply: (reply: Reply) => void,
+  ) => Promise<void>;
+}
+
+interface Listening {
+  readonly server: NetServer;
+  readonly closeConnections: () => void;
+}
+
+const httpListener = ({ record, answer }: Exchange): Listening => {
+  const server = createServer((request, response) => {
+    const controller = new AbortController();
+    response.on("close", () => {
+      if (!response.writableFinished) controller.abort();
+    });
+    // Recorded at arrival; the body getter shows the bytes received so far.
+    const chunks: Array<Buffer> = [];
+    let complete: Uint8Array | undefined;
+    const received: Received = {
+      method: request.method ?? "",
+      target: request.url ?? "",
+      lines: pairs(request.rawHeaders),
+      get body() {
+        return complete ?? new Uint8Array(Buffer.concat(chunks));
+      },
+      aborted: () => controller.signal.aborted,
+    };
+    record(received);
+    const exchange = async () => {
+      try {
+        complete = await collect(request, chunks);
+      } catch {
+        // The client went away mid-body: the entry keeps what arrived and reads as
+        // aborted, and no handler sees a partial request.
+        controller.abort();
+        return;
+      }
+      await answer(received, controller.signal, (reply) =>
+        write(response, reply),
+      );
+    };
+    // Whatever still fails, such as a second write after a partial one, ends the
+    // connection rather than escaping as an unhandled rejection.
+    exchange().catch(() => response.destroy());
+  });
+  return { server, closeConnections: () => server.closeAllConnections() };
+};
+
+/**
+ * Read a head the way a server that refuses nothing has to. The method runs to the first space, and
+ * the target from there to a final ` HTTP/<major>.<minor>`, or to the end of the line without one.
+ * A header name runs to its line's first colon, and a line without a colon is a name with an empty
+ * value. A value loses its surrounding spaces and tabs, as in `node:http`.
+ */
+const readHead = (head: string) => {
+  const [requestLine = "", ...fields] = head.split("\r\n");
+  const space = requestLine.indexOf(" ");
+  return {
+    method: space < 0 ? requestLine : requestLine.slice(0, space),
+    target:
+      space < 0
+        ? ""
+        : requestLine.slice(space + 1).replace(/ HTTP\/\d\.\d$/, ""),
+    lines: fields.map((field): readonly [string, string] => {
+      const colon = field.indexOf(":");
+      return colon < 0
+        ? [field, ""]
+        : [
+            field.slice(0, colon),
+            field.slice(colon + 1).replace(/^[ \t]+|[ \t]+$/g, ""),
+          ];
+    }),
+  };
+};
+
+/**
+ * A plain socket listener, for requests `node:http` would refuse or reshape, such as a space in the
+ * target, an unknown method or `CONNECT`. It serves one request per connection. The head ends at
+ * the first CRLF CRLF, and only a whole number in `Content-Length` frames a body; any other bytes
+ * after the head are ignored. Bytes become characters one for one, as `node:http` decodes the
+ * target and header lines. The reply goes through Node's own `ServerResponse`, so it has the same
+ * lines and framing as under `node:http`, except `Connection: close`.
+ */
+const socketListener = ({ record, answer }: Exchange): Listening => {
+  const open = new Set<Socket>();
+  const server = createSocketServer((socket) => {
+    open.add(socket);
+    socket.on("close", () => open.delete(socket));
+    // A reset ends the connection like any other disconnect, which the reply's close event reports.
+    socket.on("error", () => undefined);
+    let start = Buffer.alloc(0);
+    const readStart = (chunk: Buffer) => {
+      start = Buffer.concat([start, chunk]);
+      const end = start.indexOf("\r\n\r\n");
+      if (end < 0) return;
+      socket.off("data", readStart);
+      const head = start.toString("latin1", 0, end);
+      const { method, target, lines } = readHead(head);
+      const declared = header(lines, "content-length") ?? "";
+      const length = /^\d+$/.test(declared) ? Number(declared) : 0;
+      const response = new ServerResponse({
+        method,
+        httpVersionMajor: 1,
+        httpVersionMinor: 1,
+      } as IncomingMessage);
+      response.shouldKeepAlive = false;
+      response.assignSocket(socket);
+      response.on("finish", () => socket.end());
+      const controller = new AbortController();
+      response.on("close", () => {
+        if (!response.writableFinished) controller.abort();
+      });
+      let body = start.subarray(end + 4, end + 4 + length);
+      const received: Received = {
+        method,
+        target,
+        lines,
+        head,
+        get body() {
+          return new Uint8Array(body);
+        },
+        aborted: () => controller.signal.aborted,
+      };
+      record(received);
+      const exchange = () => {
+        // As under `node:http`, whatever still fails ends the connection.
+        answer(received, controller.signal, (reply) =>
+          write(response, reply),
+        ).catch(() => socket.destroy());
+      };
+      if (body.length >= length) return exchange();
+      const readBody = (more: Buffer) => {
+        body = Buffer.concat([body, more]).subarray(0, length);
+        if (body.length < length) return;
+        socket.off("data", readBody);
+        exchange();
+      };
+      socket.on("data", readBody);
+    };
+    socket.on("data", readStart);
+  });
+  return {
+    server,
+    closeConnections: () => {
+      for (const socket of open) socket.destroy();
+    },
+  };
+};
+
 /**
  * Serve `handler` on an ephemeral loopback port for the current scope. Closing the scope closes
  * every open connection, including held-open requests. `host` defaults to `127.0.0.1`; any address
- * in `127.0.0.0/8` is loopback on Linux and Windows.
+ * in `127.0.0.0/8` is loopback on Linux and Windows. `listener` defaults to `node:http`.
  */
 export const serve = (
   handler: Handler,
   host = "127.0.0.1",
+  listener: Listener = "http",
 ): Effect.Effect<Server, never, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.promise(
@@ -137,56 +311,32 @@ export const serve = (
               include: (received: Received) => boolean,
             ) => ledger.filter(include).length >= count;
             let origin = "";
-            const server = createServer((request, response) => {
-              const controller = new AbortController();
-              response.on("close", () => {
-                if (!response.writableFinished) controller.abort();
-              });
-              // Recorded at arrival; the body getter shows the bytes received so far.
-              const chunks: Array<Buffer> = [];
-              let complete: Uint8Array | undefined;
-              const received: Received = {
-                method: request.method ?? "",
-                target: request.url ?? "",
-                lines: pairs(request.rawHeaders),
-                get body() {
-                  return complete ?? new Uint8Array(Buffer.concat(chunks));
-                },
-                aborted: () => controller.signal.aborted,
-              };
-              ledger.push(received);
-              for (const waiter of waiting.splice(0))
-                if (reached(waiter.count, waiter.include)) waiter.resolve();
-                else waiting.push(waiter);
-              const exchange = async () => {
+            const exchange: Exchange = {
+              record: (received) => {
+                ledger.push(received);
+                for (const waiter of waiting.splice(0))
+                  if (reached(waiter.count, waiter.include)) waiter.resolve();
+                  else waiting.push(waiter);
+              },
+              answer: async (received, signal, reply) => {
                 try {
-                  complete = await collect(request, chunks);
-                } catch {
-                  // The client went away mid-body: the entry keeps what arrived and reads as
-                  // aborted, and no handler sees a partial request.
-                  controller.abort();
-                  return;
-                }
-                try {
-                  const reply = await handler(received, {
-                    signal: controller.signal,
-                    origin,
-                  });
-                  if (!controller.signal.aborted) write(response, reply);
+                  const answered = await handler(received, { signal, origin });
+                  if (!signal.aborted) reply(answered);
                 } catch (cause) {
-                  if (!controller.signal.aborted)
-                    write(response, {
+                  if (!signal.aborted)
+                    reply({
                       status: 599,
                       statusText: "Fixture Failure",
                       lines: [["Content-Type", "text/plain"]],
                       body: `fixture handler threw: ${String(cause)}`,
                     });
                 }
-              };
-              // Whatever still fails, such as a second write after a partial one, ends the
-              // connection rather than escaping as an unhandled rejection.
-              exchange().catch(() => response.destroy());
-            });
+              },
+            };
+            const { server, closeConnections } =
+              listener === "http"
+                ? httpListener(exchange)
+                : socketListener(exchange);
             server.listen(0, host, () => {
               const { port } = server.address() as AddressInfo;
               origin = `http://${host}:${port}`;
@@ -201,7 +351,7 @@ export const serve = (
                       ),
                 close: () =>
                   new Promise((done) => {
-                    server.closeAllConnections();
+                    closeConnections();
                     server.close(() => done());
                   }),
               });

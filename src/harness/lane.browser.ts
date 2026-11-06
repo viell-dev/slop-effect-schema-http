@@ -37,7 +37,12 @@ export const lane: Lane = {
       control("/backends", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, options, cors: start?.cors ?? "harness" }),
+        body: JSON.stringify({
+          name,
+          options,
+          cors: start?.cors ?? "harness",
+          listener: start?.listener ?? "http",
+        }),
       }).pipe(
         Effect.map((started) => {
           const { id, origin } = started as {
@@ -68,4 +73,5 @@ export const lane: Lane = {
   clients: [["fetch", FetchHttpClient.layer]],
   fetchClient: FetchHttpClient.layer,
   linesClient: undefined,
+  rawClient: undefined,
 };

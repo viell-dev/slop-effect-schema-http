@@ -1,16 +1,16 @@
 import { Effect } from "effect";
 import type { Backend, Lane } from "./lane.js";
-import { fetchClient, linesLayer } from "./providers.js";
+import { fetchClient, linesLayer, rawLayer } from "./providers.js";
 import { loadHandler } from "./registry.js";
 import { serve } from "./server.js";
 
-/** The Node lane: backends run in this process, and both client providers are available. */
+/** The Node lane: backends run in this process, and every client provider is available. */
 export const lane: Lane = {
   name: "node",
-  backend: (name, options) =>
+  backend: (name, options, start) =>
     Effect.gen(function* () {
       const handler = yield* Effect.promise(() => loadHandler(name, options));
-      const server = yield* serve(handler);
+      const server = yield* serve(handler, undefined, start?.listener);
       const backend: Backend = {
         origin: server.origin,
         ledger: Effect.sync(() =>
@@ -18,6 +18,7 @@ export const lane: Lane = {
             method: received.method,
             target: received.target,
             lines: received.lines,
+            head: received.head,
             body: received.body,
             aborted: received.aborted(),
           })),
@@ -32,4 +33,5 @@ export const lane: Lane = {
   ],
   fetchClient,
   linesClient: linesLayer,
+  rawClient: rawLayer,
 };
