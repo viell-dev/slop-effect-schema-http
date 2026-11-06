@@ -41,11 +41,11 @@ integration rather than one request at a time.
 
 ### Policy interface
 
-| Member of `UrlEncoding.Service` | Input                              | Result                             |
-| ------------------------------- | ---------------------------------- | ---------------------------------- |
-| `path(value)`                   | One schema-encoded path value      | Escaped path text                  |
-| `query(entries)`                | Ordered decoded query pairs        | Query text without the leading `?` |
-| `join(base, path)`              | Base URL and rendered request path | Combined URL text                  |
+| Member of `UrlEncoding.Service` | Input                                                    | Result                             |
+| ------------------------------- | -------------------------------------------------------- | ---------------------------------- |
+| `path(value)`                   | One schema-encoded path value                            | Escaped path text                  |
+| `query(entries)`                | Ordered decoded query pairs, except text kept as written | Query text without the leading `?` |
+| `join(base, path)`              | Base URL and rendered request path                       | Combined URL text                  |
 
 `UrlEncoding.UrlEncoding` is an Effect context reference with `defaults` as its default value.
 `UrlEncoding.layer(service)` supplies a replacement. Exceptions from rendering become
@@ -55,15 +55,17 @@ integration rather than one request at a time.
 in its `hash` field, so the query goes before it. See
 [fragments](../design.md#fragments-stay-on-the-request).
 
-### Constructor URLs and opaque query text
+### Constructor URLs
 
-A query already in `Request.get("/search?q=Ada+Lovelace")` is parsed as form data. The `+` becomes a
-space and the default policy renders it as `%20`. Original percent-escape spelling is not kept. This
-lets field combinators and query schemas work on one structured representation.
+A query already in `Request.get("/search?q=Ada+Lovelace")` is passed to the client as written until
+something edits that entry. The `+` and any percent escapes keep their spelling, and so do empty `&`
+segments and a lone `?`. The client can still process the URL afterwards.
 
-If a protocol requires opaque query text, start without query declarations and edit the native URL
-using `Request.mapEffect`. Base joining and provider processing still apply afterwards. This is an
-advanced escape hatch, not a way to disable the HTTP provider's URL handling.
+Each entry also has a form-decoded name and value, so `Request.setQuery("q", "Grace Hopper")` edits
+this one and leaves any other as written. An edited or added entry goes through `query`, which
+receives only the entries that are not kept as written. Where written text stands between such
+entries, each run of them is rendered by a separate call, so the query keeps its order. See the [URL
+contract](../design.md#urls-are-made-sendable-not-normalized) for examples.
 
 ### Joining and provider normalization
 

@@ -186,6 +186,11 @@ The library renders URLs through [UrlEncoding](./url-encoding.md). Its defaults 
 order, repetition, bare keys, and empty values. The HTTP provider can still normalize URLs; see [URL
 processing](./url-encoding.md#advanced-url-processing).
 
+A query written in the URL is passed to the client as written until something edits that entry, so
+`?a=1;b=2` and `?q=a+b` keep their spelling. `setQuery`, `appendQuery` and `removeQuery` address an
+entry by its decoded name, and leave the other entries as they are. See [constructor
+URLs](./url-encoding.md#constructor-urls).
+
 A fragment stays on the request. The compiled request holds it in `request.hash`, exactly as
 written, and the query goes before it. A constructor fragment survives `Request.path` and query
 edits, and `Request.mapEffect` with `HttpClientRequest.removeHash` removes it. Whether it goes out

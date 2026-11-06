@@ -1,8 +1,18 @@
 /** A field value, or a computation that stays data until materialization. `undefined` omits the field. */
 export type Value<A = string> = A | (() => A | undefined);
 
+/**
+ * One declaration. A query entry written in a request's constructor also keeps that text. An edit
+ * makes a new entry, so the text falls away with the old one.
+ */
+export type Field<A = string> = readonly [
+  name: string,
+  value: Value<A>,
+  written?: string,
+];
+
 /** Ordered declarations. Entries preserve repetition and their order across names. */
-export type Fields<A = string> = ReadonlyArray<readonly [string, Value<A>]>;
+export type Fields<A = string> = ReadonlyArray<Field<A>>;
 
 /** The form two names are compared in. Entries keep their own spelling. */
 export type Fold = (name: string) => string;
@@ -19,7 +29,7 @@ export const set = <A>(
   const folded = fold(name);
   const position = fields.findIndex(([key]) => fold(key) === folded);
   if (position < 0) return [...fields, [name, value]];
-  return fields.flatMap((entry, index): Array<readonly [string, Value<A>]> =>
+  return fields.flatMap((entry, index): Array<Field<A>> =>
     index === position
       ? [[name, value]]
       : fold(entry[0]) === folded
