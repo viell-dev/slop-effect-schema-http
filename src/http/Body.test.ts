@@ -457,6 +457,14 @@ const bigEndianUint64 = (bytes: Uint8Array): bigint =>
     0,
   );
 
+/** A generic codec, a form that must keep compiling. */
+const jsonOf = <S extends Schema.Top>(schema: S) => Body.jsonSchema(schema);
+
+/** The same bound by `Schema.Constraint`, which has no constructor. */
+const jsonOfConstraint = <S extends Schema.Constraint>(schema: S) =>
+  // @ts-expect-error: only `Schema.Top` has `makeEffect`
+  Body.jsonSchema(schema);
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/91
 describe("a schema's value is built before it is encoded", () => {
   class User extends Schema.Class<User>("User")({
@@ -588,7 +596,7 @@ describe("a schema's value is built before it is encoded", () => {
   it("lets Body.make take more than it returns", () => {
     const codec = Body.make({
       encode: (value: string | number) => Body.text.encode(String(value)),
-      decode: (response) => response.text,
+      decode: (incoming) => incoming.text,
     });
     expectTypeOf<Parameters<typeof codec.encode>[0]>().toEqualTypeOf<
       string | number
@@ -599,12 +607,72 @@ describe("a schema's value is built before it is encoded", () => {
   });
 
   it("needs a full schema, so a generic helper is bound by Schema.Top", () => {
-    const helper = <S extends Schema.Top>(schema: S) => Body.jsonSchema(schema);
-    void helper(User);
-    const narrow = <S extends Schema.Constraint>(schema: S) =>
-      // @ts-expect-error: only `Schema.Top` has `makeEffect`
-      Body.jsonSchema(schema);
-    void narrow;
+    void jsonOf(User);
+    void jsonOfConstraint;
+  });
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/113
+describe("a schema-backed body takes either side of its schema", () => {
+  const at = "2026-11-07T12:00:00.000Z";
+  const Slot = Schema.Struct({
+    at: Schema.DateFromString,
+    limit: Schema.FiniteFromString,
+  });
+  const expected = `{"at":"${at}","limit":"5"}`;
+
+  it.effect.each([
+    ["the decoded side", { at: new Date(at), limit: 5 }],
+    ["the encoded side", { at, limit: "5" }],
+    ["a mix by field", { at: new Date(at), limit: "5" }],
+  ] as const)("Body.jsonSchema takes %s", ([, value]) =>
+    Effect.gen(function* () {
+      const body = yield* Body.jsonSchema(Slot).encode(value);
+      expect(textOf(body)).toBe(expected);
+    }),
+  );
+
+  it.effect("Body.encodeSchema passes on what the schema writes", () =>
+    Effect.gen(function* () {
+      const count = Body.text.pipe(Body.encodeSchema(Schema.FiniteFromString));
+      for (const value of [42, "42", "042"]) {
+        expect(textOf(yield* count.encode(value))).toBe("42");
+      }
+    }),
+  );
+
+  it.effect("reports the decoded side's error when every route fails", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        Body.jsonSchema(Slot).encode({ at: new Date(at), limit: "many" }),
+      );
+      expect(Schema.isSchemaError(error)).toBe(true);
+      expect(String(error)).toContain("Expected number");
+    }),
+  );
+
+  it.effect("takes the schema's own encoded side, not the JSON text", () =>
+    Effect.gen(function* () {
+      const Stamp = Schema.Struct({ at: Schema.Date });
+      const codec = Body.jsonSchema(Stamp);
+      expect(textOf(yield* codec.encode({ at: new Date(at) }))).toBe(
+        `{"at":"${at}"}`,
+      );
+      const error = yield* Effect.flip(codec.encode({ at: at as never }));
+      expect(Schema.isSchemaError(error)).toBe(true);
+    }),
+  );
+
+  it("takes what the schema's two sides take, and returns its decoded side", () => {
+    const codec = Body.jsonSchema(Schema.FiniteFromString);
+    expectTypeOf<Parameters<typeof codec.encode>[0]>().toEqualTypeOf<
+      number | string
+    >();
+    expectTypeOf<
+      Effect.Success<ReturnType<typeof codec.decode>>
+    >().toEqualTypeOf<number>();
+    // @ts-expect-error: a boolean is on neither side of the schema
+    void codec.encode(true);
   });
 });
 

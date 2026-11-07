@@ -1341,13 +1341,15 @@ describe("Request.headers", () => {
     Request.headers(Schema.Struct({ "X-Page": Schema.NumberFromString }));
   });
 
-  it("takes the schema's application type as input, not its encoded type", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/113
+  it("takes either side of the schema as input, and nothing else", () => {
     const paged = Request.get("/").pipe(
       Request.headers(Schema.Struct({ "X-Page": Schema.NumberFromString })),
     );
     void Request.compile(paged, { headers: { "X-Page": 3 } });
-    // @ts-expect-error: the input is the application value, a number
     void Request.compile(paged, { headers: { "X-Page": "3" } });
+    // @ts-expect-error: a boolean is on neither side of the schema
+    void Request.compile(paged, { headers: { "X-Page": true } });
   });
 
   it.effect(
@@ -1502,13 +1504,15 @@ describe("Request.query", () => {
     );
   });
 
-  it("takes the schema's application type as input, not its encoded type", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/113
+  it("takes either side of the schema as input, and nothing else", () => {
     const paged = Request.get("/").pipe(
       Request.query(Schema.Struct({ page: Schema.NumberFromString })),
     );
     void Request.compile(paged, { query: { page: 2 } });
-    // @ts-expect-error: the input is the application value, a number
     void Request.compile(paged, { query: { page: "2" } });
+    // @ts-expect-error: a boolean is on neither side of the schema
+    void Request.compile(paged, { query: { page: true } });
   });
 });
 
@@ -1729,6 +1733,15 @@ const MomentFromNumber = Schema.Number.pipe(
   }),
 );
 
+/** A generic path binding, a form that must keep compiling. */
+const pathOf = <S extends Schema.Top>(schema: S) =>
+  Request.path(schema, () => "/x");
+
+/** The same bound by `Schema.Constraint`, which has no constructor. */
+const pathOfConstraint = <S extends Schema.Constraint>(schema: S) =>
+  // @ts-expect-error: only `Schema.Top` has `makeEffect`
+  Request.path(schema, () => "/x");
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/91
 describe("a schema's value is built before it is encoded", () => {
   class Filter extends Schema.Class<Filter>("Filter")({
@@ -1813,7 +1826,7 @@ describe("a schema's value is built before it is encoded", () => {
         Request.query(Filter),
       );
       const error = yield* Effect.flip(
-        compile(request, { query: { page: "many" as never } }),
+        compile(request, { query: { page: true as never } }),
       );
       expect(Schema.isSchemaError(error)).toBe(true);
       expect(prepared).toBe(0);
@@ -1847,8 +1860,8 @@ describe("a schema's value is built before it is encoded", () => {
 
   it("takes the constructor's input in the type", () => {
     const query = Request.get("/x").pipe(Request.query(Filter));
-    expectTypeOf<Parameters<typeof query.prepare>[0]>().toEqualTypeOf<
-      unknown & { readonly query: { readonly page: number } }
+    expectTypeOf<{ readonly page: number }>().toExtend<
+      Parameters<typeof query.prepare>[0]["query"]
     >();
     const path = Request.get("/x").pipe(byKey);
     void Request.compile(path, { path: { id: 7 } });
@@ -1856,24 +1869,477 @@ describe("a schema's value is built before it is encoded", () => {
     void Request.compile(path, { path: {} });
   });
 
-  it("keeps a brand: a plain value in a branded field does not compile", () => {
-    const Id = Schema.String.pipe(Schema.brand("Id"));
-    const request = Request.get("/x").pipe(
-      Request.query(Schema.Struct({ id: Id })),
+  it("needs a full schema, so a generic helper is bound by Schema.Top", () => {
+    void pathOf(Schema.String);
+    void pathOfConstraint;
+  });
+});
+
+const reverse = (text: string) => Array.from(text).toReversed().join("");
+
+/** A generic helper that names the input of its schema, a form that must keep compiling. */
+const encodeBody = <S extends Schema.Top>(schema: S, value: Request.Input<S>) =>
+  Body.jsonSchema(schema).encode(value);
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/113
+describe("a schema-backed input takes either side of its schema", () => {
+  const MomentFromDate = Schema.Date.pipe(
+    Schema.decodeTo(MomentFromSelf, {
+      decode: SchemaGetter.transform(
+        (date: Date) => new Moment(date.getTime()),
+      ),
+      encode: SchemaGetter.transform(
+        (moment: Moment) => new Date(moment.minutes),
+      ),
+    }),
+  );
+  const Limit = Schema.Struct({ limit: Schema.FiniteFromString });
+  const limited = Request.get("/things").pipe(Request.query(Limit));
+  /** Both sides are text, so its two readings of a value cannot be told apart. */
+  const Reversed = Schema.String.pipe(
+    Schema.decodeTo(Schema.String, {
+      decode: SchemaGetter.transform(reverse),
+      encode: SchemaGetter.transform(reverse),
+    }),
+  );
+
+  it.effect(
+    "gives the same request from the decoded and the encoded side",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* urlOf(limited, { query: { limit: 5 } })).toBe(
+          "/things?limit=5",
+        );
+        expect(yield* urlOf(limited, { query: { limit: "5" } })).toBe(
+          "/things?limit=5",
+        );
+      }),
+  );
+
+  it.effect("takes a mix by field", () =>
+    Effect.gen(function* () {
+      const Picked = Schema.Struct({
+        at: MomentFromString,
+        limit: Schema.FiniteFromString,
+        name: Schema.optional(Schema.String),
+      });
+      const request = Request.get("/slots").pipe(Request.query(Picked));
+      const expected = "/slots?at=15%3A30%3A00&limit=5";
+      expect(
+        yield* urlOf(request, { query: { at: new Moment(930), limit: 5 } }),
+      ).toBe(expected);
+      expect(
+        yield* urlOf(request, { query: { at: "15:30", limit: "5" } }),
+      ).toBe(expected);
+      expect(yield* urlOf(request, { query: { at: "t1530", limit: 5 } })).toBe(
+        expected,
+      );
+      expect(
+        yield* urlOf(request, { query: { at: new Moment(930), limit: "5" } }),
+      ).toBe(expected);
+    }),
+  );
+
+  it.effect("takes a schema's own type on either side, such as a Date", () =>
+    Effect.gen(function* () {
+      const noon = new Date("2026-11-07T12:00:00.000Z");
+      const request = Request.post("/slots").pipe(
+        Request.body(Body.jsonSchema(Schema.Struct({ from: MomentFromDate }))),
+      );
+      for (const from of [noon, new Moment(noon.getTime())]) {
+        const compiled = yield* compile(request, { body: { from } });
+        expect(bodyText(compiled.request)).toBe(
+          '{"from":"2026-11-07T12:00:00.000Z"}',
+        );
+      }
+    }),
+  );
+
+  it.effect("takes a value a decoder accepts and writes what it writes", () =>
+    Effect.gen(function* () {
+      expect(yield* urlOf(limited, { query: { limit: "05" } })).toBe(
+        "/things?limit=5",
+      );
+      const Loose = Schema.Union([Schema.String, Schema.Number]).pipe(
+        Schema.decodeTo(Schema.String, {
+          decode: SchemaGetter.transform((value: string | number) =>
+            String(value),
+          ),
+          encode: SchemaGetter.passthrough(),
+        }),
+      );
+      const request = Request.get("/things").pipe(
+        Request.query(Schema.Struct({ id: Loose })),
+      );
+      expect(yield* urlOf(request, { query: { id: 7 } })).toBe("/things?id=7");
+      expect(yield* urlOf(request, { query: { id: "7" } })).toBe(
+        "/things?id=7",
+      );
+    }),
+  );
+
+  it.effect("validates both routes, so text cannot get past a schema", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        compile(limited, { query: { limit: "many" } }),
+      );
+      expect(Schema.isSchemaError(error)).toBe(true);
+    }),
+  );
+
+  it.effect("reports the decoded side's error when every route fails", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        compile(limited, { query: { limit: "many" } }),
+      );
+      expect(String(error)).toContain("Expected number");
+      expect(String(error)).toContain('"limit"');
+    }),
+  );
+
+  it.effect(
+    "lets a weak schema through, as that is the definition's choice",
+    () =>
+      Effect.gen(function* () {
+        const request = Request.get("/things").pipe(
+          Request.query(Schema.Struct({ limit: Schema.NumberFromString })),
+        );
+        expect(yield* urlOf(request, { query: { limit: "many" } })).toBe(
+          "/things?limit=NaN",
+        );
+      }),
+  );
+
+  describe("when both sides share a type", () => {
+    const Coded = Schema.Struct({ code: Reversed });
+    const coded = Request.get("/things").pipe(Request.query(Coded));
+
+    it.effect("reads a value as decoded, so it is encoded once", () =>
+      Effect.gen(function* () {
+        expect(yield* urlOf(coded, { query: { code: "abc" } })).toBe(
+          "/things?code=cba",
+        );
+      }),
     );
-    void Request.compile(request, { query: { id: Id.make("a") } });
-    // @ts-expect-error: a brand says the value has been through the schema
-    void Request.compile(request, { query: { id: "a" } });
+
+    it.effect("encodes an already encoded value again, with no error", () =>
+      Effect.gen(function* () {
+        expect(yield* urlOf(coded, { query: { code: "cba" } })).toBe(
+          "/things?code=abc",
+        );
+      }),
+    );
+
+    it.effect(
+      "reads the value as encoded when the group only fits that way",
+      () =>
+        Effect.gen(function* () {
+          const request = Request.get("/things").pipe(
+            Request.query(
+              Schema.Struct({ code: Reversed, limit: Schema.FiniteFromString }),
+            ),
+          );
+          expect(
+            yield* urlOf(request, { query: { code: "cba", limit: 5 } }),
+          ).toBe("/things?code=abc&limit=5");
+          expect(
+            yield* urlOf(request, { query: { code: "cba", limit: "5" } }),
+          ).toBe("/things?code=cba&limit=5");
+        }),
+    );
+
+    it.effect(
+      "keeps a default on its encoded side, as it is written text",
+      () =>
+        Effect.gen(function* () {
+          const request = Request.get("/things?code=cba").pipe(
+            Request.query(Schema.Struct({ code: Schema.optional(Reversed) })),
+          );
+          expect(yield* urlOf(request, { query: {} })).toBe("/things?code=cba");
+        }),
+    );
   });
 
-  it("needs a full schema, so a generic helper is bound by Schema.Top", () => {
-    const helper = <S extends Schema.Top>(schema: S) =>
-      Request.path(schema, () => "/x");
-    void helper(Schema.String);
-    const narrow = <S extends Schema.Constraint>(schema: S) =>
-      // @ts-expect-error: only `Schema.Top` has `makeEffect`
-      Request.path(schema, () => "/x");
-    void narrow;
+  describe("the forms of a schema", () => {
+    it.effect("takes a renamed field by its encoded name, with the rest", () =>
+      Effect.gen(function* () {
+        const Paging = Schema.Struct({
+          page: Schema.FiniteFromString,
+          size: Schema.FiniteFromString,
+        }).pipe(Schema.encodeKeys({ page: "page_number" }));
+        const request = Request.get("/things").pipe(Request.query(Paging));
+        const expected = "/things?page_number=2&size=5";
+        expect(yield* urlOf(request, { query: { page: 2, size: 5 } })).toBe(
+          expected,
+        );
+        expect(
+          yield* urlOf(request, { query: { page_number: "2", size: "5" } }),
+        ).toBe(expected);
+        expect(yield* urlOf(request, { query: { page: 2, size: "5" } })).toBe(
+          expected,
+        );
+      }),
+    );
+
+    it.effect("takes each side of a class, and a mix by field", () =>
+      Effect.gen(function* () {
+        class Filter extends Schema.Class<Filter>("Filter")({
+          page: Schema.FiniteFromString,
+          size: Schema.FiniteFromString,
+        }) {}
+        const request = Request.get("/things").pipe(Request.query(Filter));
+        const expected = "/things?page=2&size=5";
+        for (const query of [
+          new Filter({ page: 2, size: 5 }),
+          { page: 2, size: 5 },
+          { page: "2", size: "5" },
+          { page: 2, size: "5" },
+        ]) {
+          expect(yield* urlOf(request, { query })).toBe(expected);
+        }
+      }),
+    );
+
+    it.effect("takes each side of a union, and a mix within one member", () =>
+      Effect.gen(function* () {
+        const Either = Schema.Union([
+          Schema.Struct({
+            kind: Schema.Literal("page"),
+            page: Schema.FiniteFromString,
+            size: Schema.FiniteFromString,
+          }),
+          Schema.Struct({
+            kind: Schema.Literal("cursor"),
+            cursor: Schema.String,
+          }),
+        ]);
+        const request = Request.get("/things").pipe(Request.query(Either));
+        const expected = "/things?kind=page&page=2&size=5";
+        for (const query of [
+          { kind: "page", page: 2, size: 5 },
+          { kind: "page", page: "2", size: "5" },
+          { kind: "page", page: 2, size: "5" },
+        ] as const) {
+          expect(yield* urlOf(request, { query })).toBe(expected);
+        }
+        expect(
+          yield* urlOf(request, { query: { kind: "cursor", cursor: "c" } }),
+        ).toBe("/things?kind=cursor&cursor=c");
+      }),
+    );
+
+    it.effect("takes a field that is a class on either of its sides", () =>
+      Effect.gen(function* () {
+        class Stamp extends Schema.Class<Stamp>("Stamp")({
+          at: Schema.DateFromString,
+        }) {}
+        const request = Request.post("/things").pipe(
+          Request.body(
+            Body.jsonSchema(
+              Schema.Struct({ stamp: Stamp, size: Schema.FiniteFromString }),
+            ),
+          ),
+        );
+        const at = "2026-11-07T12:00:00.000Z";
+        const expected = `{"stamp":{"at":"${at}"},"size":"5"}`;
+        for (const body of [
+          { stamp: new Stamp({ at: new Date(at) }), size: 5 },
+          { stamp: { at }, size: "5" },
+          { stamp: { at }, size: 5 },
+        ]) {
+          const compiled = yield* compile(request, { body });
+          expect(bodyText(compiled.request)).toBe(expected);
+        }
+      }),
+    );
+
+    it.effect("fills in a constructor default on a mix", () =>
+      Effect.gen(function* () {
+        const Paging = Schema.Struct({
+          limit: Schema.FiniteFromString.pipe(
+            Schema.withConstructorDefault(Effect.succeed(25)),
+          ),
+          page: Schema.FiniteFromString,
+          size: Schema.FiniteFromString,
+        });
+        const request = Request.get("/things").pipe(Request.query(Paging));
+        expect(yield* urlOf(request, { query: { page: "2", size: 5 } })).toBe(
+          "/things?limit=25&page=2&size=5",
+        );
+      }),
+    );
+
+    it.effect("leaves out an optional field a mix leaves undefined", () =>
+      Effect.gen(function* () {
+        const Paging = Schema.Struct({
+          page: Schema.FiniteFromString,
+          size: Schema.FiniteFromString,
+          name: Schema.optional(Schema.FiniteFromString),
+        });
+        const request = Request.get("/things").pipe(Request.query(Paging));
+        expect(
+          yield* urlOf(request, {
+            query: { page: "2", size: 5, name: undefined },
+          }),
+        ).toBe("/things?page=2&size=5");
+      }),
+    );
+  });
+
+  it.effect("applies to headers, paths and path structs", () =>
+    Effect.gen(function* () {
+      const headers = Request.get("/a").pipe(
+        Request.headers(Schema.Struct({ "x-limit": Schema.FiniteFromString })),
+      );
+      for (const value of [5, "5"]) {
+        expect(
+          yield* linesOf(headers, { headers: { "x-limit": value } }),
+        ).toEqual([["x-limit", "5"]]);
+      }
+      const scalar = Request.get("").pipe(
+        Request.path(
+          Schema.FiniteFromString,
+          (id, encode) => `/things/${encode(id)}`,
+        ),
+      );
+      const struct = Request.get("").pipe(
+        Request.path(
+          Schema.Struct({ id: Schema.FiniteFromString }),
+          ({ id }, encode) => `/things/${encode(id)}`,
+        ),
+      );
+      for (const id of [7, "7", "07"]) {
+        expect(yield* urlOf(scalar, { path: id })).toBe("/things/7");
+        expect(yield* urlOf(struct, { path: { id } })).toBe("/things/7");
+      }
+    }),
+  );
+
+  it.effect("reaches every stacked schema from one input", () =>
+    Effect.gen(function* () {
+      const request = Request.get("/x").pipe(
+        Request.query(Schema.Struct({ a: Schema.FiniteFromString })),
+        Request.query(Schema.Struct({ b: Schema.FiniteFromString })),
+      );
+      expect(yield* urlOf(request, { query: { a: 1, b: "2" } })).toBe(
+        "/x?a=1&b=2",
+      );
+    }),
+  );
+
+  it.effect(
+    "meets a default the same way, whichever side the caller gives",
+    () =>
+      Effect.gen(function* () {
+        const request = Request.get("/x?size=2").pipe(
+          Request.query(
+            Schema.Struct({
+              page: Schema.FiniteFromString,
+              size: Schema.optional(Schema.FiniteFromString),
+            }),
+          ),
+        );
+        expect(yield* urlOf(request, { query: { page: 1 } })).toBe(
+          "/x?page=1&size=2",
+        );
+        expect(yield* urlOf(request, { query: { page: "1" } })).toBe(
+          "/x?page=1&size=2",
+        );
+      }),
+  );
+
+  it.effect(
+    "needs decoding services only for a value that takes that route",
+    () =>
+      Effect.gen(function* () {
+        const Tenanted = Schema.String.pipe(
+          Schema.decodeTo(
+            Schema.String,
+            SchemaTransformation.transformEffect({
+              decode: (wire: string) =>
+                Effect.gen(function* () {
+                  return `${yield* Tenant}:${wire}`;
+                }),
+              encode: (value: string) => Effect.succeed(value),
+            }),
+          ),
+        );
+        const Who = Schema.Struct({
+          who: Tenanted,
+          limit: Schema.FiniteFromString,
+        });
+        const request = Request.get("/x").pipe(Request.query(Who));
+        type Needs = Effect.Services<ReturnType<typeof request.prepare>>;
+        expectTypeOf<Needs>().toEqualTypeOf<Tenant>();
+        expect(
+          yield* urlOf(request, { query: { who: "me", limit: "1" } }).pipe(
+            Effect.provideService(Tenant, "t1"),
+          ),
+        ).toBe("/x?who=t1%3Ame&limit=1");
+      }),
+  );
+
+  describe("types", () => {
+    const Paged = Schema.Struct({
+      page: Schema.FiniteFromString,
+      name: Schema.String,
+    });
+    const paged = Request.get("/x").pipe(Request.query(Paged));
+
+    it("accepts each side and a mix", () => {
+      void Request.compile(paged, { query: { page: 1, name: "a" } });
+      void Request.compile(paged, { query: { page: "1", name: "a" } });
+    });
+
+    it("rejects a value on neither side", () => {
+      // @ts-expect-error: a boolean is on neither side of the schema
+      void Request.compile(paged, { query: { page: true, name: "a" } });
+      // @ts-expect-error: a field is missing on every side
+      void Request.compile(paged, { query: { page: 1 } });
+      void Request.compile(
+        Request.get("/x").pipe(Request.path(Schema.Date, () => "/x")),
+        // @ts-expect-error: `Schema.Date` encodes to a `Date`, so text is on neither side
+        { path: "2026-11-07" },
+      );
+    });
+
+    it("stays the plain shape when both sides are the same", () => {
+      expectTypeOf<
+        Request.Input<typeof Schema.String>
+      >().toEqualTypeOf<string>();
+      const Same = Schema.Struct({ a: Schema.String });
+      expectTypeOf<Request.Input<typeof Same>>().toEqualTypeOf<{
+        readonly a: string;
+      }>();
+    });
+
+    it("is either side for a scalar", () => {
+      expectTypeOf<
+        Request.Input<typeof Schema.FiniteFromString>
+      >().toEqualTypeOf<number | string>();
+    });
+
+    it("has no mix for a list, which has no fields", () => {
+      const Ids = Schema.Array(Schema.FiniteFromString);
+      expectTypeOf<Request.Input<typeof Ids>>().toEqualTypeOf<
+        ReadonlyArray<number> | ReadonlyArray<string>
+      >();
+    });
+
+    it("lets a generic helper name the input of a schema", () => {
+      void encodeBody(Schema.FiniteFromString, "5");
+      // @ts-expect-error: a boolean is on neither side of the schema
+      void encodeBody(Schema.FiniteFromString, true);
+    });
+
+    it("lets a plain value into a branded field, on the encoded side", () => {
+      const Id = Schema.String.pipe(Schema.brand("Id"));
+      const request = Request.get("/x").pipe(
+        Request.query(Schema.Struct({ id: Id })),
+      );
+      void Request.compile(request, { query: { id: Id.make("a") } });
+      void Request.compile(request, { query: { id: "a" } });
+    });
   });
 });
 
@@ -3162,9 +3628,7 @@ describe("a schema states the shape of its group", () => {
       const typed = withService(Request.get("/x").pipe(Request.query(Limit)));
       expectTypeOf(typed).toEqualTypeOf<
         Request.Request<
-          {
-            readonly query: { readonly limit?: number | undefined };
-          },
+          { readonly query: Request.Input<typeof Limit> },
           Schema.SchemaError | Request.InvalidRequest
         >
       >();

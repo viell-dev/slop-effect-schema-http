@@ -48,9 +48,10 @@ This request accepts a numeric user ID and a JSON body:
 <<< ../../examples/modules/request.ts#inputs
 
 `Schema.NumberFromString` has an application side of `number` and an encoded side of `string`.
-Requests use the encoding direction: `42` becomes `"42"`. The path renderer receives that encoded
-string; `encode(id)` escapes it as a path value. The renderer supplies the whole request path and
-replaces the path passed to `Request.patch`, so the example starts with `""`. The base URL is joined
+Requests use the encoding direction: `42` becomes `"42"`. [A schema-backed
+input](#a-schema-has-two-sides) also takes `"42"`. The path renderer receives that encoded string;
+`encode(id)` escapes it as a path value. The renderer supplies the whole request path and replaces
+the path passed to `Request.patch`, so the example starts with `""`. The base URL is joined
 afterwards. It does not need to be repeated inside the renderer.
 
 `Request.body` accepts a [body encoder](./body.md). `Body.jsonSchema` validates the body and encodes
@@ -69,9 +70,9 @@ Use schemas when the caller supplies a query or header group:
 
 <<< ../../examples/modules/request.ts#query
 
-The caller passes a number for `page`; the query schema encodes it to text. Header schemas work the
-same way. Their encoded shapes must fit `Transport.HeaderInput`; query schemas must encode to
-`UrlEncoding.QueryInput`.
+The caller passes a number for `page`, or [its encoded text](#a-schema-has-two-sides); the query
+schema writes text. Header schemas work the same way. Their encoded shapes must fit
+`Transport.HeaderInput`; query schemas must encode to `UrlEncoding.QueryInput`.
 
 | Binding                        | Input property | What it produces                                  |
 | ------------------------------ | -------------- | ------------------------------------------------- |
@@ -133,6 +134,50 @@ the rendered path instead of adding a child. A single shared `Request.baseUrl` h
 prefix; reusable renderers handle the variable resource hierarchy.
 
 ## Advanced behavior
+
+### A schema has two sides
+
+A schema's decoded side is what your application works with, and its encoded side is what goes on
+the wire. A schema-backed input takes either side, or a mix by field, and the request always carries
+what the schema writes:
+
+<<< ../../examples/modules/request.ts#two-sides
+
+This applies to `Request.path`, `Request.query`, `Request.headers`, `Body.jsonSchema` and
+`Body.encodeSchema`. For this schema:
+
+| The caller gives                               | Read as                    | The request carries                |
+| ---------------------------------------------- | -------------------------- | ---------------------------------- |
+| `{ from: date, limit: 5 }`                     | Decoded                    | `from=2026-11-07T12…&limit=5`      |
+| `{ from: "2026-11-07T12:00:00Z", limit: "5" }` | Encoded, and decoded first | The same                           |
+| `{ from: date, limit: "5" }`                   | A mix, field by field      | The same                           |
+| `{ from: date, limit: "05" }`                  | A mix                      | `limit=5`, as the schema writes it |
+| `{ from: date, limit: "many" }`                | Neither                    | `SchemaError`, before dispatch     |
+| `{ from: date, limit: true }`                  | Neither                    | A compile error                    |
+
+The decoded side is what the schema's constructor takes. A plain object works for a `Schema.Class`,
+and a field with a constructor default can be left out. Preparation tries the decoded side first,
+then the decoder as a whole, then the decoder field by field, and reports the decoded side's error
+if all fail. The type of such an input is `Request.Input<S>`.
+
+Both routes validate, so text cannot get past a schema. The check is as strict as the schema,
+though. `Schema.NumberFromString` turns `"many"` into `NaN`, so `{ limit: "many" }` goes out as
+`limit=NaN` under that schema. Choose `Schema.FiniteFromString` when that matters. A string where a
+number was expected compiles, so the failure appears when the request is prepared. An input can need
+the schema's decoding services as well as its encoding services, so a binding adds both to the
+request.
+
+#### When both sides share a type
+
+A value that fits the decoded side is read as decoded, which is the one rule for a case that cannot
+be told apart. Under a schema from text to text, such as `Schema.StringFromBase64`, an already
+encoded value fits the decoded side, so it is encoded again, with no error:
+
+<<< ../../examples/modules/request.ts#same-type
+
+Under such a schema, pass the decoded value. Where a group has other fields, a group that only fits
+on the encoded side goes through the decoder as a whole, so `{ token: "aGVsbG8=", limit: "5" }`
+reads `token` as encoded.
 
 ### A schema states the shape of its group
 

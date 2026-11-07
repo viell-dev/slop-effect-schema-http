@@ -144,6 +144,48 @@ const page = await Effect.runPromise(
 // #endregion query
 assert.equal(page.request.url, "https://api.example.test/users?page=2");
 
+// #region two-sides
+const Slots = Schema.Struct({
+  from: Schema.DateFromString,
+  limit: Schema.FiniteFromString,
+});
+const listSlots = Request.get("https://api.example.test/slots").pipe(
+  Request.query(Slots),
+);
+const noon = new Date("2026-11-07T12:00:00.000Z");
+
+const decodedSide = { query: { from: noon, limit: 5 } };
+const encodedSide = { query: { from: noon.toISOString(), limit: "5" } };
+const mixed = { query: { from: noon, limit: "5" } };
+// All three carry ?from=2026-11-07T12%3A00%3A00.000Z&limit=5
+// #endregion two-sides
+for (const input of [decodedSide, encodedSide, mixed]) {
+  assert.equal(
+    (await Effect.runPromise(Request.compile(listSlots, input))).request.url,
+    "https://api.example.test/slots?from=2026-11-07T12%3A00%3A00.000Z&limit=5",
+  );
+}
+
+// #region same-type
+const Token = Schema.Struct({ token: Schema.StringFromBase64 });
+const verify = Request.get("https://api.example.test/verify").pipe(
+  Request.query(Token),
+);
+
+const decodedToken = { query: { token: "hello" } };
+// ?token=aGVsbG8%3D
+const encodedToken = { query: { token: "aGVsbG8=" } };
+// ?token=YUdWc2JHOD0%3D, encoded twice
+// #endregion same-type
+assert.equal(
+  (await Effect.runPromise(Request.compile(verify, decodedToken))).request.url,
+  "https://api.example.test/verify?token=aGVsbG8%3D",
+);
+assert.equal(
+  (await Effect.runPromise(Request.compile(verify, encodedToken))).request.url,
+  "https://api.example.test/verify?token=YUdWc2JHOD0%3D",
+);
+
 // #region shape
 const ApiHeaders = { authorization: Schema.optional(Schema.String) };
 const Paging = Schema.Struct({

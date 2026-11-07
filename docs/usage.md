@@ -53,7 +53,8 @@ to accept the same input:
 
 The `&` combines the two required groups into one object. `path` and `body` are the library's
 binding names; `userId` and `name` come from your schemas. `Schema.NumberFromString` accepts a
-number here and encodes it to a string for the path renderer.
+number here and encodes it to a string for the path renderer. It also accepts that string, because
+[an input takes either side of its schema](./modules/request.md#a-schema-has-two-sides).
 
 The path input does not have to be an object. Binding `Schema.NumberFromString` directly would
 instead require `{ path: 42 }`; naming the renderer's parameter `userId` would not give that number

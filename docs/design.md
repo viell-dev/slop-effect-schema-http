@@ -65,11 +65,47 @@ field. Header names compare without case and keep the spelling they were written
 `Request.path` and `Request.body` add their input to the request, so each can be combined with the
 other bindings.
 
-A schema-backed input takes what the schema's constructor takes, and the library builds the schema's
-value before encoding it. A plain object therefore works for a `Schema.Class`, including one nested
-in a struct, and a field with a constructor default can be left out. These functions need
-`Schema.Top`, the bound that has a constructor. Building and then encoding validates twice, which
-costs microseconds next to a request, so neither step is skipped.
+### A schema has two sides
+
+A schema's decoded side is what an application works with, and its encoded side is what goes on the
+wire. In Effect, outgoing data goes through `encode` and incoming data through `decode`. The two
+directions are not always inverses. A decoder can accept more than the encoder writes, so
+`decode(encode(value))` need not equal `value`, and `encode(decode(text))` need not equal `text`. A
+schema may accept `t1530` and `15:30` and always write `15:30:00`.
+
+A schema-backed input takes either side, or a mix by field, and the request always carries what the
+schema writes. That applies to headers, query, path and bodies, and it is the same route a raw
+default takes.
+
+```text
+decoded value ----------------------> encode --> wire
+encoded value --> decode --> decoded -> encode --> wire
+```
+
+- **The decoded side is what the schema's constructor takes.** The library builds the schema's value
+  before encoding it, so a plain object works for a `Schema.Class`, and a field with a constructor
+  default can be left out. These functions need `Schema.Top`, the bound that has a constructor.
+  Building and then encoding validates twice, which costs microseconds next to a request, so neither
+  step is skipped.
+- **Preparation tries the decoded side first, then the decoder as a whole, then the decoder field by
+  field.** If all fail, it reports the decoded side's error, a `SchemaError` before dispatch, so
+  existing failures read the same.
+- **A value that fits the decoded side is read as decoded.** When both sides have the same type, as
+  under a schema from `string` to `string` such as `Schema.StringFromBase64`, an already encoded
+  value cannot be told apart from a decoded one, so it is encoded again, with no error. Under a
+  group with other fields, the order above decides: a group that only fits on the encoded side goes
+  through the decoder as a whole, so a shared-type field in it is read as encoded.
+- **Both routes validate.** An encoded value goes through the decoder, so text cannot get past a
+  schema. A value on neither side is a compile error.
+- **A weak schema lets more through.** `Schema.NumberFromString` turns `"many"` into `NaN`, so
+  `{ limit: "many" }` goes out as `limit=NaN`, and `Schema.FiniteFromString` refuses it. That is a
+  property of the definition, and the library does not try to correct it.
+
+The type of an input is `Request.Input<S>`. A mix is one level deep in the type, and a renamed field
+takes its encoded name only when the whole value is on the encoded side. A plain value in a branded
+field compiles, because it is on the encoded side, and it goes through the schema's checks. The
+compiler therefore checks less than it would for the decoded side alone: a string where a number was
+expected compiles, and fails when the request is prepared if the schema refuses it.
 
 ### A schema states the shape of its group
 
@@ -416,8 +452,9 @@ Decisions that need the decoded value belong in the consumer's composition outsi
 
 Failures and services are typed and kept separate. Input schema errors, `InvalidRequest`, transport
 errors, `DecodeError`, `UnexpectedResponse`, `TimeoutError`, and the schedule's error are distinct
-members of the operation's error type. A request schema contributes its encoding services and a
-response schema its decoding services. A decoder's or client transform's `Scope` is provided by the
+members of the operation's error type. A request schema contributes its encoding and decoding
+services, because an encoded input or a raw default goes through the decoder, and a response schema
+contributes its decoding services. A decoder's or client transform's `Scope` is provided by the
 attempt and does not reach the caller.
 
 ## Diagnostics

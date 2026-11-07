@@ -21,15 +21,15 @@ before dispatch. Invalid response data fails during decoding and is returned by 
 
 Use the codec that matches what the service sends or accepts:
 
-| Codec                     | Application value                   | Media type                          |
-| ------------------------- | ----------------------------------- | ----------------------------------- |
-| `Body.jsonSchema(schema)` | What the schema's constructor takes | `application/json`                  |
-| `Body.json`               | `unknown`; no schema validation     | `application/json`                  |
-| `Body.text`               | `string`                            | `text/plain`                        |
-| `Body.bytes`              | `Uint8Array`                        | `application/octet-stream`          |
-| `Body.formData`           | Web `FormData`                      | `multipart/form-data`               |
-| `Body.urlEncoded`         | Effect `UrlParams.UrlParams`        | `application/x-www-form-urlencoded` |
-| `Body.empty`              | `void`                              | None                                |
+| Codec                     | Application value               | Media type                          |
+| ------------------------- | ------------------------------- | ----------------------------------- |
+| `Body.jsonSchema(schema)` | Either side of the schema       | `application/json`                  |
+| `Body.json`               | `unknown`; no schema validation | `application/json`                  |
+| `Body.text`               | `string`                        | `text/plain`                        |
+| `Body.bytes`              | `Uint8Array`                    | `application/octet-stream`          |
+| `Body.formData`           | Web `FormData`                  | `multipart/form-data`               |
+| `Body.urlEncoded`         | Effect `UrlParams.UrlParams`    | `application/x-www-form-urlencoded` |
+| `Body.empty`              | `void`                          | None                                |
 
 For `Body.urlEncoded`, construct values with `UrlParams.fromInput` from `effect/http`. `Body.empty`
 sends no body and discards incoming bytes. It is useful for responses whose body your application
@@ -47,9 +47,12 @@ A service may return a number as plain text. Add a schema in the direction you n
 application input before passing it to the underlying encoder. Each returns only that direction;
 adding a decoding transform does not invent an inverse encoder.
 
-Encoding builds the schema's value first, so a plain object works for a `Schema.Class`, including
-one nested in a struct, and a field with a constructor default can be left out. An existing instance
-works as it is, and decoding still returns an instance.
+A schema-backed body takes [either side of its schema](./request.md#a-schema-has-two-sides), or a
+mix by field, and the underlying encoder receives what the schema writes. A plain object works for a
+`Schema.Class`, including one nested in a struct, and a field with a constructor default can be left
+out. An existing instance works as it is, and decoding still returns an instance. With
+`Body.jsonSchema`, the encoded side is the schema's own: a `Schema.Date` field takes a `Date`, not
+the ISO text the JSON carries.
 
 `Body.jsonSchema` uses the schema's canonical JSON codec (`Schema.toCodecJson`). Use the text/bytes
 combinators when your service needs another representation. Effect's [Schema
