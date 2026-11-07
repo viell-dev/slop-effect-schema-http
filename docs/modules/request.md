@@ -202,7 +202,9 @@ across repeated names. `undefined` declares nothing, so it stops no automatic va
 query schema refuses it.
 
 A header keeps the spelling you wrote, and a `setHeader` that replaces a line takes the new
-spelling. A provider that sends header lines receives that spelling; `fetch` sends lowercase names.
+spelling. A provider that sends header lines receives that spelling; `fetch` sends lowercase names,
+because [what a client does afterwards](../limits.md#paths-and-other-requests-passed-on-as-written)
+is up to the client.
 
 These helpers also work on a request with a schema bound, within [the shape that schema
 states](#a-schema-states-the-shape-of-its-group).
@@ -406,7 +408,7 @@ import { Schema } from "effect";
 import { Request } from "viell-effect-schema-http";
 
 const paged = Request.get("https://api.example.test/things").pipe(
-  Request.query(Schema.Struct({ page: Schema.NumberFromString })),
+  Request.query(Schema.Struct({ page: Schema.FiniteFromString })),
 );
 const withFields = paged.pipe(
   Request.query(Schema.Struct({ fields: Schema.optional(Schema.String) })),
@@ -474,9 +476,13 @@ metadata](./body.md#body-metadata) for multipart and `Content-Length`.
 
 ### Effectful preparation and per-attempt changes
 
-`Request.mapEffect((nativeRequest, input) => effect)` edits Effect's native request. It runs once
-per operation evaluation, before attempts begin. At that point, the base URL and query rendering are
-not final. Use it for preparation that should be shared by every retry.
+`Request.mapEffect((nativeRequest, input) => effect)` edits Effect's native request. The function
+returns an Effect, so it can read a service, and a generator works there:
+
+<<< ../../examples/modules/request.ts#map-effect
+
+It runs once per operation evaluation, before attempts begin. At that point, the base URL and query
+rendering are not final. Use it for preparation that should be shared by every retry.
 
 Use [Operation's client transformation](./operation.md#client-middleware) for credentials or
 signatures that must change per attempt, which receives the attempt number. Input encoding, computed
@@ -494,10 +500,11 @@ The library renders URLs through [UrlEncoding](./url-encoding.md). Its defaults 
 order, repetition, bare keys, and empty values. The HTTP provider can still normalize URLs; see [URL
 processing](./url-encoding.md#advanced-url-processing).
 
-A query written in the URL is passed to the client as written until something edits that entry or a
-schema covers it, so `?a=1;b=2` and `?q=a+b` keep their spelling. `setQuery`, `appendQuery` and
-`removeQuery` address an entry by its decoded name, and leave the other entries as they are. See
-[constructor URLs](./url-encoding.md#constructor-urls).
+A query written in the URL is [passed to the client as
+written](../limits.md#paths-and-other-requests-passed-on-as-written) until something edits that
+entry or a schema covers it, so `?a=1;b=2` and `?q=a+b` keep their spelling. `setQuery`,
+`appendQuery` and `removeQuery` address an entry by its decoded name, and leave the other entries as
+they are. See [constructor URLs](./url-encoding.md#constructor-urls).
 
 A fragment stays on the request. The compiled request holds it in `request.hash`, exactly as
 written, and the query goes before it. A constructor fragment survives `Request.path` and query

@@ -2,7 +2,8 @@
 
 `Operation` pairs a [request](./request.md) with a [response contract](./response.md). Its `execute`
 method returns an Effect that encodes input, sends the request, and decodes the answer. Your
-application supplies the HTTP client and chooses when to run the Effect.
+application supplies the HTTP client and chooses when to run the Effect. Write an operation once,
+near the integration, and [adjust it where it is used](#define-once-adjust-where-it-is-used).
 
 ## Start with one request
 
@@ -40,10 +41,33 @@ library accepts any compatible `HttpClient`, including one with application midd
 [services](https://effect.website/docs/v4/requirements-management/services) and
 [layers](https://effect.website/docs/v4/requirements-management/layers) guides for composition.
 
+## Run it with a generator
+
+Running an operation is an Effect, so a generator works as well as a pipeline. Inside `Effect.gen`,
+`yield*` runs the operation and gives you its result:
+
+<<< ../../examples/modules/operation.ts#generator-run
+
+`Effect.fn` gives a generator a name and parameters, for a function that calls an operation:
+
+<<< ../../examples/modules/operation.ts#named-function
+
+Each returns an Effect, so nothing runs until you evaluate it, and you supply the client in the same
+way. Use whichever form reads better.
+
+A generator works wherever the library takes a function that returns an Effect, or an Effect itself:
+[`Operation.mapEffect`](#adjust-a-mapped-operation),
+[`Request.mapEffect`](./request.md#effectful-preparation-and-per-attempt-changes),
+[`Body.mapEffect`](./body.md#map-decoded-values) and
+[`Request.baseUrl`](./request.md#supply-the-base-when-the-request-runs). Building a plan is
+different. A `Request` is a plain value and not an Effect, so you compose it with `.pipe` and
+ordinary functions.
+
 ## Transform a successful result
 
 Use `Operation.map` for a pure mapping or `Operation.mapEffect` for a mapping that may fail or need
-another service:
+another service. Each takes any function of the result, so a named one works as well as an arrow
+function:
 
 <<< ../../examples/modules/operation.ts#map
 
@@ -81,15 +105,22 @@ suits the common request never prevents a less common one:
 The original never changes. `firstFive` is an ordinary `Request` transform, so it works on a request
 before any operation exists too, as in `Request.get("/things").pipe(api, firstFive)`.
 
-Hold each transform in a named variable and map once per change, or pass an arrow function such as
-`(request) => request.pipe(...)`. To compose several `Request` transforms into one, define it with
-`flow` or an ordinary function, then pass that. Each is equally good.
+### Choose a style
+
+Each of these makes the same change, and each is equally good:
+
+<<< ../../examples/modules/operation.ts#adjust-styles
+
+Named transforms read well when a change is worth a name or is used twice. An arrow function is the
+simplest choice for a one-off. Use `flow` only to define a composed function with its own name, and
+pass that name to the map function rather than writing `flow(...)` inside the call.
 
 Hold the `Request` or `Response` transform in the variable, not the `Operation.mapRequest` call. A
 transform like `firstFive` works for any request, and a call on its own has no operation to learn
 the types from, so it gives `unknown` failures and services or a compile error. `Operation.map` with
 an annotated parameter, and `Operation.mapOptions` with a function that ignores the current options,
-have no such problem.
+have no such problem. For the same reason, [`flow` over `Operation.mapRequest` and its
+siblings](#compose-adjustments-into-one-function) needs the operation's type first.
 
 ### Change the request and the response together
 

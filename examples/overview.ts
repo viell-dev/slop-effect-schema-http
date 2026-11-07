@@ -17,9 +17,18 @@ const readUser = getUser.execute(undefined);
 // An Effect that will produce { id: number, name: string } when run with a client.
 // #endregion contract
 
+// #region adjust
+const inFrench = Request.setHeader("accept-language", "fr");
+
+const getUserInFrench = getUser.pipe(Operation.mapRequest(inFrench));
+// A new operation. getUser itself does not change.
+// #endregion adjust
+
 let calls = 0;
+const languages: Array<string | undefined> = [];
 const synthetic = HttpClient.make((request, url) => {
   calls++;
+  languages.push(request.headers["accept-language"]);
   assert.equal(request.method, "GET");
   assert.equal(url.href, "https://api.example.test/users/42");
   return Effect.succeed(
@@ -37,3 +46,9 @@ assert.deepEqual(
   { id: 42, name: "Ada" },
 );
 assert.equal(calls, 1);
+await Effect.runPromise(
+  getUserInFrench
+    .execute(undefined)
+    .pipe(Effect.provideService(HttpClient.HttpClient, synthetic)),
+);
+assert.deepEqual(languages, [undefined, "fr"]);

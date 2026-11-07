@@ -64,9 +64,15 @@ Use `Body.map` for a pure transformation:
 
 <<< ../../examples/modules/body.ts#map
 
-Use `Body.mapEffect` when the transformation can fail or requires a service. Decoder errors and
-required services remain in the resulting types. Both transformations preserve the decoder's media
-type, which contributes to the operation's automatic `Accept` header.
+Use `Body.mapEffect` when the transformation can fail or requires a service. Its function returns an
+Effect, so a generator works there, here through `Effect.fn`:
+
+<<< ../../examples/modules/body.ts#map-effect
+
+Decoder errors and required services remain in the resulting types. In an operation, a failure here
+is part of decoding, so it arrives as `Response.DecodeError` with this error as its cause. Both
+transformations preserve the decoder's media type, which contributes to the operation's automatic
+`Accept` header.
 
 ## Advanced codecs and body behavior
 
@@ -90,9 +96,10 @@ headers](./request.md#a-request-s-own-headers-win).
 
 Neither changes the bytes a codec produced. A declared `Content-Type` on multipart form data
 replaces the transport's, and without the boundary the body cannot be read. A declared
-`Content-Length` that disagrees with the body is passed to the client as written. A client can fail
-or stall on it, as Node Fetch does, so a request that declares one needs a provider that can send it
-and a [timeout](./policy.md#bound-execution-time).
+`Content-Length` that disagrees with the body is [passed to the client as
+written](../limits.md#paths-and-other-requests-passed-on-as-written). A client can fail or stall on
+it, as Node Fetch does, so a request that declares one needs a provider that can send it and a
+[timeout](./policy.md#bound-execution-time).
 
 A decoder's `mediaType` contributes to `Accept`; it does not itself check the response's
 `Content-Type`. If that header determines how to read the answer, select a decoder with

@@ -30,7 +30,8 @@ check `_tag`. The metadata contains `status`, normalized `headers`, `cookies`, a
 
 A declared 404 is a successful decoded outcome in this example. It does not automatically enter the
 Effect error channel. Use [`Operation.mapEffect`](./operation.md#transform-a-successful-result) if
-your application wants to turn that outcome into a domain error.
+your application wants to turn that outcome into a domain error. A contract is an ordinary value, so
+[cases several operations share](../recipes.md#shared-error-cases) can be written once.
 
 ### Select by headers or other metadata
 

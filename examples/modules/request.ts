@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 // #region imports
 import { Context, DateTime, Effect, flow, Schema } from "effect";
+import { HttpClientRequest } from "effect/http";
 import { Body, Request } from "viell-effect-schema-http";
 // #endregion imports
 
@@ -264,7 +265,7 @@ assert.equal(
 
 // #region query
 const search = Request.get("https://api.example.test/users").pipe(
-  Request.query(Schema.Struct({ page: Schema.NumberFromString })),
+  Request.query(Schema.Struct({ page: Schema.FiniteFromString })),
   Request.headers(Schema.Struct({ "accept-language": Schema.String })),
 );
 const page = await Effect.runPromise(
@@ -402,6 +403,30 @@ assert.equal(
     )
   ).request.url,
   "https://api.example.test/things?owner=ada",
+);
+
+// #region map-effect
+class Tenant extends Context.Service<Tenant, string>()("app/Tenant") {}
+
+const addTenant = Request.mapEffect((native) =>
+  Effect.gen(function* () {
+    const tenant = yield* Tenant;
+    return HttpClientRequest.setHeader(native, "x-tenant", tenant);
+  }),
+);
+
+const tenantUsers = users.pipe(addTenant);
+// Running this request now needs the Tenant service.
+// #endregion map-effect
+assert.equal(
+  (
+    await Effect.runPromise(
+      Request.compile(tenantUsers, undefined).pipe(
+        Effect.provideService(Tenant, "t1"),
+      ),
+    )
+  ).request.headers["x-tenant"],
+  "t1",
 );
 
 // #region adapt
