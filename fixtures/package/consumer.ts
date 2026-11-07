@@ -38,6 +38,12 @@ export const toCount = Operation.map(
   (items: ReadonlyArray<string>) => items.length,
 );
 export const noRetries = Operation.mapOptions(() => ({ policy: Policy.none }));
+export const withNoContent = Operation.mapResponse(
+  (response: Response.Response<string>) =>
+    response.pipe(Response.orElse(Response.status(204, Body.empty))),
+);
+export const removeKey = <K extends Response.Key>(key: K) =>
+  Response.remove(key);
 
 const Names = Body.jsonSchema(Schema.Array(Schema.String));
 

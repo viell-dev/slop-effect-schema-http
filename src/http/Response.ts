@@ -94,8 +94,10 @@ export type Key = string | number;
  * The results of a set of cases.
  *
  * @remarks
- * This and the other helpers below are public so that a transform held in an exported variable,
- * such as `export const asText = Response.replace(200, Body.text)`, can appear in a declaration.
+ * This and the other helpers below are public so that the declaration of a transform held in an
+ * exported variable, such as `export const asText = Response.replace(200, Body.text)`, can name
+ * them. A private interface there stops the declaration emitting, and a private alias printed in
+ * full can lose its meaning.
  */
 export type CaseValue<C> =
   C extends Case<unknown, infer A, unknown, unknown> ? A : never;
