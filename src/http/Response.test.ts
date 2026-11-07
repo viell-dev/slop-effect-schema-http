@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
-import { Context, Effect, Option, Schema } from "effect";
+import { Context, Effect, flow, identity, Option, Schema } from "effect";
 import { HttpClientError } from "effect/http";
 import { empty, json, probeBody, response, text } from "../../test/support.js";
 import * as Body from "./Body.js";
@@ -655,7 +655,7 @@ describe("Response case keys", () => {
         // @ts-expect-error a key is not a tag
         Response.remove("Found"),
       ),
-    ).toThrow("no case Found");
+    ).toThrow('no case "Found"');
   });
 
   it("treats a status and a string spelling it as different keys", () => {
@@ -664,7 +664,19 @@ describe("Response case keys", () => {
         // @ts-expect-error keys compare exactly
         Response.remove("200"),
       ),
-    ).toThrow("no case 200");
+    ).toThrow('no case "200"');
+    expect(keysAfter(contract.pipe(Response.remove(200)))).toEqual([
+      404,
+      "flag",
+    ]);
+    const named = Response.when(flagged, Body.text, { key: "200" });
+    expect(() =>
+      named.pipe(
+        // @ts-expect-error the same the other way round
+        Response.remove(200),
+      ),
+    ).toThrow(/no case 200$/);
+    expect(keysAfter(named.pipe(Response.remove("200")))).toEqual([]);
   });
 
   it("refuses a widened key passed in, however it arrives", () => {
@@ -714,7 +726,7 @@ describe("Response case keys", () => {
         // @ts-expect-error a pattern is not a literal
         Response.remove("x-b"),
       ),
-    ).toThrow("no case x-b");
+    ).toThrow('no case "x-b"');
 
     type Branded = string & { readonly brand: unique symbol };
     const branded = Response.when(flagged, Body.text, { key: "a" as Branded });
@@ -723,7 +735,7 @@ describe("Response case keys", () => {
         // @ts-expect-error a brand is not a literal
         Response.remove("b"),
       ),
-    ).toThrow("no case b");
+    ).toThrow('no case "b"');
   });
 
   it("refuses a union of keys passed in", () => {
@@ -776,12 +788,29 @@ describe("Response case keys", () => {
         // @ts-expect-error an unkeyed case has no key to address
         Response.remove("flag"),
       ),
-    ).toThrow("no case flag");
+    ).toThrow('no case "flag"');
     expect(() =>
       (Response.remove(undefined as never) as (self: unknown) => unknown)(
         unkeyed,
       ),
     ).toThrow("no case undefined");
+  });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/125
+  it("currently refuses flow over edits with no contract to check the keys against", () => {
+    const trimmed = flow(
+      identity<typeof contract>,
+      Response.remove(404),
+      Response.replace(200, Body.empty),
+    );
+    expect(keysAfter(trimmed(contract))).toEqual([200, "flag"]);
+
+    const noMissing = Response.remove(404);
+    const emptied = Response.replace(200, Body.empty);
+    expect(() =>
+      // @ts-expect-error a key can only be checked against a known contract
+      flow(noMissing, emptied),
+    ).toBeTypeOf("function");
   });
 
   it("loses the keys of a contract annotated without them", () => {

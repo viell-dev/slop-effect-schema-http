@@ -123,7 +123,9 @@
   once, after the retries, outside the attempt's scope and timeout. `Operation.mapRequest` and
   `Operation.mapOptions` always work on a mapped operation, and `Operation.mapResponse` works when
   the new result still fits. Anything else is a compile error that names `Operation.unmap`, which
-  removes every step ([#105](https://github.com/viell-dev/slop-effect-schema-http/issues/105)).
+  removes every step. The inner functions of `Operation.map` and `Operation.mapEffect` gain a type
+  parameter for the parts. It has a default, so it only matters to explicit type arguments, which
+  give a plain operation ([#105](https://github.com/viell-dev/slop-effect-schema-http/issues/105)).
 
 ## 0.1.0 — 2026-11-04
 

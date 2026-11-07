@@ -604,9 +604,22 @@ types throws.
 
 A generic transform needs a `pipe` around it to learn its types. Hold the `Request` or `Response`
 transform in a variable rather than the `Operation.mapRequest` call, which on its own has no
-operation to infer from. A function given to `Operation.mapResponse` has to be generic, or typed for
-the operation's own response: a wider parameter is refused, mapped or not, because the response slot
-is invariant.
+operation to infer from. For the same reason, `flow` over `Operation.mapRequest`,
+`Operation.mapResponse`, `Operation.mapOptions` and `Operation.unmap` is a compile error unless its
+first function names the operation, as `identity<typeof getThings>` does. A type cannot apply a
+generic function, and the key and fit rules depend on an operation a composed function does not have
+yet. Moving those rules into the result type would let `flow` compile, but a refused change would
+then compile and run with no error where it was written.
+
+A function given to `Operation.mapResponse` has to take the response's whole type, including its
+cases, because the response slot is invariant, mapped or not. Make it generic, or type it as
+`typeof contract`. `Response.Response<A, E, R>` is refused even with the operation's exact `A`, `E`
+and `R`, because it does not say which cases there are. A function generic in the cases cannot
+address one, because a key needs a known contract.
+
+`Operation.map` and `Operation.mapEffect` wrap the operation's own `execute`, so a value whose
+`execute` was replaced keeps that replacement. `Operation.mapRequest`, `Operation.mapResponse`,
+`Operation.mapOptions` and `Operation.unmap` build from the parts, so they drop it.
 
 ### Recorded result steps
 

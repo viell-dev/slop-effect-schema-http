@@ -202,7 +202,9 @@ const positionOf = (cases: ReadonlyArray<AnyCase>, key: Key): number => {
   const position =
     key === undefined ? -1 : cases.findIndex((entry) => entry.key === key);
   if (position === -1)
-    throw new Error(`This response contract has no case ${String(key)}`);
+    throw new Error(
+      `This response contract has no case ${typeof key === "string" ? JSON.stringify(key) : String(key)}`,
+    );
   return position;
 };
 

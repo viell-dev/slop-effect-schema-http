@@ -38,10 +38,15 @@ export const toCount = Operation.map(
   (items: ReadonlyArray<string>) => items.length,
 );
 export const noRetries = Operation.mapOptions(() => ({ policy: Policy.none }));
-export const withNoContent = Operation.mapResponse(
-  (response: Response.Response<string>) =>
-    response.pipe(Response.orElse(Response.status(204, Body.empty))),
+const text = Response.status(200, Body.text);
+
+export const withNoContent = Operation.mapResponse((response: typeof text) =>
+  response.pipe(Response.orElse(Response.status(204, Body.empty))),
 );
+export const textOrNothing = Operation.make(
+  Request.get("https://api.test/text"),
+  text,
+).pipe(withNoContent);
 export const removeKey = <K extends Response.Key>(key: K) =>
   Response.remove(key);
 

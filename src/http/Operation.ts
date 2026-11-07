@@ -322,6 +322,10 @@ export interface Step<out E = never, out R = never> {
  *
  * `S` is invariant: widening it by annotation could otherwise make any response look as if it fits
  * a recorded step.
+ *
+ * {@link mapRequest}, {@link mapResponse}, {@link mapOptions} and {@link unmap} build from these,
+ * so they drop an `execute` replaced on the value. {@link map} and {@link mapEffect} wrap
+ * `execute` itself, and keep it.
  */
 export interface Parts<out Q, in out S, out O, out T = undefined> {
   readonly request: Q;
@@ -624,28 +628,35 @@ export type Next<P, E, R> = [P] extends [
   ? Parts<Q, S, O, Step<StepFailure<T> | E, StepServices<T> | R>>
   : P;
 
-/** Two steps combine into one, so the type does not grow with each map. */
+/**
+ * Wrap the operation's own `execute`, and record the step for a later {@link rebuild}. Two steps
+ * combine into one, so the type does not grow with each map.
+ */
 const addStep = <Result>(
   self: Adjustable<unknown, unknown>,
   f: Runner,
 ): Result => {
-  if (self.parts === undefined) {
-    const wrapped: unknown = fromEffect((input: never) =>
-      Effect.flatMap(self.execute(input), f),
-    );
-    return wrapped as Result;
-  }
-  const parts = self.parts as ErasedParts;
-  const previous = parts.step;
-  return rebuild({
-    ...parts,
-    step: {
-      run:
-        previous === undefined
-          ? f
-          : (value) => Effect.flatMap(previous.run(value), f),
-    },
-  });
+  const wrapped = fromEffect((input: never) =>
+    Effect.flatMap(self.execute(input), f),
+  );
+  const parts = self.parts as ErasedParts | undefined;
+  const previous = parts?.step;
+  const result: unknown =
+    parts === undefined
+      ? wrapped
+      : {
+          ...wrapped,
+          parts: {
+            ...parts,
+            step: {
+              run:
+                previous === undefined
+                  ? f
+                  : (value: unknown) => Effect.flatMap(previous.run(value), f),
+            },
+          },
+        };
+  return result as Result;
 };
 
 /**

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 // #region imports
-import { Data, Effect, Schedule, Schema } from "effect";
+import { Data, Effect, flow, identity, Schedule, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import {
   Body,
@@ -205,6 +205,19 @@ const listOptions = listThings.pipe(
 );
 // #endregion unmap
 
+// #region flow
+const forDropdown = flow(
+  identity<typeof listThings>,
+  Operation.unmap,
+  Operation.mapRequest(withoutPaging),
+  Operation.mapRequest(idAndNameOnly),
+  Operation.mapResponse(asOptionPage),
+  Operation.mapEffect(dataOrNotFound),
+);
+
+const dropdownOptions = forDropdown(listThings);
+// #endregion flow
+
 // #region generator
 const namesOnly = Effect.fn("namesOnly")(function* (
   things: ReadonlyArray<typeof Thing.Type>,
@@ -327,6 +340,13 @@ assert.equal(
 assert.deepEqual(
   await dispatched(
     listOptions.execute(undefined),
+    answering(200, { data: [{ id: 1, name: "first" }] }),
+  ),
+  [{ id: 1, name: "first" }],
+);
+assert.deepEqual(
+  await dispatched(
+    dropdownOptions.execute(undefined),
     answering(200, { data: [{ id: 1, name: "first" }] }),
   ),
   [{ id: 1, name: "first" }],

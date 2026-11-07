@@ -82,8 +82,8 @@ The original never changes. `firstFive` is an ordinary `Request` transform, so i
 before any operation exists too, as in `Request.get("/things").pipe(api, firstFive)`.
 
 Hold each transform in a named variable and map once per change, or pass an arrow function such as
-`(request) => request.pipe(...)`. To compose several transforms into one, define it with `flow` or
-an ordinary function, then pass that. Each is equally good.
+`(request) => request.pipe(...)`. To compose several `Request` transforms into one, define it with
+`flow` or an ordinary function, then pass that. Each is equally good.
 
 Hold the `Request` or `Response` transform in the variable, not the `Operation.mapRequest` call. A
 transform like `firstFive` works for any request, and a call on its own has no operation to learn
@@ -143,6 +143,22 @@ mapping can use a generator, with `Effect.gen` inside the function or `Effect.fn
 
 The fit check is a compile-time rule. A cast gets past it, and the mapping then receives a shape it
 was not written for.
+
+### Compose adjustments into one function
+
+`flow` over `Operation.mapRequest`, `Operation.mapResponse`, `Operation.mapOptions` and
+`Operation.unmap` is a compile error on its own, because a composed function has no operation to
+learn the types from or to check keys and fit against. Use `pipe`, or name the operation: start the
+`flow` with `identity<typeof listThings>`, or write
+`(operation: typeof listThings) => operation.pipe(...)`:
+
+<<< ../../examples/modules/operation.ts#flow
+
+The usual rules still apply there, including the fit check. Such a function serves that definition.
+To reuse request or option changes across definitions, write a generic function over
+`Operation.Derived`. It cannot address a response case, because a key needs a known contract. `flow`
+over `Operation.map` and `Operation.mapEffect` alone compiles when the first function's parameter is
+annotated.
 
 ### Choose `Operation.map` or `Body.map`
 
@@ -216,6 +232,11 @@ Use `Operation.fromEffect` when you already have a function returning an Effect:
 The function is suspended until evaluation. This adapter adds the operation interface; it does not
 add HTTP dispatch, a retry policy, or response decoding to that function. The result has no parts,
 so it [cannot be adjusted](#offer-less-than-the-whole-definition).
+
+This is the way to change how an operation runs. If a value replaces `execute` instead,
+`Operation.map` and `Operation.mapEffect` keep the replacement, because they wrap `execute`, and
+`Operation.mapRequest`, `Operation.mapResponse`, `Operation.mapOptions` and `Operation.unmap` drop
+it, because they build from the parts.
 
 ### Diagnostics
 
