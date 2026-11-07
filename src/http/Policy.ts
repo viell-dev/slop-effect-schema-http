@@ -87,8 +87,9 @@ export const transient = (reason: Reason): boolean => {
  * `Schedule.recurs(n)` permits up to `n` retries after the first attempt. Defaults to
  * {@link transient}, honoring `Retry-After`, and no attempt timeout. Enable retries only when
  * repeating the service action is acceptable; transport failure does not prove it was unapplied.
- * The attempt timeout covers client execution and decoding, not initial request preparation or
- * retry delays. Apply `Effect.timeout` around the operation for an overall limit.
+ * `while` sees every completed outcome, so `while: () => true` also repeats a successful 200 until
+ * the schedule ends. The attempt timeout covers client execution and decoding, not initial request
+ * preparation or retry delays. Apply `Effect.timeout` around the operation for an overall limit.
  */
 export const make = <Out, E = never, R = never>(
   schedule: Schedule.Schedule<Out, Reason, E, R>,

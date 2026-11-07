@@ -61,6 +61,11 @@ contains a cause and, when a response was available, metadata. The example there
 decoded 429 and a failure associated with a 429. It does not retry an unrelated transport error or
 timeout.
 
+The classifier sees every completed outcome, not only failures. A 200 that decoded successfully is a
+`Response` reason like any other, so `while: () => true` retries it too. The operation repeats until
+the schedule runs out, then returns the last attempt's result. Inspect the reason rather than
+answering `true` for everything.
+
 ## Advanced policy behavior
 
 ### Options and defaults
