@@ -692,6 +692,11 @@ describe("non-text payloads through Body.bytes and a schema", () => {
     }),
   );
 
+  it("finds that the label iso-8859-1 selects windows-1252, not exact Latin-1", () => {
+    expect(latin1.encoding).toBe("windows-1252");
+    expect(latin1.decode(new Uint8Array([0x80]))).toBe("\u20AC");
+  });
+
   it.effect("reads 64-bit integers without losing precision", () =>
     Effect.gen(function* () {
       const exceedsDouble = 9007199254740993n;

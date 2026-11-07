@@ -385,6 +385,88 @@ describe("Operation over real loopback sockets", () => {
     }),
   );
 
+  it.live("Fetch refuses a method such as TRACE", () =>
+    Effect.gen(function* () {
+      let requests = 0;
+      const { origin } = yield* listen((_, response) => {
+        requests++;
+        response.end("ok");
+      });
+      const error = yield* Operation.make(
+        Request.make("TRACE", origin),
+        Response.status(200, Body.text),
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(FetchHttpClient.layer), Effect.flip);
+      expect(error).toMatchObject({ reason: { _tag: "TransportError" } });
+      expect(requests).toBe(0);
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/100
+  it.live("Effect's Fetch client takes a declared Content-Length off", () =>
+    Effect.gen(function* () {
+      const { origin } = yield* listen((request, response) => {
+        const chunks: Array<Buffer> = [];
+        request.on("data", (chunk: Buffer) => chunks.push(chunk));
+        request.once("end", () =>
+          response.end(
+            `${request.headers["content-length"]}:${Buffer.concat(chunks)}`,
+          ),
+        );
+      });
+      const withLength = (value: string) =>
+        Operation.make(
+          Request.post(origin).pipe(
+            Request.setHeader("Content-Length", value),
+            Request.body(Body.text),
+          ),
+          Response.status(200, Body.text),
+        )
+          .execute({ body: "hello" })
+          .pipe(Effect.provide(FetchHttpClient.layer));
+      expect(yield* withLength("3")).toBe("5:hello");
+      expect(yield* withLength("10")).toBe("5:hello");
+      const error = yield* Effect.flip(withLength(""));
+      expect(error).toMatchObject({ reason: { _tag: "TransportError" } });
+    }),
+  );
+
+  it.live("keeps a carriage return or line feed off the wire", () =>
+    Effect.gen(function* () {
+      const targets: Array<string | undefined> = [];
+      const { origin } = yield* listen((request, response) => {
+        targets.push(request.url);
+        response.end("ok");
+      });
+      const injected = Operation.make(
+        Request.get(origin).pipe(
+          Request.setHeader("x-value", "1\r\nInjected: 2"),
+        ),
+        Response.status(200, Body.text),
+      ).execute(undefined);
+      const overFetch = yield* injected.pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.exit,
+      );
+      const overLines = yield* injected.pipe(
+        Effect.provideService(HttpClient.HttpClient, linesClient),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(overFetch)).toBe(true);
+      expect(Exit.isFailure(overLines)).toBe(true);
+      expect(targets).toEqual([]);
+
+      yield* Operation.make(
+        Request.get(`${origin}/a\r\nb`),
+        Response.status(200, Body.text),
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(FetchHttpClient.layer));
+      expect(targets).toEqual(["/ab"]);
+    }),
+  );
+
   it.live(
     "interrupting an active body read closes the socket without retrying",
     () =>

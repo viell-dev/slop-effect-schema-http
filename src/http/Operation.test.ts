@@ -904,6 +904,62 @@ describe("Operation failures", () => {
     }),
   );
 
+  it.effect(
+    "reports a Body.mapEffect failure as a DecodeError with its cause",
+    () =>
+      Effect.gen(function* () {
+        const server = synthetic(() => text(200, "x"));
+        const refused = Body.text.pipe(
+          Body.mapEffect(() => Effect.fail("refused" as const)),
+        );
+        const error = yield* Operation.make(
+          Request.get("https://api.test/"),
+          Response.status(200, refused),
+        )
+          .execute(undefined)
+          .pipe(Effect.provide(server.layer), Effect.flip);
+        expect(error).toBeInstanceOf(Response.DecodeError);
+        expect(error).toMatchObject({ cause: "refused" });
+      }),
+  );
+
+  it.effect("treats an exception in a custom decoder as a defect", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => text(200, "x"));
+      const broken = Body.decoder((): Effect.Effect<string> => {
+        throw new Error("decoder bug");
+      });
+      const exit = yield* Operation.make(
+        Request.get("https://api.test/"),
+        Response.status(200, broken),
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer), Effect.exit);
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+    }),
+  );
+
+  it.effect("keeps the response on a client error, with what it read", () =>
+    Effect.gen(function* () {
+      const malformed = synthetic(() => text(200, "not json"));
+      const decoding = yield* getItem
+        .execute(undefined)
+        .pipe(Effect.provide(malformed.layer), Effect.flip);
+      expect(decoding).toBeInstanceOf(Response.DecodeError);
+      expect(decoding).toMatchObject({ cause: { response: { status: 200 } } });
+
+      const refusing = synthetic(() => text(500, "refused"));
+      const rejected = yield* Operation.make(
+        Request.get("https://api.test/"),
+        Response.status(200, Body.text),
+        { transformClient: HttpClient.filterStatusOk },
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(refusing.layer), Effect.flip);
+      expect(rejected).toMatchObject({ response: { status: 500 } });
+    }),
+  );
+
   it("keeps mapped errors in the result and failure unions", () => {
     class Missing extends Data.TaggedError("Missing") {}
     const operation = Operation.make(
@@ -1502,6 +1558,24 @@ describe("Operation retries", () => {
     }),
   );
 
+  it.effect("adds no attempt for a Retry-After once the budget is spent", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(503, { "retry-after": "10" }));
+      const fiber = yield* Operation.make(
+        Request.get("https://api.test/"),
+        Response.status(204, Body.empty),
+        { policy: spaced(1) },
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer), Effect.forkChild);
+      yield* TestClock.adjust("10 seconds");
+      expect(failureOf(yield* Fiber.await(fiber))).toBeInstanceOf(
+        Response.UnexpectedResponse,
+      );
+      expect(server.exchanges).toHaveLength(2);
+    }),
+  );
+
   it.effect("ignores Retry-After when the policy opts out", () =>
     Effect.gen(function* () {
       const server = synthetic((_, index) =>
@@ -1714,6 +1788,100 @@ describe("Operation timeouts and interruption", () => {
       const exit = yield* Fiber.await(fiber);
       expect(Cause.isTimeoutError(failureOf(exit))).toBe(true);
       expect(server.exchanges[0]?.signal.aborted).toBe(true);
+    }),
+  );
+
+  it.effect("bounds the drain of an unmatched body within the attempt", () =>
+    Effect.gen(function* () {
+      const server = synthetic(
+        () =>
+          new globalThis.Response(
+            new ReadableStream<Uint8Array>({
+              pull: () => new Promise(() => {}),
+            }),
+            { status: 500 },
+          ),
+      );
+      const fiber = yield* Operation.make(
+        Request.get("https://api.test/"),
+        Response.status(200, Body.text),
+        {
+          policy: Policy.make(Schedule.recurs(0), {
+            attemptTimeout: "1 second",
+          }),
+        },
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer), Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      const exit = yield* Fiber.await(fiber);
+      expect(Cause.isTimeoutError(failureOf(exit))).toBe(true);
+    }),
+  );
+
+  it.effect("covers a Body.mapEffect within the attempt", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => text(200, "x"));
+      const fiber = yield* Operation.make(
+        Request.get("https://api.test/"),
+        Response.status(
+          200,
+          Body.text.pipe(Body.mapEffect(() => Effect.never)),
+        ),
+        {
+          policy: Policy.make(Schedule.recurs(0), {
+            attemptTimeout: "1 second",
+          }),
+        },
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer), Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      const exit = yield* Fiber.await(fiber);
+      expect(Cause.isTimeoutError(failureOf(exit))).toBe(true);
+    }),
+  );
+
+  it.effect("lets a caller's timeout cover preparation and retry delays", () =>
+    Effect.gen(function* () {
+      const accepted = Response.status(204, Body.empty);
+      const idle = synthetic(() => empty(204));
+      const preparing = yield* Operation.make(
+        Request.get("/things").pipe(
+          Request.baseUrl(
+            Effect.as(Effect.sleep("1 minute"), "https://slow.test"),
+          ),
+        ),
+        accepted,
+      )
+        .execute(undefined)
+        .pipe(
+          Effect.timeout("1 second"),
+          Effect.provide(idle.layer),
+          Effect.forkChild,
+        );
+      yield* TestClock.adjust("1 second");
+      const slowExit = yield* Fiber.await(preparing);
+      expect(Cause.isTimeoutError(failureOf(slowExit))).toBe(true);
+      expect(idle.exchanges).toHaveLength(0);
+
+      const busy = synthetic(() => empty(503));
+      const waiting = yield* Operation.make(
+        Request.get("https://api.test/"),
+        accepted,
+        { policy: spaced(5) },
+      )
+        .execute(undefined)
+        .pipe(
+          Effect.timeout("1500 millis"),
+          Effect.provide(busy.layer),
+          Effect.forkChild,
+        );
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("500 millis");
+      const busyExit = yield* Fiber.await(waiting);
+      expect(Cause.isTimeoutError(failureOf(busyExit))).toBe(true);
+      expect(busy.exchanges).toHaveLength(2);
     }),
   );
 
@@ -2412,6 +2580,38 @@ describe("transformClient and the attempt number", () => {
       expect(server.exchanges.map(({ url }) => url)).toEqual([
         "https://eu.test/things",
         "https://ap.test/things",
+      ]);
+    }),
+  );
+
+  it.effect("puts prependUrl's text before a fixed base, past the join", () =>
+    Effect.gen(function* () {
+      const joins: Array<readonly [string, string]> = [];
+      const server = synthetic(() => empty(204));
+      const onServer = HttpClient.mapRequest(
+        HttpClientRequest.prependUrl("https://eu.test"),
+      );
+      yield* Operation.make(
+        Request.get("/things").pipe(Request.baseUrl("https://api.test")),
+        contract,
+        { transformClient: (client) => onServer(client) },
+      )
+        .execute(undefined)
+        .pipe(
+          Effect.provide(server.layer),
+          Effect.provide(
+            UrlEncoding.layer({
+              ...UrlEncoding.defaults,
+              join: (base, path) => {
+                joins.push([base, path]);
+                return UrlEncoding.defaults.join(base, path);
+              },
+            }),
+          ),
+        );
+      expect(joins).toEqual([["https://api.test", "/things"]]);
+      expect(server.exchanges.map(({ url }) => url)).toEqual([
+        "https://eu.test/https://api.test/things",
       ]);
     }),
   );
@@ -4262,6 +4462,7 @@ describe("ways to write a variant", () => {
     });
   });
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/125
   it("currently cannot address a case from a function generic in the cases", () => {
     compileOnly(
       <A, E, R, C extends Response.AnyCase>(
