@@ -157,10 +157,7 @@ const typesAt = (
   });
 
 /** The names on a schema's decoded side, which a value can use as well as the wire names. */
-export const decodedNames = (
-  ast: Ast,
-  value?: unknown,
-): ReadonlyArray<string> =>
+const decodedNames = (ast: Ast, value?: unknown): ReadonlyArray<string> =>
   ast._tag === "Union"
     ? ast.types
         .filter((member) => !ruledOut(member, value))
@@ -268,29 +265,37 @@ const at = (value: unknown, key: PropertyKey): unknown =>
   isObject(value) ? value[key] : undefined;
 
 /**
- * Whether a name is only a wire name, for a field that holds a choice of member the types under that
- * name do not show. A renamed field's encoded type is flattened, so text that holds JSON reads as
- * text there, and nothing says which field it belongs to. Its strict read failed with the whole
- * value's, so it cannot be shown to have kept everything.
+ * Whether a name may be a wire name for a field that holds a choice of member. A renamed field's
+ * encoded type is flattened, so text that holds JSON reads as text there, whatever is in it, and
+ * nothing says which field the name belongs to. A field given under its own name was read there.
  */
-const hidesChoice = (sides: ReadonlyArray<Ast>, key: PropertyKey): boolean =>
-  !typesAt(sides, key).some(holdsMemberChoice) &&
+const hidesChoice = (
+  sides: ReadonlyArray<Ast>,
+  key: PropertyKey,
+  given: Record<PropertyKey, unknown>,
+): boolean =>
   sides.some((side) => {
-    const decoded = fieldsOf(side);
     const encoded = fieldsOf(encodedEnd(side)).map(({ name }) => name);
     return (
       encoded.includes(key) &&
-      decoded.some(
-        ({ name, type }) => !encoded.includes(name) && holdsMemberChoice(type),
+      fieldsOf(side).some(
+        ({ name, type }) =>
+          !encoded.includes(name) &&
+          given[name] === undefined &&
+          holdsMemberChoice(type),
       )
     );
   });
 
-/** A field that may be gone. With `types`, it is only gone if they cannot read `value` strictly. */
+/**
+ * A field that may be gone. With `types`, it is only gone if they cannot read `value` strictly, to
+ * what came out as `output`.
+ */
 export interface Missing {
   readonly path: Path;
   readonly types?: ReadonlyArray<Ast>;
   readonly value?: unknown;
+  readonly output?: unknown;
 }
 
 /** Whether a value's keys mean something here: it is plain, or a struct here reads it. */
@@ -304,7 +309,8 @@ const comparable = (sides: ReadonlyArray<Ast>, value: object): boolean =>
  *
  * A value that cannot be compared, such as text that holds JSON or a `Map`, may hide a choice. It
  * comes back with its `types`, so that a strict read can settle it. Text is on the encoded side
- * already, so only a choice of member can hide in it.
+ * already, so only a choice of member can hide in it, and text that came out as it went in has lost
+ * nothing. Under a name that {@link hidesChoice}, `hidden`, no type can read text that changed.
  */
 export const missing = (
   types: ReadonlyArray<Ast>,
@@ -312,19 +318,22 @@ export const missing = (
   value: unknown,
   output: unknown,
   path: Path = [],
+  hidden = false,
 ): ReadonlyArray<Missing> => {
-  if (given === undefined) return [];
+  if (given === undefined || given === output) return [];
   const sides = types.flatMap((type) => sidesOf(type, given));
+  if (!isObject(given) && hidden) return [{ path }];
   if (!isObject(given) || !comparable(sides, given)) {
     const choosing = types.filter(
       isObject(given) ? holdsChoice : holdsMemberChoice,
     );
-    return choosing.length > 0 ? [{ path, types: choosing, value: given }] : [];
+    return choosing.length > 0
+      ? [{ path, types: choosing, value: given, output }]
+      : [];
   }
   const decoded = new Set(types.flatMap((type) => decodedNames(type, given)));
   const holdsAsWritten = (key: PropertyKey) =>
     has(output, key) &&
-    !hidesChoice(sides, key) &&
     (!isObject(value) ||
       !decoded.has(String(key)) ||
       isObject(given[key]) ||
@@ -338,6 +347,7 @@ export const missing = (
           at(value, key),
           at(output, key),
           here,
+          hidden || hidesChoice(sides, key, given),
         )
       : [{ path: here }];
   });
