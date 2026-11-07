@@ -16,6 +16,20 @@ const compiled = await Effect.runPromise(Request.compile(listUsers, undefined));
 assert.equal(compiled.request.url, "https://api.example.test/users?limit=10");
 assert.equal(compiled.request.headers["accept-language"], "en");
 
+// #region plain-fields
+const listAdmins = Request.get("https://api.example.test/users").pipe(
+  Request.setQuery({ page: 2, role: ["admin", "owner"], preview: null }),
+  Request.setHeader({ "accept-language": "en", "x-trace": () => "t1" }),
+);
+// ?page=2&role=admin&role=owner&preview
+// #endregion plain-fields
+const admins = await Effect.runPromise(Request.compile(listAdmins, undefined));
+assert.equal(
+  admins.request.url,
+  "https://api.example.test/users?page=2&role=admin&role=owner&preview",
+);
+assert.equal(admins.request.headers["x-trace"], "t1");
+
 // #region shared-base
 const api = Request.baseUrl("https://api.example.test/api/v1");
 const users = Request.get("/users").pipe(api);

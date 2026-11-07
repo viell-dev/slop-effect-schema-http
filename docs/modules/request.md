@@ -100,9 +100,26 @@ Use the raw field helpers when a schema is unnecessary:
 | `appendHeader(name, value)`  | `appendQuery(name, value)`  | Add a line or entry, preserving repetition        |
 | `removeHeader(name, value?)` | `removeQuery(name, value?)` | Remove the field, or only entries with that value |
 
-A value can be a string or a function evaluated during request preparation. `undefined` omits it.
-Query values also accept `null` for a bare key such as `?preview`; `""` produces `?preview=`. Header
-names compare without case; query names compare with case.
+`setHeader` and `setQuery` also take a plain object, which is the form to reach for when several
+fields are fixed:
+
+<<< ../../examples/modules/request.ts#plain-fields
+
+Each key replaces that name, as the two-argument form does, in key order, and other names stay.
+
+| Value                       | Query                                | Headers                    |
+| --------------------------- | ------------------------------------ | -------------------------- |
+| Text                        | `?name=text`                         | A line with that value     |
+| A number, bigint or boolean | Written as text, in the object form  | Not accepted               |
+| `""`                        | `?name=`                             | A line with an empty value |
+| `null`                      | A bare key, `?name`                  | Not accepted               |
+| An array                    | Repeats the name, in the object form | Use `appendHeader`         |
+| A function                  | Evaluated during request preparation | The same                   |
+| `undefined`                 | Removes that name's declarations     | The same                   |
+
+Header names compare without case; query names compare with case. Use `appendQuery` for exact order
+across repeated names. `undefined` declares nothing, so it stops no automatic value; that is what
+`removeHeader` is for.
 
 A header keeps the spelling you wrote, and a `setHeader` that replaces a line takes the new
 spelling. A provider that sends header lines receives that spelling; `fetch` sends lowercase names.

@@ -19,24 +19,29 @@ export type Fold = (name: string) => string;
 
 const exact: Fold = (name) => name;
 
-/** Replace a name at its first position and drop its later entries, or append a new entry. */
+/** Put values at a name's first position and drop its later entries, or append new entries. */
+export const replace = <A>(
+  fields: Fields<A>,
+  name: string,
+  values: ReadonlyArray<Value<A>>,
+  fold: Fold = exact,
+): Fields<A> => {
+  const folded = fold(name);
+  const position = fields.findIndex(([key]) => fold(key) === folded);
+  const entries = values.map((value): Field<A> => [name, value]);
+  if (position < 0) return [...fields, ...entries];
+  return fields.flatMap((entry, index): ReadonlyArray<Field<A>> =>
+    index === position ? entries : fold(entry[0]) === folded ? [] : [entry],
+  );
+};
+
+/** Replace a name with one value. */
 export const set = <A>(
   fields: Fields<A>,
   name: string,
   value: Value<A>,
   fold: Fold = exact,
-): Fields<A> => {
-  const folded = fold(name);
-  const position = fields.findIndex(([key]) => fold(key) === folded);
-  if (position < 0) return [...fields, [name, value]];
-  return fields.flatMap((entry, index): Array<Field<A>> =>
-    index === position
-      ? [[name, value]]
-      : fold(entry[0]) === folded
-        ? []
-        : [entry],
-  );
-};
+): Fields<A> => replace(fields, name, [value], fold);
 
 export const append = <A>(
   fields: Fields<A>,

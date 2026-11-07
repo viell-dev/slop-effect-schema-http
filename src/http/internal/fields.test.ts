@@ -3,6 +3,50 @@ import * as Fields from "./fields.js";
 
 const lowercase = (name: string) => name.toLowerCase();
 
+describe("Fields.replace", () => {
+  it("puts several values at the first position, together", () => {
+    const fields: Fields.Fields = [
+      ["a", "1"],
+      ["b", "2"],
+      ["c", "3"],
+      ["b", "4"],
+    ];
+    expect(Fields.replace(fields, "b", ["x", "y"])).toEqual([
+      ["a", "1"],
+      ["b", "x"],
+      ["b", "y"],
+      ["c", "3"],
+    ]);
+  });
+
+  it("appends values under a new name, in order", () => {
+    expect(Fields.replace([["a", "1"]], "b", ["x", "y"])).toEqual([
+      ["a", "1"],
+      ["b", "x"],
+      ["b", "y"],
+    ]);
+  });
+
+  it("removes a name when given no values", () => {
+    const fields: Fields.Fields = [
+      ["a", "1"],
+      ["b", "2"],
+      ["a", "3"],
+    ];
+    expect(Fields.replace(fields, "a", [])).toEqual([["b", "2"]]);
+    expect(Fields.replace(fields, "z", [])).toEqual(fields);
+  });
+
+  it("compares names through the fold and keeps the new spelling", () => {
+    expect(
+      Fields.replace([["X-A", "1"]], "x-a", ["2", "3"], lowercase),
+    ).toEqual([
+      ["x-a", "2"],
+      ["x-a", "3"],
+    ]);
+  });
+});
+
 describe("Fields.set", () => {
   it("appends a new name", () => {
     expect(Fields.set([["a", "1"]], "b", "2")).toEqual([

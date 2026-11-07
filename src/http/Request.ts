@@ -35,6 +35,31 @@ export class InvalidRequest extends Data.TaggedError("InvalidRequest")<{
 export type FieldValue<A = string> = Fields.Value<A>;
 
 /**
+ * Headers declared together: a name's value, or `undefined` to remove its declarations.
+ *
+ * @remarks
+ * Use with {@link setHeader}. A value is text or a function that supplies it, as in {@link FieldValue}.
+ */
+export type HeaderFields = Readonly<Record<string, FieldValue | undefined>>;
+
+/**
+ * Query fields declared together: what a query schema may encode to, or a function.
+ *
+ * @remarks
+ * Use with {@link setQuery}. Numbers, bigints and booleans become text, `null` is a bare key, an
+ * array repeats the name, and `undefined` removes the name's declarations. A function supplies its
+ * value during preparation, as in {@link FieldValue}.
+ */
+export type QueryFields = Readonly<
+  Record<
+    string,
+    | UrlEncoding.QueryValue
+    | ReadonlyArray<UrlEncoding.QueryValue>
+    | (() => string | null | undefined)
+  >
+>;
+
+/**
  * What a schema-backed input takes: the schema's decoded side, its encoded side, or a mix by field.
  *
  * @remarks
@@ -274,14 +299,17 @@ const foldHeader: Fields.Fold = (name) => name.toLowerCase();
 /** Query names compare exactly. */
 const foldQuery: Fields.Fold = (name) => name;
 
+/** A raw edit: a request's fields change, and its input, errors and services stay. */
+type Edit = <I, E, R>(self: Request<I, E, R>) => Request<I, E, R>;
+
 const editHeaders =
   (
     edited: ReadonlyArray<string>,
     edit: (fields: Fields.Fields) => Fields.Fields,
     removed: (names: ReadonlySet<string>) => ReadonlySet<string> = (names) =>
       names,
-  ) =>
-  <I, E, R>(self: Request<I, E, R>): Request<I, E, R> =>
+  ): Edit =>
+  (self) =>
     construct(
       {
         ...self.declaration,
@@ -305,8 +333,8 @@ const editQuery =
     edit: (
       fields: Fields.Fields<string | null>,
     ) => Fields.Fields<string | null>,
-  ) =>
-  <I, E, R>(self: Request<I, E, R>): Request<I, E, R> =>
+  ): Edit =>
+  (self) =>
     construct(
       {
         ...self.declaration,
@@ -324,7 +352,16 @@ const editQuery =
     );
 
 /**
- * Set a raw header, replacing every existing line with that name.
+ * Set a raw header, replacing every existing line with that name, or set several from an object.
+ *
+ * @example
+ * ```ts
+ * import { Request } from "viell-effect-schema-http";
+ * const request = Request.get("https://api.example.test/things").pipe(
+ *   Request.setHeader("X-One", "1"),
+ *   Request.setHeader({ "X-Two": "2", "X-Three": () => "3" }),
+ * );
+ * ```
  *
  * @remarks
  * Names compare without case, and the new line keeps the spelling of this call. A declared
@@ -334,9 +371,34 @@ const editQuery =
  * With a {@link headers} schema bound, in either order, the name has to be one a schema allows, and
  * the value is a default that goes through the schema. Setting a name the schema always writes,
  * after that schema, is an {@link InvalidRequest}, because the value could never reach the client.
+ *
+ * In the object form each key replaces its name as above, in key order, and other names stay. A key
+ * set to `undefined` removes that name's declarations and stops no automatic value, which is what
+ * {@link removeHeader} is for.
  */
-export const setHeader = (name: string, value: FieldValue) =>
-  editHeaders([name], (fields) => Fields.set(fields, name, value, foldHeader));
+export const setHeader: {
+  (name: string, value: FieldValue): Edit;
+  (fields: HeaderFields): Edit;
+} = (first: string | HeaderFields, value?: FieldValue) => {
+  const entries =
+    typeof first === "string"
+      ? [[first, value] as const]
+      : Object.entries(first);
+  return editHeaders(
+    entries.map(([name]) => name),
+    (fields) =>
+      entries.reduce(
+        (result, [name, entry]) =>
+          Fields.replace(
+            result,
+            name,
+            entry === undefined ? [] : [entry],
+            foldHeader,
+          ),
+        fields,
+      ),
+  );
+};
 
 /**
  * Add a raw header line after the existing lines, preserving repetition.
@@ -372,7 +434,17 @@ export const removeHeader = (name: string, value?: string) =>
   );
 
 /**
- * Set a raw query field, replacing entries with the same case-sensitive name.
+ * Set a raw query field, replacing entries with the same case-sensitive name, or set several from an
+ * object.
+ *
+ * @example
+ * ```ts
+ * import { Request } from "viell-effect-schema-http";
+ * const search = Request.get("https://api.example.test/users").pipe(
+ *   Request.setQuery({ page: 2, tag: ["a", "b"], preview: null }),
+ * );
+ * // URL query: ?page=2&tag=a&tag=b&preview
+ * ```
  *
  * @remarks
  * `null` produces a bare key, `""` an empty value, and `undefined` omits the entry. Names compare
@@ -382,9 +454,34 @@ export const removeHeader = (name: string, value?: string) =>
  * With a {@link query} schema bound, in either order, the name has to be one a schema allows, and
  * the value is a default that goes through the schema. Setting a name the schema always writes,
  * after that schema, is an {@link InvalidRequest}, because the value could never reach the client.
+ *
+ * The object form takes {@link QueryFields}. Each key replaces its name as above, in key order, and
+ * other names stay. Use {@link appendQuery} for exact order across repeated names.
  */
-export const setQuery = (name: string, value: FieldValue<string | null>) =>
-  editQuery([name], (fields) => Fields.set(fields, name, value));
+export const setQuery: {
+  (name: string, value: FieldValue<string | null>): Edit;
+  (fields: QueryFields): Edit;
+} = (first: string | QueryFields, value?: FieldValue<string | null>) => {
+  const entries: ReadonlyArray<readonly [string, QueryFields[string]]> =
+    typeof first === "string" ? [[first, value]] : Object.entries(first);
+  return editQuery(
+    entries.map(([name]) => name),
+    (fields) =>
+      entries.reduce(
+        (result, [name, entry]) =>
+          Fields.replace(
+            result,
+            name,
+            typeof entry === "function"
+              ? [entry]
+              : UrlEncoding.queryEntries([[name, entry]]).map(
+                  ([, text]) => text,
+                ),
+          ),
+        fields,
+      ),
+  );
+};
 
 /**
  * Append a raw query entry, preserving order and repeated names.
