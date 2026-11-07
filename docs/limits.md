@@ -27,11 +27,9 @@ Effect's HTTP modules are marked unstable upstream and can change across minor v
 release notes and retain a known-good lockfile when upgrading, including any application-owned
 client middleware. Report regressions with the exact dependency version.
 
-Other Node majors, macOS, Firefox, Safari, Deno, Bun and CommonJS are outside the initial
-qualification scope. Browser support does not imply support for every bundler or browser
-configuration; provider behavior and browser policy still apply. The [verification
-guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md#hostile-server-integration-tests)
-explains the coverage and how it is checked.
+Other Node majors, macOS, Firefox, Safari, Deno, Bun and CommonJS are outside the qualification
+scope. Browser support does not imply support for every bundler or browser configuration; provider
+behavior and browser policy still apply.
 
 ## Supported behavior
 
@@ -45,9 +43,30 @@ The library passes the request you declared to the HTTP client you chose, and it
 there. The client may rewrite or refuse it, and a server may read it differently. The library does
 not promise that an unusual request works.
 
-For a path, Node.js Fetch keeps repeated and trailing slashes and resolves dot segments, including
-encoded ones. A server may merge `//`, and another client can differ. Encoding a path value does not
-make it safe, so [constrain a value from a
+This covers paths, constructor query text, header names and declared headers, fragments, methods,
+and bodies on GET and HEAD. Wherever these guides say something is "passed to the client as
+written", they describe what the library hands over, not what reaches a server.
+
+These are the paths a server received from Effect's Fetch client on Node.js:
+
+| Path passed to the client | Path the server received |
+| ------------------------- | ------------------------ |
+| `/a//b`                   | `/a//b`                  |
+| `//a`                     | `//a`                    |
+| `/a/`                     | `/a/`                    |
+| `/a/./b`                  | `/a/b`                   |
+| `/a/../b`                 | `/b`                     |
+| `/a/%2e%2e/b`             | `/b`                     |
+| `/a/b/..`                 | `/a/`                    |
+
+So that client keeps repeated and trailing slashes, and resolves dot segments, including encoded
+ones. A server may then merge `//`, and another client can differ.
+
+Fetch makes other choices of its own. It sends lowercase header names, does not send a fragment,
+refuses a body on GET or HEAD, and refuses a method such as `TRACE`. A service that needs one of
+those needs a provider that can send it.
+
+Encoding a path value does not make it safe, so [constrain a value from a
 user](./modules/request.md#encoding-does-not-make-a-value-safe) in its schema.
 
 ### Slow or unusual responses
@@ -57,10 +76,13 @@ that body can hold the attempt open; set a policy `attemptTimeout` or the caller
 timeout when the service cannot guarantee completion.
 
 Browser Fetch hides some cookies, headers and redirect metadata, and CORS can turn an answer into a
-transport failure after the server has acted. Native middleware can change URL and header
-representations. `Body.text` is lenient UTF-8 through Fetch-backed providers. The relevant
-[browser](./design.md#in-a-browser), [URL](./design.md#wire-representations-stay-distinct), and
-[body](./design.md#bodies) sections explain the controls and limits.
+transport failure after the server has acted. Effect's default trace headers force a CORS preflight
+on a cross-origin request, so a working server that does not allow them looks down; [turn them
+off](./recipes.md#browser-requests-to-another-origin) or allow them on the server. Native middleware
+can change URL and header representations. `Body.text` is lenient UTF-8 through Fetch-backed
+providers. The relevant [browser](./design.md#in-a-browser),
+[URL](./design.md#wire-representations-stay-distinct), and [body](./design.md#bodies) sections
+explain the controls and limits.
 
 ## Identify the failure stage
 
@@ -80,12 +102,16 @@ Node result cannot establish what the page can observe.
 
 ## Report a defect
 
-Use the [issue tracker](https://github.com/viell-dev/slop-effect-schema-http/issues). Include the
-library commit, Node/browser and Effect versions, provider and settings, synthetic inputs, expected
-and actual results, and a small reproduction. Distinguish the observed response or wire facts from
-your interpretation of their cause. Do not post credentials, private URLs or service data.
+Use the [bug report
+form](https://github.com/viell-dev/slop-effect-schema-http/issues/new?template=bug_report.yml).
+Include the library version or commit, Node/browser and Effect versions, provider and settings,
+synthetic inputs, expected and actual results, and a small reproduction. Distinguish the observed
+response or wire facts from your interpretation of their cause. Do not post credentials, private
+URLs or service data.
 
-For sensitive security reports, use [GitHub private vulnerability
+For sensitive security reports, follow the [security
+policy](https://github.com/viell-dev/slop-effect-schema-http/blob/main/SECURITY.md), which uses
+[GitHub private vulnerability
 reporting](https://github.com/viell-dev/slop-effect-schema-http/security/advisories/new). For
 changes to the project, follow the public [contribution
 guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md).
