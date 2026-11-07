@@ -28,11 +28,12 @@ release runs in this order:
    - **`docs/release-notes/X.Y.md`:** for a new minor release, write or update the article with the
      capabilities and changes consumers will notice, examples and migration steps for every breaking
      change. Patch releases update it when they change the consumer experience. Keep maintenance
-     details in the changelog. Remove any wording that says the release is not published yet, and do
-     not publish a draft as a completed release.
+     details in the changelog. Do not publish a draft as a completed release.
    - **`docs/.vitepress/config.ts`:** add a new article to the sidebar.
-   - **Release status:** README, `docs/index.md`, `docs/api.md` and `docs/versions.md`, including
-     the tarball names, download links and checksum examples in `docs/versions.md`.
+   - **Release status:** README, `docs/index.md`, `docs/api.md`, `docs/versions.md` and the release
+     article. Remove any wording that says this release is not published yet, which the checks
+     cannot find. Update the tarball names, download links and checksum examples in
+     `docs/versions.md`.
    - **Source links:** the version-pinned `blob/VERSION` link at the end of each module guide.
    - **Hostile suite:** the commit pinned in `.github/workflows/release.yml`, when this release
      needs suite changes. A breaking release usually does. Suite changes reach the

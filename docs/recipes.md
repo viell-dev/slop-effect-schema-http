@@ -152,10 +152,10 @@ The steps then run in order, and a failure of the second keeps what the first re
 
 <<< ../examples/recipes/create-then-upload.ts#steps
 
-| Failure               | What is known                                                             |
-| --------------------- | ------------------------------------------------------------------------- |
-| From `createDocument` | No document was confirmed, though a transport error does not rule one out |
-| `UploadFailed`        | The document exists under `documentId`, without its content               |
+| Failure               | What is known                                                                |
+| --------------------- | ---------------------------------------------------------------------------- |
+| From `createDocument` | No document was confirmed, though a transport error does not rule one out    |
+| `UploadFailed`        | The document exists under `documentId`, and its content may not have arrived |
 
 After `UploadFailed`, finish the upload instead of starting again:
 
