@@ -144,10 +144,10 @@
   function with an optional second parameter of its own now receives the number there
   ([#99](https://github.com/viell-dev/slop-effect-schema-http/issues/99)).
 - Let a query carry a `Date`. A query schema can encode to one, and `Request.setQuery` takes one in
-  its object form, written with `toISOString()`. A default under such a field is read from its text.
-  An invalid `Date` has no ISO text, so it goes out as `Invalid Date`, and a schema such as
-  `Schema.Date` refuses it before that. Headers stay text, because HTTP date headers are not ISO
-  ([#110](https://github.com/viell-dev/slop-effect-schema-http/issues/110)).
+  its object form, directly or from a function, written with `toISOString()`. A default under such a
+  field is read from its text. An invalid `Date` has no ISO text, so it goes out as `Invalid Date`,
+  and a schema such as `Schema.Date` refuses it before that. Headers stay text, because HTTP date
+  headers are not ISO ([#110](https://github.com/viell-dev/slop-effect-schema-http/issues/110)).
 
 ## 0.1.0 — 2026-11-04
 

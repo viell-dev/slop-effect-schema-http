@@ -2755,6 +2755,22 @@ describe("dates in a query", () => {
       }),
     );
 
+    it.effect(
+      "writes a computed `Date` as ISO text, each time it is prepared",
+      () =>
+        Effect.gen(function* () {
+          const dates = [noon, new Date("2026-11-08T12:00:00.000Z")];
+          const request = Request.get("/slots").pipe(
+            Request.setQuery({ from: () => dates.shift() }),
+          );
+          expect(yield* urlOf(request, undefined)).toBe(`/slots?from=${iso}`);
+          expect(yield* urlOf(request, undefined)).toBe(
+            "/slots?from=2026-11-08T12%3A00%3A00.000Z",
+          );
+          expect(yield* urlOf(request, undefined)).toBe("/slots");
+        }),
+    );
+
     it.effect("repeats a list of them", () =>
       Effect.gen(function* () {
         expect(
@@ -2815,10 +2831,11 @@ describe("dates in a query", () => {
     it("takes a `Date` only in the object form", () => {
       void Request.setQuery({ from: noon });
       void Request.setQuery({ from: [noon, noon] });
+      void Request.setQuery({ from: () => noon });
       // @ts-expect-error: the two-argument form takes text, as it always has
       void Request.setQuery("from", noon);
-      // @ts-expect-error: a function supplies text
-      void Request.setQuery({ from: () => noon });
+      // @ts-expect-error: as does its function
+      void Request.setQuery("from", () => noon);
     });
   });
 
