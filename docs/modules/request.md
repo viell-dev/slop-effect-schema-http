@@ -194,8 +194,12 @@ Each key replaces that name, as the two-argument form does, in key order, and ot
 | `""`                        | `?name=`                             | A line with an empty value |
 | `null`                      | A bare key, `?name`                  | Not accepted               |
 | An array                    | Repeats the name, in the object form | Use `appendHeader`         |
-| A function                  | Evaluated during request preparation | The same                   |
+| A function                  | Its one result, by these rows        | The same                   |
 | `undefined`                 | Removes that name's declarations     | The same                   |
+
+A function runs during request preparation. In the object form it can return any single value in
+this table, so `{ page: () => 2 }` works as `{ page: 2 }` does. In the two-argument form it returns
+text, `null` or `undefined`.
 
 Header names compare without case; query names compare with case. Use `appendQuery` for exact order
 across repeated names. `undefined` declares nothing, so it stops no automatic value; that is what
