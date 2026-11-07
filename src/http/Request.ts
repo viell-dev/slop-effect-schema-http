@@ -716,8 +716,9 @@ const applyDeclaredBodyFields = (
  *
  * @remarks
  * The input is an {@link Input} of the schema. Encoding produces ordered header lines. The schema
- * states the shape of the group, whatever the order of the calls. A raw header under a name it
- * allows is a default: what the schema writes replaces it, and otherwise it goes through the
+ * states the shape of the group, whatever the order of the calls: once any schema is bound, every
+ * header the request declares must be a name some schema allows. A raw header under such a name
+ * is a default: what the schema writes replaces it, and otherwise it goes through the
  * schema, which writes its value, spelling and order. An omitted optional field therefore leaves
  * the default in place. A raw header under a name no schema allows is an {@link InvalidRequest}
  * before anything is sent. A record or `Schema.StructWithRest` allows any name. Names compare
@@ -821,8 +822,9 @@ export const headers = <
  *
  * @remarks
  * The input is an {@link Input} of the schema. The schema encodes to `UrlEncoding.QueryInput` and
- * states the shape of the group, whatever the order of the calls. A raw entry under a name it
- * allows is a default, including one written in the constructor: what the schema writes replaces
+ * states the shape of the group, whatever the order of the calls: once any schema is bound, every
+ * query field the request declares must be a name some schema allows. A raw entry under such a
+ * name is a default, including one written in the constructor: what the schema writes replaces
  * it, and otherwise it goes through the schema, which writes its value and order. An omitted
  * optional field therefore leaves the default in place. A raw entry under a name no schema allows
  * is an {@link InvalidRequest} before anything is sent. A record, `Schema.StructWithRest` or a list

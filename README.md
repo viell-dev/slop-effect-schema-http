@@ -6,7 +6,10 @@ to your application; the server does not need to use this library or Effect.
 
 ## Example
 
-Describe a user lookup and the JSON response your application understands:
+Describe a user lookup and the JSON response your application understands. The constructor's path
+and `Request.path` add together, so the example passes `""` and the template holds the whole path;
+`Request.get("/users")` with the same template would ask for `/users/users/42`. A base URL is joined
+to a relative path, and an absolute URL in the request bypasses it:
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -34,10 +37,9 @@ const inFrench = Request.setHeader("accept-language", "fr");
 const getUserInFrench = getUser.pipe(Operation.mapRequest(inFrench));
 ```
 
-Reuse `api` across requests to share the base URL. The path template adds `/users/42` to the empty
-path passed to `Request.get`, and that is joined to the base. The path value's schema turns the
-number into URL text, and the library escapes it. The response schema validates the returned JSON.
-Constructing `program` sends nothing; evaluating it produces a typed user or an Effect failure.
+Reuse `api` across requests to share the base URL. The path value's schema turns the number into URL
+text, and the library escapes it. The response schema validates the returned JSON. Constructing
+`program` sends nothing; evaluating it produces a typed user or an Effect failure.
 
 A definition describes the most common request, not the only one. Write it once, near the
 integration, and let each part of your application adjust its request, response or options. [Getting

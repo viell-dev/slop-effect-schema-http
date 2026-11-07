@@ -42,6 +42,12 @@ service assigns the ID.
 The request and response schemas are separate. Your application supplies the fields needed to create
 a user and receives the fields needed to use the result.
 
+This request holds its whole URL. When you split a URL up, two rules come first. The constructor's
+path and `Request.path` add together, so `Request.get("/users")` and `` Request.path`/42` `` make
+`/users/42`, and `Request.get("")` leaves the whole path to the template. A base URL from
+`Request.baseUrl` is joined to a relative path, and an absolute URL such as this one bypasses it, so
+drop the origin from a request when you give it a base.
+
 ## Supply a client and run it
 
 Append this code to the same file. It supplies an Effect HTTP client that answers with a created

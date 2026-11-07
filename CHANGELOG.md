@@ -145,6 +145,9 @@ compiles and still changes your URLs.
   removes every step. The inner functions of `Operation.map` and `Operation.mapEffect` gain a type
   parameter for the parts. It has a default, so it only matters to explicit type arguments, which
   give a plain operation ([#105](https://github.com/viell-dev/slop-effect-schema-http/issues/105)).
+- State the rules a reader meets first where they meet them: the README and Getting Started now say
+  that the constructor's path and `Request.path` add together and that an absolute request URL
+  bypasses a base URL, and each introduction of a schema's shape gives its plain reading.
 - Report a key the contract lacks as one error on a mapped operation.
   `Operation.mapResponse(Response.replace(500, body))` with no 500 case also said that the response
   no longer fits, and said it first. A real `unknown` or `any` result is still refused.

@@ -66,8 +66,9 @@ These principles give a few rules that the sections below state in full:
 - Bindings add, and nothing replaces silently. The constructor path and `Request.path` join, and
   later schemas add fields. Functions that say they replace, such as `Request.setQuery` and
   `Request.baseUrl`, still do, and `Request.unbind` starts a group again.
-- A schema states the shape of its group. A raw value under a name it allows is a default, and a
-  name it does not allow is an error.
+- A schema states the shape of its group: once any schema is bound to headers or query, every header
+  or query field the request declares must be a name some schema allows. A raw value under such a
+  name is a default, and any other name is an error.
 - A request's own declaration wins. Automatic `Accept`, `Content-Type` and `Content-Length` apply
   only when the request declares nothing.
 - What is written is what the client receives. Path text is joined exactly, a constructor query
@@ -144,6 +145,9 @@ compiler therefore checks less than it would for the decoded side alone: a strin
 expected compiles, and fails when the request is prepared if the schema refuses it.
 
 ### A schema states the shape of its group
+
+In plain terms, once any schema is bound to headers or query, every header or query field the
+request declares must be a name some schema allows.
 
 A field group is a dictionary of names, and each raw edit produces a new dictionary. A header or
 query schema states the shape of that dictionary, and one that cannot be built against the schema is
@@ -443,6 +447,7 @@ to the client as written until something edits that entry or a schema covers it:
 | `/x?a=%41&b=1;2` with `setQuery("a", "new value")` | `/x?a=new%20value&b=1;2` |
 | `/x?` with `setQuery("b", "1")`                    | `/x?b=1`                 |
 | `/x?a=1&` with `setQuery("b", "1")`                | `/x?a=1&&b=1`            |
+| `/things?page=02&&tail=1` under a schema for both  | `/things?&page=2&tail=1` |
 
 Each segment between `&` signs is also an entry with a form-decoded name and value, so `setQuery`,
 `appendQuery` and `removeQuery` can edit one entry and leave the others alone. Decoding reads `+` as
@@ -460,6 +465,10 @@ nor validates it, until a query schema covers the entry. [A schema states the
 shape](#a-schema-states-the-shape-of-its-group) of its group, so a written entry goes through a
 schema that allows it, and one no schema allows is an incompatible shape. A lone `?` holds no
 entries, so a schema has nothing to say about it, and it stays until something writes an entry.
+
+A written empty segment is not a field, so a schema leaves it in place, and what a schema writes
+goes after every entry it leaves in place. An empty segment between two entries a schema covers
+therefore ends up leading, as the last row of the table shows.
 
 A URL that cannot be rendered or encoded fails with `Request.InvalidRequest`.
 
