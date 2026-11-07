@@ -3,6 +3,7 @@ import {
   request as forward,
   type ServerResponse,
 } from "node:http";
+import { pipeline } from "node:stream";
 import type { Plugin } from "vitest/config";
 
 /**
@@ -45,9 +46,11 @@ import type { Plugin } from "vitest/config";
  * the call is now same-origin, so there is no preflight, `Origin` is sent only on non-GET requests,
  * `Sec-Fetch-Site` is `same-origin`, and cookies come from the page origin's jar.
  *
- * If the backend cannot be reached, the proxy answers `502 Bad Gateway` with a `text/plain` body
- * naming the cause. A page that aborts its request closes the forwarded request too, so the
- * backend observes the abort.
+ * If the backend cannot be reached, or closes the connection before a complete response head, or
+ * writes one `node:http` refuses, the proxy answers `502 Bad Gateway` with a `text/plain` body
+ * naming the cause. An answer that fails once its head has passed through ends the page's connection
+ * too, without completing the page's framing, so the page meets the cut as a failed body. A page
+ * that aborts its request closes the forwarded request too, so the backend observes the abort.
  */
 
 const target =
@@ -181,7 +184,10 @@ export const proxyMiddleware = (
         answer.statusMessage ?? "",
         flat(endToEnd(pairs(answer.rawHeaders))),
       );
-      answer.pipe(response);
+      // The head goes now, so an answer that fails at once is a failed body, not a lost connection.
+      response.flushHeaders();
+      // `pipe` alone would leave the page waiting for the rest of an answer that was cut off.
+      pipeline(answer, response, () => undefined);
     });
     upstream.on("error", (cause) => {
       // After the page went away, or once the answer has started, there is nobody to tell.

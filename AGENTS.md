@@ -9,8 +9,9 @@ the scenarios. The library's own design, which these tests are judged against, i
 - `src/harness/`: the loopback server and router used by backends, the client providers, the two
   lanes behind `#lane` (`lane.node.ts`, `lane.browser.ts` with its control server), the browser
   lane's same-origin proxy (`proxy.ts`), and the app lane's setup, which builds the app and serves
-  it with that proxy (`app-setup.ts`). Change these only when a scenario needs it, and keep them
-  backend-neutral.
+  it with that proxy (`app-setup.ts`). `fixtures/` holds neutral backends for the harness's own
+  tests, which a lane finds by name and no scenario uses. Change these only when a scenario needs
+  it, and keep them backend-neutral.
 - `services/`: one page per hostile service, as its owners would publish it for integrators:
   endpoints, formats, value conventions, errors, and the history of each quirk (who introduced it,
   when, and why nobody can remove it), with the JSON options a test can set in a separate "Test
@@ -39,7 +40,8 @@ the scenarios. The library's own design, which these tests are judged against, i
   their helpers (EXT-6a to EXT-6e). The `replay` backend serves recordings to consumer tests.
   `readers.node.test.ts` holds the backend side's regression cases for the store's and the
   gateway's XML readers and the store's bundle writer, beside the consumer side's corpora
-  (EXT-3 to EXT-5).
+  (EXT-3 to EXT-5). `bookings.node.test.ts` holds the `bookings` backend, which imitates no recorded
+  software, to its service page, byte for byte (EXT-29).
 
 ## Rules
 
@@ -99,10 +101,30 @@ the scenarios. The library's own design, which these tests are judged against, i
     and `src/harness/proxy.ts` documents what the proxy changes on the wire.
 - **Real sockets only.** Every scenario dispatches over HTTP to a backend started in the test's own
   scope, so each test gets fresh state. Do not replace the transport with an in-memory client.
+- **Replies that fail.** `node:http` frames and checks a `Reply`, so one is always complete and well
+  formed. A handler that needs a failure after the headers, or no answer at all, returns a
+  `RawReply` from `src/harness/server.ts` instead: a `head`, `body` steps, and an `end`, written
+  straight to the socket with nothing added or checked, under either listener. A router with such
+  routes is `rawRouter`.
+  - `src/harness/route.ts` builds the usual shapes: `rawHead`, `truncated`, `chunk` and `lastChunk`,
+    `trickled`, `noReply` and `gzip`, whose `GzipDamage` says where a stream is broken. Its doc
+    comments give each one's rules. A whole damaged gzip stream goes in an ordinary `Reply`.
+  - Keep a head in `head`, since that is where harness CORS adds its lines in the browser lane. A
+    reset can overtake bytes the client has not read yet, so a body that must arrive first needs a
+    `{ wait }` step before `end: "reset"`. A body that a client must read in two pieces needs a
+    `{ wait }` step between them too, because a client's reads need not follow the server's writes.
+  - `CATALOGUE.md` says what each shape does to each client, under
+    [Failures on the wire](./CATALOGUE.md#failures-on-the-wire), including what a browser cannot
+    show. `src/harness/raw-replies.test.ts` pins that against the platform's own `fetch`.
 - **Assert the wire.** Check what the backend received from `yield* backend.ledger`: method, target, header
   lines, body bytes and request counts. Do not rely only on the decoded value.
   - The ledger reads bytes as characters one for one, so UTF-8's `ä` in a target arrives as
     the two characters U+00C3 and U+00A4.
+  - Each entry says which connection it arrived on, in `connection`, and whether that connection
+    was still open when the ledger was read, in `connectionOpen`, so a test can see a connection
+    reused or released. `aborted` is true only when the client left before the reply ended, not
+    when the server ended the connection itself. A server learns of a client's close from its
+    socket, so read the ledger until it shows, in a bounded loop.
   - `node:http` refuses or reshapes some requests before a backend sees them. A test about those
     starts the backend with `lane.backend(name, options, { listener: "socket" })`, in either lane.
     That plain socket listener refuses nothing, serves one request per connection and frames a body
@@ -113,7 +135,10 @@ the scenarios. The library's own design, which these tests are judged against, i
   unexpected responses and explicit fallbacks are different outcomes; assert which one occurred.
 - **Providers.** `lane.clients` lists the providers available in the current lane.
   - `lane.linesClient` (Node lane only) preserves header lines, follows no redirects and keeps no
-    cookies.
+    cookies. It takes what `node:http` takes: a request `node:http` refuses to build, such as
+    `BAD METHOD` or CR and LF in a header, fails as a `TransportError` with nothing sent, and so does
+    any answer to `CONNECT` and a `101` with `Upgrade`, which `node:http` treats as handing over the
+    connection. `lane.rawClient` sends those shapes, and no provider reads a `101`.
   - `lane.rawClient` (Node lane only) is not in `lane.clients`, because it takes the origin to
     connect to: `lane.rawClient(backend.origin)`. It sends a request exactly as written, for shapes
     no standard client sends: `request.url` without that origin, or whole when the URL does not

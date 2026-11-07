@@ -21,6 +21,8 @@ export const lane: Lane = {
             head: received.head,
             body: received.body,
             aborted: received.aborted(),
+            connection: received.connection,
+            connectionOpen: received.connectionOpen(),
           })),
         ),
         arrived: (count) => Effect.promise(() => server.arrived(count)),

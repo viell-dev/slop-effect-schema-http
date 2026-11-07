@@ -1,10 +1,10 @@
 # Effect Schema HTTP: hostile-API integration suite
 
 This branch holds a server-backed integration suite for
-[Effect Schema HTTP](https://github.com/viell-dev/slop-effect-schema-http). Five synthetic backends
+[Effect Schema HTTP](https://github.com/viell-dev/slop-effect-schema-http). Six synthetic backends
 reproduce the conventions of real APIs that a client does not control: an identity provider, a SOAP
-document store, a JSON business API, a CGI reporting gateway, and a notification service. Each one
-carries decades of plausible historical accidents. The suite checks that one consumer can talk to
+document store, a JSON business API, a CGI reporting gateway, a notification service, and a regional
+booking service. Each one carries decades of plausible historical accidents. The suite checks that one consumer can talk to
 all of them through the library's public API, without escaping it.
 
 Real APIs are where the suite starts, not where it stops. Its purpose is to cover every odd, bad or
@@ -68,9 +68,12 @@ The backends are `node:http` servers on ephemeral loopback ports, started for ea
 refuses or reshapes some requests before a backend sees them, so a test can start any backend with
 `{ listener: "socket" }` instead. That plain socket listener refuses nothing, serves one request per
 connection and records each request's raw `head` in the ledger, and its replies are the same apart
-from `Connection: close`. The backends need no accounts, network access beyond loopback, secrets or
-private data, and they are black boxes: the consumer reaches them only over HTTP. `npm run check`
-runs `scripts/boundaries.mjs`, which
+from `Connection: close`. A backend can also write a raw reply straight to the socket, under either
+listener, for a response that is cut short, malformed or never finished, or for no response at all;
+the [catalogue](./CATALOGUE.md#failures-on-the-wire) says what each of those does to each client.
+The backends need no accounts, network access beyond loopback, secrets or private data, and they
+are black boxes: the consumer reaches them only over HTTP. `npm run check` runs
+`scripts/boundaries.mjs`, which
 resolves every import, following `package.json` `imports` and `tsconfig.json` `paths` aliases: a
 backend may import only Node built-ins, other backend modules and the harness's server and router,
 consumer code may import neither a backend nor a Node-side harness module, and the backend-side
@@ -174,9 +177,10 @@ The packed lane covers the package's `exports` map, its emitted JavaScript and d
 the peer `effect` as npm resolves it. It does not cover the browser lane, which always imports the
 source, or a bundled application, which the app lane covers. Nor does it isolate the
 package from the suite's other dependencies: a package the library imports without declaring it
-would go unnoticed if the suite happens to install it. A check of the packed package in an
-isolated consumer, in the library's own CI, is tracked in
-[#15](https://github.com/viell-dev/slop-effect-schema-http/issues/15).
+would go unnoticed if the suite happens to install it. The library's own CI covers that with
+`npm run test:package`, which installs the tarball in an isolated consumer, as its [contributor
+guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md#packed-package-verification)
+describes.
 
 ### The app lane
 

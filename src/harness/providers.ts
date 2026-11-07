@@ -1,4 +1,8 @@
-import { type IncomingMessage, request as send } from "node:http";
+import {
+  type ClientRequest,
+  type IncomingMessage,
+  request as send,
+} from "node:http";
 import { connect, type Socket } from "node:net";
 import { Duplex } from "node:stream";
 import { Effect, Layer, Option, Stream } from "effect";
@@ -165,9 +169,43 @@ const readResponse = (
 };
 
 /**
+ * Fail a request whose response is a change of protocol. `node:http` treats every answer to
+ * `CONNECT`, whatever its status, and a `101` with `Upgrade`, as handing over the connection: it
+ * emits neither `response` nor `error`, and with no listener it just drops the socket, so the
+ * request would never settle. These providers read a response and own no tunnel, so the connection
+ * ends here, as a transport failure that names what the server answered.
+ */
+const refuseHandover = (
+  outgoing: ClientRequest,
+  request: HttpClientRequest.HttpClientRequest,
+  resume: Resume,
+): void => {
+  const refuse = (incoming: IncomingMessage, connection: Duplex) => {
+    connection.destroy();
+    resume(
+      Effect.fail(
+        transportError(
+          request,
+          new Error(
+            `${request.method} was answered ${incoming.statusCode ?? 0} with a change of protocol, which this provider does not take`,
+          ),
+        ),
+      ),
+    );
+  };
+  outgoing.on("connect", refuse);
+  outgoing.on("upgrade", refuse);
+};
+
+/**
  * A custom provider over `node:http` that sends the operation's original header lines
  * (`Transport.headerLines`) unjoined, and attaches the response's raw lines to the response with
  * `Transport.withResponseHeaders`. It follows no redirects and keeps no cookies.
+ *
+ * It takes what `node:http` takes. A request `node:http` refuses to build, such as a method with a
+ * space or CR and LF in a header, fails as a transport error with nothing sent, and so does any
+ * answer to `CONNECT`, because `refuseHandover` turns it into one. Send those shapes through the
+ * raw client, which writes them.
  */
 export const linesClient: HttpClient.HttpClient = HttpClient.make(
   (request, url, signal) =>
@@ -179,19 +217,26 @@ export const linesClient: HttpClient.HttpClient = HttpClient.make(
         HttpClientResponse.HttpClientResponse,
         HttpClientError.HttpClientError
       >((resume) => {
-        const outgoingRequest = send(
-          url,
-          {
-            method: request.method,
-            headers: outgoing.flatMap(([name, value]) => [name, value]),
-            signal,
-          },
-          (incoming) => readResponse(request, incoming, resume),
-        );
-        outgoingRequest.on("error", (cause) =>
-          resume(Effect.fail(transportError(request, cause))),
-        );
-        outgoingRequest.end(bytes);
+        try {
+          const outgoingRequest = send(
+            url,
+            {
+              method: request.method,
+              headers: outgoing.flatMap(([name, value]) => [name, value]),
+              signal,
+            },
+            (incoming) => readResponse(request, incoming, resume),
+          );
+          outgoingRequest.on("error", (cause) =>
+            resume(Effect.fail(transportError(request, cause))),
+          );
+          refuseHandover(outgoingRequest, request, resume);
+          outgoingRequest.end(bytes);
+        } catch (cause) {
+          // `node:http` validates the method and header lines by throwing, not with an `error`
+          // event; a throw here would otherwise end the fiber as a defect.
+          resume(Effect.fail(transportError(request, cause)));
+        }
       });
     }),
 );
@@ -268,6 +313,7 @@ const readFromSocket = (
   placeholder.on("error", (cause) =>
     resume(Effect.fail(transportError(request, cause))),
   );
+  refuseHandover(placeholder, request, resume);
   placeholder.end();
 };
 

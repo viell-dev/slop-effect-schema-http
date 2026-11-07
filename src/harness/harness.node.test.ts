@@ -9,8 +9,9 @@ import {
   Transport,
 } from "viell-effect-schema-http";
 import { startControl } from "./control.js";
-import { fetchClient, linesLayer } from "./providers.js";
-import { header, headerValues, serve } from "./server.js";
+import { fetchClient, linesLayer, rawLayer } from "./providers.js";
+import { rawHead } from "./route.js";
+import { header, headerValues, type Listener, serve } from "./server.js";
 
 /** Ten distinct bytes, a hundred times: the part of an upload that arrives before the cut. */
 const partial = "0123456789".repeat(100);
@@ -76,6 +77,28 @@ const scoped = (origin: string) =>
       Request.appendHeader("X-Scope", "write"),
     ),
     Response.status(200, Body.text),
+  );
+
+/** The transport error a request fails with, or the test's failure if it dies or hangs. */
+const transportFailure = <E, R>(
+  operation: Operation.Operation<void, unknown, E, R>,
+) =>
+  operation.execute(undefined).pipe(
+    Effect.provide(linesLayer),
+    Effect.timeout("2 seconds"),
+    Effect.flip,
+    Effect.map((error) => {
+      if ((error as { readonly _tag?: string })._tag !== "HttpClientError")
+        throw error;
+      const { reason } = error as unknown as {
+        readonly reason: {
+          readonly _tag: string;
+          readonly cause: { readonly code?: string; message?: string };
+        };
+      };
+      expect(reason._tag).toBe("TransportError");
+      return reason.cause;
+    }),
   );
 
 describe("harness", () => {
@@ -266,11 +289,128 @@ describe("harness", () => {
             ],
             body: btoa(partial),
             aborted: true,
+            connection: 1,
+            connectionOpen: false,
           },
         ]);
         expect(rejections.seen).toEqual([]);
       }),
   );
+
+  describe("what the line-preserving provider does not take", () => {
+    const answerAnything = serve(() => ({ status: 200, body: "ok" }));
+
+    for (const [what, code, declare] of [
+      [
+        "a method with a space",
+        "ERR_INVALID_HTTP_TOKEN",
+        (origin: string) => Request.make("BAD METHOD", `${origin}/x`),
+      ],
+      [
+        "CR and LF in a header value",
+        "ERR_INVALID_CHAR",
+        (origin: string) =>
+          Request.get(`${origin}/x`).pipe(
+            Request.setHeader("x-name", "a\r\nx-added: b"),
+          ),
+      ],
+      [
+        "CR and LF in a header name",
+        "ERR_INVALID_HTTP_TOKEN",
+        (origin: string) =>
+          Request.get(`${origin}/x`).pipe(Request.setHeader("x\r\nname", "a")),
+      ],
+    ] as const)
+      it.live(`${what} fails as a transport error, with nothing sent`, () =>
+        Effect.gen(function* () {
+          const server = yield* answerAnything;
+          const cause = yield* transportFailure(
+            Operation.make(
+              declare(server.origin),
+              Response.status(200, Body.text),
+            ),
+          );
+          expect(cause.code).toBe(code);
+          expect(server.ledger).toEqual([]);
+        }),
+      );
+
+    for (const status of [200, 407])
+      it.live(
+        `CONNECT answered ${status} fails as a transport error instead of hanging, and closes its connection`,
+        () =>
+          Effect.gen(function* () {
+            const server = yield* serve(
+              () => ({ status, body: "tunnel" }),
+              undefined,
+              "socket",
+            );
+            const cause = yield* transportFailure(
+              Operation.make(
+                Request.make("CONNECT", `${server.origin}/x`),
+                Response.status(200, Body.text),
+              ),
+            );
+            expect(cause.message).toContain(`answered ${status}`);
+            expect(server.ledger.map(({ method }) => method)).toEqual([
+              "CONNECT",
+            ]);
+            yield* eventually(() => !server.ledger[0]!.connectionOpen());
+          }),
+      );
+
+    it.live(
+      "CONNECT to node:http, which closes the connection unanswered, fails as a transport error",
+      () =>
+        Effect.gen(function* () {
+          const server = yield* answerAnything;
+          const cause = yield* transportFailure(
+            Operation.make(
+              Request.make("CONNECT", `${server.origin}/x`),
+              Response.status(200, Body.text),
+            ),
+          );
+          expect(cause.code).toBe("ECONNRESET");
+          expect(server.ledger).toEqual([]);
+        }),
+    );
+
+    for (const listener of ["http", "socket"] satisfies ReadonlyArray<Listener>)
+      it.live(
+        `a 101 with Upgrade fails as a transport error through either provider, instead of hanging (${listener})`,
+        () =>
+          Effect.gen(function* () {
+            const server = yield* serve(
+              () => ({
+                head: rawHead(101, [
+                  ["Connection", "Upgrade"],
+                  ["Upgrade", "tunnel"],
+                ]),
+                end: "hold",
+              }),
+              undefined,
+              listener,
+            );
+            const switching = Operation.make(
+              Request.get(`${server.origin}/x`),
+              Response.status(200, Body.text),
+            );
+            const cause = yield* transportFailure(switching);
+            expect(cause.message).toContain("answered 101");
+            const error = yield* switching
+              .execute(undefined)
+              .pipe(
+                Effect.provide(rawLayer(server.origin)),
+                Effect.timeout("2 seconds"),
+                Effect.flip,
+              );
+            expect(error._tag).toBe("HttpClientError");
+            yield* eventually(() =>
+              server.ledger.every(({ connectionOpen }) => !connectionOpen()),
+            );
+          }),
+      );
+  });
 
   it.live(
     "aborts a held-open request on interruption, observed by the server",
