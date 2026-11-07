@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Duration, Schedule } from "effect";
-import { HttpClientError, HttpClientRequest } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import { empty, response } from "../../test/support.js";
 import * as Policy from "./Policy.js";
 import * as Request from "./Request.js";
@@ -126,6 +126,28 @@ describe("Policy.transient", () => {
         ),
       ),
     ).toBe(false);
+  });
+
+  it("agrees with Effect's own classification", () => {
+    for (let status = 200; status < 600; status++) {
+      expect(Policy.transient(answered(status))).toBe(
+        HttpClient.isTransientResponse(response(empty(status))),
+      );
+    }
+    for (const error of [
+      new Cause.TimeoutError(),
+      clientError(new HttpClientError.TransportError({ request })),
+      clientError(
+        new HttpClientError.InvalidUrlError({ request, cause: "bad" }),
+      ),
+      statusError(503),
+      statusError(404),
+      new Error("other"),
+    ]) {
+      expect(Policy.transient(failed(Cause.fail(error)))).toBe(
+        HttpClient.isTransientError(error),
+      );
+    }
   });
 
   it("does not classify defects or interruptions as transient", () => {

@@ -750,6 +750,11 @@ describe("Request.mapBaseUrl", () => {
     }),
   );
 
+  it("leaves an Effect on the declaration, so reading it cannot extend a base", () => {
+    const users = Request.get("/users").pipe(api, admin);
+    expect(Effect.isEffect(users.declaration.baseUrl)).toBe(true);
+  });
+
   it.effect("is replaced by a later base URL", () =>
     Effect.gen(function* () {
       let calls = 0;
@@ -2402,6 +2407,25 @@ describe("Request.query", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/135
+  it.effect(
+    "currently needs its group in the input with every field optional",
+    () =>
+      Effect.gen(function* () {
+        const request = Request.get("/things").pipe(
+          Request.query(
+            Schema.Struct({ limit: Schema.optional(Schema.FiniteFromString) }),
+          ),
+        );
+        expect(yield* urlOf(request, { query: {} })).toBe("/things");
+        const error = yield* Effect.flip(
+          // @ts-expect-error the group's key is required
+          compile(request, {}),
+        );
+        expect(error).toBeInstanceOf(Schema.SchemaError);
+      }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/87
   it.effect(
     "refuses raw entries the schema does not allow, including the URL's query string",
@@ -3282,6 +3306,23 @@ describe("the path is joined exactly", () => {
         ).toBe("https://api.test/v1/a");
       }
     }),
+  );
+
+  it.effect(
+    "keeps a query on its own beside a base, where a template adds /",
+    () =>
+      Effect.gen(function* () {
+        const base = Request.baseUrl("https://api.test/svc");
+        expect(yield* urlOf(Request.get("?wsdl").pipe(base), undefined)).toBe(
+          "https://api.test/svc?wsdl",
+        );
+        expect(
+          yield* urlOf(
+            Request.get("").pipe(base, Request.path`?wsdl`),
+            undefined,
+          ),
+        ).toBe("https://api.test/svc/?wsdl");
+      }),
   );
 
   it.effect("lets a native edit see the path so far, and adds to it", () =>
@@ -5271,6 +5312,23 @@ describe("a schema states the shape of its group", () => {
       }),
     );
 
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/112
+    it.effect(
+      "currently leaves a required field to the caller regardless",
+      () =>
+        Effect.gen(function* () {
+          const request = Request.put("/things").pipe(
+            shared,
+            Request.headers(Schema.Struct({ Authorization: Schema.String })),
+          );
+          const error = yield* Effect.flip(
+            // @ts-expect-error the input comes from the schema alone
+            compile(request, { headers: {} }),
+          );
+          expect(error).toBeInstanceOf(Schema.SchemaError);
+        }),
+    );
+
     it.effect("stays when the caller passes undefined for it", () =>
       Effect.gen(function* () {
         const request = Request.get("/things?limit=5").pipe(
@@ -5401,6 +5459,26 @@ describe("a schema states the shape of its group", () => {
         expect(yield* urlOf(request, { query: {} })).toBe(
           "/things?page=2&q=a%20b",
         );
+      }),
+    );
+
+    it.effect("reads a written entry under its decoded name", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/things?%6Cimit=5").pipe(Request.query(Limit)),
+            { query: {} },
+          ),
+        ).toBe("/things?limit=5");
+        const Named = Schema.Struct({
+          "first name": Schema.optional(Schema.String),
+        });
+        expect(
+          yield* urlOf(
+            Request.get("/x?first+name=Ada").pipe(Request.query(Named)),
+            { query: {} },
+          ),
+        ).toBe("/x?first%20name=Ada");
       }),
     );
 
@@ -6405,6 +6483,24 @@ describe("a schema states the shape of its group", () => {
       }),
     );
 
+    it.effect(
+      "show an open schema every field, so its values have to fit",
+      () =>
+        Effect.gen(function* () {
+          const request = Request.get("/x").pipe(
+            Request.query(Schema.Struct({ page: Schema.FiniteFromString })),
+            Request.query(Schema.Record(Schema.String, Schema.String)),
+          );
+          expect(
+            yield* urlOf(request, { query: { page: "2", extra: "x" } }),
+          ).toBe("/x?page=2&extra=x");
+          const refused = { query: { page: 2 } } as never;
+          expect(yield* Effect.flip(compile(request, refused))).toBeInstanceOf(
+            Schema.SchemaError,
+          );
+        }),
+    );
+
     it.effect("send a default through every schema that allows its name", () =>
       Effect.gen(function* () {
         const Short = Schema.Struct({
@@ -6701,7 +6797,9 @@ describe("a schema states the shape of its group", () => {
   });
 
   describe("outside the check", () => {
-    it.effect("leaves what a union drops from the caller's own value", () =>
+    // Effect reads the caller's value before any default joins it. The design page states the limit.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/134
+    it.effect("currently leaves what a union drops from a caller's value", () =>
       Effect.gen(function* () {
         const input = { query: { a: "x", b: "y" } };
         const narrowFirst = Schema.Union([
@@ -6901,6 +6999,36 @@ describe("a schema states the shape of its group", () => {
       }),
     );
 
+    it.effect("leaves a mapEffect that reads the removed input nothing", () =>
+      Effect.gen(function* () {
+        const seen: Array<unknown> = [];
+        const noteQuery = Request.mapEffect(
+          (native, input: { readonly query: unknown }) =>
+            Effect.sync(() => {
+              seen.push(input.query);
+              return native;
+            }),
+        );
+        const noted = Request.get("/things").pipe(
+          Request.query(Paging),
+          noteQuery,
+        );
+        yield* compile(
+          noted.pipe(
+            Request.headers(Schema.Struct({ "x-a": Schema.String })),
+            Request.unbind("query"),
+          ),
+          { headers: { "x-a": "1" } },
+        );
+        expect(seen).toEqual([undefined]);
+
+        const exit = yield* Effect.exit(
+          compile(noted.pipe(Request.unbind("query")), undefined),
+        );
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      }),
+    );
+
     it.effect(
       "skips a binding that mapInput feeds, keeping what it requires",
       () =>
@@ -6936,6 +7064,7 @@ describe("a schema states the shape of its group", () => {
   });
 
   describe("what a caller can pass", () => {
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/111
     it.effect("replaces a value a schema allows", () =>
       Effect.gen(function* () {
         const request = Request.get("/x").pipe(
@@ -7879,6 +8008,18 @@ describe("Request.mapInput", () => {
       expect(calls).toBe(2);
     }),
   );
+
+  it.effect("makes an exception from the mapping a defect", () =>
+    Effect.gen(function* () {
+      const request = Request.get("https://api.test/").pipe(
+        Request.mapInput((): unknown => {
+          throw new Error("mapping bug");
+        }),
+      );
+      const exit = yield* Effect.exit(compile(request, 1));
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+    }),
+  );
 });
 
 describe("Request.mapEffect", () => {
@@ -8132,6 +8273,23 @@ describe("reusable request transforms", () => {
 });
 
 describe("Request.compile", () => {
+  it.effect("adds no check of its own for a carriage return or line feed", () =>
+    Effect.gen(function* () {
+      const { request, headerLines } = yield* compile(
+        Request.get("/a\r\nb").pipe(
+          Request.setHeader("x-value", "1\r\nInjected: 2"),
+          Request.setHeader("x-name\r\nInjected", "1"),
+        ),
+        undefined,
+      );
+      expect(request.url).toBe("/a\r\nb");
+      expect(headerLines).toEqual([
+        ["x-value", "1\r\nInjected: 2"],
+        ["x-name\r\nInjected", "1"],
+      ]);
+    }),
+  );
+
   it.effect("returns a request with every query entry in the URL", () =>
     Effect.gen(function* () {
       const { request } = yield* compile(
