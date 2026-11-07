@@ -469,6 +469,7 @@ const health = Operation.make(
   Response.status(200, Body.text),
   { transformClient: (client) => withLabel(client) },
 );
+// #endregion transform-client
 const labels: Array<unknown> = [];
 const recordLabel = Effect.provideService(
   HttpClient.HttpClient,
