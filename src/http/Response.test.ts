@@ -1,5 +1,5 @@
-import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schema } from "effect";
+import { describe, expect, expectTypeOf, it } from "@effect/vitest";
+import { Context, Effect, Option, Schema } from "effect";
 import { HttpClientError } from "effect/http";
 import { empty, json, probeBody, response, text } from "../../test/support.js";
 import * as Body from "./Body.js";
@@ -8,6 +8,9 @@ import * as Transport from "./Transport.js";
 
 const metadataOf = (web: globalThis.Response) =>
   Response.metadata(response(web));
+
+/** Read by a decoder, to show which cases a contract's services come from. */
+class Prefix extends Context.Service<Prefix, string>()("test/Prefix") {}
 
 describe("Response.metadata", () => {
   it("exposes status, normalized headers and cookies", () => {
@@ -355,4 +358,444 @@ describe("Response.decode", () => {
       expect(selected).toBe(1);
     }),
   );
+});
+
+type ValueOf<T> =
+  T extends Response.Response<infer A, unknown, unknown> ? A : never;
+type FailureOf<T> =
+  T extends Response.Response<unknown, infer E, unknown> ? E : never;
+type ServicesOf<T> =
+  T extends Response.Response<unknown, unknown, infer R> ? R : never;
+type KeysOf<T> =
+  T extends Response.Response<unknown, unknown, unknown, infer C>
+    ? C extends Response.Case<infer K, unknown, unknown, unknown>
+      ? K
+      : never
+    : never;
+
+const labelled = (label: string) =>
+  Body.text.pipe(Body.map((value) => `${label}:${value}`));
+const flagged = (metadata: Response.Metadata) =>
+  metadata.headers["x-flag"] !== undefined;
+const flaggedResponse = () => response(text(200, "x", { "x-flag": "1" }));
+
+describe("Response cases", () => {
+  it("lists each case with its key, in priority order", () => {
+    const contract = Response.status(200, Body.text).pipe(
+      Response.orElse(Response.when(flagged, Body.empty, { key: "flag" })),
+      Response.orElse(Response.when(flagged, Body.json)),
+    );
+    expect(contract.cases.map((entry) => entry.key)).toEqual([
+      200,
+      "flag",
+      undefined,
+    ]);
+    expectTypeOf<KeysOf<typeof contract>>().toEqualTypeOf<
+      200 | "flag" | undefined
+    >();
+  });
+
+  it("selects and accepts from that list", () => {
+    const contract = Response.status(200, Body.json).pipe(
+      Response.orElse(Response.status(404, Body.text)),
+    );
+    expect(contract.accepts).toEqual(["application/json", "text/plain"]);
+    const selected = contract.select(metadataOf(empty(404)));
+    expect(Option.isSome(selected) && selected.value).toBe(
+      contract.cases[1]?.decoder,
+    );
+  });
+
+  it("keeps a key out of selection", () => {
+    const contract = Response.when(() => false, Body.text, { key: 200 });
+    expect(Option.isNone(contract.select(metadataOf(empty(200))))).toBe(true);
+  });
+
+  it("keeps a plain annotation and explicit type arguments compiling", () => {
+    const annotated: Response.Response<
+      string,
+      HttpClientError.HttpClientError
+    > = Response.status<string, HttpClientError.HttpClientError, never>(
+      200,
+      Body.text,
+    );
+    expect(annotated.accepts).toEqual(["text/plain"]);
+  });
+});
+
+describe("Response.replace", () => {
+  it.effect("changes one decoder and leaves the other cases alone", () =>
+    Effect.gen(function* () {
+      const full = Response.status(200, Body.jsonSchema(Schema.Number)).pipe(
+        Response.orElse(Response.status(404, labelled("missing"))),
+      );
+      const short = full.pipe(Response.replace(200, labelled("short")));
+      expect(yield* Response.decode(short, response(text(200, "x")))).toBe(
+        "short:x",
+      );
+      expect(yield* Response.decode(short, response(text(404, "y")))).toBe(
+        "missing:y",
+      );
+    }),
+  );
+
+  it.effect("leaves the original contract unchanged", () =>
+    Effect.gen(function* () {
+      const full = Response.status(200, labelled("full"));
+      const cases = full.cases;
+      full.pipe(Response.replace(200, labelled("short")));
+      expect(full.cases).toBe(cases);
+      expect(yield* Response.decode(full, response(text(200, "x")))).toBe(
+        "full:x",
+      );
+    }),
+  );
+
+  it.effect("keeps the case's position, because order is priority", () =>
+    Effect.gen(function* () {
+      const contract = Response.when(flagged, labelled("flag"), {
+        key: "flag",
+      }).pipe(Response.orElse(Response.status(200, labelled("plain"))));
+
+      const later = contract.pipe(Response.replace(200, labelled("new")));
+      expect(yield* Response.decode(later, flaggedResponse())).toBe("flag:x");
+      expect(yield* Response.decode(later, response(text(200, "y")))).toBe(
+        "new:y",
+      );
+
+      const earlier = contract.pipe(Response.replace("flag", labelled("new")));
+      expect(yield* Response.decode(earlier, flaggedResponse())).toBe("new:x");
+      expect(earlier.cases.map((entry) => entry.key)).toEqual(["flag", 200]);
+    }),
+  );
+
+  it.effect("keeps a when case's match rule", () =>
+    Effect.gen(function* () {
+      const contract = Response.when(
+        (metadata) => metadata.status >= 500,
+        labelled("old"),
+        { key: "server" },
+      );
+      const replaced = contract.pipe(
+        Response.replace("server", labelled("new")),
+      );
+      expect(yield* Response.decode(replaced, response(text(503, "x")))).toBe(
+        "new:x",
+      );
+      const error = yield* Effect.flip(
+        Response.decode(replaced, response(text(200, "x"))),
+      );
+      expect(error._tag).toBe("UnexpectedResponse");
+    }),
+  );
+
+  it.effect(
+    "keeps the first position when a key repeats, and drops the others",
+    () =>
+      Effect.gen(function* () {
+        const contract = Response.status(200, labelled("first")).pipe(
+          Response.orElse(Response.status(404, labelled("missing"))),
+          Response.orElse(Response.status(200, Body.json)),
+        );
+        const replaced = contract.pipe(Response.replace(200, labelled("new")));
+        expect(replaced.cases.map((entry) => entry.key)).toEqual([200, 404]);
+        expect(replaced.accepts).toEqual(["text/plain"]);
+        expect(yield* Response.decode(replaced, response(text(200, "x")))).toBe(
+          "new:x",
+        );
+        expectTypeOf<ValueOf<typeof replaced>>().toEqualTypeOf<string>();
+      }),
+  );
+
+  it("moves Accept with the new decoder, in declaration order", () => {
+    const contract = Response.status(200, Body.json).pipe(
+      Response.orElse(Response.status(400, Body.text)),
+      Response.orElse(Response.status(422, Body.json)),
+    );
+    expect(contract.pipe(Response.replace(200, Body.bytes)).accepts).toEqual([
+      "application/octet-stream",
+      "text/plain",
+      "application/json",
+    ]);
+    expect(contract.pipe(Response.replace(400, Body.json)).accepts).toEqual([
+      "application/json",
+    ]);
+    expect(contract.pipe(Response.replace(200, Body.empty)).accepts).toEqual([
+      "text/plain",
+      "application/json",
+    ]);
+  });
+
+  it("holds only the cases that can still occur in its type", () => {
+    const Thing = Schema.Struct({ id: Schema.Number });
+    const full = Response.status(
+      200,
+      Response.tag("Found", Body.jsonSchema(Thing)),
+    ).pipe(
+      Response.orElse(
+        Response.status(404, Response.tag("Missing", Body.empty)),
+      ),
+    );
+    const short = full.pipe(Response.replace(200, Body.text));
+    expectTypeOf<ValueOf<typeof short>>().toEqualTypeOf<
+      string | Response.Tagged<"Missing", void>
+    >();
+    expectTypeOf<KeysOf<typeof short>>().toEqualTypeOf<200 | 404>();
+  });
+
+  it("drops a replaced case's failures and services from its type", () => {
+    const needsPrefix = Body.decoder(() =>
+      Effect.flatMap(Prefix, () => Effect.fail("bad" as const)),
+    );
+    const contract = Response.status(200, needsPrefix).pipe(
+      Response.orElse(Response.status(404, Body.empty)),
+    );
+    expectTypeOf<ServicesOf<typeof contract>>().toEqualTypeOf<Prefix>();
+    expectTypeOf<"bad">().toExtend<FailureOf<typeof contract>>();
+
+    const plain = contract.pipe(Response.replace(200, Body.empty));
+    expectTypeOf<ServicesOf<typeof plain>>().toEqualTypeOf<never>();
+    expectTypeOf<"bad">().not.toExtend<FailureOf<typeof plain>>();
+  });
+});
+
+describe("Response.remove", () => {
+  it.effect("lets a matching response fall through to a later case", () =>
+    Effect.gen(function* () {
+      const contract = Response.status(404, labelled("missing")).pipe(
+        Response.orElse(Response.when(() => true, labelled("other"))),
+      );
+      const trimmed = contract.pipe(Response.remove(404));
+      expect(yield* Response.decode(trimmed, response(text(404, "x")))).toBe(
+        "other:x",
+      );
+    }),
+  );
+
+  it.effect("fails with UnexpectedResponse when no case is left to match", () =>
+    Effect.gen(function* () {
+      const contract = Response.status(200, Body.text).pipe(
+        Response.orElse(Response.status(404, Body.text)),
+      );
+      const trimmed = contract.pipe(Response.remove(404));
+      const error = yield* Effect.flip(
+        Response.decode(trimmed, response(text(404, "x"))),
+      );
+      expect(error._tag).toBe("UnexpectedResponse");
+      expect(contract.cases).toHaveLength(2);
+    }),
+  );
+
+  it("removes every case with the key and its media type", () => {
+    const contract = Response.status(200, Body.json).pipe(
+      Response.orElse(Response.status(404, Body.text)),
+      Response.orElse(Response.status(200, Body.bytes)),
+    );
+    const trimmed = contract.pipe(Response.remove(200));
+    expect(trimmed.cases.map((entry) => entry.key)).toEqual([404]);
+    expect(trimmed.accepts).toEqual(["text/plain"]);
+    expectTypeOf<ValueOf<typeof trimmed>>().toEqualTypeOf<string>();
+  });
+
+  it.effect(
+    "can remove the last case, leaving a contract that accepts nothing",
+    () =>
+      Effect.gen(function* () {
+        const trimmed = Response.status(200, Body.text).pipe(
+          Response.remove(200),
+        );
+        expect(trimmed.cases).toEqual([]);
+        expect(trimmed.accepts).toEqual([]);
+        expectTypeOf<ValueOf<typeof trimmed>>().toEqualTypeOf<never>();
+        const error = yield* Effect.flip(
+          Response.decode(trimmed, response(text(200, "x"))),
+        );
+        expect(error._tag).toBe("UnexpectedResponse");
+      }),
+  );
+
+  it("drops a removed case's failures and services from its type", () => {
+    const needsPrefix = Body.decoder(() =>
+      Effect.map(Prefix, (prefix) => prefix),
+    );
+    const contract = Response.status(200, needsPrefix).pipe(
+      Response.orElse(Response.status(404, Body.empty)),
+    );
+    const trimmed = contract.pipe(Response.remove(200));
+    expectTypeOf<ServicesOf<typeof contract>>().toEqualTypeOf<Prefix>();
+    expectTypeOf<ServicesOf<typeof trimmed>>().toEqualTypeOf<never>();
+  });
+});
+
+/** A call the types refuse has type `never`, so its keys are read through this. */
+const keysAfter = (refused: unknown) =>
+  (refused as Response.Response<unknown>).cases.map((entry) => entry.key);
+
+describe("Response case keys", () => {
+  const contract = Response.status(200, Body.text).pipe(
+    Response.orElse(Response.status(404, Body.empty)),
+    Response.orElse(Response.when(flagged, Body.json, { key: "flag" })),
+  );
+
+  it("refuses a key the contract lacks, at compile time and at run time", () => {
+    expect(() =>
+      contract.pipe(
+        // @ts-expect-error there is no 201 case to replace
+        Response.replace(201, Body.text),
+      ),
+    ).toThrow("no case 201");
+    expect(() =>
+      contract.pipe(
+        // @ts-expect-error there is no 201 case to remove
+        Response.remove(201),
+      ),
+    ).toThrow("no case 201");
+    expect(() =>
+      contract.pipe(
+        // @ts-expect-error a key is not a tag
+        Response.remove("Found"),
+      ),
+    ).toThrow("no case Found");
+  });
+
+  it("treats a status and a string spelling it as different keys", () => {
+    expect(() =>
+      contract.pipe(
+        // @ts-expect-error keys compare exactly
+        Response.remove("200"),
+      ),
+    ).toThrow("no case 200");
+  });
+
+  it("refuses a widened key passed in, however it arrives", () => {
+    const code = 200 as number;
+    const name = "flag" as string;
+    expect(
+      keysAfter(
+        contract.pipe(
+          // @ts-expect-error a widened number proves nothing about which case this is
+          Response.replace(code, Body.empty),
+        ),
+      ),
+    ).toEqual([200, 404, "flag"]);
+    expect(
+      keysAfter(
+        contract.pipe(
+          // @ts-expect-error a widened string proves nothing either
+          Response.remove(name),
+        ),
+      ),
+    ).toEqual([200, 404]);
+  });
+
+  it("refuses a case whose own key is not a literal", () => {
+    const code = 200 as number;
+    const widened = Response.status(code, Body.text);
+    expect(
+      keysAfter(
+        widened.pipe(
+          // @ts-expect-error a widened case proves nothing about which case this is
+          Response.replace(200, Body.empty),
+        ),
+      ),
+    ).toEqual([200]);
+    expect(() =>
+      widened.pipe(
+        // @ts-expect-error the same for removing, and here the value differs too
+        Response.remove(201),
+      ),
+    ).toThrow("no case 201");
+
+    const pattern = Response.when(flagged, Body.text, {
+      key: "x-a" as `x-${string}`,
+    });
+    expect(() =>
+      pattern.pipe(
+        // @ts-expect-error a pattern is not a literal
+        Response.remove("x-b"),
+      ),
+    ).toThrow("no case x-b");
+
+    type Branded = string & { readonly brand: unique symbol };
+    const branded = Response.when(flagged, Body.text, { key: "a" as Branded });
+    expect(() =>
+      branded.pipe(
+        // @ts-expect-error a brand is not a literal
+        Response.remove("b"),
+      ),
+    ).toThrow("no case b");
+  });
+
+  it("refuses a union of keys passed in", () => {
+    const key = 200 as 200 | 404;
+    // A union is refused because only the value passed is touched at run time.
+    expect(
+      keysAfter(
+        contract.pipe(
+          // @ts-expect-error the type would drop both cases, and only one would go
+          Response.remove(key),
+        ),
+      ),
+    ).toEqual([404, "flag"]);
+    expect(
+      keysAfter(
+        contract.pipe(
+          // @ts-expect-error the same for replacing
+          Response.replace(key, Body.empty),
+        ),
+      ),
+    ).toEqual([200, 404, "flag"]);
+  });
+
+  it("refuses a case whose own key is a union", () => {
+    const code = 404 as 200 | 404;
+    const either = Response.status(code, Body.text);
+    expect(() =>
+      either.pipe(
+        // @ts-expect-error the case's key does not say which status it is
+        Response.remove(200),
+      ),
+    ).toThrow("no case 200");
+
+    const name = "a" as "a" | undefined;
+    const optional = Response.when(flagged, Body.text, { key: name });
+    expect(
+      keysAfter(
+        optional.pipe(
+          // @ts-expect-error the key may be absent
+          Response.remove("a"),
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  it("cannot address a when case with no key", () => {
+    const unkeyed = Response.when(flagged, Body.text);
+    expect(() =>
+      unkeyed.pipe(
+        // @ts-expect-error an unkeyed case has no key to address
+        Response.remove("flag"),
+      ),
+    ).toThrow("no case flag");
+    expect(() =>
+      (Response.remove(undefined as never) as (self: unknown) => unknown)(
+        unkeyed,
+      ),
+    ).toThrow("no case undefined");
+  });
+
+  it("loses the keys of a contract annotated without them", () => {
+    const annotated: Response.Response<string> = Response.status(
+      200,
+      Body.decoder(() => Effect.succeed("x")),
+    );
+    expect(
+      keysAfter(
+        annotated.pipe(
+          // @ts-expect-error the annotation dropped the keys, which seals the contract
+          Response.replace(200, Body.empty),
+        ),
+      ),
+    ).toEqual([200]);
+  });
 });
