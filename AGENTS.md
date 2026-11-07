@@ -138,7 +138,7 @@ the scenarios. The library's own design, which these tests are judged against, i
     cookies. It takes what `node:http` takes: a request `node:http` refuses to build, such as
     `BAD METHOD` or CR and LF in a header, fails as a `TransportError` with nothing sent, and so does
     any answer to `CONNECT` and a `101` with `Upgrade`, which `node:http` treats as handing over the
-    connection. Send those shapes through `lane.rawClient`.
+    connection. `lane.rawClient` sends those shapes, and no provider reads a `101`.
   - `lane.rawClient` (Node lane only) is not in `lane.clients`, because it takes the origin to
     connect to: `lane.rawClient(backend.origin)`. It sends a request exactly as written, for shapes
     no standard client sends: `request.url` without that origin, or whole when the URL does not

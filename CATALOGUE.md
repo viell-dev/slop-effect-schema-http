@@ -2628,7 +2628,8 @@ does to a booking shows in `GET /v1/bookings`.
   `withCookiesRef` does. The last test shows it with no library at all, as
   `HttpClient.withScope(HttpClient.followRedirects(client))`. An attempt timeout and an interruption
   still end the body, because they reach it directly, so what stays open is an answer nothing is
-  reading. A suspected defect, with no issue filed yet. Status: defect.
+  reading. A suspected defect, tracked in
+  [#142](https://github.com/viell-dev/slop-effect-schema-http/issues/142). Status: defect.
   - `[EXT-25h] with no redirect a refused answer's request is aborted by the time its outcome is classified`
   - `[EXT-25h] currently, a redirected answer refused unread is still running when its outcome is classified, against the design's promise`
   - `[EXT-25h] currently, so is one that filterStatusOk rejects after a redirect, the same thing through ordinary middleware`

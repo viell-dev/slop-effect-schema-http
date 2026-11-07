@@ -809,10 +809,11 @@ describe("[EXT-29] the bookings backend against its page", () => {
           client.write(requestText(eu.origin, "GET", `/v1/export/${name}`));
           yield* eventually(() => client.state.closed);
           expect(client.received()).toBe(`${head}${first}${second}0\r\n\r\n`);
+          // On Linux a stalled loop can read both pieces at once, so only the pause is asserted.
           const split = client.reads.findIndex(({ bytes }) =>
-            bytes.startsWith(second),
+            bytes.includes(second),
           );
-          expect(split).toBeGreaterThan(0);
+          expect(split).toBeGreaterThanOrEqual(0);
           expect(client.reads[split]!.at - sent).toBeGreaterThanOrEqual(20);
         }),
       );
