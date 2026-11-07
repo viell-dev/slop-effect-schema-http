@@ -186,6 +186,10 @@ const splitFragment = (url: string): readonly [string, string | undefined] => {
     : [url.slice(0, position), url.slice(position + 1)];
 };
 
+/** A written empty segment is text with no name, so it is not a field a schema could allow. */
+const isEmptySegment = (draft: Draft, param: UrlParam): boolean =>
+  draft.queryText.get(param) === "";
+
 /** Read one written query segment as an entry that keeps its text. */
 const readSegment = (segment: string): Fields.Field<string | null> => {
   // URLSearchParams strips one leading query marker; a marker in the key is data. An empty segment
@@ -207,8 +211,8 @@ const readSegment = (segment: string): Fields.Field<string | null> => {
  * Each entry also has a form-decoded name and value, which {@link setQuery} and {@link removeQuery}
  * compare against. An entry that is edited, or added, is rendered through `UrlEncoding.query`. An
  * entry under a name a {@link query} schema allows goes through that schema, and one under a name
- * no bound schema allows is an incompatible shape. The name is the decoded name, so a written empty
- * segment counts as a field called `""`.
+ * no bound schema allows is an incompatible shape. A written empty segment has no name, so it is
+ * not a field, and it stays as written.
  *
  * A fragment stays on the request, exactly as written, in the native request's `hash` field. It
  * survives {@link path} and query edits, and wins over a fragment in path output or a base URL.
@@ -742,6 +746,7 @@ export const query = <
           .filter(
             (param) =>
               prepared.declaredQuery.has(param) &&
+              !isEmptySegment(prepared, param) &&
               !names.has(param[0]) &&
               Shapes.allows(shape, param[0]),
           )
@@ -1073,7 +1078,9 @@ const fieldProblems = (
     [
       [
         "query",
-        draft.request.urlParams.params.map(([name]) => name),
+        draft.request.urlParams.params
+          .filter((param) => !isEmptySegment(draft, param))
+          .map(([name]) => name),
         declaration.queryShapes,
         foldQuery,
       ],

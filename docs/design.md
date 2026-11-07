@@ -156,8 +156,8 @@ allows any name. Header names compare without case, and query names compare exac
 Raw values are text. Where a field encodes to a number, boolean or bigint, the text is read as one
 first, the reverse of how the library writes it, so a schema encoded as a number accepts a default.
 A single raw value under a list field fits that list. A query entry written in the constructor is a
-raw value like any other. Its name is the decoded name, so a written empty segment counts as a field
-named `""`.
+raw value like any other, under its decoded name. A written empty segment has no name, so it is not
+a field, and it stays as written.
 
 The check runs when the request is prepared, not in the editor. A definition's dictionary is
 normally incomplete, because required values come from the caller, and a stacked schema can allow a
