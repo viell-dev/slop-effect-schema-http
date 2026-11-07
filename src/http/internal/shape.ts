@@ -26,18 +26,38 @@ const holdsUndefined = (ast: SchemaAST.AST): boolean =>
   ast._tag === "Void" ||
   (ast._tag === "Union" && ast.types.some(holdsUndefined));
 
+/**
+ * Whether a field whose encoded side is optional is written all the same, as a decoding default is.
+ * The decoded side has to hold a value, and the step that makes the encoded side optional has to
+ * hand that value on as it is. A step that decides for itself may write nothing, as
+ * `Schema.OptionFromOptionalKey` does for `None` and the `omit` strategy of a default always does.
+ */
+const writesOptional = (type: SchemaAST.AST): boolean => {
+  const decoded = SchemaAST.toType(type);
+  const step = type.encoding?.find(({ to }) => SchemaAST.isOptional(to));
+  return (
+    !SchemaAST.isOptional(decoded) &&
+    !holdsUndefined(decoded) &&
+    step?.transformation._tag === "Transformation" &&
+    step.transformation.encode._tag === "Passthrough"
+  );
+};
+
 const readObjects = (ast: SchemaAST.Objects): Reading => {
   const stated = ast.propertySignatures.map(
-    ({ name, type }) => [String(name), type] as const,
+    ({ name, type }) =>
+      [String(name), SchemaAST.toEncoded(type), type] as const,
   );
   return {
-    fields: new Map(stated.map(([name, type]) => [name, [type]])),
-    rest: ast.indexSignatures.map(({ type }) => type),
+    fields: new Map(stated.map(([name, encoded]) => [name, [encoded]])),
+    rest: ast.indexSignatures.map(({ type }) => SchemaAST.toEncoded(type)),
     open: ast.indexSignatures.length > 0,
     required: new Set(
       stated
         .filter(
-          ([, type]) => !SchemaAST.isOptional(type) && !holdsUndefined(type),
+          ([, encoded, type]) =>
+            (!SchemaAST.isOptional(encoded) && !holdsUndefined(encoded)) ||
+            writesOptional(type),
         )
         .map(([name]) => name),
     ),
@@ -63,13 +83,24 @@ const readUnion = (members: ReadonlyArray<Reading>): Reading => {
   };
 };
 
-/** Read a schema's encoded AST. Where names cannot be read, the schema allows any name. */
-const read = (ast: SchemaAST.AST): Reading =>
-  ast._tag === "Objects"
-    ? readObjects(ast)
-    : ast._tag === "Union"
-      ? readUnion(ast.types.map(read))
+/**
+ * The node a schema's encoding ends at. `toEncoded` gives the same names, but it flattens each
+ * field's own encoding away, and that encoding is how {@link writesOptional} reads a field.
+ */
+const encodedEnd = (ast: SchemaAST.AST): SchemaAST.AST => {
+  const last = ast.encoding?.at(-1);
+  return last === undefined ? ast : encodedEnd(last.to);
+};
+
+/** Read a schema's encoded side. Where names cannot be read, the schema allows any name. */
+const read = (ast: SchemaAST.AST): Reading => {
+  const end = encodedEnd(ast);
+  return end._tag === "Objects"
+    ? readObjects(end)
+    : end._tag === "Union"
+      ? readUnion(end.types.map(read))
       : { fields: new Map(), rest: [], open: true, required: new Set() };
+};
 
 const takesList = (ast: SchemaAST.AST): boolean =>
   ast._tag === "Arrays" || (ast._tag === "Union" && ast.types.some(takesList));
@@ -224,7 +255,7 @@ export const lost = (
  * Without one it takes the looser match, and {@link lost} tells the caller what that left out.
  */
 export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
-  const reading = read(SchemaAST.toEncoded(contract.ast));
+  const reading = read(contract.ast);
   const spelling = new Map(
     Array.from(reading.fields.keys(), (name) => [fold(name), name] as const),
   );

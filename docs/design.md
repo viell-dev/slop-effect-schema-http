@@ -193,8 +193,9 @@ an error: `Request.InvalidRequest` before anything is sent.
   could never reach the client, because the caller's value replaces it, and removing that name would
   change nothing, because the schema puts the value back. An edit of an optional field is allowed:
   setting it changes the default, removing it clears the default, and callers can still pass that
-  field. This is the one rule that depends on order. Before the schema, a raw value under a required
-  name is an ordinary default that the caller's value replaces.
+  field. A field with a decoding default counts as required, because the schema writes it whatever
+  the caller does. This is the one rule that depends on order. Before the schema, a raw value under
+  a required name is an ordinary default that the caller's value replaces.
 - **Schemas stack.** A second `Request.query` or `Request.headers` adds its fields, and together the
   schemas state the shape. Each takes its own fields from one input, and a default goes through
   every schema that allows its name. An open schema sees every field, so its value type has to
@@ -211,6 +212,12 @@ Names are wire names, read from the schema's encoded AST when it is bound. That 
 classes, renamed fields and unions, where a union allows what any member allows and requires what
 every member writes. Where names cannot be read, as with a record or a list of pairs, the schema
 allows any name. Header names compare without case, and query names compare exactly.
+
+A name is required if the encoded side requires it. It is also required if the encoded side leaves
+it optional, the decoded side always holds a value, and the step that makes it optional hands that
+value on as it is, which is how a decoding default writes. A step that decides for itself may write
+nothing, so `Schema.OptionFromOptionalKey` and a default with the `omit` encoding strategy do not
+count.
 
 Raw values are text. Where a field encodes to a number, boolean, bigint or `Date`, the text is read
 as one first, the reverse of how the library writes it, so a schema encoded as a number accepts a
@@ -235,9 +242,10 @@ Some things are outside the check:
   after the schema to survive under such a name. `transformClient` and a client layer work on the
   prepared request, so the check does not see them.
 - A check is only as strict as its schema. `Schema.NumberFromString` accepts `"two"` as `NaN`.
-- "Required" is read from the encoded side. A field with `Schema.withDecodingDefaultKey` is optional
-  there, so a raw edit of it after the schema is not refused, although the schema always writes it
-  and the edit never reaches the client.
+- A decoding default shows in a field's own encoding, and a struct-level transformation replaces the
+  fields with their encoded forms. Under `Schema.encodeKeys`, a field with a decoding default
+  therefore reads as optional, so a raw edit of it after the schema is not refused, although the
+  edit never reaches the client.
 - A union reads the whole input and cannot see which names a stacked schema holds. A name both state
   is the union's to hold, so a union of `{ a }` and `{ b }` stacked with `{ b }` refuses `{ a, b }`.
   Keep a name in one schema.

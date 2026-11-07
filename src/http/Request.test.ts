@@ -7054,26 +7054,250 @@ describe("a schema states the shape of its group", () => {
       }),
     );
 
-    // A field with a decoding default is optional on the encoded side, which is where "required" is
-    // read, so this edit is lost without an error. The design page states the limit.
     // https://github.com/viell-dev/slop-effect-schema-http/issues/120
-    it.effect("currently misses a field with a decoding default", () =>
-      Effect.gen(function* () {
-        const request = Request.get("/things").pipe(
-          Request.query(
-            Schema.Struct({
-              limit: Schema.FiniteFromString.pipe(
-                Schema.withDecodingDefaultKey(Effect.succeed("25")),
+    describe("under a field with a decoding default", () => {
+      const twentyFive = Effect.succeed("25");
+      const Limited = Schema.Struct({
+        limit: Schema.FiniteFromString.pipe(
+          Schema.withDecodingDefaultKey(twentyFive),
+        ),
+      });
+      const limited = Request.get("/things").pipe(Request.query(Limited));
+
+      it.effect("is refused, because the schema always writes it", () =>
+        Effect.gen(function* () {
+          const set = limited.pipe(Request.setQuery("limit", "5"));
+          for (const query of [{ limit: 1 }, { limit: "1" }, {}]) {
+            const error = yield* refusal(set, { query });
+            expect(error.message).toContain("could never reach the client");
+            expect(error.message).toContain('"limit"');
+            expect(error.message).not.toContain("5");
+          }
+        }),
+      );
+
+      it.effect("is refused for every way of editing the group", () =>
+        Effect.gen(function* () {
+          for (const edit of [
+            Request.setQuery({ limit: 5 }),
+            Request.appendQuery("limit", "5"),
+            Request.removeQuery("limit"),
+            Request.removeQuery("limit", "5"),
+          ]) {
+            const error = yield* refusal(limited.pipe(edit), { query: {} });
+            expect(error.message).toContain('"limit"');
+          }
+          const Header = Schema.Struct({
+            "x-limit": Schema.String.pipe(
+              Schema.withDecodingDefaultKey(twentyFive),
+            ),
+          });
+          const headers = Request.get("/x").pipe(Request.headers(Header));
+          for (const edit of [
+            Request.setHeader("X-Limit", "5"),
+            Request.setHeader({ "x-limit": "5" }),
+            Request.appendHeader("x-limit", "5"),
+            Request.removeHeader("x-limit"),
+          ]) {
+            const error = yield* refusal(headers.pipe(edit), { headers: {} });
+            expect(error.message.toLowerCase()).toContain('"x-limit"');
+            expect(error.message).toContain("headers group");
+          }
+        }),
+      );
+
+      it.effect("is refused under each form of decoding default", () =>
+        Effect.gen(function* () {
+          const text = Effect.succeed("25");
+          for (const field of [
+            Schema.String.pipe(Schema.withDecodingDefaultKey(text)),
+            Schema.String.pipe(Schema.withDecodingDefault(text)),
+            Schema.String.pipe(Schema.withDecodingDefaultTypeKey(text)),
+            Schema.String.pipe(Schema.withDecodingDefaultType(text)),
+          ]) {
+            const error = yield* refusal(
+              Request.get("/x").pipe(
+                Request.query(Schema.Struct({ limit: field })),
+                Request.setQuery("limit", "5"),
               ),
+              { query: {} },
+            );
+            expect(error.message).toContain("could never reach the client");
+          }
+        }),
+      );
+
+      it.effect("is refused for a class's field", () =>
+        Effect.gen(function* () {
+          class Capped extends Schema.Class<Capped>("Capped")({
+            limit: Schema.String.pipe(
+              Schema.withDecodingDefaultKey(twentyFive),
+            ),
+          }) {}
+          const error = yield* refusal(
+            Request.get("/x").pipe(
+              Request.query(Capped),
+              Request.setQuery("limit", "5"),
+            ),
+            { query: new Capped({ limit: "1" }) },
+          );
+          expect(error.message).toContain("could never reach the client");
+        }),
+      );
+
+      it.effect("is refused only if every union member writes the name", () =>
+        Effect.gen(function* () {
+          const defaulted = Schema.String.pipe(
+            Schema.withDecodingDefaultKey(twentyFive),
+          );
+          const Every = Schema.Union([
+            Schema.Struct({ a: Schema.String, limit: defaulted }),
+            Schema.Struct({ b: Schema.String, limit: Schema.String }),
+          ]);
+          const every = yield* refusal(
+            Request.get("/x").pipe(
+              Request.query(Every),
+              Request.setQuery("limit", "5"),
+            ),
+            { query: { a: "x" } },
+          );
+          expect(every.message).toContain("could never reach the client");
+          const Some = Schema.Union([
+            Schema.Struct({ a: Schema.String, limit: defaulted }),
+            Schema.Struct({
+              b: Schema.String,
+              limit: Schema.optionalKey(Schema.String),
             }),
-          ),
-          Request.setQuery("limit", "5"),
-        );
-        expect(yield* urlOf(request, { query: { limit: 1 } })).toBe(
-          "/things?limit=1",
-        );
-      }),
-    );
+          ]);
+          expect(
+            yield* urlOf(
+              Request.get("/x").pipe(
+                Request.query(Some),
+                Request.setQuery("limit", "5"),
+              ),
+              { query: { b: "x" } },
+            ),
+          ).toBe("/x?b=x&limit=5");
+        }),
+      );
+
+      it.effect("stays a default before the schema", () =>
+        Effect.gen(function* () {
+          const before = Request.get("/things?limit=5").pipe(
+            Request.query(Limited),
+          );
+          expect(yield* urlOf(before, { query: {} })).toBe("/things?limit=25");
+          expect(yield* urlOf(before, { query: { limit: 1 } })).toBe(
+            "/things?limit=1",
+          );
+        }),
+      );
+
+      it.effect("is lifted by an unbind", () =>
+        Effect.gen(function* () {
+          expect(
+            yield* urlOf(
+              limited.pipe(
+                Request.setQuery("limit", "5"),
+                Request.unbind("query"),
+              ),
+              undefined,
+            ),
+          ).toBe("/things?limit=5");
+        }),
+      );
+
+      it.effect("is not refused where the schema may write nothing", () =>
+        Effect.gen(function* () {
+          const Maybe = Schema.Struct({
+            limit: Schema.OptionFromOptionalKey(Schema.String),
+          });
+          const maybe = Request.get("/x").pipe(
+            Request.query(Maybe),
+            Request.setQuery("limit", "5"),
+          );
+          expect(yield* urlOf(maybe, { query: { limit: Option.none() } })).toBe(
+            "/x?limit=5",
+          );
+          const Sometimes = Schema.Struct({
+            limit: Schema.UndefinedOr(Schema.String).pipe(
+              Schema.withDecodingDefaultKey(twentyFive),
+            ),
+          });
+          expect(
+            yield* urlOf(
+              Request.get("/x").pipe(
+                Request.query(Sometimes),
+                Request.setQuery("limit", "5"),
+              ),
+              { query: { limit: undefined } },
+            ),
+          ).toBe("/x?limit=5");
+          // Optional on the decoded side too, so a caller's `{}` is built with no such field.
+          for (const limit of [
+            Schema.String.pipe(
+              Schema.optional,
+              Schema.withDecodingDefault(twentyFive),
+            ),
+            Schema.String.pipe(
+              Schema.optionalKey,
+              Schema.withDecodingDefaultKey(twentyFive),
+            ),
+          ])
+            expect(
+              yield* urlOf(
+                Request.get("/x").pipe(
+                  Request.query(Schema.Struct({ limit })),
+                  Request.setQuery("limit", "5"),
+                ),
+                { query: {} },
+              ),
+            ).toBe("/x?limit=5");
+        }),
+      );
+
+      it.effect("is not this refusal under the omit strategy", () =>
+        Effect.gen(function* () {
+          const Omitted = Schema.Struct({
+            limit: Schema.String.pipe(
+              Schema.withDecodingDefaultKey(twentyFive, {
+                encodingStrategy: "omit",
+              }),
+            ),
+          });
+          // The schema reads the name and never writes it, so the value goes either way.
+          const error = yield* refusal(
+            Request.get("/x").pipe(
+              Request.query(Omitted),
+              Request.setQuery("limit", "5"),
+            ),
+            { query: {} },
+          );
+          expect(error.message).toContain("would be lost");
+          expect(error.message).not.toContain("could never reach the client");
+        }),
+      );
+
+      // A struct-level transformation replaces the fields with their encoded forms, so the
+      // encoding that shows the default is out of sight. The design page states the limit.
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/120
+      it.effect("currently misses a field that a struct renames", () =>
+        Effect.gen(function* () {
+          const Renamed = Limited.pipe(
+            Schema.encodeKeys({ limit: "page_size" }),
+          );
+          expect(
+            yield* urlOf(
+              Request.get("/x").pipe(
+                Request.query(Renamed),
+                Request.setQuery("page_size", "5"),
+              ),
+              { query: {} },
+            ),
+          ).toBe("/x?page_size=25");
+        }),
+      );
+    });
 
     it.effect("is told apart from a field no schema allows", () =>
       Effect.gen(function* () {
