@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a defect with a small synthetic reproduction.
+labels:
+  - "Type: Bug"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep credentials, private URLs and service data out of this report. For a security problem, use [private vulnerability reporting](https://github.com/viell-dev/slop-effect-schema-http/security/advisories/new) instead.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Synthetic reproduction
+      description: The smallest code that shows the problem, with synthetic inputs in place of real service data.
+      render: ts
+    validations:
+      required: true
+  - type: input
+    id: library-version
+    attributes:
+      label: Library version
+      description: The published version or the commit you used.
+    validations:
+      required: true
+  - type: input
+    id: effect-version
+    attributes:
+      label: Effect version
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node.js or browser version, operating system, and the HTTP provider with its settings.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: What you observed, kept apart from what you think caused it.
+    validations:
+      required: true
