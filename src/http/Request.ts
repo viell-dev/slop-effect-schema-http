@@ -7,6 +7,7 @@ import {
 } from "effect/http";
 import type * as Body from "./Body.js";
 import * as Fields from "./internal/fields.js";
+import * as Inputs from "./internal/input.js";
 import * as Shapes from "./internal/shape.js";
 import * as Transport from "./Transport.js";
 import * as UrlEncoding from "./UrlEncoding.js";
@@ -32,6 +33,16 @@ export class InvalidRequest extends Data.TaggedError("InvalidRequest")<{
  * the field. Query fields also accept `null` for a bare key.
  */
 export type FieldValue<A = string> = Fields.Value<A>;
+
+/**
+ * What a schema-backed input takes: what the schema's constructor takes.
+ *
+ * @remarks
+ * A plain object works for a `Schema.Class`, including one nested in a struct, and a field with a
+ * constructor default can be left out. The library builds the schema's value first, so an existing
+ * instance works as it is and invalid input fails with `SchemaError` before dispatch.
+ */
+export type Input<S extends Schema.Top> = Inputs.Input<S>;
 
 /**
  * The method, URL and raw fields from which request preparation starts.
@@ -492,21 +503,17 @@ const applyDeclaredBodyFields = (
  * declares nothing, so the automatic value still applies.
  */
 export const headers = <
-  S extends Schema.ConstraintCodec<
-    unknown,
-    Transport.HeaderInput,
-    unknown,
-    unknown
-  >,
+  S extends Schema.Top &
+    Schema.ConstraintCodec<unknown, Transport.HeaderInput, unknown, unknown>,
 >(
   contract: S,
 ) => {
-  const encode = Schema.encodeEffect(contract);
+  const encode = Inputs.encoder(contract, Schema.encodeEffect(contract));
   const { shape, settle } = Shapes.bind(contract, foldHeader);
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
-    I & { readonly headers: S["Type"] },
+    I & { readonly headers: Input<S> },
     E | Schema.SchemaError | InvalidRequest,
     R | S["EncodingServices"] | S["DecodingServices"]
   > =>
@@ -516,7 +523,7 @@ export const headers = <
         headerShapes: [...self.declaration.headerShapes, shape],
       },
       Effect.fnUntraced(function* (
-        input: I & { readonly headers: S["Type"] },
+        input: I & { readonly headers: Input<S> },
         draft: Draft,
       ) {
         if (draft.unbound.has("headers"))
@@ -591,21 +598,17 @@ export const headers = <
  * {@link unbind} to start again, and {@link mapInput} to supply a required field's value.
  */
 export const query = <
-  S extends Schema.ConstraintCodec<
-    unknown,
-    UrlEncoding.QueryInput,
-    unknown,
-    unknown
-  >,
+  S extends Schema.Top &
+    Schema.ConstraintCodec<unknown, UrlEncoding.QueryInput, unknown, unknown>,
 >(
   contract: S,
 ) => {
-  const encode = Schema.encodeEffect(contract);
+  const encode = Inputs.encoder(contract, Schema.encodeEffect(contract));
   const { shape, settle } = Shapes.bind(contract, foldQuery);
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
-    I & { readonly query: S["Type"] },
+    I & { readonly query: Input<S> },
     E | Schema.SchemaError | InvalidRequest,
     R | S["EncodingServices"] | S["DecodingServices"]
   > =>
@@ -615,7 +618,7 @@ export const query = <
         queryShapes: [...self.declaration.queryShapes, shape],
       },
       Effect.fnUntraced(function* (
-        input: I & { readonly query: S["Type"] },
+        input: I & { readonly query: Input<S> },
         draft: Draft,
       ) {
         if (draft.unbound.has("query"))
@@ -658,7 +661,7 @@ export const query = <
  * ```
  *
  * @remarks
- * The value under `path` has the schema's application type. A scalar schema takes a scalar;
+ * The value under `path` is an {@link Input} of the schema. A scalar schema takes a scalar;
  * `Schema.Struct({ userId: Schema.NumberFromString })` takes `{ userId: number }`. Use a struct
  * to name one path value or group several. Renderer parameter names do not affect the input type.
  *
@@ -670,22 +673,22 @@ export const query = <
  * Renderer or path-encoding exceptions become {@link InvalidRequest}; schema failures remain
  * `SchemaError` values.
  */
-export const path = <S extends Schema.Constraint>(
+export const path = <S extends Schema.Top>(
   contract: S,
   render: (value: S["Encoded"], encode: UrlEncoding.Service["path"]) => string,
 ) => {
-  const encode = Schema.encodeEffect(contract);
+  const encode = Inputs.encoder(contract, Schema.encodeEffect(contract));
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
-    I & { readonly path: S["Type"] },
+    I & { readonly path: Input<S> },
     E | Schema.SchemaError | InvalidRequest,
     R | S["EncodingServices"]
   > =>
     construct(
       self.declaration,
       Effect.fnUntraced(function* (
-        input: I & { readonly path: S["Type"] },
+        input: I & { readonly path: Input<S> },
         draft: Draft,
       ) {
         if (draft.unbound.has("path")) return yield* self.prepare(input, draft);

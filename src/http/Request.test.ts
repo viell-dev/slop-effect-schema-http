@@ -1729,6 +1729,154 @@ const MomentFromNumber = Schema.Number.pipe(
   }),
 );
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/91
+describe("a schema's value is built before it is encoded", () => {
+  class Filter extends Schema.Class<Filter>("Filter")({
+    page: Schema.NumberFromString,
+  }) {}
+  class Trace extends Schema.Class<Trace>("Trace")({
+    "X-Trace": Schema.String,
+  }) {}
+  class Key extends Schema.Class<Key>("Key")({ id: Schema.NumberFromString }) {
+    get path() {
+      return `/things/${this.id}`;
+    }
+  }
+  const byKey = Request.path(Key, ({ id }, encode) => `/things/${encode(id)}`);
+
+  it.effect("takes a plain object for a class in each binding", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(Request.get("/x").pipe(Request.query(Filter)), {
+          query: { page: 2 },
+        }),
+      ).toBe("/x?page=2");
+      expect(
+        yield* linesOf(Request.get("/x").pipe(Request.headers(Trace)), {
+          headers: { "X-Trace": "t" },
+        }),
+      ).toEqual([["X-Trace", "t"]]);
+      expect(
+        yield* urlOf(Request.get("").pipe(byKey), { path: { id: 7 } }),
+      ).toBe("/things/7");
+    }),
+  );
+
+  it.effect("takes an existing instance in each binding", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(Request.get("/x").pipe(Request.query(Filter)), {
+          query: new Filter({ page: 2 }),
+        }),
+      ).toBe("/x?page=2");
+      expect(
+        yield* linesOf(Request.get("/x").pipe(Request.headers(Trace)), {
+          headers: new Trace({ "X-Trace": "t" }),
+        }),
+      ).toEqual([["X-Trace", "t"]]);
+      expect(
+        yield* urlOf(Request.get("").pipe(byKey), {
+          path: new Key({ id: 7 }),
+        }),
+      ).toBe("/things/7");
+    }),
+  );
+
+  it.effect("takes a plain object for a class nested in a struct", () =>
+    Effect.gen(function* () {
+      const request = Request.post("/x").pipe(
+        Request.body(
+          Body.jsonSchema(
+            Schema.Struct({ filter: Filter, size: Schema.Number }),
+          ),
+        ),
+      );
+      const compiled = yield* compile(request, {
+        body: { filter: { page: 2 }, size: 1 },
+      });
+      expect(bodyText(compiled.request)).toBe(
+        '{"filter":{"page":"2"},"size":1}',
+      );
+    }),
+  );
+
+  it.effect("fails with SchemaError before anything else happens", () =>
+    Effect.gen(function* () {
+      let prepared = 0;
+      const request = Request.get("/x").pipe(
+        Request.mapEffect((native) =>
+          Effect.sync(() => {
+            prepared++;
+            return native;
+          }),
+        ),
+        Request.query(Filter),
+      );
+      const error = yield* Effect.flip(
+        compile(request, { query: { page: "many" as never } }),
+      );
+      expect(Schema.isSchemaError(error)).toBe(true);
+      expect(prepared).toBe(0);
+    }),
+  );
+
+  it.effect("fills in a field with a constructor default", () =>
+    Effect.gen(function* () {
+      const Paging = Schema.Struct({
+        limit: Schema.FiniteFromString.pipe(
+          Schema.withConstructorDefault(Effect.succeed(25)),
+        ),
+      });
+      const request = Request.get("/x").pipe(Request.query(Paging));
+      expect(yield* urlOf(request, { query: {} })).toBe("/x?limit=25");
+      expect(yield* urlOf(request, { query: { limit: 5 } })).toBe("/x?limit=5");
+    }),
+  );
+
+  it.effect("stacks classes and structs on one input", () =>
+    Effect.gen(function* () {
+      const request = Request.get("/x").pipe(
+        Request.query(Schema.Struct({ a: Schema.String })),
+        Request.query(Filter),
+      );
+      expect(yield* urlOf(request, { query: { a: "1", page: 2 } })).toBe(
+        "/x?a=1&page=2",
+      );
+    }),
+  );
+
+  it("takes the constructor's input in the type", () => {
+    const query = Request.get("/x").pipe(Request.query(Filter));
+    expectTypeOf<Parameters<typeof query.prepare>[0]>().toEqualTypeOf<
+      unknown & { readonly query: { readonly page: number } }
+    >();
+    const path = Request.get("/x").pipe(byKey);
+    void Request.compile(path, { path: { id: 7 } });
+    // @ts-expect-error: the field is missing
+    void Request.compile(path, { path: {} });
+  });
+
+  it("keeps a brand: a plain value in a branded field does not compile", () => {
+    const Id = Schema.String.pipe(Schema.brand("Id"));
+    const request = Request.get("/x").pipe(
+      Request.query(Schema.Struct({ id: Id })),
+    );
+    void Request.compile(request, { query: { id: Id.make("a") } });
+    // @ts-expect-error: a brand says the value has been through the schema
+    void Request.compile(request, { query: { id: "a" } });
+  });
+
+  it("needs a full schema, so a generic helper is bound by Schema.Top", () => {
+    const helper = <S extends Schema.Top>(schema: S) =>
+      Request.path(schema, () => "/x");
+    void helper(Schema.String);
+    const narrow = <S extends Schema.Constraint>(schema: S) =>
+      // @ts-expect-error: only `Schema.Top` has `makeEffect`
+      Request.path(schema, () => "/x");
+    void narrow;
+  });
+});
+
 /** A native edit under a name, outside any schema's check. */
 const appendTrace = (value: string) =>
   Request.mapEffect((request) =>
