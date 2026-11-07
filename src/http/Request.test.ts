@@ -5752,10 +5752,11 @@ describe("a caller's field under a union", () => {
             Schema.Struct({ f: Schema.fromJsonString(Inner) }),
             Schema.Struct({ b: text, c: text }),
           ]);
-          const query = { f: '{"x":"1"}', b: "2" };
+          // The spaces keep the text from coming out as it went in.
+          const query = { f: '{ "x": "1" }', b: "2" };
           const url = yield* urlOf(stacked(WithText, Holds), { query });
           const params = new URL(url, "http://x.test").searchParams;
-          expect(params.get("f")).toBe(query.f);
+          expect(params.get("f")).toBe('{"x":"1"}');
           expect(params.get("b")).toBe("2");
         }),
       );
@@ -7091,6 +7092,79 @@ describe("a value on the encoded side stays there", () => {
     }),
   );
 
+  it.effect("refuses a union in text below a union under a wire name", () =>
+    Effect.gen(function* () {
+      const Apart = Schema.Union([
+        Schema.Struct({ a: text }),
+        Schema.Struct({ b: text }),
+      ]);
+      const Deep = Schema.Struct({
+        f: Schema.Union([
+          Schema.Struct({ g: Schema.fromJsonString(Apart) }),
+          Schema.Struct({ h: text }),
+        ]),
+      }).pipe(Schema.encodeKeys({ f: "F" }));
+      const request = Request.post("/x").pipe(
+        Request.body(Body.jsonSchema(Deep)),
+      );
+      expect(
+        yield* schemaFailure(request, {
+          body: { F: { g: '{"a":"1","b":"2"}' } },
+        }),
+      ).toContain('["F"]["g"]');
+      expect(yield* sent(Deep, { F: { g: '{"a":"1"}' } })).toBe(
+        '{"F":{"g":"{\\"a\\":\\"1\\"}"}}',
+      );
+    }),
+  );
+
+  it.effect("does not let another member's text answer for this one", () =>
+    Effect.gen(function* () {
+      const Rivals = Schema.Union([
+        Schema.Struct({
+          b: text,
+          a: Schema.fromJsonString(
+            Schema.Union([
+              Schema.Struct({ d: text }),
+              Schema.Struct({ e: Schema.optionalKey(text) }),
+            ]),
+          ),
+        }),
+        Schema.Struct({
+          a: Schema.fromJsonString(Schema.Struct({ c: text })),
+          z: text,
+        }),
+      ]);
+      expect(
+        yield* schemaFailure(queried(Rivals), {
+          query: { b: "s", a: '{"c":"s"}' },
+        }),
+      ).toContain('["a"]');
+    }),
+  );
+
+  it.effect("does not let a loose write answer for text it would strip", () =>
+    Effect.gen(function* () {
+      const Inner = Schema.Union([
+        Schema.Struct({ a: Schema.optionalKey(text) }),
+        Schema.Struct({ a: Schema.optionalKey(text), d: text }).pipe(
+          Schema.encodeKeys({ d: "D" }),
+        ),
+      ]);
+      const Holder = Schema.Struct({
+        f: Schema.fromJsonString(Inner),
+        g: Renamed,
+      });
+      // The twin in `g` makes the whole strict read fail, so `f` is read loosely and is compared.
+      expect(
+        yield* schemaFailure(
+          Request.post("/x").pipe(Request.body(Body.jsonSchema(Holder))),
+          { body: { f: '{"a":"1","D":"s"}', g: { a: "1", A: "2" } } },
+        ),
+      ).toContain('["f"]');
+    }),
+  );
+
   it.effect("reads a union under a wire name, and names the field", () =>
     Effect.gen(function* () {
       const Apart = Schema.Union([
@@ -7149,6 +7223,20 @@ describe("a value on the encoded side stays there", () => {
       });
       expect(new URL(request.url, "http://x.test").searchParams.get("f")).toBe(
         '{"g":{"A":"x"}}',
+      );
+    }),
+  );
+
+  it.effect("still strips a stray key in text under a wire name", () =>
+    Effect.gen(function* () {
+      const InText = Schema.Struct({
+        f: Schema.fromJsonString(Schema.Struct({ a: text })),
+      }).pipe(Schema.encodeKeys({ f: "F" }));
+      const { request } = yield* compile(queried(InText), {
+        query: { F: '{"a":"1","z":"2"}' },
+      });
+      expect(new URL(request.url, "http://x.test").searchParams.get("F")).toBe(
+        '{"a":"1"}',
       );
     }),
   );

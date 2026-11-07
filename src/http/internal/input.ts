@@ -109,14 +109,38 @@ const fromPart = (
 ): Effect.Effect<unknown, Schema.SchemaError, unknown> =>
   toDecoded(Schema.make<Schema.Top>(ast), options)(value);
 
+/**
+ * Read a part strictly. A union can offer a type the read did not use, so text also has to come out
+ * as it did, or a strict read of another member's field would answer for this one.
+ */
+const readsStrictly = (
+  type: SchemaAST.AST,
+  value: unknown,
+  output: unknown,
+): Effect.Effect<unknown, unknown, unknown> => {
+  const read = fromPart(type, value, Excess.strict);
+  return typeof value !== "string"
+    ? read
+    : Effect.flatMap(read, (decoded) =>
+        Effect.flatMap(
+          Schema.encodeEffect(Schema.make<Schema.Top>(type))(
+            decoded,
+            Excess.strict,
+          ),
+          (text) =>
+            text === output ? Effect.void : Effect.fail("Another read"),
+        ),
+      );
+};
+
 /** Whether a part that could not be compared cannot be read strictly either. */
-const staysUnread = ({ types = [], value }: Excess.Missing) =>
+const staysUnread = ({ types = [], value, output }: Excess.Missing) =>
   types.length === 0
     ? Effect.succeed(true)
     : Effect.map(
         Effect.exit(
           Effect.firstSuccessOf(
-            types.map((type) => fromPart(type, value, Excess.strict)),
+            types.map((type) => readsStrictly(type, value, output)),
           ),
         ),
         Exit.isFailure,
@@ -162,7 +186,7 @@ const stripping = <S extends Schema.Top, A, R>(
  * this can no longer read a schema, a key it should have left out is reported as lost, so it refuses
  * rather than strips.
  *
- * A schema with no such choice skips all of this, so a plain struct costs what it always did.
+ * A schema with neither choice skips all of this, so a plain struct costs what it always did.
  */
 export const reader = <S extends Schema.Top, A, R>(
   contract: S,

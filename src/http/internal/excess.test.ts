@@ -306,14 +306,27 @@ describe("Excess.missing", () => {
     const InText = Schema.Struct({ filter: Schema.fromJsonString(Either) });
     const [found, ...others] = Excess.missing(
       [InText.ast],
-      { filter: "{}" },
+      { filter: "{ }" },
       { filter: {} },
       { filter: "{}" },
     );
     expect(others).toEqual([]);
     expect(found?.path).toEqual(["filter"]);
-    expect(found?.value).toBe("{}");
+    expect(found?.value).toBe("{ }");
+    expect(found?.output).toBe("{}");
     expect(found?.types).toHaveLength(1);
+  });
+
+  it("has nothing to say about text that came out as it went in", () => {
+    const InText = Schema.Struct({ filter: Schema.fromJsonString(Either) });
+    expect(
+      Excess.missing(
+        [InText.ast],
+        { filter: "{}" },
+        { filter: {} },
+        { filter: "{}" },
+      ),
+    ).toEqual([]);
   });
 
   it("has nothing to say about a value with no choice under it", () => {

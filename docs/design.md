@@ -152,8 +152,8 @@ encoded value --> decode --> decoded -> encode --> wire
   counts keys. An ordinary class instance that only a struct can read reads as a plain object. A
   strict read that passes has stripped nothing. Anything else is read as Effect reads it, and the
   result is compared with what went in, so what is lost is what actually went. A schema with neither
-  choice skips this and reads as it always did. Under such a union a schema's own steps can run more
-  than once for a value the strict read refuses.
+  choice skips this and reads as it always did. Under either choice a schema's own steps can run
+  more than once for a value the strict read refuses.
 - **A field no member can keep is an error.** Under `Union([Struct({ a }), Struct({ b })])`,
   `{ a, b }` is a `SchemaError` before dispatch, naming the field that would go. The types allow
   that value, and whichever member took it would lose a field the schema states, so the choice
