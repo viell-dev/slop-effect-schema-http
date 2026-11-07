@@ -1,4 +1,5 @@
 import { Effect, Schema, SchemaAST } from "effect";
+import * as Excess from "./excess.js";
 import type { Fold } from "./fields.js";
 
 /** What one schema says about its field group. Names are wire names, in their compared form. */
@@ -9,6 +10,8 @@ export interface Shape {
   readonly open: boolean;
   /** The names it always writes, so a raw edit of one could never reach the client. */
   readonly required: ReadonlySet<string>;
+  /** Whether it holds a union that can lose a field, which a stacked schema may take. */
+  readonly chooses: boolean;
 }
 
 /** What a schema's encoded side states, in the schema's own spelling. */
@@ -226,6 +229,35 @@ const writtenNames = (output: object): ReadonlyArray<string> =>
 export const written = (output: object, fold: Fold): ReadonlySet<string> =>
   new Set(writtenNames(output).map(fold));
 
+const noNames: ReadonlySet<PropertyKey> = new Set();
+
+/** The names a schema's decoded side states, which a caller can use as well as the wire names. */
+const decodedNames = (ast: SchemaAST.AST): ReadonlyArray<string> =>
+  ast._tag === "Objects"
+    ? ast.propertySignatures.map(({ name }) => String(name))
+    : ast._tag === "Union"
+      ? ast.types.flatMap(decodedNames)
+      : ast._tag === "Declaration" && ast.encoding !== undefined
+        ? decodedNames(ast.encoding[0].to)
+        : [];
+
+/**
+ * The names other schemas in the group took, in their compared form. A value one of them holds is
+ * that schema's, not a default for this one.
+ */
+export const others = (
+  all: ReadonlySet<PropertyKey> | undefined,
+  own: ReadonlySet<PropertyKey> | undefined,
+  fold: Fold,
+): ReadonlySet<PropertyKey> =>
+  all === undefined || own === undefined
+    ? noNames
+    : new Set(
+        Array.from(all)
+          .filter((name) => !own.has(name))
+          .map((name) => (typeof name === "string" ? fold(name) : name)),
+      );
+
 /**
  * What went into `settle` and is gone from what came out, in the spelling it went in with. A schema
  * can write less than it was given, and that must not pass as a group that was built.
@@ -261,11 +293,35 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
   );
   const decode = Schema.decodeUnknownEffect(contract);
   const encode = Schema.encodeEffect(contract);
+  const chooses = Excess.holdsChoice(contract.ast);
   const shape: Shape = {
     names: new Set(spelling.keys()),
     open: reading.open,
     required: new Set(Array.from(reading.required, fold)),
+    chooses,
   };
+  // A member a union did not take states a name it does not hold, so a union goes by what it wrote.
+  const held = chooses ? [] : decodedNames(contract.ast);
+  /**
+   * The caller's fields this schema took: what it wrote, and any it states and the caller gave,
+   * which may be written under another name or not at all. What it would lose is not among them.
+   */
+  const taken = (
+    input: unknown,
+    output: object,
+    lost: ReadonlyArray<Excess.Path>,
+  ): ReadonlySet<PropertyKey> =>
+    new Set(
+      [
+        ...writtenNames(output),
+        ...held.filter(
+          (name) =>
+            typeof input === "object" &&
+            input !== null &&
+            (input as Record<string, unknown>)[name] !== undefined,
+        ),
+      ].filter((name) => !lost.some(([key]) => key === name)),
+    );
   const settle = <W extends object, A>(
     output: W,
     defaults: ReadonlyArray<readonly [string, A]>,
@@ -306,5 +362,5 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
       through(),
     );
   };
-  return { shape, settle };
+  return { shape, settle, taken };
 };

@@ -180,8 +180,30 @@ const fromPart = (
 ): Effect.Effect<unknown, Schema.SchemaError, unknown> =>
   toDecoded(Schema.make<Schema.Top>(ast), pass)(value);
 
+/** Take a value through one pass, to the decoded side and then out through `write`. */
+const passing = <S extends Schema.Top, A, R>(
+  contract: S,
+  write: (
+    value: S["Type"],
+    options?: SchemaAST.ParseOptions,
+  ) => Effect.Effect<A, Schema.SchemaError, R>,
+  pass: Pass,
+) => {
+  const decoded = toDecoded(contract, pass);
+  return (
+    input: Input<S>,
+  ): Effect.Effect<A, Schema.SchemaError, R | S["DecodingServices"]> =>
+    Effect.flatMap(decoded(input), (value) => write(value, pass.options));
+};
+
+/** What a schema wrote, and the fields of its input it would lose, which may be held elsewhere. */
+export interface Written<A> {
+  readonly output: A;
+  readonly lost: ReadonlyArray<Excess.Path>;
+}
+
 /**
- * Bring a value to the schema's decoded side, then write it.
+ * Bring a value to the schema's decoded side, then write it, and say what that would lose.
  *
  * @remarks
  * Effect takes the first union member that fits and strips what that member does not state, on the
@@ -192,29 +214,24 @@ const fromPart = (
  * A strict read also fails on what no member states, which is what a stacked schema's fields look
  * like, so those keys go and it reads again. They are stripped as a struct strips them. What is left
  * is either a value no member fits, which keeps its usual failure, or a field a member states and
- * the member that fits would lose, which {@link Excess.refusal} names.
+ * the member that fits would lose, which goes back as {@link Written.lost}.
  *
  * A schema with no such choice skips all of this, so a plain struct costs what it always did.
  */
-export const encoder = <S extends Schema.Top, A, R>(
+export const reader = <S extends Schema.Top, A, R>(
   contract: S,
   write: (
     value: S["Type"],
     options?: SchemaAST.ParseOptions,
   ) => Effect.Effect<A, Schema.SchemaError, R>,
 ) => {
-  const through = (pass: Pass) => {
-    const decoded = toDecoded(contract, pass);
-    return (
-      input: Input<S>,
-    ): Effect.Effect<A, Schema.SchemaError, R | S["DecodingServices"]> =>
-      Effect.flatMap(decoded(input), (value) => write(value, pass.options));
-  };
-  const stripped = through(stripping);
-  if (!Excess.holdsChoice(contract.ast)) return stripped;
-  const kept = through(keeping);
-  const surveyed = through(surveying);
-  const reported = through(reporting);
+  const stripped = passing(contract, write, stripping);
+  const keepsAll = (output: A): Written<A> => ({ output, lost: [] });
+  if (!Excess.holdsChoice(contract.ast))
+    return (input: Input<S>) => Effect.map(stripped(input), keepsAll);
+  const kept = passing(contract, write, keeping);
+  const surveyed = passing(contract, write, surveying);
+  const reported = passing(contract, write, reporting);
   const withoutExcess = (input: Input<S>) =>
     Effect.catch(surveyed(input), ({ issue }) =>
       reported(
@@ -223,15 +240,49 @@ export const encoder = <S extends Schema.Top, A, R>(
     );
   return (
     input: Input<S>,
-  ): Effect.Effect<A, Schema.SchemaError, R | S["DecodingServices"]> =>
-    Effect.catch(kept(input), () =>
-      Effect.catch(withoutExcess(input), (failure) =>
-        Effect.flatMap(stripped(input), (output) => {
-          const [first, ...others] = Excess.lost(failure.issue, input);
-          return first === undefined
-            ? Effect.succeed(output)
-            : Effect.fail(Excess.refusal(contract.ast, [first, ...others]));
-        }),
+  ): Effect.Effect<Written<A>, Schema.SchemaError, R | S["DecodingServices"]> =>
+    Effect.catch(Effect.map(kept(input), keepsAll), () =>
+      Effect.catch(Effect.map(withoutExcess(input), keepsAll), (failure) =>
+        Effect.map(stripped(input), (output) => ({
+          output,
+          lost: Excess.lost(failure.issue, input),
+        })),
       ),
+    );
+};
+
+/**
+ * Refuse the fields a schema would lose, unless another schema in the group took them. Only a field
+ * of the group itself can be taken, so one further down a value stays lost.
+ */
+export const refuseLost = (
+  contract: Schema.Top,
+  lost: ReadonlyArray<Excess.Path>,
+  taken?: ReadonlySet<PropertyKey>,
+): Effect.Effect<void, Schema.SchemaError> => {
+  const [first, ...others] = lost.filter(
+    (path) => path.length > 1 || taken?.has(path[0]!) !== true,
+  );
+  return first === undefined
+    ? Effect.void
+    : Effect.fail(Excess.refusal(contract.ast, [first, ...others]));
+};
+
+/** Bring a value to the schema's decoded side and write it, with nothing else to hold what it loses. */
+export const encoder = <S extends Schema.Top, A, R>(
+  contract: S,
+  write: (
+    value: S["Type"],
+    options?: SchemaAST.ParseOptions,
+  ) => Effect.Effect<A, Schema.SchemaError, R>,
+) => {
+  if (!Excess.holdsChoice(contract.ast))
+    return passing(contract, write, stripping);
+  const read = reader(contract, write);
+  return (
+    input: Input<S>,
+  ): Effect.Effect<A, Schema.SchemaError, R | S["DecodingServices"]> =>
+    Effect.flatMap(read(input), ({ output, lost }) =>
+      Effect.as(refuseLost(contract, lost), output),
     );
 };

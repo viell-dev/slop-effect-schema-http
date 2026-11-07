@@ -5538,19 +5538,356 @@ describe("a caller's field under a union", () => {
       }),
     );
 
-    // A union sees the whole input and cannot tell that a sibling holds a name it states too.
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/134
-    it.effect("currently refuses a name a sibling also states", () =>
-      Effect.gen(function* () {
-        const request = Request.get("/x").pipe(
-          Request.query(Apart),
-          Request.query(Schema.Struct({ b: text })),
-        );
-        expect(
-          yield* schemaFailure(request, { query: { a: "x", b: "y" } }),
-        ).toContain('["b"]');
-      }),
-    );
+    describe("a field another schema in the group takes", () => {
+      const Holds = Schema.Struct({ b: text });
+      const HoldsHeader = Schema.Struct({ "x-b": text });
+      const ApartHeaders = Schema.Union([
+        Schema.Struct({ "x-a": text }),
+        Schema.Struct({ "x-b": text }),
+      ]);
+      const stacked = <
+        F extends Schema.Top &
+          Schema.ConstraintCodec<
+            unknown,
+            UrlEncoding.QueryInput,
+            unknown,
+            unknown
+          >,
+        G extends Schema.Top &
+          Schema.ConstraintCodec<
+            unknown,
+            UrlEncoding.QueryInput,
+            unknown,
+            unknown
+          >,
+      >(
+        first: F,
+        second: G,
+      ) => Request.get("/x").pipe(Request.query(first), Request.query(second));
+
+      it.effect("is not lost, in either order", () =>
+        Effect.gen(function* () {
+          const query = { a: "x", b: "y" };
+          expect(yield* urlOf(stacked(Apart, Holds), { query })).toBe(
+            "/x?a=x&b=y",
+          );
+          expect(yield* urlOf(stacked(Holds, Apart), { query })).toBe(
+            "/x?b=y&a=x",
+          );
+        }),
+      );
+
+      it.effect("is not lost from headers, in either order", () =>
+        Effect.gen(function* () {
+          const input = { headers: { "x-a": "1", "x-b": "2" } };
+          expect(
+            yield* linesOf(
+              Request.get("/x").pipe(
+                Request.headers(ApartHeaders),
+                Request.headers(HoldsHeader),
+              ),
+              input,
+            ),
+          ).toEqual([
+            ["x-a", "1"],
+            ["x-b", "2"],
+          ]);
+          expect(
+            yield* linesOf(
+              Request.get("/x").pipe(
+                Request.headers(HoldsHeader),
+                Request.headers(ApartHeaders),
+              ),
+              input,
+            ),
+          ).toEqual([
+            ["x-b", "2"],
+            ["x-a", "1"],
+          ]);
+        }),
+      );
+
+      it.effect("is not lost with another schema between them", () =>
+        Effect.gen(function* () {
+          expect(
+            yield* urlOf(
+              Request.get("/x").pipe(
+                Request.query(Apart),
+                Request.query(Schema.Struct({ c: text })),
+                Request.query(Holds),
+              ),
+              { query: { a: "x", b: "y", c: "z" } },
+            ),
+          ).toBe("/x?a=x&c=z&b=y");
+        }),
+      );
+
+      it.effect("is not lost however that schema holds it", () =>
+        Effect.gen(function* () {
+          class Held extends Schema.Class<Held>("Held")({ b: text }) {}
+          const query = { a: "x", b: "y" };
+          expect(yield* urlOf(stacked(Apart, Held), { query })).toBe(
+            "/x?a=x&b=y",
+          );
+          expect(
+            yield* urlOf(
+              stacked(Apart, Schema.Struct({ b: Schema.optionalKey(text) })),
+              { query },
+            ),
+          ).toBe("/x?a=x&b=y");
+          const Open = Schema.Record(text, text);
+          expect(yield* urlOf(stacked(Apart, Open), { query })).toBe(
+            "/x?a=x&b=y",
+          );
+          expect(yield* urlOf(stacked(Open, Apart), { query })).toBe(
+            "/x?b=y&a=x",
+          );
+        }),
+      );
+
+      it.effect("is not lost if that schema writes it under another name", () =>
+        Effect.gen(function* () {
+          const Renamed = Holds.pipe(Schema.encodeKeys({ b: "B" }));
+          const query = { a: "x", b: "y" };
+          expect(yield* urlOf(stacked(Apart, Renamed), { query })).toBe(
+            "/x?a=x&B=y",
+          );
+          expect(yield* urlOf(stacked(Renamed, Apart), { query })).toBe(
+            "/x?B=y&a=x",
+          );
+        }),
+      );
+
+      it.effect("is not lost if that schema writes nothing for it", () =>
+        Effect.gen(function* () {
+          const Maybe = Schema.Struct({
+            b: Schema.OptionFromOptionalKey(text),
+          });
+          expect(
+            yield* urlOf(stacked(Apart, Maybe), {
+              query: { a: "x", b: Option.none() },
+            }),
+          ).toBe("/x?a=x");
+        }),
+      );
+
+      it.effect("is not lost if a second union takes it", () =>
+        Effect.gen(function* () {
+          const Other = Schema.Union([
+            Schema.Struct({ b: text }),
+            Schema.Struct({ c: text }),
+          ]);
+          const query = { a: "x", b: "y" };
+          expect(yield* urlOf(stacked(Apart, Other), { query })).toBe(
+            "/x?a=x&b=y",
+          );
+          expect(yield* urlOf(stacked(Other, Apart), { query })).toBe(
+            "/x?b=y&a=x",
+          );
+        }),
+      );
+
+      it.effect("is lost if each schema only leaves it to the other", () =>
+        Effect.gen(function* () {
+          const Twin = Schema.Union([
+            Schema.Struct({ a: text }),
+            Schema.Struct({ b: text }),
+          ]);
+          const query = { a: "x", b: "y" };
+          for (const request of [stacked(Apart, Twin), stacked(Apart, Apart)])
+            expect(yield* schemaFailure(request, { query })).toContain('["b"]');
+        }),
+      );
+
+      it.effect("is lost if a tag ruled out the member that states it", () =>
+        Effect.gen(function* () {
+          const Tagged = Schema.Union([
+            Schema.Struct({ kind: Schema.Literal("one"), b: text }),
+            Schema.Struct({ kind: Schema.Literal("two") }),
+          ]);
+          // The types refuse `b` under this tag in a literal, so it comes in a wider value.
+          const query = { a: "x", b: "y", kind: "two" } as const;
+          expect(
+            yield* schemaFailure(stacked(Apart, Tagged), { query }),
+          ).toContain('["b"]');
+        }),
+      );
+
+      it.effect(
+        "is lost if the union writes another field under its name",
+        () =>
+          Effect.gen(function* () {
+            const Swapped = Schema.Union([
+              Schema.Struct({ a: text }).pipe(Schema.encodeKeys({ a: "b" })),
+              Schema.Struct({ b: text }),
+            ]);
+            const Other = Schema.Struct({ c: text });
+            expect(
+              yield* schemaFailure(stacked(Swapped, Other), {
+                query: { a: "1", b: "2", c: "3" },
+              }),
+            ).toContain('["b"]');
+          }),
+      );
+
+      it.effect("is lost if the other schema was unbound", () =>
+        Effect.gen(function* () {
+          const request = Request.get("/x").pipe(
+            Request.query(Holds),
+            Request.unbind("query"),
+            Request.query(Apart),
+          );
+          expect(
+            yield* schemaFailure(request, { query: { a: "x", b: "y" } }),
+          ).toContain('["b"]');
+        }),
+      );
+
+      it.effect("is only a field of the group, not one further down", () =>
+        Effect.gen(function* () {
+          const request = stacked(
+            Schema.Struct({ filter: Schema.fromJsonString(Apart) }),
+            Schema.Struct({ b: Schema.optionalKey(text) }),
+          );
+          expect(
+            yield* schemaFailure(request, {
+              query: { filter: { a: "x", b: "y" }, b: "z" },
+            }),
+          ).toContain('["filter"]["b"]');
+        }),
+      );
+
+      it.effect("still has to fit that schema", () =>
+        Effect.gen(function* () {
+          const message = yield* schemaFailure(
+            stacked(Apart, Schema.Struct({ b: Schema.FiniteFromString })),
+            { query: { a: "x", b: "many" } },
+          );
+          expect(message).toContain("Expected number");
+        }),
+      );
+
+      it.effect("replaces a raw value under its name, in either order", () =>
+        Effect.gen(function* () {
+          const query = { a: "x", b: "y" };
+          const raw = Request.get("/x?b=raw");
+          expect(
+            yield* urlOf(raw.pipe(Request.query(Apart), Request.query(Holds)), {
+              query,
+            }),
+          ).toBe("/x?a=x&b=y");
+          expect(
+            yield* urlOf(raw.pipe(Request.query(Holds), Request.query(Apart)), {
+              query,
+            }),
+          ).toBe("/x?b=y&a=x");
+          const line = Request.get("/x").pipe(Request.setHeader("X-B", "raw"));
+          const headers = { "x-a": "1", "x-b": "2" };
+          expect(
+            yield* linesOf(
+              line.pipe(
+                Request.headers(ApartHeaders),
+                Request.headers(HoldsHeader),
+              ),
+              { headers },
+            ),
+          ).toEqual([
+            ["x-a", "1"],
+            ["x-b", "2"],
+          ]);
+          expect(
+            yield* linesOf(
+              line.pipe(
+                Request.headers(HoldsHeader),
+                Request.headers(ApartHeaders),
+              ),
+              { headers },
+            ),
+          ).toEqual([
+            ["x-b", "2"],
+            ["x-a", "1"],
+          ]);
+        }),
+      );
+
+      it.effect("compares header names without case", () =>
+        Effect.gen(function* () {
+          const Spelled = Schema.Union([
+            Schema.Struct({ "x-a": text }),
+            Schema.Struct({ "X-B": text }),
+          ]);
+          expect(
+            yield* linesOf(
+              Request.get("/x").pipe(
+                Request.headers(Schema.Struct({ "X-B": text })),
+                Request.headers(Spelled),
+              ),
+              { headers: { "x-a": "1", "X-B": "2" } },
+            ),
+          ).toEqual([
+            ["X-B", "2"],
+            ["x-a", "1"],
+          ]);
+        }),
+      );
+
+      it.effect("is not a raw value the caller left out", () =>
+        Effect.gen(function* () {
+          const Optional = Schema.Struct({ b: Schema.optionalKey(text) });
+          const error = yield* refusal(
+            Request.get("/x?b=raw").pipe(
+              Request.query(Apart),
+              Request.query(Optional),
+            ),
+            { query: { a: "x" } },
+          );
+          expect(error.message).toContain('"b"');
+        }),
+      );
+
+      it.effect("leaves a schema's own default going through it", () =>
+        Effect.gen(function* () {
+          const Own = Schema.Struct({
+            b: Schema.OptionFromOptionalKey(Schema.FiniteFromString),
+          });
+          const request = Request.get("/x?b=many").pipe(
+            Request.query(Own),
+            Request.query(Apart),
+          );
+          // It took `b` and wrote nothing, so raw text under that name is still its to check.
+          const query = { a: "x", b: Option.none() } as never;
+          const error = yield* refusal(request, { query });
+          expect(error.message).toContain('"b"');
+        }),
+      );
+
+      // A union reads its input before it can know what the others took, so it stays with the
+      // member it chose. The design page states the limit.
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/134
+      it.effect("currently does not change the member a union chooses", () =>
+        Effect.gen(function* () {
+          const Either = Schema.Union([
+            Schema.Struct({ b: text }),
+            Schema.Struct({ a: text, c: text }),
+          ]);
+          const message = yield* schemaFailure(stacked(Either, Holds), {
+            query: { a: "x", b: "y", c: "z" },
+          });
+          expect(message).toContain('["a"]');
+          expect(message).toContain('["c"]');
+          // The member that leaves the sibling its field has to come first.
+          const Reordered = Schema.Union([
+            Schema.Struct({ a: text, c: text }),
+            Schema.Struct({ b: text }),
+          ]);
+          expect(
+            yield* urlOf(stacked(Reordered, Holds), {
+              query: { a: "x", b: "y", c: "z" },
+            }),
+          ).toBe("/x?a=x&c=z&b=y");
+        }),
+      );
+    });
   });
 
   describe("a field no member can keep", () => {
