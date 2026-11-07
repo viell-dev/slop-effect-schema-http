@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 // #region imports
 import { Data, Effect, flow, identity, Schedule, Schema } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
 import {
   Body,
   Operation,
@@ -90,6 +95,47 @@ assert.equal(
   ),
   "Unhandled status: 404",
 );
+
+// #region per-attempt
+const regionOf = (attempt: number) =>
+  attempt === 1 ? "https://eu.example.test" : "https://us.example.test";
+const toRegion = (self: HttpClient.HttpClient, attempt: number) =>
+  HttpClient.mapRequest(self, HttpClientRequest.prependUrl(regionOf(attempt)));
+
+const regionalHealth = Operation.make(
+  Request.get("/health"),
+  Response.status(200, Body.text),
+  {
+    policy: Policy.make(Schedule.recurs(1)),
+    transformClient: toRegion,
+  },
+);
+// The first attempt goes to the EU region, and a retry goes to the US region.
+// #endregion per-attempt
+const regionsTried: Array<string> = [];
+const onlyUsAnswers = HttpClient.make((request) => {
+  regionsTried.push(request.url);
+  return Effect.succeed(
+    HttpClientResponse.fromWeb(
+      request,
+      request.url.startsWith("https://us.")
+        ? new globalThis.Response("ready")
+        : new globalThis.Response(null, { status: 503 }),
+    ),
+  );
+});
+assert.equal(
+  await Effect.runPromise(
+    regionalHealth
+      .execute(undefined)
+      .pipe(Effect.provideService(HttpClient.HttpClient, onlyUsAnswers)),
+  ),
+  "ready",
+);
+assert.deepEqual(regionsTried, [
+  "https://eu.example.test/health",
+  "https://us.example.test/health",
+]);
 
 // #region adapt
 const greet = Operation.fromEffect((name: string) =>

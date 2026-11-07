@@ -24,9 +24,11 @@ entries, `null` means a bare key, and `undefined` omits an entry:
 
 <<< ../../examples/modules/url-encoding.ts#entries
 
-Numbers, bigints and booleans become strings. An empty string remains an empty value. Use an
-iterable of pairs when you need explicit ordering across repeated names. The exported `QueryInput`
-type is also the encoded shape accepted by a request query schema.
+Numbers, bigints and booleans become strings, and a `Date` becomes its ISO text. An invalid `Date`
+has no ISO text, so it goes out as `Invalid Date`, and a schema such as `Schema.Date` refuses it
+before that. An empty string remains an empty value. Use an iterable of pairs when you need explicit
+ordering across repeated names. The exported `QueryInput` type is also the encoded shape accepted by
+a request query schema, so [a query schema can encode to a `Date`](./request.md#dates-in-a-query).
 
 ## Replace one encoding rule
 

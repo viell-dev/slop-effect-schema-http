@@ -90,8 +90,9 @@ operation's known method or repeat-safety decision in the classifier's closure. 
 on decoded application values, compose outside the operation's attempt policy.
 
 The attempt scope has already closed when classification runs. Input encoding, computed request
-fields, and `Request.mapEffect` are not rerun for a retry. Use [client
-middleware](./operation.md#client-middleware) for per-attempt data.
+fields, `Request.mapEffect` and a base URL from an Effect are not rerun for a retry. Use [client
+middleware](./operation.md#client-middleware) for per-attempt data, which receives the attempt
+number.
 
 See the [execution contract](../design.md#execution) and [source
 signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0/src/http/Policy.ts) for

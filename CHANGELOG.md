@@ -126,6 +126,28 @@
   removes every step. The inner functions of `Operation.map` and `Operation.mapEffect` gain a type
   parameter for the parts. It has a default, so it only matters to explicit type arguments, which
   give a plain operation ([#105](https://github.com/viell-dev/slop-effect-schema-http/issues/105)).
+- Let `Request.baseUrl` also take an `Effect`, so a service or a `Config` value can supply a
+  location that is not known when a request is defined. Its failures and services join the request's
+  type, so leaving out a service is a compile error. It runs once per evaluation, after the input is
+  encoded and before the first attempt, so every retry uses the same base, and what it supplies goes
+  through `UrlEncoding.join` like any base. A location that must change between attempts stays with
+  `transformClient`. **Breaking for extensions:** `Request.Declaration`'s `baseUrl` is text or an
+  `Effect` ([#89](https://github.com/viell-dev/slop-effect-schema-http/issues/89)).
+- Add `Request.mapBaseUrl`, which changes a base that is text or an `Effect`, so a variant can
+  extend a prefix it cannot read or one that is not known yet. Its function runs during preparation,
+  and an exception from it is `Request.InvalidRequest`. Joining two `Request` values stays out: it
+  would need a conflict rule for every part of a request
+  ([#81](https://github.com/viell-dev/slop-effect-schema-http/issues/81)).
+- Tell `transformClient` which attempt is running. It receives the attempt number as a second
+  argument, starting at `1` and matching the `http.attempt` log annotation, so a retry can go to
+  another server, send a retry count or sign differently. A one-parameter function keeps working. A
+  function with an optional second parameter of its own now receives the number there
+  ([#99](https://github.com/viell-dev/slop-effect-schema-http/issues/99)).
+- Let a query carry a `Date`. A query schema can encode to one, and `Request.setQuery` takes one in
+  its object form, written with `toISOString()`. A default under such a field is read from its text.
+  An invalid `Date` has no ISO text, so it goes out as `Invalid Date`, and a schema such as
+  `Schema.Date` refuses it before that. Headers stay text, because HTTP date headers are not ISO
+  ([#110](https://github.com/viell-dev/slop-effect-schema-http/issues/110)).
 
 ## 0.1.0 — 2026-11-04
 

@@ -62,10 +62,10 @@ Raw declarations (`setHeader`, `appendHeader`, `removeHeader`, and the query equ
 value or a computation. A computation runs once per materialization, and `undefined` omits the
 field. `setHeader` and `setQuery` also take a plain object, whose keys each replace their name in
 key order. Its query values are what a query schema may encode to, or a computation, so `page: 2`
-writes `page=2`, `null` is a bare key and an array repeats the name, at the name's first position.
-In either group a key set to `undefined` removes that name's earlier declarations. Header names
-compare without case and keep the spelling they were written with, so a `setHeader` that replaces an
-earlier line also replaces its spelling. Query keys compare exactly.
+writes `page=2`, a `Date` writes ISO text, `null` is a bare key and an array repeats the name, at
+the name's first position. In either group a key set to `undefined` removes that name's earlier
+declarations. Header names compare without case and keep the spelling they were written with, so a
+`setHeader` that replaces an earlier line also replaces its spelling. Query keys compare exactly.
 
 `Request.headers` and `Request.query` take a schema whose encoded side fits the representation
 (`Transport.HeaderInput` or `UrlEncoding.QueryInput`); its application side can be any shape.
@@ -157,11 +157,14 @@ classes, renamed fields and unions, where a union allows what any member allows 
 every member writes. Where names cannot be read, as with a record or a list of pairs, the schema
 allows any name. Header names compare without case, and query names compare exactly.
 
-Raw values are text. Where a field encodes to a number, boolean or bigint, the text is read as one
-first, the reverse of how the library writes it, so a schema encoded as a number accepts a default.
-A single raw value under a list field fits that list. A query entry written in the constructor is a
-raw value like any other, under its decoded name. A written empty segment has no name, so it is not
-a field, and it stays as written.
+Raw values are text. Where a field encodes to a number, boolean, bigint or `Date`, the text is read
+as one first, the reverse of how the library writes it, so a schema encoded as a number accepts a
+default. Date text is read as `Schema.DateFromString` reads it, with `new Date(text)`, and text that
+holds no date stays text for the schema to refuse. Only ISO text with a `Z` or an offset reads the
+same everywhere. JavaScript reads other forms by the engine's rules, and text with no offset in the
+time zone of whatever runs the request. A single raw value under a list field fits that list. A
+query entry written in the constructor is a raw value like any other, under its decoded name. A
+written empty segment has no name, so it is not a field, and it stays as written.
 
 The check runs when the request is prepared, not in the editor. A definition's dictionary is
 normally incomplete, because required values come from the caller, and a stacked schema can allow a
@@ -347,7 +350,9 @@ replace a whole path.
 ### URLs are made sendable, not normalized
 
 `Request.baseUrl` supplies a shared origin and fixed prefix, and the base is joined after the path
-is complete. The library does not join two Request values.
+is complete. A later call replaces the base, and
+[`Request.mapBaseUrl`](#a-base-url-can-be-known-late) changes it. The library does not join two
+Request values.
 
 The `UrlEncoding` service renders path values, query entries, and the final URL. Its defaults
 percent-encode path values and query entries with `encodeURIComponent`, and join the base URL and
@@ -419,6 +424,37 @@ entries, so a schema has nothing to say about it, and it stays until something w
 
 A URL that cannot be rendered or encoded fails with `Request.InvalidRequest`.
 
+### A base URL can be known late
+
+`Request.baseUrl` also takes an `Effect`, so a service or a `Config` value can supply a location
+that is not known when the request is defined. That is Effect's own mechanism, so the library gains
+no configuration system, and a definition stays a plain value. Forgetting the location is a compile
+error, where a relative request sent with no base would fail or reach the wrong server at run time.
+
+- **The types carry it.** The Effect's failures and services join the request's. A later
+  `Request.baseUrl` replaces the Effect, so it never runs, but the types keep what it added, as they
+  do for `Request.unbind`.
+- **It runs once per evaluation,** after computed fields, input encoding and `Request.mapEffect`,
+  and before the first attempt. Refused input therefore costs no lookup, and every retry uses the
+  same base.
+- **Its failure is its own.** It stays the Effect's typed failure rather than
+  `Request.InvalidRequest`, and nothing is sent. A policy does not retry it, and an `attemptTimeout`
+  does not limit it, because both apply to attempts.
+- **What it supplies is a base like any other.** It goes through `UrlEncoding.join`, and a fragment
+  or query in it behaves as it does in text. The Effect runs even when an absolute request URL
+  bypasses the base, because the join decides that.
+
+`Request.mapBaseUrl` changes a base in either form, so a variant can extend a prefix it cannot read,
+or one that is not known yet. Its function runs during preparation in both, as constructing a
+request evaluates nothing, and an exception from it is `Request.InvalidRequest`. It receives the
+whole text as it stands at that step, so a later `Request.baseUrl` replaces the result, and text
+added after a fragment stays in the fragment. `declaration.baseUrl` is text or an Effect, and after
+`Request.mapBaseUrl` it is always an Effect, so reading it is no way to extend a base.
+
+A location that must change between attempts belongs in client middleware, through
+[`transformClient`](#preparation-and-attempt-lifetime). A base resolved here cannot move during
+retries.
+
 ### Fragments stay on the request
 
 A fragment ends a URL, so the query always goes before it. The compiled request keeps the fragment
@@ -444,6 +480,27 @@ What happens to a fragment afterwards is a property of the client. `HttpClient.m
 the `URL` it gives its runner, which percent-encodes some characters. A provider built with
 `HttpClient.makeWith` reads `request.url` directly, so it has to read `request.hash` as well.
 `fetch` does not send a fragment.
+
+### A query value can be a `Date`
+
+A query value is text, and a `Date` has an obvious text, so `UrlEncoding.QueryValue` includes it and
+a query schema can encode to it. It is written with `toISOString()`. A request carries a schema's
+encoded side, and the caller gives its decoded side:
+
+| Schema                                                                             | Caller gives          | Request carries |
+| ---------------------------------------------------------------------------------- | --------------------- | --------------- |
+| `Schema.Date`                                                                      | A `Date`              | ISO text        |
+| `Schema.DateFromString`                                                            | A `Date`, or its text | ISO text        |
+| A schema from `Date` to an application's own type, as `Schema.DateTimeUtcFromDate` | Its type, or a `Date` | ISO text        |
+
+An invalid `Date` has no ISO text, so it goes out as `String(value)`, which is `Invalid Date`. A
+schema such as `Schema.Date` refuses it before that, with a `SchemaError`. A raw record takes a
+`Date` too, in the object form of `Request.setQuery`, which turns it into text when the request is
+defined, so a later change to that `Date` changes nothing. As a default it goes through the schema
+like any other [raw value](#a-schema-states-the-shape-of-its-group).
+
+Headers stay text. Date headers such as `If-Modified-Since` use the HTTP date format, not ISO, so
+`Transport.HeaderInput` has no `Date`, and a header schema writes its own text.
 
 ### Wire representations stay distinct
 
@@ -554,10 +611,12 @@ to run the Effect. See [Operation](./modules/operation.md) for execution and err
 
 ### Preparation and attempt lifetime
 
-Each evaluation materializes the request once: computed fields run and input is encoded a single
-time, so credentials stay the same across retries. Anything that must differ per attempt, such as a
-nonce or a signature over the attempt, belongs in client middleware through the `transformClient`
-option.
+Each evaluation materializes the request once: computed fields run, input is encoded and a base URL
+Effect runs a single time, so credentials stay the same across retries. Anything that must differ
+per attempt, such as a nonce or a signature over the attempt, belongs in client middleware through
+the `transformClient` option. Its second argument is the attempt number, which starts at `1` for
+each evaluation, counts every attempt, including one that timed out, and matches the `http.attempt`
+log annotation. A function with an optional second parameter of its own receives the number there.
 
 Each attempt owns a `Scope` that covers dispatch and decoding. The scope closes, aborting the
 attempt's request if it is still in flight, before the outcome is classified or a retry delay
@@ -651,12 +710,13 @@ case goes in that case's decoder with `Body.map`, and a replace takes it with th
 
 ### Error and service types
 
-Failures and services are typed and kept separate. Input schema errors, `InvalidRequest`, transport
-errors, `DecodeError`, `UnexpectedResponse`, `TimeoutError`, and the schedule's error are distinct
-members of the operation's error type. A request schema contributes its encoding and decoding
-services, because an encoded input or a raw default goes through the decoder, and a response schema
-contributes its decoding services. A decoder's or client transform's `Scope` is provided by the
-attempt and does not reach the caller.
+Failures and services are typed and kept separate. Input schema errors, `InvalidRequest`, a base URL
+Effect's failure, transport errors, `DecodeError`, `UnexpectedResponse`, `TimeoutError`, and the
+schedule's error are distinct members of the operation's error type. A request schema contributes
+its encoding and decoding services, because an encoded input or a raw default goes through the
+decoder, a base URL Effect contributes its own, and a response schema contributes its decoding
+services. A decoder's or client transform's `Scope` is provided by the attempt and does not reach
+the caller.
 
 ## Diagnostics
 
