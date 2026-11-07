@@ -100,6 +100,30 @@
   renderer form stays for a path whose shape depends on its value. `Request.setPath` replaces the
   constructor's path, and `Request.unbind("path")` also removes a template's text
   ([#80](https://github.com/viell-dev/slop-effect-schema-http/issues/80)).
+- Keep response cases as a keyed list, and add `Response.replace` and `Response.remove`. A status
+  case is keyed by its status, and a `Response.when` case by a new `key` option. A replaced case
+  keeps its position and match rule, and a replaced or removed case leaves the contract's type. A
+  key that is absent, not a literal or a union is a compile error, and one that gets past the types
+  throws when the contract is built. **Breaking for types:** `Response.Response` gains a fourth
+  parameter that records each case, with a default, so `Response.Response<A, E, R>` annotations stay
+  valid. A contract's type now names its cases, so a `let` holding `Response.status(200, body)`
+  cannot be assigned `Response.status(201, body)`, and `Operation.make` refuses a conditional
+  between them. Write `Response.status(legacy ? 200 : 201, body)` instead, or annotate both as
+  `Response.Response<A, E, R>`. **Breaking for extensions:** `Response.Response` requires a new
+  `cases` member ([#88](https://github.com/viell-dev/slop-effect-schema-http/issues/88)).
+- Let a definition be adjusted where it is used. `Operation.make` now keeps its parts in `parts`,
+  and `Operation.mapRequest`, `Operation.mapResponse` and `Operation.mapOptions` derive a variant,
+  leaving the original unchanged. `Operation.fromEffect(operation.execute)` seals a definition.
+  `Operation` gains an optional fifth type parameter for the parts, so existing four-parameter
+  annotations stay valid and hide the parts from these functions. An editor hover on such an
+  annotation shows a trailing `unknown`
+  ([#86](https://github.com/viell-dev/slop-effect-schema-http/issues/86)).
+- Keep a mapped operation adjustable. `Operation.map` and `Operation.mapEffect` used to return a
+  value with nothing to adjust. They now keep the parts and record a step, which runs as before:
+  once, after the retries, outside the attempt's scope and timeout. `Operation.mapRequest` and
+  `Operation.mapOptions` always work on a mapped operation, and `Operation.mapResponse` works when
+  the new result still fits. Anything else is a compile error that names `Operation.unmap`, which
+  removes every step ([#105](https://github.com/viell-dev/slop-effect-schema-http/issues/105)).
 
 ## 0.1.0 — 2026-11-04
 
