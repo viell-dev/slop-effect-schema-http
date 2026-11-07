@@ -56,16 +56,28 @@ export const holdsChoice = (ast: SchemaAST.AST): boolean =>
   partsOf(ast).some(holdsChoice) ||
   (ast.encoding ?? []).some(({ to }) => holdsChoice(to));
 
-/** Stands in for a union in a failure made here. These failures are only read, never reported. */
+/** Marks a failure of two routes to one value. These failures are only read, never reported. */
 const routes = new SchemaAST.Union([]);
 
-/** The failure of every route to one value, any of which it may have been meant for. */
+/** Stands in for the union in a failure of its members, read one at a time. */
+const members = new SchemaAST.Union([]);
+
+/** The failure of two routes to one value, either of which it may have been meant for. */
 export const either = (
-  ...failures: ReadonlyArray<Schema.SchemaError>
+  first: Schema.SchemaError,
+  next: Schema.SchemaError,
+): Schema.SchemaError =>
+  new Schema.SchemaError(
+    new SchemaIssue.AnyOf(routes, [first.issue, next.issue]),
+  );
+
+/** The failure of every member of a union, as Effect would report it. */
+export const anyMember = (
+  failures: ReadonlyArray<Schema.SchemaError>,
 ): Schema.SchemaError =>
   new Schema.SchemaError(
     new SchemaIssue.AnyOf(
-      routes,
+      members,
       failures.map(({ issue }) => issue),
     ),
   );
@@ -125,6 +137,9 @@ export const excess = (issue: SchemaIssue.Issue): ReadonlyArray<Path> =>
  * The fields a parse that strips would lose although a union states them, or `undefined` if
  * stripping would not make this failure pass. Effect takes the first member that fits, so that is
  * the member to ask, and a field it refuses is lost when another member would have held it.
+ *
+ * Only members compare. A key the other route to a value reads is that member's other name for a
+ * field, as an encoded name is beside a decoded one, and a struct strips it the same way.
  */
 const wouldLose = (
   issue: SchemaIssue.Issue,
@@ -143,6 +158,12 @@ const wouldLose = (
         : undefined;
     }
     case "AnyOf": {
+      if (issue.ast === routes) {
+        const read = issue.issues
+          .map(wouldLose)
+          .filter((paths) => paths !== undefined);
+        return read.find((paths) => paths.length > 0) ?? read[0];
+      }
       const member = issue.issues.find((part) => wouldLose(part) !== undefined);
       if (member === undefined) return undefined;
       const unstated = refusedByAll(issue.issues) ?? [];

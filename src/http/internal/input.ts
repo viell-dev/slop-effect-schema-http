@@ -149,7 +149,7 @@ export const toDecoded = <S extends Schema.Top>(
           ),
         Effect.fail([]),
       ),
-      (failures) => Excess.either(...failures),
+      Excess.anyMember,
     );
   const inPieces = (input: object) =>
     contract.ast._tag === "Union"
