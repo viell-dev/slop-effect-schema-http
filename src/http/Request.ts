@@ -38,7 +38,8 @@ export type FieldValue<A = string> = Fields.Value<A>;
  * Headers declared together: a name's value, or `undefined` to remove its declarations.
  *
  * @remarks
- * Use with {@link setHeader}. A value is text or a function that supplies it, as in {@link FieldValue}.
+ * Use with {@link setHeader}. A value is text or a function that supplies it, as in
+ * {@link FieldValue}.
  */
 export type HeaderFields = Readonly<Record<string, FieldValue | undefined>>;
 
@@ -48,7 +49,8 @@ export type HeaderFields = Readonly<Record<string, FieldValue | undefined>>;
  * @remarks
  * Use with {@link setQuery}. Numbers, bigints and booleans become text, `null` is a bare key, an
  * array repeats the name, and `undefined` removes the name's declarations. A function supplies its
- * value during preparation, as in {@link FieldValue}.
+ * value during preparation, as in {@link FieldValue}. Fields apply in the object's key order, in
+ * which JavaScript puts integer-like keys first.
  */
 export type QueryFields = Readonly<
   Record<
@@ -102,7 +104,7 @@ export interface Declaration {
   readonly headerShapes: ReadonlyArray<Shape>;
   /** The schemas bound to the query group, which together state its shape. */
   readonly queryShapes: ReadonlyArray<Shape>;
-  /** Raw edits made after a schema of a name it always writes, which could never reach the client. */
+  /** Raw edits, after a schema, of a name it always writes, which could never reach the client. */
   readonly conflicts: ReadonlyArray<
     readonly [group: "query" | "headers", name: string]
   >;
@@ -204,8 +206,8 @@ const readSegment = (segment: string): Fields.Field<string | null> => {
  * `?a=1;b=2`, `?q=a+b` and `?a=%41` keep their spelling, as do empty `&` segments and a lone `?`.
  * Each entry also has a form-decoded name and value, which {@link setQuery} and {@link removeQuery}
  * compare against. An entry that is edited, or added, is rendered through `UrlEncoding.query`. An
- * entry under a name a {@link query} schema allows goes through that schema, and one under a name no
- * bound schema allows is an incompatible shape. The name is the decoded name, so a written empty
+ * entry under a name a {@link query} schema allows goes through that schema, and one under a name
+ * no bound schema allows is an incompatible shape. The name is the decoded name, so a written empty
  * segment counts as a field called `""`.
  *
  * A fragment stays on the request, exactly as written, in the native request's `hash` field. It
@@ -434,8 +436,8 @@ export const removeHeader = (name: string, value?: string) =>
   );
 
 /**
- * Set a raw query field, replacing entries with the same case-sensitive name, or set several from an
- * object.
+ * Set a raw query field, replacing entries with the same case-sensitive name, or set several from
+ * an object.
  *
  * @example
  * ```ts
@@ -487,8 +489,8 @@ export const setQuery: {
  * Append a raw query entry, preserving order and repeated names.
  *
  * @remarks
- * Uses the same value rules as {@link setQuery}, and a bound {@link query} schema checks it the same
- * way.
+ * Uses the same value rules as {@link setQuery}, and a bound {@link query} schema checks it the
+ * same way.
  */
 export const appendQuery = (name: string, value: FieldValue<string | null>) =>
   editQuery([name], (fields) => Fields.append(fields, name, value));
@@ -596,19 +598,20 @@ const applyDeclaredBodyFields = (
  * Bind a schema to the call's `{ headers }` input.
  *
  * @remarks
- * The input is an {@link Input} of the schema. Encoding produces ordered header lines. The schema states the shape of the group, whatever the
- * order of the calls. A raw header under a name it allows is a default: what the schema writes
- * replaces it, and otherwise it goes through the schema, which writes its value, spelling and order.
- * An omitted optional field therefore leaves the default in place. A raw header under a name no
- * schema allows is an {@link InvalidRequest} before anything is sent. A record or
- * `Schema.StructWithRest` allows any name. Names compare without case.
+ * The input is an {@link Input} of the schema. Encoding produces ordered header lines. The schema
+ * states the shape of the group, whatever the order of the calls. A raw header under a name it
+ * allows is a default: what the schema writes replaces it, and otherwise it goes through the
+ * schema, which writes its value, spelling and order. An omitted optional field therefore leaves
+ * the default in place. A raw header under a name no schema allows is an {@link InvalidRequest}
+ * before anything is sent. A record or `Schema.StructWithRest` allows any name. Names compare
+ * without case.
  *
  * Header schemas stack: a second one adds its fields, and together they state the shape. Use
  * {@link unbind} to start again.
  *
  * A field the schema produces wins over an automatic `Accept`, `Content-Type` or `Content-Length`,
- * whether the schema is bound before or after the body. An optional field the caller leaves out
- * declares nothing, so the automatic value still applies.
+ * whether the schema is bound before or after the body, and so does a default. An optional field
+ * left out with no default declares nothing, so the automatic value still applies.
  */
 export const headers = <
   S extends Schema.Top &
@@ -691,12 +694,13 @@ export const headers = <
  * ```
  *
  * @remarks
- * The input is an {@link Input} of the schema. The schema encodes to `UrlEncoding.QueryInput` and states the shape of the group, whatever the
- * order of the calls. A raw entry under a name it allows is a default, including one written in the
- * constructor: what the schema writes replaces it, and otherwise it goes through the schema, which
- * writes its value and order. An omitted optional field therefore leaves the default in place. A
- * raw entry under a name no schema allows is an {@link InvalidRequest} before anything is sent. A
- * record, `Schema.StructWithRest` or a list of pairs allows any name.
+ * The input is an {@link Input} of the schema. The schema encodes to `UrlEncoding.QueryInput` and
+ * states the shape of the group, whatever the order of the calls. A raw entry under a name it
+ * allows is a default, including one written in the constructor: what the schema writes replaces
+ * it, and otherwise it goes through the schema, which writes its value and order. An omitted
+ * optional field therefore leaves the default in place. A raw entry under a name no schema allows
+ * is an {@link InvalidRequest} before anything is sent. A record, `Schema.StructWithRest` or a list
+ * of pairs allows any name.
  *
  * Text under a field that encodes to a number, boolean or bigint is read as one first, and a single
  * value under a list field fits it. The check is as strict as the schema. A `?` in a base URL or
@@ -886,9 +890,10 @@ export type Unbound<I, K extends Group> = K extends keyof I
  * ```
  *
  * @remarks
- * Takes `"path"`, `"query"`, `"headers"` or `"body"`, and affects only bindings before it. To replace
- * a binding, unbind the group and bind again. Raw declarations stay, and go out unchecked once no
- * schema states the group's shape. A constructor path and query are declarations, so they stay too.
+ * Takes `"path"`, `"query"`, `"headers"` or `"body"`, and affects only bindings before it. To
+ * replace a binding, unbind the group and bind again. Raw declarations stay, and go out unchecked
+ * once no schema states the group's shape. A constructor path and query are declarations, so they
+ * stay too.
  *
  * Other steps stay as well. A {@link mapEffect} that reads the removed input receives `undefined`
  * for it. After {@link mapInput}, the binding is skipped, but the mapped input keeps whatever the
