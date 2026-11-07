@@ -1,8 +1,9 @@
 /**
  * The CGI reporting gateway: one router for the scripts, the XML-RPC endpoint and the audit
  * endpoint, wrapped in the `delays` hold. `cgi.ts` holds what the scripts share, `files.ts` the
- * extract and CSV formats, `xmlrpc.ts` the XML-RPC reader and writer, and `digest.ts` the audit
- * endpoint's authentication. Every call to {@link handler} creates fresh state.
+ * extract and CSV formats, `help.ts` the help topics and their links, `xmlrpc.ts` the XML-RPC reader
+ * and writer, and `digest.ts` the audit endpoint's authentication. Every call to {@link handler}
+ * creates fresh state.
  *
  * Service documentation: services/gateway.md
  */
@@ -15,7 +16,15 @@ import {
   type Received,
   type Reply,
 } from "../../harness/server.js";
-import { apachePage, hold, parseQuery, pipe, pipeError } from "./cgi.js";
+import {
+  apachePage,
+  hold,
+  movedPage,
+  parseQuery,
+  pipe,
+  pipeError,
+  queryString,
+} from "./cgi.js";
 import { digest } from "./digest.js";
 import {
   type Account,
@@ -25,6 +34,7 @@ import {
   importGerman,
   trailerOf,
 } from "./files.js";
+import { go, help } from "./help.js";
 import * as Rpc from "./xmlrpc.js";
 
 export type { Account, Extract, ExtractRecord } from "./files.js";
@@ -90,24 +100,17 @@ const refuse = (status: number, code: string, message: string): Reply => ({
  * 80, then the new path and the request's query. The page escapes the target as HTML.
  */
 const legacy = (request: Received, origin: string): Reply => {
-  const query = request.target.indexOf("?");
+  const query = queryString(request.target);
   const own = new URL(origin);
   const host = header(request.lines, "host") ?? own.host;
   const authority =
     /:\d*$/.test(host) || own.port === "" || own.port === "80"
       ? host
       : `${host}:${own.port}`;
-  const location = `http://${authority}/cgi-bin/report.cgi${query < 0 ? "" : request.target.slice(query)}`;
-  const escaped = location
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-  return apachePage(
+  return movedPage(
     301,
     "Moved Permanently",
-    `The document has moved <A HREF="${escaped}">here</A>.`,
-    [["Location", location]],
+    `http://${authority}/cgi-bin/report.cgi${query === undefined ? "" : `?${query}`}`,
   );
 };
 
@@ -326,6 +329,16 @@ export const handler = (options: Options = {}): Handler => {
     { method: "GET", path: "/cgi-bin/extract.cgi", handle: extract },
     { method: "HEAD", path: "/cgi-bin/extract.cgi", handle: extract },
     { method: "POST", path: "/cgi-bin/import.cgi", handle: importSheet },
+    {
+      method: "GET",
+      path: /^\/cgi-bin\/help\.cgi\/(?<topic>[^/]+)$/,
+      handle: (request, { params }) => help(request, params["topic"]!),
+    },
+    {
+      method: "GET",
+      path: "/cgi-bin/go.cgi",
+      handle: (request, { origin }) => go(request, origin),
+    },
     { method: "POST", path: "/RPC2", handle: rpc },
     { method: "GET", path: "/admin/audit.cgi", handle: audit },
   ]);

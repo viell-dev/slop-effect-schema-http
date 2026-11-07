@@ -16,12 +16,21 @@ const decodeForm = (text: string): string => {
   }
 };
 
+/**
+ * The target's query as Apache splits it for `QUERY_STRING`, or `undefined` without one: it starts
+ * at the first `?` and ends at the first `#`, and a `?` after that `#` starts nothing.
+ */
+export const queryString = (target: string): string | undefined => {
+  const hash = target.indexOf("#");
+  const beforeFragment = hash < 0 ? target : target.slice(0, hash);
+  const start = beforeFragment.indexOf("?");
+  return start < 0 ? undefined : beforeFragment.slice(start + 1);
+};
+
 /** CGI.pm's query parsing: split on `&` and `;`, and keep the first value of a repeated name. */
 export const parseQuery = (target: string): ReadonlyMap<string, string> => {
-  const start = target.indexOf("?");
   const result = new Map<string, string>();
-  if (start < 0) return result;
-  for (const pair of target.slice(start + 1).split(/[&;]/)) {
+  for (const pair of (queryString(target) ?? "").split(/[&;]/)) {
     if (pair === "") continue;
     const equals = pair.indexOf("=");
     const name = decodeForm(equals < 0 ? pair : pair.slice(0, equals));
@@ -60,6 +69,25 @@ export const apachePage = (
     ],
     body,
   };
+};
+
+/** Apache 1.3's page for a redirect, which links `location` escaped as HTML. */
+export const movedPage = (
+  status: number,
+  title: string,
+  location: string,
+): Reply => {
+  const escaped = location
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+  return apachePage(
+    status,
+    title,
+    `The document has moved <A HREF="${escaped}">here</A>.`,
+    [["Location", location]],
+  );
 };
 
 /** Format cents as units with a separator and exactly two decimals, without floating point. */
