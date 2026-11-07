@@ -1361,14 +1361,14 @@ around it keep the layer's` (provider; in the Node lane's `lines` run, the repla
 
 ### Requests no standard client sends
 
-The entries above cover strange responses. EXT-9 to EXT-11 cover strange requests, which neither
-standard client can send, tracked in
+The entries above cover strange responses. EXT-9 to EXT-16 cover strange requests, most of which
+neither standard client can send, tracked in
 [#95](https://github.com/viell-dev/slop-effect-schema-http/issues/95) and
 [#98](https://github.com/viell-dev/slop-effect-schema-http/issues/98). They rest on a provider that
 sends a request exactly as written, `lane.rawClient(backend.origin)`, called the raw client below,
 and on a plain socket listener; [AGENTS.md](./AGENTS.md) describes both, and
 `src/harness/raw.node.test.ts` tests them without any hostile backend. `fetch` below means
-`lane.fetchClient`.
+`lane.fetchClient`. EXT-17 covers raw values under a schema at a real service.
 
 Entries marked limit or defect have tests too, as each entry lists: those statuses record what was
 observed, and a test pins it.
@@ -1498,9 +1498,9 @@ of these replies has round-trip and negative tests of its own in
 
 #### Request shapes
 
-EXT-10a to EXT-10v send odd request shapes through the raw client, in
+EXT-10a to EXT-10x send odd request shapes through the raw client, in
 `src/scenarios/request-shapes.node.test.ts`, which needs Node because only Node has that client.
-EXT-11a to EXT-11v send the same shapes through `fetch`, in `src/scenarios/request-shapes.test.ts`,
+EXT-11a to EXT-11x send the same shapes through `fetch`, in `src/scenarios/request-shapes.test.ts`,
 in both lanes. The letters match: EXT-11c is EXT-10c's shape. Where an entry says a URL is resolved
 or normalized, that happens in the URL parse inside Effect's `HttpClient.make`, before `fetch` sees
 the request, so any provider built with `make` does the same.
@@ -1595,6 +1595,16 @@ as declared in every entry, whatever the provider then does with it.
   `HttpClientRequest.setUrl`, for each of `?a=1;b=2`, `?a=1&&b=2`, a bare `?`, `?a=%2f` and
   `?q=a|b[1]{x}`. Each arrives unchanged. Status: tested.
   - `[EXT-10v] the raw client sends the opaque query ${query} unchanged`
+- **EXT-10w** A GET with a body: `Request.get("${origin}/shape")` with `Request.body(Body.text)` and
+  the input `{ body: "hello" }`. The library passes it on like any other method, as
+  [#96](https://github.com/viell-dev/slop-effect-schema-http/issues/96) decided. `head` is
+  `GET /shape HTTP/1.1`, `host: <host>`, `content-type: text/plain`, `content-length: 5`,
+  `accept: text/plain`, and the ledger's body is `hello`. STAT-12 is the same request to a service
+  that needs it. Status: tested.
+  - `[EXT-10w] the raw client sends a GET with a body`
+- **EXT-10x** A HEAD with a body: EXT-10w through `Request.head`, with the same `head` under
+  `HEAD /shape HTTP/1.1`. `echo`'s reply has no body, so the answer is empty. Status: tested.
+  - `[EXT-10x] the raw client sends a HEAD with a body`
 - **EXT-11a** Dot segments through `fetch`: the target is `/b`. Status: limit.
   - `[EXT-11a] fetch resolves /a/../b to /b after the client received it as written`
 - **EXT-11b** Percent-encoded dot segments through `fetch`: the target is `/b`. Status: limit.
@@ -1656,3 +1666,309 @@ as declared in every entry, whatever the provider then does with it.
   - `[EXT-11u] fetch refuses an unparseable URL as an invalid URL after the client received it`
 - **EXT-11v** Opaque query text through `fetch`: each spelling arrives unchanged. Status: tested.
   - `[EXT-11v] fetch sends the opaque query ${query} unchanged`
+- **EXT-11w** A GET with a body through `fetch`: refused, as `HttpClientError` with a `TransportError`
+  reason whose cause holds the platform's words, `Request with GET/HEAD method cannot have body.`,
+  in Node and in Chromium. The client received the request with its body and headers, and the ledger
+  is empty. Status: limit.
+  - `[EXT-11w] fetch refuses a GET with a body as a transport error after the client received it`
+- **EXT-11x** A HEAD with a body through `fetch`: refused the same way. Status: limit.
+  - `[EXT-11x] fetch refuses a HEAD with a body as a transport error after the client received it`
+
+#### Automatic headers
+
+EXT-12 and EXT-13 cover what the library adds by itself: an operation's `Accept`, and a body's
+`Content-Type` and `Content-Length`. A request's own declaration wins over these, and
+`Request.removeHeader` stops them, as
+[#100](https://github.com/viell-dev/slop-effect-schema-http/issues/100) decided and the design page
+states under _Bodies_. EXT-12a to EXT-12t go through the raw client, in
+`src/scenarios/header-declarations.node.test.ts`, which needs Node because only Node has that
+client, and every other client adds or changes these headers. EXT-13a to EXT-13t go through `fetch`,
+in `src/scenarios/header-declarations.test.ts`, in both lanes. The letters match, and
+`src/clients/echoed.ts` holds the declarations they share.
+
+Each test starts `echo` with its socket listener and declares `Response.status(404, Body.text)`, so
+the automatic `Accept` is `text/plain`. "A `POST` with `hello`" below is
+`Request.post("${origin}/shape")` with `Request.body(Body.text)` and the input `{ body: "hello" }`.
+An entry with a body is a `POST`, and any other a `GET`. For the raw client, `head` is the proof: the
+request line, then `host: <host>`, then the lines an entry gives, and no others. An EXT-13 test compares all three
+headers at the client and on the wire, so one gained or lost beside the header in the title fails
+too.
+
+Effect's Fetch provider takes a declared `Content-Length` off before `fetch` sees it, unless the
+value is empty. So what the platform itself does with a wrong length needs a client that hands the
+header over: "bare `fetch`" below is a small `HttpClient.make` client in the test, which passes
+`request.headers` and the body's bytes to the lane's `fetch`.
+
+- **EXT-12a** Nothing declared: a `POST` with `hello`. `head` has `content-type: text/plain`,
+  `content-length: 5` and `accept: text/plain`, and the body arrives. Status: tested.
+  - `[EXT-12a] a request that declares nothing gets the automatic Accept, Content-Type and Content-Length`
+- **EXT-12b** `Request.removeHeader("accept")`, alone and followed by
+  `Request.setHeader("accept", () => undefined)`, which declares nothing. `head` has no other line.
+  Status: tested.
+  - `[EXT-12b] removeHeader("accept") stops the automatic Accept`
+  - `[EXT-12b] a computed value that returns undefined declares nothing, so the removal stays in force`
+- **EXT-12c** `Request.setHeader("accept", "text/weird")`. `head` has `accept: text/weird`.
+  Status: tested.
+  - `[EXT-12c] a declared Accept wins over the automatic one`
+- **EXT-12d** `Request.setHeader("accept", "")`. `head` has `accept: ` as its one line. Status:
+  tested.
+  - `[EXT-12d] an empty declared Accept goes out empty, and the automatic one stays away`
+- **EXT-12e** A header schema that writes `accept`, with the input `text/schema`. `head` has
+  `accept: text/schema`. Status: tested.
+  - `[EXT-12e] a header schema that writes Accept wins over the automatic one`
+- **EXT-12f** Optional schema fields left out: a `POST` with `hello` under a header schema of
+  optional `accept` and `content-type`, with the input `{ headers: {} }`. `head` is EXT-12a's.
+  Status: tested.
+  - `[EXT-12f] an optional schema field left out declares nothing, so the automatic values stay`
+- **EXT-12g** A declared `Content-Type`: a `POST` with `hello` and
+  `Request.setHeader("Content-Type", "application/weird")`, before and after the body. `head` has
+  `Content-Type: application/weird`, in that spelling, and `content-length: 5` and
+  `accept: text/plain`. Two lines from `Request.appendHeader`, spelled differently, both go out as
+  written. Status: tested.
+  - `[EXT-12g] a Content-Type declared before the body wins, with its spelling`
+  - `[EXT-12g] a Content-Type declared after the body wins, with its spelling`
+  - `[EXT-12g] two Content-Type lines declared with appendHeader both go out, as written`
+- **EXT-12h** A header schema that writes `Content-Type`, bound before and after the body. `head` is
+  EXT-12g's. Status: tested.
+  - `[EXT-12h] a header schema bound before the body wins over the codec's Content-Type`
+  - `[EXT-12h] a header schema bound after the body wins over the codec's Content-Type`
+- **EXT-12i** `Request.removeHeader("content-type")` on a `POST` with `hello`. `head` has
+  `content-length: 5` and `accept: text/plain`. Status: tested.
+  - `[EXT-12i] removeHeader("content-type") stops the codec's Content-Type`
+- **EXT-12j** `Request.removeHeader("content-type", "text/plain")`: a removal limited to one value
+  records nothing, because the name may still be declared. `head` is EXT-12a's. Status: tested.
+  - `[EXT-12j] a removal limited to one value stops nothing`
+- **EXT-12k** A declared `Content-Type` over `Body.empty`, on a `POST`. `head` has
+  `content-type: application/weird` and `accept: text/plain`, and no `Content-Length`, because the
+  raw client frames only bytes. Status: tested.
+  - `[EXT-12k] a declared Content-Type stays on a request with Body.empty`
+- **EXT-12l** A declared `Content-Type` over `Body.formData`. Without one, `head` has the boundary
+  the provider supplied. With `multipart/form-data` declared, `head` has that value alone, and the
+  body still has a boundary nothing on the request names, so no server can read it. That is the
+  consumer's choice. Status: tested.
+  - `[EXT-12l] a declared Content-Type replaces the boundary a multipart body would have had`
+- **EXT-12m** `Request.mapEffect` setting `content-type` after the body, over a declared one. Its
+  value goes out, as a line in lower case. Status: tested.
+  - `[EXT-12m] Request.mapEffect after the body has the last word`
+- **EXT-12n** `Request.mapEffect` setting `content-type` before the body: the codec's value replaces
+  the edit, unless the request removed that name, in which case the edit goes out. Status: tested.
+  - `[EXT-12n] Request.mapEffect before the body sees its edit replaced`
+  - `[EXT-12n] Request.mapEffect before the body keeps its edit when the request removed that name`
+- **EXT-12o** `Request.removeHeader("accept")` and then `Request.setHeader("accept", "text/late")`.
+  `head` has `accept: text/late`. Status: tested.
+  - `[EXT-12o] a later declaration still goes out after a removal`
+- **EXT-12p** A removal and a schema: a removal can never discard what a schema writes. After a
+  schema that always writes `accept`, the removal is `Request.InvalidRequest` before anything is
+  sent, and the ledger is empty. Before that schema, the schema's value goes out. After an optional
+  field, nothing goes out if the caller leaves it out, and the caller's value if not. Status: tested.
+  - `[EXT-12p] removing a name a schema always writes, after that schema, is refused before anything is sent`
+  - `[EXT-12p] a removal before a schema never discards what the schema writes`
+  - `[EXT-12p] a removal after an optional schema field stays in force when the caller leaves it out`
+  - `[EXT-12p] a removal after an optional schema field gives way to a caller's value`
+- **EXT-12q** A `Content-Length` below the body's: a `POST` with `hello` and
+  `Request.setHeader("Content-Length", "3")`. `head` has `Content-Length: 3`, then
+  `content-type: text/plain` and `accept: text/plain`. The declaration never changes the bytes, so
+  all five go out, and the server, which believes the line, reads `hel`. Status: tested.
+  - `[EXT-12q] a declared Content-Length below the body's goes out, with the whole body, and the server reads that many bytes`
+- **EXT-12r** A `Content-Length` above the body's: the same with `10`. The line goes out, and the
+  server waits for bytes that never come, so no answer arrives. A test stops the request after
+  `arrived(1)`, and nothing has answered it by then. Status: tested.
+  - `[EXT-12r] a declared Content-Length above the body's goes out, and the server waits for bytes that never come`
+- **EXT-12s** An empty `Content-Length`: `Request.setHeader("content-length", "")`. `head` has
+  `content-length: ` as a line, and the socket listener reads no body. Status: tested.
+  - `[EXT-12s] an empty declared Content-Length goes out empty, and the server reads no body`
+- **EXT-12t** `Request.removeHeader("content-length")`. The library adds nothing. The raw client
+  frames a body itself unless told not to, so with `{ framing: false }` `head` has
+  `content-type: text/plain` and `accept: text/plain` alone, and the socket listener reads no body.
+  Without it, `content-length: 5` follows them, as the line-preserving provider's does. Status:
+  tested.
+  - `[EXT-12t] removeHeader("content-length") leaves the provider to frame the body, and this one can decline`
+  - `[EXT-12t] the raw client frames a body whose Content-Length the request removed`
+- **EXT-13a** EXT-12a through `fetch`: all three reach the client and arrive. Status: tested.
+  - `[EXT-13a] a request that declares nothing gets the automatic Accept, Content-Type and Content-Length`
+- **EXT-13b** EXT-12b through `fetch`: no client received an `Accept`, and the platform adds
+  `Accept: */*`, in both lanes. Status: limit.
+  - `[EXT-13b] removeHeader("accept") reaches the client with no Accept, and the platform adds its own`
+  - `[EXT-13b] a computed value that returns undefined leaves the removal in force, and the platform adds its own`
+- **EXT-13c** EXT-12c through `fetch`. Status: tested.
+  - `[EXT-13c] a declared Accept wins over the automatic one`
+- **EXT-13d** EXT-12d through `fetch`: the empty value arrives, in both lanes, and the platform adds
+  no `Accept` of its own. Status: tested.
+  - `[EXT-13d] an empty declared Accept goes out empty, and the automatic one stays away`
+- **EXT-13e** EXT-12e through `fetch`. Status: tested.
+  - `[EXT-13e] a header schema that writes Accept wins over the automatic one`
+- **EXT-13f** EXT-12f through `fetch`. Status: tested.
+  - `[EXT-13f] an optional schema field left out declares nothing, so the automatic values stay`
+- **EXT-13g** EXT-12g through `fetch`. The two lines reach `fetch` joined, as
+  `application/one, application/two`, and go out as one. Status: tested.
+  - `[EXT-13g] a Content-Type declared before the body wins`
+  - `[EXT-13g] a Content-Type declared after the body wins`
+  - `[EXT-13g] two Content-Type lines declared with appendHeader reach fetch joined, and go out as one`
+- **EXT-13h** EXT-12h through `fetch`. Status: tested.
+  - `[EXT-13h] a header schema bound before the body wins over the codec's Content-Type`
+  - `[EXT-13h] a header schema bound after the body wins over the codec's Content-Type`
+- **EXT-13i** EXT-12i through `fetch`: neither platform supplies a `Content-Type` for a body of
+  bytes, so none arrives. Status: tested.
+  - `[EXT-13i] removeHeader("content-type") stops the codec's Content-Type, and a body of bytes gets none from fetch`
+- **EXT-13j** EXT-12j through `fetch`. Status: tested.
+  - `[EXT-13j] a removal limited to one value stops nothing`
+- **EXT-13k** EXT-12k through `fetch`: the declaration arrives, and the platform adds
+  `Content-Length: 0` to the `POST`. Status: tested.
+  - `[EXT-13k] a declared Content-Type stays on a request with Body.empty, and the platform frames the empty body`
+- **EXT-13l** EXT-12l through `fetch`: `multipart/form-data` arrives with no boundary, in both lanes,
+  over a body that has one. Without a declaration the client received no `Content-Type`, and the
+  platform supplies the boundary. Status: tested.
+  - `[EXT-13l] a declared Content-Type replaces the boundary fetch would have supplied`
+- **EXT-13m** EXT-12m through `fetch`. Status: tested.
+  - `[EXT-13m] Request.mapEffect after the body has the last word`
+- **EXT-13n** EXT-12n through `fetch`. Status: tested.
+  - `[EXT-13n] Request.mapEffect before the body sees its edit replaced`
+  - `[EXT-13n] Request.mapEffect before the body keeps its edit when the request removed that name`
+- **EXT-13o** EXT-12o through `fetch`. Status: tested.
+  - `[EXT-13o] a later declaration still goes out after a removal`
+- **EXT-13p** EXT-12p through `fetch`. The refused request reaches no client, and a caller who left
+  the optional field out meets the platform's `Accept: */*`, as in EXT-13b. Status: tested.
+  - `[EXT-13p] removing a name a schema always writes, after that schema, is refused before the client receives anything`
+  - `[EXT-13p] a removal before a schema never discards what the schema writes`
+  - `[EXT-13p] a removal after an optional schema field stays in force when the caller leaves it out, and the platform adds its own`
+  - `[EXT-13p] a removal after an optional schema field gives way to a caller's value`
+- **EXT-13q** EXT-12q through `fetch`: the client received `3`, Effect's Fetch provider takes it off,
+  and the platform writes `Content-Length: 5` over the whole body, in both lanes. Bare `fetch` in
+  Node stalls: nothing reaches the socket and nothing fails, so only the caller's own timeout, 500
+  milliseconds in the test, ends the request. Bare `fetch` in Chromium writes the true length,
+  because `Content-Length` is a forbidden header there. Status: limit.
+  - `[EXT-13q] Effect's Fetch provider takes off a Content-Length below the body's, and the platform writes the true one`
+  - `[EXT-13q] fetch on its own stalls in Node on a Content-Length below the body's, and Chromium writes the true one`
+- **EXT-13r** EXT-12r through `fetch`: the same with `10` through Effect's Fetch provider. Bare
+  `fetch` in Node fails as `HttpClientError` with a `TransportError` reason whose cause has the code
+  `UND_ERR_REQ_CONTENT_LENGTH_MISMATCH`, and the ledger is empty. Bare `fetch` in Chromium writes the
+  true length. Status: limit.
+  - `[EXT-13r] Effect's Fetch provider takes off a Content-Length above the body's, and the platform writes the true one`
+  - `[EXT-13r] fetch on its own refuses a Content-Length above the body's in Node, and Chromium writes the true one`
+- **EXT-13s** EXT-12s through `fetch`: Effect's Fetch provider leaves an empty value on, so `fetch`
+  sees it. Node refuses it as `HttpClientError` with a `TransportError` reason whose cause has the
+  code `UND_ERR_INVALID_ARG`, with an empty ledger. Chromium writes `Content-Length: 5`. Status:
+  limit.
+  - `[EXT-13s] an empty Content-Length reaches fetch, which Node refuses and Chromium replaces with the true one`
+- **EXT-13t** EXT-12t through `fetch`: the client received no `Content-Length`, and the platform
+  writes `Content-Length: 5`, in both lanes. A body always goes out framed. Status: limit.
+  - `[EXT-13t] removeHeader("content-length") reaches the client with none, and the platform writes the true one`
+
+#### Header name spelling
+
+EXT-14 covers how a header name is spelled, as
+[#101](https://github.com/viell-dev/slop-effect-schema-http/issues/101) decided: a name keeps the
+spelling it was written with, and names compare without case. EXT-14a to EXT-14g go through the raw
+client, in `src/scenarios/header-declarations.node.test.ts`, on a `GET`; each `head` also ends with
+`accept: text/plain`. EXT-14h goes through `fetch`, in `src/scenarios/header-declarations.test.ts`,
+in both lanes.
+
+- **EXT-14a** `Request.setHeader("X-API-Key", "v")`. `head` has `X-API-Key: v`. Status: tested.
+  - `[EXT-14a] setHeader keeps the name as written`
+- **EXT-14b** `Request.appendHeader("X-Multi", "a")` and `Request.appendHeader("x-multi", "b")`.
+  `head` has both lines as written. Status: tested.
+  - `[EXT-14b] appendHeader keeps each line as written`
+- **EXT-14c** `x-thing: 1`, then `X-Other: 2`, then `Request.setHeader("X-Thing", "3")`. `head` has
+  `X-Thing: 3` where the first line was, then `X-Other: 2`. Status: tested.
+  - `[EXT-14c] a replacing setHeader matches across spellings, keeps the first position and takes the new spelling`
+- **EXT-14d** `Request.setHeader("X-Thing", "1")` and `Request.removeHeader("x-THING")`. `head` has
+  no such line. Status: tested.
+  - `[EXT-14d] removeHeader matches across spellings`
+- **EXT-14e** A header schema with the field `X-API-Key`. `head` has `X-API-Key: v`. Status: tested.
+  - `[EXT-14e] a header schema writes the spelling it was given`
+- **EXT-14f** A raw `X-API-KEY` under a schema's optional `X-Api-Key`, which the caller leaves out.
+  The default goes through the schema, so `head` has `X-Api-Key: v`. Status: tested.
+  - `[EXT-14f] a raw default under a schema's name takes the schema's spelling`
+- **EXT-14g** Client middleware changing one of two declared fields. It sees the normalized view,
+  with lowercase names. `head` keeps `X-Other: 2` as written, and a lowercase `x-thing: 3` replaces
+  the line that field had. Status: tested.
+  - `[EXT-14g] middleware sees the lowercase view, and a value it changes replaces that field's lines alone`
+- **EXT-14h** EXT-14a through `fetch`: the client's lines hold `X-API-Key`, and `x-api-key` arrives,
+  because `fetch` receives the normalized view. Status: limit.
+  - `[EXT-14h] fetch sends a lowercase name, whatever the client's lines say`
+
+#### Queries as written
+
+EXT-15 and EXT-16 are the table of
+[#102](https://github.com/viell-dev/slop-effect-schema-http/issues/102), which the design page
+repeats under _URLs are made sendable, not normalized_: a query written in the constructor goes out
+as written until something edits that entry. The last letter adds its rule that an entry stays
+editable by its decoded name. Each row is a `Request.get` of the written text on `origin`, with its
+edit. EXT-15a to EXT-15i go through the raw client, in `src/scenarios/written-queries.node.test.ts`,
+and each asserts the client's URL and the request line. EXT-16a to EXT-16i go through `fetch`, in
+`src/scenarios/written-queries.test.ts`, in both lanes, and each asserts the client's URL and the
+target. The letters match. Every row gave the same result at
+the client and on the wire, in Node and in Chromium, apart from the line-preserving provider's in
+EXT-15c.
+
+- **EXT-15a** `/x?a=1;b=2` goes out as written. Status: tested.
+  - `[EXT-15a] the raw client sends /x?a=1;b=2 as /x?a=1;b=2`
+- **EXT-15b** `/x?a=1&&b=2` goes out as written. Status: tested.
+  - `[EXT-15b] the raw client sends /x?a=1&&b=2 as /x?a=1&&b=2`
+- **EXT-15c** `/x?` goes out as written. The line-preserving provider receives it the same way and
+  sends `/x`, because it hands `node:http` a parsed `URL`, whose `search` has no place for a `?` with
+  nothing after it. That belongs to that provider, so the entry stays tested. Status: tested.
+  - `[EXT-15c] the raw client sends /x? as /x?`
+  - `[EXT-15c] the line-preserving provider receives /x? as written, and sends /x`
+- **EXT-15d** `/x?q=a+b` goes out as written. Status: tested.
+  - `[EXT-15d] the raw client sends /x?q=a+b as /x?q=a+b`
+- **EXT-15e** `/x?a=%41&wsdl` goes out as written. Status: tested.
+  - `[EXT-15e] the raw client sends /x?a=%41&wsdl as /x?a=%41&wsdl`
+- **EXT-15f** `/x?a=%41&b=1;2` with `Request.setQuery("a", "new value")` goes out as
+  `/x?a=new%20value&b=1;2`: the edited entry is rendered, the other stays as written, and the order
+  holds. Status: tested.
+  - `[EXT-15f] the raw client sends /x?a=%41&b=1;2 with setQuery("a", "new value") as /x?a=new%20value&b=1;2`
+- **EXT-15g** `/x?` with `Request.setQuery("b", "1")` goes out as `/x?b=1`: a lone `?` holds no
+  entries. Status: tested.
+  - `[EXT-15g] the raw client sends /x? with setQuery("b", "1") as /x?b=1`
+- **EXT-15h** `/x?a=1&` with `Request.setQuery("b", "1")` goes out as `/x?a=1&&b=1`: a written empty
+  segment is text like any other. Status: tested.
+  - `[EXT-15h] the raw client sends /x?a=1& with setQuery("b", "1") as /x?a=1&&b=1`
+- **EXT-15i** `/x?a+b=1&c=%32` with `Request.setQuery("a b", "2")` goes out as `/x?a%20b=2&c=%32`: the
+  first entry's decoded name is `a b`, so the edit finds it and renders it, and the other entry
+  keeps its escape. Status: tested.
+  - `[EXT-15i] the raw client sends /x?a+b=1&c=%32 with setQuery("a b", "2") as /x?a%20b=2&c=%32`
+- **EXT-16a** EXT-15a through `fetch`. Status: tested.
+  - `[EXT-16a] fetch sends /x?a=1;b=2 as /x?a=1;b=2`
+- **EXT-16b** EXT-15b through `fetch`. Status: tested.
+  - `[EXT-16b] fetch sends /x?a=1&&b=2 as /x?a=1&&b=2`
+- **EXT-16c** EXT-15c through `fetch`: the `?` survives the URL parser in both lanes. Status: tested.
+  - `[EXT-16c] fetch sends /x? as /x?`
+- **EXT-16d** EXT-15d through `fetch`. Status: tested.
+  - `[EXT-16d] fetch sends /x?q=a+b as /x?q=a+b`
+- **EXT-16e** EXT-15e through `fetch`. Status: tested.
+  - `[EXT-16e] fetch sends /x?a=%41&wsdl as /x?a=%41&wsdl`
+- **EXT-16f** EXT-15f through `fetch`. Status: tested.
+  - `[EXT-16f] fetch sends /x?a=%41&b=1;2 with setQuery("a", "new value") as /x?a=new%20value&b=1;2`
+- **EXT-16g** EXT-15g through `fetch`. Status: tested.
+  - `[EXT-16g] fetch sends /x? with setQuery("b", "1") as /x?b=1`
+- **EXT-16h** EXT-15h through `fetch`. Status: tested.
+  - `[EXT-16h] fetch sends /x?a=1& with setQuery("b", "1") as /x?a=1&&b=1`
+- **EXT-16i** EXT-15i through `fetch`. Status: tested.
+  - `[EXT-16i] fetch sends /x?a+b=1&c=%32 with setQuery("a b", "2") as /x?a%20b=2&c=%32`
+
+#### Raw values under a schema
+
+EXT-17 takes the schema rules of
+[#87](https://github.com/viell-dev/slop-effect-schema-http/issues/87) and
+[#113](https://github.com/viell-dev/slop-effect-schema-http/issues/113) to a real service, the
+business API, in `src/scenarios/schema-groups.test.ts`, in both lanes. The library's own tests state
+each rule; these show what a consumer meets at the other end.
+
+- **EXT-17a** A shared default under an optional header:
+  `Request.setHeader("Authorization", "Bearer <token>")` under a schema with an optional
+  `Authorization`, against `GET /v2/tasks`. With the input `{ headers: {} }` the default arrives and
+  the service answers 200. With `Bearer wrong` as input, the caller's value replaces it, it arrives
+  as the one line, and the service answers 401. Status: tested.
+  - `[EXT-17a] a shared Authorization default under an optional header reaches the service, and a caller's value replaces it`
+- **EXT-17b** A raw name no schema allows: `X-Stray` beside that schema, and `?fields=hidden` written
+  in the constructor under a query schema. Each is `Request.InvalidRequest` before anything is sent,
+  with an empty ledger, and its message names the field and never holds the value. Status: tested.
+  - `[EXT-17b] a raw header no schema allows is refused before anything is sent, by its name and never its value`
+  - `[EXT-17b] a query entry written in the constructor that no schema allows is refused before anything is sent`
+- **EXT-17c** A value in the form the schema writes, against `GET /v1/customers` with `page` under
+  `Schema.FiniteFromString`. The caller's `2` and `"02"`, from the two sides of the schema, are the
+  same request, `?page=2`, and so is `?page=02` written in the constructor under an optional field.
+  Status: tested.
+  - `[EXT-17c] a caller's value reaches the service in the form the schema writes, from either side of the schema`
+  - `[EXT-17c] a default written in the constructor goes through the schema, which writes its own spelling`

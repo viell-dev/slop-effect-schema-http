@@ -122,6 +122,8 @@ the scenarios. The library's own design, which these tests are judged against, i
     target, so write `${origin}/` for the root.
     It adds `Host` and the body's framing only when the request has none, and refuses nothing. A
     target goes out as UTF-8 and a header line as Latin-1, or as UTF-8 when it does not fit.
+    `lane.rawClient(backend.origin, { framing: false })` adds `Host` alone, for a request with no
+    `Content-Length` of its own; the socket listener then reads no body.
     Add `HttpClient.followRedirects` to follow redirects, within that one origin.
   - `lane.fetchClient` is Effect's Fetch provider over the lane's own `fetch`.
   - When cookies, redirects or caching matter, state the provider and its settings in the test.

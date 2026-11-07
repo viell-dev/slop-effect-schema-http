@@ -130,7 +130,8 @@ providers are:
 - in the Node lane, a raw provider beside it, for the requests no standard client sends. It writes
   the composed URL and header lines to a socket with no URL parsing of its own, so a dot segment, a
   fragment or `*` goes out as written. It needs the origin to connect to, because a target such as
-  `*` names none: `lane.rawClient(backend.origin)`.
+  `*` names none: `lane.rawClient(backend.origin)`. It frames a body itself when a request has no
+  `Content-Length`, unless told not to with `{ framing: false }`.
 
 [CATALOGUE.md](./CATALOGUE.md) maps each scenario to its tests or to a recorded limit.
 `npm run check` verifies it against the test sources: every entry has a status, and every entry
