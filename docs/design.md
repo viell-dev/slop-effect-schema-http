@@ -302,6 +302,9 @@ Some things are outside the check:
 - A union chooses its member before it can know what a stacked schema took. A union of `{ b }` and
   `{ a, c }` stacked with `{ b }` takes the first member for `{ a, b, c }`, so `a` and `c` are
   refused, although the second member and the stacked schema could hold it all between them.
+- Two members can state one field under different wire names. A union of `{ c }` and `{ c }` renamed
+  to `C` takes the first member that fits, so `{ C: "s" }` goes out as `?c=s`. The value arrives,
+  under the other member's name, with no error. Bind the member you mean directly.
 - A schema that encodes to an iterable other than a list of pairs, such as a `Map`, cannot take
   defaults, because they are added as pairs. A default under it fails the check.
 
