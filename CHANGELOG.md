@@ -145,6 +145,9 @@ compiles and still changes your URLs.
   removes every step. The inner functions of `Operation.map` and `Operation.mapEffect` gain a type
   parameter for the parts. It has a default, so it only matters to explicit type arguments, which
   give a plain operation ([#105](https://github.com/viell-dev/slop-effect-schema-http/issues/105)).
+- Report a key the contract lacks as one error on a mapped operation.
+  `Operation.mapResponse(Response.replace(500, body))` with no 500 case also said that the response
+  no longer fits, and said it first. A real `unknown` or `any` result is still refused.
 - Let `Request.baseUrl` also take an `Effect`, so a service or a `Config` value can supply a
   location that is not known when a request is defined. Its failures and services join the request's
   type, so leaving out a service is a compile error. It runs once per evaluation, after the input is
