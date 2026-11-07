@@ -5,8 +5,19 @@
 - Correct what the guides say about a declared `Content-Length`. Effect's Fetch client takes a
   non-empty one off before `fetch` sees it, so `fetch` sends the body's real length, and it neither
   fails nor stalls there. On Node.js an empty one is a transport failure.
-- State in the Request guide and in editor help that a caller's own field can go, with no error,
-  under a union whose first member is narrower, and that a wider member goes first
+- Keep a caller's field under a union. Effect takes the first member that fits and strips what it
+  does not state, so `{ a, b }` under a union of `{ a }` and `{ a, b }` lost `b` with no error, and
+  a raw `?b=1` then took the caller's place. A schema with a choice between objects is now read
+  strictly first, on the decoded side and again when it encodes, so a member that keeps every field
+  wins, in headers, query, path and bodies, at any depth. The order of the members no longer costs a
+  field, and a wider member need not go first. A key no member states is still stripped, as a struct
+  strips it, and a schema with no such choice reads as before
+  ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
+- **Breaking:** refuse a field no union member can keep. `{ a, b }` under a union of `{ a }` and
+  `{ b }` used to send `a` and drop `b`, and a value a wider member refused was dropped the same
+  way. It is now a `SchemaError` before anything is sent, which names the field and never its value.
+  This call compiled and ran, and it now fails at run time, for the values that reach it. Add a
+  member that holds both fields, or send one of them
   ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
 - State that a success `retain` rejects drops an earlier retained success for equal input, and what
   a `Request.mapEffect` finds after `Request.unbind` removes the input it reads.
