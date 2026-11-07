@@ -1,5 +1,5 @@
 /**
- * EXT-9a to EXT-9d, EXT-9f and EXT-9h to EXT-9o: fragments on the request line. These run in the Node lane only,
+ * EXT-9a to EXT-9d, EXT-9f and EXT-9h to EXT-9p: fragments on the request line. These run in the Node lane only,
  * because only Node has the raw client: nothing else writes a fragment on a socket. What the lane's
  * other providers do with the same declarations is in `fragments.test.ts`.
  */
@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, type Scope } from "effect";
 import { HttpClient } from "effect/http";
 import { lane } from "#lane";
+import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 import { Help } from "../clients/gateway/index.js";
 import { type Received, receivedOf, watching } from "../clients/received.js";
 import { type Backend, header, type Recorded } from "../harness/lane.js";
@@ -259,6 +260,40 @@ describe("fragments through the raw client (node)", () => {
       message: 'no section a b"c',
     },
     lane.backend("gateway", undefined, { listener: "socket" }),
+  );
+
+  it.live(
+    "[EXT-9p] a | in a fragment reaches help.cgi, whose ERROR line quotes it, and the message is everything after the second |",
+    () =>
+      Effect.gen(function* () {
+        const gateway = yield* lane.backend("gateway");
+        const { outcome, received } = yield* throughRaw(
+          gateway.origin,
+          Help.pipeInFragment,
+        );
+        expect(received).toEqual([
+          { method: "GET", url: `${gateway.origin}${HELP}`, hash: "a|b" },
+        ]);
+        // The same request read as text: the line the contract decoded has four fields.
+        const text = yield* Operation.make(
+          Request.get(`${gateway.origin}${HELP}#a|b`),
+          Response.status(200, Body.text),
+        )
+          .execute(undefined)
+          .pipe(Effect.provide(lane.rawClient!(gateway.origin)));
+        expect(text).toBe("ERROR|E_SECTION|no section a|b\n");
+        expect(text.split("|")).toHaveLength(4);
+        const ledger = yield* gateway.ledger;
+        expect(requestLines(ledger)).toEqual([
+          `GET ${HELP}#a|b`,
+          `GET ${HELP}#a|b`,
+        ]);
+        expect(outcome).toEqual({
+          _tag: "GatewayError",
+          code: "E_SECTION",
+          message: "no section a|b",
+        });
+      }),
   );
 
   reaches(
