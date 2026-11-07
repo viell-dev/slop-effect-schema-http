@@ -84,7 +84,11 @@ const withHarnessCors =
             "Access-Control-Allow-Headers",
             first(request.lines, "access-control-request-headers") ?? "",
           ],
-          ["Access-Control-Max-Age", "0"],
+          // Each backend has an address of its own, so a cached preflight cannot reach another test,
+          // and the ledger leaves these out, so a test cannot tell. The cache matters: a preflight
+          // costs a browser more than the request it allows, and the lane's backends all share one
+          // event loop with Vite and the reporter (#124).
+          ["Access-Control-Max-Age", "600"],
           ["Vary", "Origin"],
         ],
       };
