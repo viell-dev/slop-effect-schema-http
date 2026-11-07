@@ -223,13 +223,10 @@ export const BundleFromFormData = Schema.instanceOf(FormData).pipe(
 /** `GET /bundle/<id>`, decoded from multipart form data. */
 export const bundle = (origin: string) =>
   Operation.make(
-    Request.get("bundle").pipe(
+    Request.get("/bundle").pipe(
       Request.baseUrl(origin),
-      Request.path(
-        Schema.NonEmptyString,
-        (id, encode) => `bundle/${encode(id)}`,
-      ),
-      Request.mapInput((id: string) => ({ path: id })),
+      Request.path`/${Request.pathValue("id", Schema.NonEmptyString)}`,
+      Request.mapInput((id: string) => ({ path: { id } })),
     ),
     Response.status(
       200,

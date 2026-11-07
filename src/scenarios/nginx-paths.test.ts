@@ -111,7 +111,7 @@ describe(`nginx path recordings (${lane.name})`, () => {
           const backend = yield* replay(["empty-id"]);
           const result = yield* Ops.taskHistoryAnyId(
             connection(backend.origin),
-          ).execute({ path: "" });
+          ).execute({ path: { id: "" } });
           expect(result._tag).toBe("History");
           if (result._tag === "History") {
             expect(result.value).toEqual({ events: globalEvents });
@@ -130,12 +130,12 @@ describe(`nginx path recordings (${lane.name})`, () => {
           const backend = yield* replay(["empty-id", "task-control"]);
           const operation = Ops.taskHistory(connection(backend.origin));
           const error = yield* Effect.flip(
-            operation.execute({ path: "" as Ops.TaskId }),
+            operation.execute({ path: { id: "" as Ops.TaskId } }),
           );
           expect(Schema.isSchemaError(error)).toBe(true);
           expect(yield* backend.ledger).toHaveLength(0);
           const result = yield* operation.execute({
-            path: Schema.decodeSync(Ops.TaskId)("T-1001"),
+            path: { id: Schema.decodeSync(Ops.TaskId)("T-1001") },
           });
           expect(result._tag).toBe("History");
           if (result._tag === "History") {

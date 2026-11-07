@@ -1285,7 +1285,9 @@ describe(`flows: translation between services (APP-3, ${lane.name})`, () => {
           "Created",
         );
         const read = narrow(
-          yield* Ops.readTask(connection).execute({ path: created.value.id }),
+          yield* Ops.readTask(connection).execute({
+            path: { id: created.value.id },
+          }),
           "Task",
         ).value;
         // The service's id is its own; the gateway account is only in the title.

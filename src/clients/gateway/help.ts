@@ -161,16 +161,16 @@ export const inConstructorWithQuery = (origin: string, last: Last) =>
     { transformClient: last },
   ).execute(undefined);
 
-/** A constructor's query and fragment, which survive `Request.path` replacing its path. */
+/** A constructor's query and fragment, which survive `Request.path` adding to its path. */
 export const inConstructorUnderPath = (origin: string, last: Last) =>
   Operation.make(
-    Request.get("/elsewhere?lang=de#closing").pipe(
+    Request.get("/cgi-bin/help.cgi?lang=de#closing").pipe(
       Request.path(Schema.String, (path) => path),
       Request.baseUrl(origin),
     ),
     response,
     { transformClient: last },
-  ).execute({ path: ACCOUNTS });
+  ).execute({ path: "/accounts" });
 
 /** The fragment in a base URL with a path to join after it and a query: both go before it. */
 export const inBaseUrlWithPath = (origin: string, last: Last) =>
@@ -186,13 +186,13 @@ export const inBaseUrlWithPath = (origin: string, last: Last) =>
 /** Fragments in the constructor and in path output: the constructor's wins. */
 export const constructorOverPathOutput = (origin: string, last: Last) =>
   Operation.make(
-    Request.get("/elsewhere#closing").pipe(
+    Request.get("/cgi-bin/help.cgi#closing").pipe(
       Request.path(Schema.String, (path) => path),
       Request.baseUrl(origin),
     ),
     response,
     { transformClient: last },
-  ).execute({ path: `${ACCOUNTS}#opening` });
+  ).execute({ path: "/accounts#opening" });
 
 /** Fragments in path output and in the base URL: path output's wins. */
 export const pathOutputOverBaseUrl = (origin: string, last: Last) =>

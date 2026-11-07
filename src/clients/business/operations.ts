@@ -377,11 +377,8 @@ const taskRejections = unauthorized.pipe(
   Response.orElse(methodNotAllowed),
 );
 
-const taskPath = <S extends Schema.Top & { readonly Encoded: string }>(
-  schema: S,
-  suffix = "",
-) =>
-  Request.path(schema, (id: string, encode) => `tasks/${encode(id)}${suffix}`);
+/** A task's id in a path, which arrives as `{ path: { id } }`. */
+const taskId = Request.pathValue("id", TaskId);
 
 // ---------------------------------------------------------------------------------------------
 // Tasks (for the cross-service flows as well)
@@ -400,7 +397,7 @@ export const createTask = (connection: Connection) =>
 
 export const readTask = (connection: Connection) =>
   Operation.make(
-    Request.get("tasks").pipe(at(connection), taskPath(TaskId)),
+    Request.get("/tasks").pipe(at(connection), Request.path`/${taskId}`),
     Response.status(200, Response.tag("Task", Body.jsonSchema(Task))).pipe(
       Response.orElse(taskRejections),
     ),
@@ -417,9 +414,9 @@ export const listTasks = (connection: Connection) =>
 /** Replace a task: a PUT, tunnelled. */
 export const replaceTask = (connection: Connection) =>
   Operation.make(
-    Request.put("tasks").pipe(
+    Request.put("/tasks").pipe(
       at(connection),
-      taskPath(TaskId),
+      Request.path`/${taskId}`,
       Request.body(Body.jsonSchema(TaskReplacement)),
       tunnel,
     ),
@@ -431,7 +428,11 @@ export const replaceTask = (connection: Connection) =>
 /** Delete a task: a DELETE, tunnelled. Also the compensation of the cross-service flows. */
 export const deleteTask = (connection: Connection) =>
   Operation.make(
-    Request.del("tasks").pipe(at(connection), taskPath(TaskId), tunnel),
+    Request.del("/tasks").pipe(
+      at(connection),
+      Request.path`/${taskId}`,
+      tunnel,
+    ),
     Response.status(204, Response.tag("Deleted", Body.empty)).pipe(
       Response.orElse(taskRejections),
     ),
@@ -465,9 +466,9 @@ export const changed = Response.status(
 /** Replace a task through the tunnel, answered with {@link changed}. */
 export const replaceTaskChanged = (connection: Connection) =>
   Operation.make(
-    Request.put("tasks").pipe(
+    Request.put("/tasks").pipe(
       at(connection),
-      taskPath(TaskId),
+      Request.path`/${taskId}`,
       Request.body(Body.jsonSchema(TaskReplacement)),
       tunnel,
     ),
@@ -477,16 +478,20 @@ export const replaceTaskChanged = (connection: Connection) =>
 /** Delete a task through the tunnel, answered with {@link changed}. */
 export const deleteTaskChanged = (connection: Connection) =>
   Operation.make(
-    Request.del("tasks").pipe(at(connection), taskPath(TaskId), tunnel),
+    Request.del("/tasks").pipe(
+      at(connection),
+      Request.path`/${taskId}`,
+      tunnel,
+    ),
     changed,
   );
 
 /** A raw PUT without the tunnel: the control case that the gateway refuses. */
 export const replaceTaskUntunnelled = (connection: Connection) =>
   Operation.make(
-    Request.put("tasks").pipe(
+    Request.put("/tasks").pipe(
       at(connection),
-      taskPath(TaskId),
+      Request.path`/${taskId}`,
       Request.body(Body.jsonSchema(TaskReplacement)),
     ),
     Response.status(200, Response.tag("Task", Body.jsonSchema(Task))).pipe(
@@ -497,7 +502,7 @@ export const replaceTaskUntunnelled = (connection: Connection) =>
 /** A raw DELETE without the tunnel: the control case that the gateway refuses. */
 export const deleteTaskUntunnelled = (connection: Connection) =>
   Operation.make(
-    Request.del("tasks").pipe(at(connection), taskPath(TaskId)),
+    Request.del("/tasks").pipe(at(connection), Request.path`/${taskId}`),
     Response.status(204, Response.tag("Deleted", Body.empty)).pipe(
       Response.orElse(taskRejections),
     ),
@@ -506,7 +511,10 @@ export const deleteTaskUntunnelled = (connection: Connection) =>
 /** QRY-3: one task's history, with the application contract refusing an empty or malformed id. */
 export const taskHistory = (connection: Connection) =>
   Operation.make(
-    Request.get("tasks").pipe(at(connection), taskPath(TaskId, "/history")),
+    Request.get("/tasks").pipe(
+      at(connection),
+      Request.path`/${taskId}/history`,
+    ),
     Response.status(
       200,
       Response.tag("History", Body.jsonSchema(History)),
@@ -519,9 +527,9 @@ export const taskHistory = (connection: Connection) =>
  */
 export const taskHistoryAnyId = (connection: Connection) =>
   Operation.make(
-    Request.get("tasks").pipe(
+    Request.get("/tasks").pipe(
       at(connection),
-      taskPath(Schema.String, "/history"),
+      Request.path`/${Request.pathValue("id")}/history`,
     ),
     Response.status(
       200,
@@ -554,9 +562,9 @@ export const quote = <EP, RP>(
   policy: Policy.Policy<EP, RP>,
 ) =>
   Operation.make(
-    Request.get("rates").pipe(
+    Request.get("/rates").pipe(
       at(connection),
-      Request.path(Pair, (pair, encode) => `rates/${encode(pair)}`),
+      Request.path`/${Request.pathValue("pair", Pair)}`,
     ),
     Response.status(200, Body.jsonSchema(Quote)),
     { policy },
@@ -567,9 +575,9 @@ export const report = <EP, RP>(
   policy: Policy.Policy<EP, RP>,
 ) =>
   Operation.make(
-    Request.get("reports").pipe(
+    Request.get("/reports").pipe(
       at(connection),
-      Request.path(Schema.String, (name, encode) => `reports/${encode(name)}`),
+      Request.path`/${Request.pathValue("name")}`,
     ),
     Response.status(200, Body.jsonSchema(Report)),
     { policy },
@@ -580,9 +588,9 @@ export const exportStatus = <EP, RP>(
   policy: Policy.Policy<EP, RP>,
 ) =>
   Operation.make(
-    Request.get("exports").pipe(
+    Request.get("/exports").pipe(
       at(connection),
-      Request.path(Schema.String, (name, encode) => `exports/${encode(name)}`),
+      Request.path`/${Request.pathValue("name")}`,
     ),
     Response.status(200, Body.jsonSchema(ExportStatus)),
     { policy },
@@ -676,17 +684,14 @@ export const listInvoicesText = (
     },
   );
 
-const invoicePath = Request.path(
-  Schema.Int,
-  (id, encode) => `invoices/${encode(String(id))}`,
-);
+const invoiceId = Request.pathValue("id", Schema.Int);
 
 /** Replace an invoice, tunnelled, encoding every value through its schema. */
 export const replaceInvoice = (connection: Connection) =>
   Operation.make(
-    Request.put("invoices").pipe(
+    Request.put("/invoices").pipe(
       at(connection),
-      invoicePath,
+      Request.path`/${invoiceId}`,
       Request.body(Body.jsonSchema(Invoice)),
       tunnel,
     ),
@@ -699,9 +704,9 @@ export const replaceInvoice = (connection: Connection) =>
 /** Replace an invoice with an untyped body: the control for the service's own validation. */
 export const replaceInvoiceUnchecked = (connection: Connection) =>
   Operation.make(
-    Request.put("invoices").pipe(
+    Request.put("/invoices").pipe(
       at(connection),
-      invoicePath,
+      Request.path`/${invoiceId}`,
       Request.body(Body.json),
       tunnel,
     ),
