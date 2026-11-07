@@ -416,7 +416,7 @@ const search = Request.get("https://api.example.test/things").pipe(
 ```
 
 This applies at any depth and to a transformation between objects. Every renamed struct takes this
-strict pass, about 14 to 34 µs per request. A value takes its names from one side, so
+strict pass, which costs more than a plain struct's read. A value takes its names from one side, so
 `{ a: "x", B: "y" }`, which mixes the names of two renamed fields, is a `SchemaError` that names
 `B`.
 
@@ -457,6 +457,10 @@ schema took it: a union of `{ a }` and `{ b }` stacked with `{ b }`, in either o
 `{ a, b }` whole. A field no schema in the group took is still refused, so two unions that each
 leave `b` to the other refuse it. A union keeps the member it chose, so a union of `{ b }` and
 `{ a, c }` stacked with `{ b }` refuses `{ a, b, c }`. Put `{ a, c }` first.
+
+Two members can state one field under different wire names. A union of `{ c }` and `{ c }` renamed
+to `C` takes the first member that fits, so `{ C: "s" }` goes out as `?c=s`, with no error. Bind the
+member you mean directly when the name on the wire matters.
 
 ### A schema states the shape of its group
 

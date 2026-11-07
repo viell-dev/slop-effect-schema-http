@@ -25,28 +25,30 @@ compiles can now fail at run time for some values.
 - Correct what the guides say about a declared `Content-Length`. Effect's Fetch client takes a
   non-empty one off before `fetch` sees it, so `fetch` sends the body's real length, and it neither
   fails nor stalls there. On Node.js an empty one is a transport failure.
-- Keep a caller's field under a union. Effect takes the first member that fits and strips what it
-  does not state, so `{ a, b }` under a union of `{ a }` and `{ a, b }` lost `b` with no error, and
-  a raw `?b=1` then took the caller's place. A schema with a choice between objects is now read
-  strictly first, on the decoded side and again when it encodes, so a member that keeps every field
-  wins, in headers, query, path and bodies, at any depth. The order of the members no longer costs a
-  field, and a wider member need not go first. A key set to `undefined` is no field under such a
-  schema, so `{ a, b: undefined, c }` under a union of `{ a, b? }` and `{ a, c }` now sends `c`,
-  where it used to lose it. A key no member states is still stripped, as a struct strips it, and a
-  schema with no such choice reads as before. An empty union now fails as a `SchemaError`, where it
-  used to die with a defect
-  ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
-- Keep a field a strict read could not see. Where a schema's two sides state different names, a
-  value on the encoded side could fit the decoded side by losing them, with no union involved:
-  `{ A: "x" }` under a struct that renames an optional `a` to `A` sent nothing, a constructor
-  default went out in the caller's place, and so did a raw value under `A`. Such a schema is now
-  read strictly too, at any depth the library can see, so the value goes through the decoder and
-  keeps its field. The same goes for a transformation between objects. A struct reads a stated name
-  however a value holds it, so an accessor on a class, an inherited field and one that is not
-  enumerable are now fields under such a schema, and a value read field by field keeps them on a
-  plain struct too. An ordinary class instance that only a struct can read reads as a plain object
-  there, so a key nothing states is stripped. Every renamed struct now takes the strict pass, about
-  14 to 34 µs per request.
+- **Breaking:** keep a caller's field under a union. A request can now carry a field this code never
+  sent before. Effect takes the first member that fits and strips what it does not state, so
+  `{ a, b }` under a union of `{ a }` and `{ a, b }` lost `b` with no error, and a raw `?b=1` then
+  took the caller's place. A schema with a choice between objects is now read strictly first, on the
+  decoded side and again when it encodes, so a member that keeps every field wins, in headers,
+  query, path and bodies, at any depth. The order of the members no longer costs a field, and a
+  wider member need not go first. A key set to `undefined` is no field under such a schema, so
+  `{ a, b: undefined, c }` under a union of `{ a, b? }` and `{ a, c }` now sends `c`, where it used
+  to lose it. A key no member states is still stripped, as a struct strips it, and a schema with no
+  such choice reads as before. An empty union now fails as a `SchemaError`, where it used to die
+  with a defect ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
+- **Breaking:** keep a field a strict read could not see, so a request can carry a field it lost
+  before. Where a schema's two sides state different names, a value on the encoded side could fit
+  the decoded side by losing them, with no union involved: `{ A: "x" }` under a struct that renames
+  an optional `a` to `A` sent nothing, a constructor default went out in the caller's place, and so
+  did a raw value under `A`. Such a schema is now read strictly too, at any depth the library can
+  see, so the value goes through the decoder and keeps its field. The same goes for a transformation
+  between objects. A struct reads a stated name however a value holds it, so an accessor on a class,
+  an inherited field and one that is not enumerable are now fields under such a schema, and a value
+  read field by field keeps them on a plain struct too. An ordinary class instance that only a
+  struct can read reads as a plain object there, so a key nothing states is stripped. Every renamed
+  struct now takes the strict pass, which measured about 14 to 34 µs per request on one Windows
+  machine with Node.js 24, as [#145](https://github.com/viell-dev/slop-effect-schema-http/pull/145)
+  records.
 - **Breaking:** refuse a value that mixes the names of two renamed fields. `{ a, B }` used to lose
   `B`, and it is now a `SchemaError` that names it.
 - **Breaking:** refuse a field no union member can keep. `{ a, b }` under a union of `{ a }` and

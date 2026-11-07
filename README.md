@@ -77,9 +77,10 @@ versions and provider boundaries.
   Operation, Policy, Interaction, UrlEncoding and Transport, from basic use to advanced behavior.
 - [Limits and recovery](https://viell-dev.github.io/slop-effect-schema-http/limits): compatibility,
   where the library's promise stops, failure stages and bug reporting.
-- [What's in 0.2](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.2) introduces
+- [What's in 0.3](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.3) introduces
   the release and how to update, and [What's in
-  0.1](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.1) the one before it;
+  0.2](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.2) and [What's in
+  0.1](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.1) the earlier ones;
   [Versions](https://viell-dev.github.io/slop-effect-schema-http/versions) covers updates and
   compatibility policy. [CHANGELOG.md](./CHANGELOG.md) records the detailed history.
 

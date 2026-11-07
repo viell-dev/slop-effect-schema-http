@@ -31,10 +31,10 @@ release runs in this order:
      change. Patch releases update it when they change the consumer experience. Keep maintenance
      details in the changelog. Do not publish a draft as a completed release.
    - **`docs/.vitepress/config.ts`:** add a new article to the sidebar.
-   - **Release status:** README, `docs/index.md`, `docs/api.md`, `docs/versions.md` and the release
-     article. Remove any wording that says this release is not published yet, which the checks
-     cannot find. Update the tarball names, download links and checksum examples in
-     `docs/versions.md`.
+   - **Release status:** README, including its list of documents, `docs/index.md`, `docs/api.md`,
+     `docs/versions.md` and the release article. Remove any wording that says this release is not
+     published yet, which the checks cannot find. Update the tarball names, download links and
+     checksum examples in `docs/versions.md`.
    - **Tested versions:** the Node.js, Effect, TypeScript and Playwright versions in
      `docs/limits.md`, CONTRIBUTING and this section. They say what a release was qualified on, so
      dependency updates between releases leave them alone and they catch up here.
