@@ -953,6 +953,18 @@ const renderedPath = <S extends Schema.Top>(
  * // URL: https://api.example.test/v1/customers/a%2Fb/calendars/7
  * ```
  *
+ * @example
+ * ```ts
+ * import { Schema } from "effect";
+ * import { Request } from "viell-effect-schema-http";
+ * const listFolder = Request.get("/files").pipe(
+ *   Request.path(Schema.String, (folder, encode) =>
+ *     folder === "" ? "/" : `/${folder.split("/").map(encode).join("/")}/`,
+ *   ),
+ * );
+ * // Input: { path: "a b/c" }; URL: /files/a%20b/c/
+ * ```
+ *
  * @remarks
  * The path is the constructor's path followed by what each `path` call adds, in order, joined
  * exactly as written. The library adds no `/` and removes none, so `/users` and `42` make
