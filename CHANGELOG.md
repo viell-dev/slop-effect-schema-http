@@ -19,7 +19,7 @@
   This call compiled and ran, and it now fails at run time, for the values that reach it. Add a
   member that holds both fields, or send one of them. A field a schema stacked with the union takes
   is not lost, in headers and query, so that call goes on working. `Draft` requires new `takenQuery`
-  and `takenHeaders` members
+  and `takenHeaders` members, and `Request.Shape` a new `chooses` member
   ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
 - Leave a field with the schema that took it. A union stacked after a schema that holds one of its
   fields used to take that value for a default it could not hold, and a raw value under that name
