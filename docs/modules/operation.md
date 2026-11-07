@@ -78,9 +78,12 @@ suits the common request never prevents a less common one:
 
 <<< ../../examples/modules/operation.ts#adjust
 
-The original never changes. Hold each transform in a named variable and map once per change, or pass
-an arrow function such as `(request) => request.pipe(...)`. To compose several transforms into one,
-define it with `flow` or an ordinary function, then pass that. Each is equally good.
+The original never changes. `firstFive` is an ordinary `Request` transform, so it works on a request
+before any operation exists too, as in `Request.get("/things").pipe(api, firstFive)`.
+
+Hold each transform in a named variable and map once per change, or pass an arrow function such as
+`(request) => request.pipe(...)`. To compose several transforms into one, define it with `flow` or
+an ordinary function, then pass that. Each is equally good.
 
 Hold the `Request` or `Response` transform in the variable, not the `Operation.mapRequest` call. A
 transform like `firstFive` works for any request, and a call on its own has no operation to learn
@@ -126,10 +129,10 @@ adjustable:
 
 A new result **fits** when it is something the current response could already produce, so the
 mapping was written for it. A same-shape replace or a removal fits. So does a stricter schema for
-the same shape. A new shape, a new case, or an `any` result does not, and neither does widening back
-after narrowing, because the check compares with the current response. Nothing is out of reach:
-`Operation.unmap` removes every step, then you change the response and map again. A named generic
-function can serve both shapes:
+the same shape, or a new case with the same result. A new shape, a case with a new result, or an
+`any` result does not, and neither does widening back after narrowing, because the check compares
+with the current response. Nothing is out of reach: `Operation.unmap` removes every step, then you
+change the response and map again. A named generic function can serve both shapes:
 
 <<< ../../examples/modules/operation.ts#unmap
 
