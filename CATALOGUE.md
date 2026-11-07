@@ -1371,7 +1371,8 @@ and on a plain socket listener; [AGENTS.md](./AGENTS.md) describes both, and
 `src/harness/raw.node.test.ts` tests them without any hostile backend. `fetch` below means
 `lane.fetchClient`. EXT-17 covers raw values under a schema at a real service, and EXT-18 to EXT-22
 cover paths, variants and values known late. [Failures on the wire](#failures-on-the-wire) has
-EXT-23 to EXT-28, which go back to strange responses.
+EXT-23 to EXT-28, which go back to strange responses, and
+[A union's fields at the wire](#a-unions-fields-at-the-wire) has EXT-30.
 
 Entries marked limit or defect have tests too, as each entry lists: those statuses record what was
 observed, and a test pins it.
@@ -2867,3 +2868,88 @@ applies to attempts, and the attempt number in `transformClient` starts at 1 for
   CORS filter. Every expected answer is written out from the page and the gzip streams are damaged
   in the test, so nothing is shared with the backend, and `date` is the only mask. Backend-side, in
   `src/conformance/bookings.node.test.ts`, Node lane. Status: tested.
+
+#### A union's fields at the wire
+
+EXT-30 takes the rule of
+[#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134) and
+[#120](https://github.com/viell-dev/slop-effect-schema-http/issues/120) to the wire, in
+`src/scenarios/union-fields.test.ts`, in both lanes, with `echo` and the socket listener. For values
+the library can see, on either side of a schema, a field a caller gave is kept or the request is
+refused. The library's own tests and search state that rule; these pin what arrives, or that nothing
+does. The remaining gaps are listed in
+[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). A status of limit here
+records where the library says the rule stops.
+
+- **EXT-30a** A narrower member first: `Union([{ owner }, { owner, limit }])`, in a query, the same
+  in headers, and in a list of filters in a JSON body. Every field the caller gave arrives. On
+  `0.2.0` the first member took the value and `limit` went. Status: tested.
+  - `[EXT-30a] a narrower member first still sends every query field the caller gave`
+  - `[EXT-30a] a narrower member first still sends every header the caller gave`
+  - `[EXT-30a] a narrower member first still sends every field of a nested JSON body`
+- **EXT-30b** A raw default under that union: `?limit=1` written in the constructor stays when the
+  caller leaves `limit` out, and the caller's value replaces it, once, when given. Status: tested.
+  - `[EXT-30b] a raw default stays when the caller leaves its field out, and goes when the caller gives it`
+- **EXT-30c** Fields no member can hold together, `{ owner, team }` under `Union([{ owner }, { team
+}])`: a `SchemaError`, with an empty ledger, naming the field and its whole path in a body, and
+  never holding the value. Status: tested.
+  - `[EXT-30c] fields no member can hold together are refused in a query, by name and never by value, and nothing is sent`
+  - `[EXT-30c] fields no member can hold together are refused in a body, by their whole path, and nothing is sent`
+- **EXT-30d** A union stacked with a struct that takes one of its fields, in both orders: both
+  fields arrive once. Status: tested.
+  - `[EXT-30d] a union stacked with a struct sends both fields, in either order`
+- **EXT-30e** Two stacked unions that each state a field: neither can leave it to the other, so the
+  group is refused, with nothing sent and no value in the error. Status: tested.
+  - `[EXT-30e] two stacked unions that each state a field leave it to neither, and are refused`
+- **EXT-30f** A raw edit of a field with a decoding default, after the schema:
+  `Request.InvalidRequest` before anything is sent, saying that the value could never reach the
+  client. Before the schema the same edit is an ordinary default, and the schema's value goes out.
+  Status: tested.
+  - `[EXT-30f] a raw edit of a field with a decoding default is refused before anything is sent`
+  - `[EXT-30f] control: the same edit before the schema is an ordinary default, and the schema's value goes out`
+- **EXT-30g** Controls for EXT-30f. Under the `omit` strategy the schema never writes the name, so
+  the same edit is refused as lost, by the other message. Under `Schema.OptionFromOptionalKey` a raw
+  edit stands. Status: tested.
+  - `[EXT-30g] control: under the omit strategy the schema never writes the name, so the same edit is refused as lost`
+  - `[EXT-30g] control: an optional field that reads absence as None leaves a raw edit to stand`
+- **EXT-30h** What either side of a schema states can be seen. Under `Schema.OptionFromNullOr` and
+  in an object given to `Schema.fromJsonString`, a wider member wins, and fields no member holds
+  together are refused with nothing sent. Status: tested.
+  - `[EXT-30h] a wider member wins under OptionFromNullOr and under an object given to a field that holds JSON, because a side of each schema states it`
+  - `[EXT-30h] fields no member can hold together are refused under OptionFromNullOr, and nothing is sent`
+  - `[EXT-30h] fields no member can hold together are refused in an object given to a field that holds JSON, and nothing is sent`
+- **EXT-30i** What is opaque: text given as text, and `Schema.Option`, a declaration. Fields no
+  member holds together are not refused, and the first member's go out, as on `0.2.0`. Status:
+  limit.
+  - `[EXT-30i] limit: fields no member can hold together in text given as text are not refused, and the first member's go out`
+  - `[EXT-30i] limit: fields no member can hold together inside Schema.Option are not refused, and the first member's go out`
+- **EXT-30j** A stray key inside an opaque value fails the whole strict read, because
+  `onExcessProperty` applies to a read and not to a part, so a visible union beside it is read
+  loosely, and a wider member's field is refused, with nothing sent. Loud, and stated in the design
+  page. Status: limit.
+  - `[EXT-30j] limit: a stray key inside an Option beside a visible union makes the union read loosely, so a wider member's field is refused, and nothing is sent`
+- **EXT-30k** A renamed struct takes its names from one side: `{ a, B }` is refused by name, with
+  nothing sent, and each side alone goes out under the wire names. Status: tested.
+  - `[EXT-30k] names from two sides of a renamed struct are refused, by name and never by value, and nothing is sent`
+  - `[EXT-30k] control: each side of the renamed struct alone goes out under the wire names`
+- **EXT-30l** One field under both of its names with different values: the decoded name's goes out
+  and the encoded name's goes, with no error, because the whole value is not on the encoded side.
+  Item 6 of #143. Status: limit.
+  - `[EXT-30l] limit: one field under both of its names under different values keeps the decoded name's, with no error`
+- **EXT-30m** A value a wider member refuses, `limit` under `Schema.FiniteFromString`, is refused
+  rather than cut down to the narrower member. Status: tested.
+  - `[EXT-30m] a value a wider member refuses is refused, and is not cut down to the narrower member`
+- **EXT-30n** A key set to `undefined` under a union is no field, and the request goes out without
+  it. Status: tested.
+  - `[EXT-30n] a key set to undefined under a union is no field, so the request goes out without it`
+- **EXT-30o** A tag has already chosen, so a key only another tag's member states goes, with no
+  error. Status: tested.
+  - `[EXT-30o] a tag has already chosen, so a key only another tag's member states goes, with no error`
+- **EXT-30p** A union chooses before it knows what a stacked schema took, so `Union([{ team }, {
+owner, limit }])` stacked with `{ team }` refuses all three fields, and bound directly, the member
+  goes out whole. Item 1 of #143. Status: limit.
+  - `[EXT-30p] limit: a union chooses before it knows what a stacked schema took, so its wider member is refused beside that schema`
+  - `[EXT-30p] control: bound directly, the member goes out whole beside that schema`
+- **EXT-30q** A field whose own encode step omits it goes out without it. The schema decided that,
+  so it is no loss the library can answer for. Status: tested.
+  - `[EXT-30q] a value whose encode step drops a field is the schema's own decision, and goes out without it`
