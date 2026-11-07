@@ -1,9 +1,9 @@
 /**
- * The declarations of EXT-12 to EXT-16, sent to the neutral `echo` helper. They live here so that the
- * raw client in the Node lane and `fetch` in both lanes send the very same request. `echo` answers
- * their paths with 404 and the text `Not Found`, so each declares that, which also makes `text/plain`
- * their automatic `Accept`. Each takes the client middleware to apply last, so that a test can see
- * what the client received, and leaves the client itself to the caller.
+ * The declarations of EXT-12 to EXT-16, sent to the neutral `echo` helper. They live here so that
+ * the raw client in the Node lane and `fetch` in both lanes send the very same request. `echo`
+ * answers their paths with 404 and the text `Not Found`, so each declares that, which also makes
+ * `text/plain` their automatic `Accept`. Each takes the client middleware to apply last, so that a
+ * test can see what the client received, and leaves the client itself to the caller.
  */
 import { Effect, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";

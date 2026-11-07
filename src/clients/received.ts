@@ -1,8 +1,8 @@
 /**
- * What a client received, for the requests a platform changes or refuses (EXT-9 to EXT-16): the request
- * a `HttpClient.tapRequest` sees when it is applied last in `transformClient`, after any other
- * middleware. A browser cannot send these shapes, so the ledger alone cannot tell a request the
- * platform changed from one the library lost before the platform saw it.
+ * What a client received, for the requests a platform changes or refuses (EXT-9 to EXT-16): the
+ * request a `HttpClient.tapRequest` sees when it is applied last in `transformClient`, after any
+ * other middleware. A browser cannot send these shapes, so the ledger alone cannot tell a request
+ * the platform changed from one the library lost before the platform saw it.
  */
 import { Effect, Option } from "effect";
 import { HttpClient, type HttpClientRequest } from "effect/http";
