@@ -1,8 +1,8 @@
 # Modules
 
-The guides below describe the public API of `0.1.0`. Start with the four modules that make one HTTP
-operation: `Request` describes what to send, `Body` reads and writes its payload, `Response`
-describes the answers, and `Operation` executes them together.
+The guides below describe the public API on `main`, which is ahead of the `0.1.0` release. Start
+with the four modules that make one HTTP operation: `Request` describes what to send, `Body` reads
+and writes its payload, `Response` describes the answers, and `Operation` executes them together.
 
 ## Build and execute a contract
 
@@ -44,7 +44,7 @@ Your editor shows inferred input, result, error and service types. Each module g
 example, covers ordinary composition, then explains advanced behavior. Links to source signatures
 remain at the end for exact overloads and generic types.
 
-Use the [end-to-end guide](./usage.md) to see the pieces together and the [design
-contract](./design.md) for their precise guarantees. Effect's [v4
-documentation](https://effect.website/docs/v4/getting-started) covers the underlying Effect, Schema,
-Layer and Scope APIs.
+Use the [end-to-end guide](./usage.md) to see the pieces together, [Recipes](./recipes.md) for
+everyday tasks that combine them, and the [design contract](./design.md) for their precise
+guarantees. Effect's [v4 documentation](https://effect.website/docs/v4/getting-started) covers the
+underlying Effect, Schema, Layer and Scope APIs.

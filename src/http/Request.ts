@@ -778,7 +778,7 @@ export const headers = <
  * import { Schema } from "effect";
  * import { Request } from "viell-effect-schema-http";
  * const search = Request.get("https://api.example.test/users").pipe(
- *   Request.query(Schema.Struct({ page: Schema.NumberFromString })),
+ *   Request.query(Schema.Struct({ page: Schema.FiniteFromString })),
  * );
  * // Input: { query: { page: 2 } }; URL query: ?page=2
  * ```
@@ -1193,7 +1193,7 @@ export type Unbound<I, K extends Group> = K extends keyof I
  * import { Schema } from "effect";
  * import { Request } from "viell-effect-schema-http";
  * const paged = Request.get("https://api.example.test/things").pipe(
- *   Request.query(Schema.Struct({ page: Schema.NumberFromString })),
+ *   Request.query(Schema.Struct({ page: Schema.FiniteFromString })),
  * );
  * const sorted = paged.pipe(
  *   Request.unbind("query"),

@@ -260,7 +260,7 @@ export const mapEffect =
  * ```ts
  * import { Schema } from "effect";
  * import { Body } from "viell-effect-schema-http";
- * const numberFromText = Body.text.pipe(Body.schema(Schema.NumberFromString));
+ * const numberFromText = Body.text.pipe(Body.schema(Schema.FiniteFromString));
  * // Decodes the text "42" to the number 42.
  * ```
  *
