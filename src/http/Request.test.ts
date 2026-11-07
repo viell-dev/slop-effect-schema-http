@@ -3675,6 +3675,28 @@ describe("a schema states the shape of its group", () => {
       }),
     );
 
+    it.effect("does not require what only some members of a union write", () =>
+      Effect.gen(function* () {
+        const Some = Schema.Union([
+          Schema.Struct({ a: Schema.String, b: Schema.String }),
+          Schema.Struct({
+            a: Schema.String,
+            b: Schema.String,
+            d: Schema.String,
+          }),
+          Schema.Struct({
+            a: Schema.String,
+            c: Schema.optional(Schema.String),
+          }),
+        ]);
+        const request = Request.get("/x").pipe(
+          Request.query(Some),
+          Request.setQuery("b", "1"),
+        );
+        expect(yield* urlOf(request, { query: { a: "x" } })).toBe("/x?a=x&b=1");
+      }),
+    );
+
     it.effect("states literal record keys as names", () =>
       Effect.gen(function* () {
         const Named = Schema.Record(Schema.Literals(["a", "b"]), Schema.String);
