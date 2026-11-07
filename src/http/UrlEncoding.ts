@@ -69,7 +69,9 @@ export interface Service {
    * @remarks
    * Text written in a request's constructor stays as written and is not passed here. Where it
    * stands between other entries, each run of them is rendered by a separate call, keeping the
-   * order of the query. A request with no entries gets one call with an empty array.
+   * order of the query. A request with no entries gets one call with an empty array, and a query
+   * made only of written text gets no call, so add a fixed entry with `Request.setQuery` in a
+   * shared transform rather than here.
    */
   readonly query: (entries: Query) => string;
   /**

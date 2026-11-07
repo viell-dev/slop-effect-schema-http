@@ -2196,7 +2196,7 @@ describe("automatic body fields", () => {
     }),
   );
 
-  it.effect("ends a removal with a later declaration", () =>
+  it.effect("lets a later declaration win over a removal", () =>
     Effect.gen(function* () {
       const set = yield* compile(
         post.pipe(
@@ -2216,7 +2216,20 @@ describe("automatic body fields", () => {
         hello,
       );
       expect(bodyFieldsOf(appended).type).toBe("application/weird");
-      expect(appended.removedHeaders).toEqual(new Set());
+    }),
+  );
+
+  it.effect("keeps a removal when a computed value declares nothing", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compile(
+        post.pipe(
+          Request.removeHeader("content-type"),
+          Request.setHeader("Content-Type", () => undefined),
+          Request.body(Body.text),
+        ),
+        hello,
+      );
+      expect(bodyFieldsOf(compiled).type).toBeUndefined();
     }),
   );
 

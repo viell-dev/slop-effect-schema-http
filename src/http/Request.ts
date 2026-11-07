@@ -235,7 +235,8 @@ const foldHeader: Fields.Fold = (name) => name.toLowerCase();
 const editHeaders =
   (
     edit: (fields: Fields.Fields) => Fields.Fields,
-    removed: (names: ReadonlySet<string>) => ReadonlySet<string>,
+    removed: (names: ReadonlySet<string>) => ReadonlySet<string> = (names) =>
+      names,
   ) =>
   <I, E, R, Q extends boolean>(
     self: Request<I, E, R, false, Q>,
@@ -248,10 +249,6 @@ const editHeaders =
       },
       self.prepare,
     );
-
-/** Declaring a name ends an earlier removal of it. */
-const endRemoval = (name: string) => (names: ReadonlySet<string>) =>
-  new Set(Array.from(names).filter((entry) => entry !== foldHeader(name)));
 
 const editQuery =
   (
@@ -276,10 +273,7 @@ const editQuery =
  * body. Unavailable after a header schema is bound.
  */
 export const setHeader = (name: string, value: FieldValue) =>
-  editHeaders(
-    (fields) => Fields.set(fields, name, value, foldHeader),
-    endRemoval(name),
-  );
+  editHeaders((fields) => Fields.set(fields, name, value, foldHeader));
 
 /**
  * Add a raw header line after the existing lines, preserving repetition.
@@ -289,7 +283,7 @@ export const setHeader = (name: string, value: FieldValue) =>
  * separate lines requires a provider that supports them; Fetch may combine or restrict headers.
  */
 export const appendHeader = (name: string, value: FieldValue) =>
-  editHeaders((fields) => Fields.append(fields, name, value), endRemoval(name));
+  editHeaders((fields) => Fields.append(fields, name, value));
 
 /**
  * Remove a raw header, or only its declarations with the supplied fixed value.
@@ -301,7 +295,8 @@ export const appendHeader = (name: string, value: FieldValue) =>
  * Without a value, this also stops the library's automatic value for that name: an operation's
  * `Accept`, or a body's `Content-Type` and `Content-Length`. It stops only that. A value that a
  * later declaration, a header schema or {@link mapEffect} supplies still goes out, and the client
- * may add its own. A removal limited to one value stops nothing, as the name may still be declared.
+ * may add its own. A computed value that returns `undefined` declares nothing, so the removal stays
+ * in force. A removal limited to one value stops nothing, as the name may still be declared.
  */
 export const removeHeader = (name: string, value?: string) =>
   editHeaders(
