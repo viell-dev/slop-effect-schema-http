@@ -5,6 +5,7 @@ import {
   ConfigProvider,
   Context,
   Data,
+  DateTime,
   Deferred,
   Effect,
   Exit,
@@ -2399,6 +2400,456 @@ describe("Request.query", () => {
     void Request.compile(paged, { query: { page: "2" } });
     // @ts-expect-error: a boolean is on neither side of the schema
     void Request.compile(paged, { query: { page: true } });
+  });
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/110
+describe("dates in a query", () => {
+  const noon = new Date("2026-11-07T12:00:00.000Z");
+  const iso = "2026-11-07T12%3A00%3A00.000Z";
+  const noonUtc = DateTime.makeUnsafe(noon);
+
+  describe("the sides of a schema", () => {
+    it.effect("`Schema.Date` takes a `Date` and carries ISO text", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots").pipe(
+          Request.query(Schema.Struct({ from: Schema.Date })),
+        );
+        expect(yield* urlOf(request, { query: { from: noon } })).toBe(
+          `/slots?from=${iso}`,
+        );
+      }),
+    );
+
+    it.effect("`Schema.DateFromString` takes a `Date` or its text", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots").pipe(
+          Request.query(Schema.Struct({ from: Schema.DateFromString })),
+        );
+        expect(yield* urlOf(request, { query: { from: noon } })).toBe(
+          `/slots?from=${iso}`,
+        );
+        expect(
+          yield* urlOf(request, { query: { from: noon.toISOString() } }),
+        ).toBe(`/slots?from=${iso}`);
+      }),
+    );
+
+    it.effect("a schema from a `Date` to another type takes either", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots").pipe(
+          Request.query(Schema.Struct({ from: Schema.DateTimeUtcFromDate })),
+        );
+        expect(yield* urlOf(request, { query: { from: noonUtc } })).toBe(
+          `/slots?from=${iso}`,
+        );
+        expect(yield* urlOf(request, { query: { from: noon } })).toBe(
+          `/slots?from=${iso}`,
+        );
+      }),
+    );
+
+    it.effect("takes either side of such a schema beside another field", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots").pipe(
+          Request.query(
+            Schema.Struct({
+              from: Schema.DateTimeUtcFromDate,
+              limit: Schema.FiniteFromString,
+            }),
+          ),
+        );
+        for (const query of [
+          { from: noonUtc, limit: 5 },
+          { from: noon, limit: "5" },
+          { from: noon, limit: 5 },
+          { from: noonUtc, limit: "5" },
+        ])
+          expect(yield* urlOf(request, { query })).toBe(
+            `/slots?from=${iso}&limit=5`,
+          );
+      }),
+    );
+
+    it.effect("mixes with other fields, and repeats in a list", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots").pipe(
+          Request.query(
+            Schema.Struct({
+              at: Schema.Array(Schema.Date),
+              limit: Schema.FiniteFromString,
+            }),
+          ),
+        );
+        expect(
+          yield* urlOf(request, { query: { at: [noon, noon], limit: "5" } }),
+        ).toBe(`/slots?at=${iso}&at=${iso}&limit=5`);
+      }),
+    );
+
+    it.effect("writes a `Date` in a record or a list of pairs", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/slots").pipe(
+              Request.query(Schema.Record(Schema.String, Schema.Date)),
+            ),
+            { query: { from: noon } },
+          ),
+        ).toBe(`/slots?from=${iso}`);
+        expect(
+          yield* urlOf(
+            Request.get("/slots").pipe(
+              Request.query(
+                Schema.Array(Schema.Tuple([Schema.String, Schema.Date])),
+              ),
+            ),
+            { query: [["from", noon]] },
+          ),
+        ).toBe(`/slots?from=${iso}`);
+      }),
+    );
+
+    it.effect("still keeps a `null` as a bare key beside a `Date`", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots").pipe(
+          Request.query(Schema.Struct({ from: Schema.NullOr(Schema.Date) })),
+        );
+        expect(yield* urlOf(request, { query: { from: null } })).toBe(
+          "/slots?from",
+        );
+      }),
+    );
+
+    it.effect("refuses an invalid `Date` with a schema error", () =>
+      Effect.gen(function* () {
+        const invalid = new Date(Number.NaN);
+        for (const contract of [
+          Schema.Date,
+          Schema.DateFromString,
+          Schema.DateTimeUtcFromDate,
+        ]) {
+          const error = yield* Effect.flip(
+            urlOf(
+              Request.get("/slots").pipe(
+                Request.query(Schema.Struct({ from: contract })),
+              ),
+              { query: { from: invalid } } as never,
+            ),
+          );
+          expect(error._tag).toBe("SchemaError");
+        }
+      }),
+    );
+
+    it("takes a `Date` only where a schema says so", () => {
+      const request = Request.get("/").pipe(
+        Request.query(Schema.Struct({ from: Schema.Date })),
+      );
+      void Request.compile(request, { query: { from: noon } });
+      // @ts-expect-error: `Schema.Date` is a `Date` on both sides, so text is on neither
+      void Request.compile(request, { query: { from: "2026-11-07" } });
+    });
+  });
+
+  describe("a default under a field that encodes to a `Date`", () => {
+    const Slots = Schema.Struct({ from: Schema.optional(Schema.Date) });
+
+    it.effect("is read from its text and goes through the schema", () =>
+      Effect.gen(function* () {
+        const request = Request.get(
+          "/slots?from=2026-11-07T12:00:00.000Z",
+        ).pipe(Request.query(Slots));
+        expect(yield* urlOf(request, { query: {} })).toBe(`/slots?from=${iso}`);
+      }),
+    );
+
+    it.effect("loses its exact spelling, as a number's does", () =>
+      Effect.gen(function* () {
+        for (const written of [
+          "2026-11-07",
+          "2026-11-07T12:00Z",
+          "2026-11-07T14:00:00+02:00",
+        ]) {
+          const request = Request.get("/slots").pipe(
+            Request.setQuery("from", written),
+            Request.query(Slots),
+          );
+          const url = yield* urlOf(request, { query: {} });
+          expect(url).toBe(
+            `/slots?from=${encodeURIComponent(new Date(written).toISOString())}`,
+          );
+        }
+      }),
+    );
+
+    it.effect("gives way to what the caller passes", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots?from=soon").pipe(
+          Request.query(Slots),
+        );
+        expect(yield* urlOf(request, { query: { from: noon } })).toBe(
+          `/slots?from=${iso}`,
+        );
+      }),
+    );
+
+    it.effect("is refused when it holds no date, and never repeated", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots?from=soon").pipe(
+          Request.query(Slots),
+        );
+        const error = yield* refusal(request, { query: {} });
+        expect(error.message).toContain('"from"');
+        expect(error.message).not.toContain("soon");
+      }),
+    );
+
+    it.effect("is refused under a declaration that accepts any `Date`", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots?from=soon").pipe(
+          Request.query(
+            Schema.Struct({ from: Schema.optional(Schema.instanceOf(Date)) }),
+          ),
+        );
+        expect((yield* refusal(request, { query: {} })).message).toContain(
+          '"from"',
+        );
+      }),
+    );
+
+    it.effect("is refused when a check on the `Date` refuses it", () =>
+      Effect.gen(function* () {
+        const early = new Date("2026-01-01T00:00:00.000Z");
+        const Early = Schema.Date.check(
+          Schema.makeFilter((date: Date) => date.getTime() <= early.getTime()),
+        );
+        const fields = Schema.Struct({ from: Schema.optional(Early) });
+        expect(
+          yield* urlOf(
+            Request.get("/slots?from=2025-01-01").pipe(Request.query(fields)),
+            { query: {} },
+          ),
+        ).toBe("/slots?from=2025-01-01T00%3A00%3A00.000Z");
+        yield* refusal(
+          Request.get("/slots?from=2026-11-07").pipe(Request.query(fields)),
+          { query: {} },
+        );
+      }),
+    );
+
+    it.effect("fits a list, and each repeat is read", () =>
+      Effect.gen(function* () {
+        const Days = Schema.Struct({
+          day: Schema.optional(Schema.Array(Schema.Date)),
+        });
+        expect(
+          yield* urlOf(
+            Request.get("/slots?day=2026-11-07").pipe(Request.query(Days)),
+            { query: {} },
+          ),
+        ).toBe("/slots?day=2026-11-07T00%3A00%3A00.000Z");
+        expect(
+          yield* urlOf(
+            Request.get("/slots?day=2026-11-07&day=2026-11-08").pipe(
+              Request.query(Days),
+            ),
+            { query: {} },
+          ),
+        ).toBe(
+          "/slots?day=2026-11-07T00%3A00%3A00.000Z&day=2026-11-08T00%3A00%3A00.000Z",
+        );
+      }),
+    );
+
+    it.effect("works under a schema to another type, and under a record", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/slots?from=2026-11-07T12:00:00.000Z").pipe(
+              Request.query(
+                Schema.Struct({
+                  from: Schema.optional(Schema.DateTimeUtcFromDate),
+                }),
+              ),
+            ),
+            { query: {} },
+          ),
+        ).toBe(`/slots?from=${iso}`);
+        expect(
+          yield* urlOf(
+            Request.get("/slots?from=2026-11-07T12:00:00.000Z").pipe(
+              Request.query(Schema.Record(Schema.String, Schema.Date)),
+            ),
+            { query: {} },
+          ),
+        ).toBe(`/slots?from=${iso}`);
+      }),
+    );
+
+    it.effect("keeps a bare key for a field that also takes `null`", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots?from").pipe(
+          Request.query(
+            Schema.Struct({
+              from: Schema.optional(Schema.NullOr(Schema.Date)),
+            }),
+          ),
+        );
+        expect(yield* urlOf(request, { query: {} })).toBe("/slots?from");
+      }),
+    );
+
+    it.effect("stays text where the field can hold text", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots?from=2026-11-07").pipe(
+          Request.query(
+            Schema.Struct({
+              from: Schema.optional(Schema.Union([Schema.Date, Schema.String])),
+            }),
+          ),
+        );
+        expect(yield* urlOf(request, { query: {} })).toBe(
+          "/slots?from=2026-11-07",
+        );
+      }),
+    );
+
+    it.effect("stays text under a declaration of text", () =>
+      Effect.gen(function* () {
+        const Day = Schema.declare(
+          (input): input is string =>
+            typeof input === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input),
+        );
+        const request = Request.get("/slots?day=2026-11-07").pipe(
+          Request.query(Schema.Struct({ day: Schema.optional(Day) })),
+        );
+        expect(yield* urlOf(request, { query: {} })).toBe(
+          "/slots?day=2026-11-07",
+        );
+      }),
+    );
+
+    it.effect("leaves another declaration's field to refuse the text", () =>
+      Effect.gen(function* () {
+        // A `Moment` is not a query value, so only a cast can get this far.
+        const request = Request.get("/slots?from=2026-11-07").pipe(
+          Request.query(
+            Schema.Struct({ from: Schema.optional(MomentFromSelf) as never }),
+          ),
+        );
+        yield* refusal(request, { query: {} });
+      }),
+    );
+  });
+
+  describe("a raw record", () => {
+    it.effect("writes a `Date` as ISO text", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/slots").pipe(Request.setQuery({ from: noon })),
+            undefined,
+          ),
+        ).toBe(`/slots?from=${iso}`);
+      }),
+    );
+
+    it.effect("repeats a list of them", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/slots").pipe(
+              Request.setQuery({ at: [noon, null, noon] }),
+            ),
+            undefined,
+          ),
+        ).toBe(`/slots?at=${iso}&at&at=${iso}`);
+      }),
+    );
+
+    it.effect("is not changed by a later edit of the `Date`", () =>
+      Effect.gen(function* () {
+        const date = new Date(noon);
+        const request = Request.get("/slots").pipe(
+          Request.setQuery({ from: date }),
+        );
+        date.setTime(0);
+        expect(yield* urlOf(request, undefined)).toBe(`/slots?from=${iso}`);
+      }),
+    );
+
+    it.effect("goes through a schema like any other default", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots").pipe(
+          Request.setQuery({ from: noon }),
+          Request.query(Schema.Struct({ from: Schema.optional(Schema.Date) })),
+        );
+        expect(yield* urlOf(request, { query: {} })).toBe(`/slots?from=${iso}`);
+      }),
+    );
+
+    it.effect("sends an invalid `Date` as its text, with no schema", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/slots").pipe(
+              Request.setQuery({ from: new Date(Number.NaN) }),
+            ),
+            undefined,
+          ),
+        ).toBe("/slots?from=Invalid%20Date");
+      }),
+    );
+
+    it.effect("is refused for an invalid `Date` under a schema", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots").pipe(
+          Request.setQuery({ from: new Date(Number.NaN) }),
+          Request.query(Schema.Struct({ from: Schema.optional(Schema.Date) })),
+        );
+        yield* refusal(request, { query: {} });
+      }),
+    );
+
+    it("takes a `Date` only in the object form", () => {
+      void Request.setQuery({ from: noon });
+      void Request.setQuery({ from: [noon, noon] });
+      // @ts-expect-error: the two-argument form takes text, as it always has
+      void Request.setQuery("from", noon);
+      // @ts-expect-error: a function supplies text
+      void Request.setQuery({ from: () => noon });
+    });
+  });
+
+  // `If-Modified-Since` and its kind use the HTTP date format, which is not ISO.
+  describe("headers stay text", () => {
+    it("refuses a header schema that encodes to a `Date`", () => {
+      void Request.headers(
+        // @ts-expect-error: the schema has to write its own text
+        Schema.Struct({ "If-Modified-Since": Schema.Date }),
+      );
+      // @ts-expect-error: header values are text
+      void Request.setHeader({ "If-Modified-Since": noon });
+    });
+
+    it.effect("writes what a schema's own text says", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/slots").pipe(
+          Request.headers(
+            Schema.Struct({
+              "If-Modified-Since": Schema.DateTimeUtcFromHttpDate,
+            }),
+          ),
+        );
+        const compiled = yield* compile(request, {
+          headers: { "If-Modified-Since": noonUtc },
+        });
+        expect(compiled.headerLines).toEqual([
+          ["If-Modified-Since", "Sat, 07 Nov 2026 12:00:00 GMT"],
+        ]);
+      }),
+    );
   });
 });
 
