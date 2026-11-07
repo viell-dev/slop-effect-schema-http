@@ -36,7 +36,7 @@ assert.equal(
 const refusal = await refusedFor(unchanged, {
   query: { owner: "ada", team: "core" },
 });
-assert.match(refusal, /No union member holds this field/);
+assert.match(refusal, /The schema cannot keep this field/);
 assert.match(refusal, /\["team"\]/);
 
 // `undefined` holds no value to lose, so a value built from optional fields keeps working.
@@ -161,6 +161,48 @@ const searchOwner = Request.get(things).pipe(
 // #endregion union-narrow
 const heldMore = { owner: "ada", team: "core" };
 assert.equal(await urlOf(searchOwner, heldMore), `${things}?owner=ada`);
+
+// #region renamed
+const Renamed = Schema.Struct({
+  owner: Schema.optionalKey(Schema.String),
+}).pipe(Schema.encodeKeys({ owner: "user" }));
+const byUser = Request.get(things).pipe(Request.query(Renamed));
+// Input: { query: { user: "ada" } }; URL query: ?user=ada
+// #endregion renamed
+assert.equal(
+  await urlOf(byUser, { query: { user: "ada" } }),
+  `${things}?user=ada`,
+);
+assert.equal(
+  await urlOf(byUser, { query: { owner: "ada" } }),
+  `${things}?user=ada`,
+);
+
+// A value that mixes two renamed fields' names used to lose one, and is now refused.
+const Both = Schema.Struct({
+  a: Schema.optionalKey(Schema.String),
+  b: Schema.optionalKey(Schema.String),
+}).pipe(Schema.encodeKeys({ a: "A", b: "B" }));
+assert.match(
+  await refusedFor(Request.get(things).pipe(Request.query(Both)), {
+    query: { a: "1", B: "2" },
+  }),
+  /\["B"\]/,
+);
+
+// A field need not be a key: an accessor on a class counts, as it does for a struct.
+class Person {
+  readonly owner = "ada";
+  get team() {
+    return "core";
+  }
+}
+assert.equal(
+  await urlOf(Request.get(things).pipe(Request.query(NarrowFirst)), {
+    query: new Person(),
+  }),
+  `${things}?owner=ada&team=core`,
+);
 
 const withDefault = Schema.FiniteFromString.pipe(
   Schema.withDecodingDefaultKey(Effect.succeed("25")),

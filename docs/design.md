@@ -134,23 +134,37 @@ encoded value --> decode --> decoded -> encode --> wire
   through the decoder as a whole, so a shared-type field in it is read as encoded.
 - **Both routes validate.** An encoded value goes through the decoder, so text cannot get past a
   schema. A value on neither side is a compile error.
+- **A value stays on the side it was given on.** Where a schema's two sides state different names, a
+  value on the encoded side can also fit the decoded side by losing them. Under
+  `Struct({ a: optionalKey(String) }).pipe(encodeKeys({ a: "A" }))`, `{ A: "x" }` would be an empty
+  value, and a constructor default would go out in the caller's place. Such a schema is read
+  strictly, as a union is below, at any depth, so that value goes through the decoder. The same goes
+  for a transformation between objects. A value takes its names from one side, so `{ a, B }`, which
+  mixes the names of two renamed fields, is a `SchemaError` that names `B`.
 - **A union keeps what the caller gave.** Effect takes the first member that fits and strips what
   that member does not state, when it reads a value and again when it encodes one. A schema with a
   choice between objects is therefore read strictly, through both steps, so a member that keeps
   every field wins over an earlier one that would strip one, at any depth. What it reads is what the
   caller means: a key set to `undefined` holds nothing, so it is no field, and a key no member
-  states is left out, so neither can push a value out of the member that holds the rest. A strict
-  read that passes has stripped nothing. Anything else is read as Effect reads it, and the result is
-  compared with what went in, so what is lost is what actually went. A schema with no such choice
-  skips this and reads as it always did. Under such a union a schema's own steps can run more than
-  once for a value the strict read refuses.
+  states is left out, so neither can push a value out of the member that holds the rest. A struct
+  reads a stated name however a value holds it, so an accessor on a class, an inherited field and
+  one that is not enumerable are fields, and they become keys first, because a strict read only
+  counts keys. An ordinary class instance that only a struct can read reads as a plain object. A
+  strict read that passes has stripped nothing. Anything else is read as Effect reads it, and the
+  result is compared with what went in, so what is lost is what actually went. A schema with neither
+  choice skips this and reads as it always did. Under such a union a schema's own steps can run more
+  than once for a value the strict read refuses.
 - **A field no member can keep is an error.** Under `Union([Struct({ a }), Struct({ b })])`,
   `{ a, b }` is a `SchemaError` before dispatch, naming the field that would go. The types allow
   that value, and whichever member took it would lose a field the schema states, so the choice
   cannot be made for the caller. A field a wider member states and refuses the value of is the same
   case. Only a real loss counts: a field another schema in the group takes is not lost, as the rule
   on stacked schemas below says. Text that holds JSON, a `Map` and an `Option` cannot be compared,
-  so a value inside one has to read strictly, and even a key no member states is refused there.
+  so a value inside one has to read strictly, and even a key no member states is refused there. A
+  `Map` or an `Option` of a renamed struct is the same case. So is text under a field's wire name
+  where that field holds a union, because the name does not say which field it is. A strict read
+  does not see an accessor as excess, so an accessor on a value inside a `Map` or an `Option` can
+  still be lost, and nothing here can reach it. Use a plain value there.
 - **A key no member states is stripped, as a struct strips it.** That is not a union choosing badly.
   The types did not allow the key, and a stacked schema's fields reach every schema in the group
   this way. So is a key only a member with another tag states, because the tag has already chosen. A

@@ -6063,7 +6063,7 @@ describe("a caller's field under a union", () => {
         const message = yield* schemaFailure(queried(Apart), {
           query: { a: "secret-a", b: "secret-b" },
         });
-        expect(message).toContain("No union member holds this field");
+        expect(message).toContain("The schema cannot keep this field");
         expect(message).toContain('["b"]');
         expect(message).not.toContain("secret");
       }),
@@ -6212,7 +6212,7 @@ describe("a caller's field under a union", () => {
           query: { n: "many" },
         });
         expect(message).toContain("Expected number");
-        expect(message).not.toContain("No union member holds");
+        expect(message).not.toContain("The schema cannot keep");
       }),
     );
   });
@@ -6822,6 +6822,19 @@ describe("a field outside a value's keys", () => {
           body: [new Mixed() as never],
         }),
       ).toContain('[0]["a"]');
+    }),
+  );
+
+  // An `Option` is a declaration, so nothing here can reach the value in it without reading what
+  // Effect holds there, and a strict read does not see an accessor as excess. The design page
+  // states the limit. https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("currently misses an accessor on a value in an Option", () =>
+    Effect.gen(function* () {
+      const InOption = Schema.Struct({ who: Schema.Option(NarrowFirst) });
+      const { request } = yield* compile(posted(InOption), {
+        body: { who: Option.some(new Person()) },
+      });
+      expect(bodyText(request)).not.toContain("ada");
     }),
   );
 
