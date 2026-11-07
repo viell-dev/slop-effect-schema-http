@@ -314,9 +314,9 @@ address, so the library never adds or removes one, and one a server wants goes o
   with slash logic of its own.
 
 The finished path is passed to the client as written, and what the client then does is outside the
-library's promise. Measured on Node.js 24 with Fetch, `//` and a trailing slash are kept and dot
-segments are resolved, including encoded ones. A server may merge `//`. Another client can differ,
-and the library does not promise that an unusual path works.
+library's promise. Measured with Fetch on Node.js 24 and in Chromium, `//` and a trailing slash are
+kept and dot segments are resolved, including encoded ones. A server may merge `//`. Another client
+can differ, and the library does not promise that an unusual path works.
 
 #### Templates and renderers
 
@@ -391,10 +391,11 @@ reorder anything:
 - An encoded dot segment such as `%2e%2e` is encoded again (`%252e%252e`), so it stays literal.
 
 What happens to the URL afterwards is a property of the client. Effect's `HttpClient.make` parses
-the composed URL with the WHATWG `URL` parser, which resolves dot segments. The runner that `make`
-calls also receives the unparsed request, so a provider can send the composed URL unchanged. A
-consumer that must never send a dot segment validates the value in the path schema or replaces
-`UrlEncoding.path`; the default does not restrict every consumer to protect some.
+the composed URL with the WHATWG `URL` parser, which resolves dot segments. A relative URL with no
+base fails there as an invalid URL, except in a browser, where it resolves against the page. The
+runner that `make` calls also receives the unparsed request, so a provider can send the composed URL
+unchanged. A consumer that must never send a dot segment validates the value in the path schema or
+replaces `UrlEncoding.path`; the default does not restrict every consumer to protect some.
 
 Encoded is not the same as safe. A `/` in a value cannot add a segment, but `..` and an empty string
 contain nothing to encode, so a value from a user needs a constraint in its schema, such as
@@ -665,7 +666,8 @@ Retries follow a `Policy`:
 - `Policy.make` takes a schedule and options. One schedule owns the retry budget across every
   reason, and a failing schedule fails the operation with the schedule's error.
 - The `while` option replaces the default classification, `Policy.transient`: timeouts, transport
-  errors, and the statuses 408, 429, 500, 502, 503, and 504.
+  errors, and the statuses 408, 429, 500, 502, 503, and 504. It sees every completed outcome, so
+  `while: () => true` also repeats a 200 that decoded successfully until the schedule ends.
 - Interruption and defects never retry.
 - `Retry-After`, as delay seconds or an HTTP date, is a minimum delay. It also applies when client
   middleware turned the response into an error, such as `HttpClient.filterStatusOk`. Malformed or

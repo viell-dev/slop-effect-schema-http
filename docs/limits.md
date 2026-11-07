@@ -47,24 +47,28 @@ This covers paths, constructor query text, header names and declared headers, fr
 and bodies on GET and HEAD. Wherever these guides say something is "passed to the client as
 written", they describe what the library hands over, not what reaches a server.
 
-These are the paths a server received from Effect's Fetch client on Node.js:
+These are the paths a server received from Effect's Fetch client on Node.js. Chromium gave the same
+result for each shape it was tested with:
 
-| Path passed to the client | Path the server received |
-| ------------------------- | ------------------------ |
-| `/a//b`                   | `/a//b`                  |
-| `//a`                     | `//a`                    |
-| `/a/`                     | `/a/`                    |
-| `/a/./b`                  | `/a/b`                   |
-| `/a/../b`                 | `/b`                     |
-| `/a/%2e%2e/b`             | `/b`                     |
-| `/a/b/..`                 | `/a/`                    |
+| Path passed to the client | Path the server received | Tested in Chromium |
+| ------------------------- | ------------------------ | ------------------ |
+| `/a//b`                   | `/a//b`                  | Yes                |
+| `//a`                     | `//a`                    | No                 |
+| `/a/`                     | `/a/`                    | Yes                |
+| `/a/./b`                  | `/a/b`                   | Yes                |
+| `/a/../b`                 | `/b`                     | Yes                |
+| `/a/%2e%2e/b`             | `/b`                     | Yes                |
+| `/a/b/..`                 | `/a/`                    | No                 |
 
-So that client keeps repeated and trailing slashes, and resolves dot segments, including encoded
-ones. A server may then merge `//`, and another client can differ.
+So Fetch keeps repeated and trailing slashes, and resolves dot segments, including encoded ones. A
+server may then merge `//`, and another client can differ.
 
 Fetch makes other choices of its own. It sends lowercase header names, does not send a fragment,
 refuses a body on GET or HEAD, and refuses a method such as `TRACE`. A service that needs one of
 those needs a provider that can send it.
+
+A relative URL with no base depends on the platform. Node refuses it as an invalid URL, and a
+browser resolves it against the page, so the request goes to the page's own server, with no error.
 
 The library joins path text exactly, so a slash at a boundary is yours to get right. The Request
 guide [recommends a convention](./modules/request.md#add-to-a-path): start each piece with `/`, do

@@ -16,6 +16,69 @@ const unchangedDefinition = Request.get("/users").pipe(
 );
 assert.equal(await urlOf(unchangedDefinition, { path: 42 }), "/users/users/42");
 
+// A label was never part of the URL on 0.1, and now it is.
+const renderUser = Request.path(
+  Schema.String,
+  (id, encode) => `/${encode(id)}`,
+);
+const labelSeen: Array<string> = [];
+const labelClient = Effect.provideService(
+  HttpClient.HttpClient,
+  HttpClient.make((native, url) => {
+    labelSeen.push(url.href);
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(native, new globalThis.Response("ok")),
+    );
+  }),
+);
+const labelled = Operation.make(
+  Request.get("{location}").pipe(renderUser),
+  Response.status(200, Body.text),
+);
+const invalidUrl = await Effect.runPromise(
+  Effect.flip(labelled.execute({ path: "a" })).pipe(labelClient),
+);
+assert.ok(invalidUrl._tag === "HttpClientError");
+assert.equal(invalidUrl.reason._tag, "InvalidUrlError");
+await Effect.runPromise(
+  Operation.make(
+    Request.get("{location}").pipe(
+      Request.baseUrl("https://api.example.test"),
+      renderUser,
+    ),
+    Response.status(200, Body.text),
+  )
+    .execute({ path: "a" })
+    .pipe(labelClient),
+);
+assert.deepEqual(labelSeen, ["https://api.example.test/%7Blocation%7D/a"]);
+
+// A constructor that carried a query or fragment keeps its path text, with no error.
+assert.equal(
+  await urlOf(
+    Request.get("/elsewhere?lang=de#closing").pipe(
+      Request.path(
+        Schema.FiniteFromString,
+        (id, encode) => `/users/${encode(id)}`,
+      ),
+    ),
+    { path: 42 },
+  ),
+  "/elsewhere/users/42?lang=de",
+);
+
+// #region path-carrier
+const getUserInGerman = Request.get("?lang=de#closing").pipe(
+  Request.path(Schema.FiniteFromString, (id, encode) => `/users/${encode(id)}`),
+);
+// /users/42?lang=de, and the fragment stays on the request
+// #endregion path-carrier
+const carried = await Effect.runPromise(
+  Request.compile(getUserInGerman, { path: 42 }),
+);
+assert.equal(carried.request.url, "/users/42?lang=de");
+assert.deepEqual(carried.request.hash, Option.some("closing"));
+
 // #region path-whole
 const getUser = Request.get("").pipe(
   Request.path(Schema.FiniteFromString, (id, encode) => `/users/${encode(id)}`),
@@ -30,6 +93,28 @@ const getUserUnderUsers = Request.get("/users").pipe(
 // #endregion path-tail
 assert.equal(await urlOf(getUserUnderUsers, { path: 42 }), "/users/42");
 
+// A trailing slash left in the constructor gives a double slash, with no error.
+assert.equal(
+  await urlOf(
+    Request.get("/users/").pipe(
+      Request.path(Schema.FiniteFromString, (id, encode) => `/${encode(id)}`),
+    ),
+    { path: 42 },
+  ),
+  "/users//42",
+);
+
+// #region path-branch
+const listFolder = Request.get("/files").pipe(
+  Request.path(Schema.String, (folder, encode) =>
+    folder === "" ? "/" : `/${encode(folder)}/`,
+  ),
+);
+// "" gives /files/, and "a b" gives /files/a%20b/
+// #endregion path-branch
+assert.equal(await urlOf(listFolder, { path: "" }), "/files/");
+assert.equal(await urlOf(listFolder, { path: "a b" }), "/files/a%20b/");
+
 // #region path-template
 const userId = Request.pathValue("userId", Schema.FiniteFromString);
 const getUserByTemplate = Request.get("").pipe(Request.path`/users/${userId}`);
@@ -39,6 +124,84 @@ assert.equal(
   await urlOf(getUserByTemplate, { path: { userId: 42 } }),
   "/users/42",
 );
+
+// #region path-suffix
+const customer = Request.pathValue("customer");
+const atCustomer = Request.path`/customers/${customer}`;
+
+const getArchive = Request.get("").pipe(atCustomer, Request.path`/archive`);
+const getInvoices = Request.get("").pipe(atCustomer, Request.path`/invoices`);
+// #endregion path-suffix
+const customerInput = { path: { customer: "a b" } };
+assert.equal(
+  await urlOf(getArchive, customerInput),
+  "/customers/a%20b/archive",
+);
+assert.equal(
+  await urlOf(getInvoices, customerInput),
+  "/customers/a%20b/invoices",
+);
+
+// Moving to a template changes the input, and the compiler finds each place that used it.
+const removeUser = Operation.make(
+  Request.del("").pipe(Request.path`/users/${userId}`),
+  Response.status(204, Body.empty),
+);
+// @ts-expect-error A text search for "path:" misses this shorthand, and the compiler does not.
+const removeById = (path: number) => removeUser.execute({ path });
+assert.equal(typeof removeById, "function");
+
+const removeByNumber = Request.del("").pipe(
+  Request.path`/users/${userId}`,
+  // @ts-expect-error A stale Request.mapInput still builds the old input.
+  Request.mapInput((id: number) => ({ path: id })),
+);
+assert.equal(typeof removeByNumber, "object");
+
+// A hand-written input type hides its callers. The first error is here, not at the caller.
+type StaleInput = { readonly path: number };
+const removeWith = (input: StaleInput) =>
+  // @ts-expect-error The first round of errors stops at this call.
+  removeUser.execute(input);
+const staleCaller = () => removeWith({ path: 42 });
+assert.equal(typeof staleCaller, "function");
+
+// A scalar renderer stacked with a template makes the input impossible to supply.
+const scalarOnTemplate = Operation.make(
+  Request.get("").pipe(
+    Request.path`/users/${userId}`,
+    Request.path(
+      Schema.FiniteFromString,
+      (id, encode) => `/posts/${encode(id)}`,
+    ),
+  ),
+  Response.status(200, Body.text),
+);
+// @ts-expect-error No value is both an object and a number.
+const impossible = () => scalarOnTemplate.execute({ path: { userId: 42 } });
+assert.equal(typeof impossible, "function");
+
+// A renderer with a struct can stack, because each reads its own fields.
+assert.equal(
+  await urlOf(
+    Request.get("").pipe(
+      Request.path`/users/${userId}`,
+      Request.path(
+        Schema.Struct({ postId: Schema.FiniteFromString }),
+        ({ postId }, encode) => `/posts/${encode(postId)}`,
+      ),
+    ),
+    { path: { userId: 42, postId: 7 } },
+  ),
+  "/users/42/posts/7",
+);
+
+// A stale scalar that gets past the types fails before anything is sent.
+const staleScalar = await Effect.runPromise(
+  Effect.flip(Request.compile(getUserByTemplate, { path: 42 } as never)),
+);
+assert.equal(staleScalar._tag, "SchemaError");
+assert.match(staleScalar.message, /Expected object/);
 
 // #region path-stacked
 const listPosts = getUserByTemplate.pipe(Request.path`/posts`);
