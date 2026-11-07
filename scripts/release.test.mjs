@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { test } from "node:test";
 import { fileURLToPath, URL } from "node:url";
+import { githubWith } from "./check-live.mjs";
 import {
   selectPublishedRelease,
   verifiedStep,
@@ -83,7 +84,13 @@ const publication = {
   status: "completed",
   conclusion: "success",
 };
-function select({ run, conclusion = "success", version = "1.2.3", tag }) {
+function select({
+  run,
+  conclusion = "success",
+  version = "1.2.3",
+  tag = { type: "commit", sha: "a".repeat(40) },
+  annotation,
+}) {
   const base = "repos/example/library";
   const responses = {
     [`${base}/actions/runs/456`]: { ...publication, ...run },
@@ -98,13 +105,21 @@ function select({ run, conclusion = "success", version = "1.2.3", tag }) {
     [`${base}/contents/package.json?ref=${"a".repeat(40)}`]: {
       content: Buffer.from(JSON.stringify({ version })).toString("base64"),
     },
-    [`${base}/commits/tags/${version}`]:
-      tag === undefined ? { sha: "a".repeat(40) } : tag,
+    ...(tag && { [`${base}/git/ref/tags/${version}`]: { object: tag } }),
+    ...(annotation && { [`${base}/git/tags/${tag.sha}`]: annotation }),
   };
   return selectPublishedRelease({
     run: 456,
     repository: "example/library",
-    github: (path) => responses[path] ?? undefined,
+    github: githubWith(([path]) => {
+      if (path in responses) return JSON.stringify(responses[path]);
+      // What gh does with a failed request: it exits with the status on stderr.
+      throw Object.assign(new Error(`Command failed: gh api ${path}`), {
+        stderr: path.includes("/commits/tags/")
+          ? "gh: No commit found for SHA: tags/9.9.9 (HTTP 422)\n"
+          : "gh: Not Found (HTTP 404)\n",
+      });
+    }),
   });
 }
 
@@ -135,7 +150,26 @@ test("a verified publication that cannot be matched to its release fails loudly"
     /its tag does not exist.*dispatch this workflow/,
   );
   assert.throws(
-    () => select({ tag: { sha: "b".repeat(40) } }),
+    () => select({ tag: { type: "commit", sha: "b".repeat(40) } }),
+    /not the commit npm published/,
+  );
+});
+
+test("an annotated tag is followed to the commit npm published", () => {
+  const tag = { type: "tag", sha: "c".repeat(40) };
+  assert.deepEqual(
+    select({
+      tag,
+      annotation: { object: { type: "commit", sha: "a".repeat(40) } },
+    }),
+    { tag: "1.2.3" },
+  );
+  assert.throws(
+    () =>
+      select({
+        tag,
+        annotation: { object: { type: "commit", sha: "b".repeat(40) } },
+      }),
     /not the commit npm published/,
   );
 });

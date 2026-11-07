@@ -2,9 +2,9 @@ import { Buffer } from "node:buffer";
 import { execFileSync } from "node:child_process";
 import console from "node:console";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import process from "node:process";
-import { fileURLToPath, URL } from "node:url";
+import { fileURLToPath, pathToFileURL, URL } from "node:url";
 
 // Compare what is published with this checkout, and the published surfaces with each other. It
 // only reads: GitHub through an authenticated gh, npm and the deployed site over the network.
@@ -23,20 +23,43 @@ import { fileURLToPath, URL } from "node:url";
 // Exits 0 when everything agrees, 2 when something is only pending, and 1 otherwise.
 const guide = (section) => `See "${section}" in RELEASING.md.`;
 
-/** `gh api`, parsed as JSON. A 404 returns undefined; a surface decides what that means. */
-export function gh(...parameters) {
-  try {
-    return JSON.parse(
-      execFileSync("gh", ["api", ...parameters], {
-        encoding: "utf8",
-        maxBuffer: 64 * 1024 * 1024,
-        stdio: ["ignore", "pipe", "pipe"],
-      }),
-    );
-  } catch (error) {
-    if (/HTTP 404/.test(error.stderr ?? "")) return undefined;
-    throw error;
+/** Whether Node started this module. `import.meta.main` would need Node.js 24.2 or later. */
+export const startedDirectly = (url) =>
+  process.argv[1] !== undefined &&
+  pathToFileURL(realpathSync(process.argv[1])).href === url;
+
+/** Read the API through `run`, parsed as JSON. A 404 returns undefined; a caller decides what that means. */
+export const githubWith =
+  (run) =>
+  (...parameters) => {
+    try {
+      return JSON.parse(run(parameters));
+    } catch (error) {
+      if (/HTTP 404/.test(error.stderr ?? "")) return undefined;
+      throw error;
+    }
+  };
+
+/** `gh api`. */
+export const gh = githubWith((parameters) =>
+  execFileSync("gh", ["api", ...parameters], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  }),
+);
+
+/**
+ * The commit a tag names, or undefined for a tag that does not exist. `commits/tags/…` is no use
+ * for this: it answers HTTP 422 for a missing tag, and for some that exist. The reference of an
+ * annotated tag names a tag object, which names the commit.
+ */
+export function commitOfTag(github, repository, tag) {
+  let target = github(`repos/${repository}/git/ref/tags/${tag}`)?.object;
+  while (target?.type === "tag") {
+    target = github(`repos/${repository}/git/tags/${target.sha}`)?.object;
   }
+  return target?.sha;
 }
 
 /** Above zero when `a` is newer. `-z` sorts a stable version after its alpha, beta and rc. */
@@ -136,7 +159,15 @@ export async function reconcile({ read, testFiles, github, fetch }) {
       `package.json's ${manifest.version} is not yet published. ${guide("Publish on GitHub")}`,
       `package.json is older, at ${manifest.version}. Update this checkout from main.`,
     );
-    tagCommit = github(`repos/${repository}/commits/tags/${version}`)?.sha;
+    tagCommit = commitOfTag(github, repository, version);
+    if (!tagCommit) {
+      add(
+        "DIFFERS",
+        `tag ${version}`,
+        "does not exist, although its release does. Restore it at the commit the release's manifest.json records.",
+      );
+      return;
+    }
     agree(
       `release target of ${version}`,
       release.target_commitish,
@@ -393,7 +424,7 @@ export const exitCodeOf = (report) => {
   return states.has("PENDING") ? 2 : 0;
 };
 
-if (import.meta.main) {
+if (startedDirectly(import.meta.url)) {
   process.chdir(fileURLToPath(new URL("../", import.meta.url)));
   const read = (path) => readFileSync(path, "utf8");
   const report = await reconcile({
