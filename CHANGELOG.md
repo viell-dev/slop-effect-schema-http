@@ -16,6 +16,8 @@
   the release status paragraphs, every install command, navigation completeness, tested versions,
   the commands and workflows the guides name, skipped Markdown fences, docblocks on public interface
   members and `{@link}` targets.
+- Add `npm run check-live`, a read-only comparison of the published surfaces, as the last step of a
+  release.
 
 ## 0.2.0 — 2026-11-07
 
