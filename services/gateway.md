@@ -110,7 +110,8 @@ OK|accounts|closing|Close an account at month end.
 | `reports`  | `export`  | `The export writes a CSV file.`         | `Der Export schreibt eine CSV-Datei.`       |
 
 A topic is one path segment, compared as it arrived. Any other topic is
-`ERROR|E_TOPIC|no topic <topic>`, with the topic as it arrived.
+`ERROR|E_TOPIC|no topic <topic>`, with the topic as it arrived. A path without a topic, such as
+`/cgi-bin/help.cgi/`, or with more segments after it, is another path, and answers 404.
 
 **The section in the fragment (1998).** The desktop client's Help pane is a plain text box, which
 cannot scroll to an anchor, and its link table holds addresses such as
@@ -139,19 +140,23 @@ this:
 
 A client that cannot send a fragment, such as a browser, gets the whole topic, and its reader finds
 the section by eye. No other script reads `REQUEST_URI`, so a fragment on any other path changes
-nothing.
+nothing: the query still ends at the `#`, and a `?` after it starts none. The one reader in front of
+a script is mod_digest, which compares [`uri`](#the-audit-endpoint-1997-digest) with the whole
+target, so on `/admin` a fragment on the request line has to be in `uri` too.
 
 **Links to a section (2004).** The operations team wanted runbook links that keep working when a
 section moves to another topic, so `GET /cgi-bin/go.cgi?section=<section>` looks the section up and
 prints a `Location` line. Apache turns that into a 302 with its HTML page, and the `Location` is
-`http://<host>/cgi-bin/help.cgi/<topic>#<section>`, with `<host>` as the `Host` header gives it. It
-has to be absolute, because Apache follows a `Location` that starts with `/` inside the server,
-where the client would see no redirect. The desktop client has followed these links since its 2004
-update, writing the `Location`'s target on its socket, fragment included, and gets the section. A
-browser leaves the fragment off and shows the whole topic. The runbooks are printed and filed, so
-the links stay. Sections are the ones above, and `go.cgi` finds a section in whichever topic holds
-it, with no language of its own. An unknown section is `ERROR|E_SECTION|no section <section>`, and a
-missing one `ERROR|E_PARAM|section missing`, both as pipe replies.
+`http://<host>/cgi-bin/help.cgi/<topic>#<section>`, with `<host>` as the `Host` header gives it:
+unlike Apache's own redirect for `rpt.exe`, the script adds no port. It has to be absolute, because
+Apache follows a `Location` that starts with `/` inside the server, where the client would see no
+redirect, so a request with no `Host` value, as HTTP/1.0 allows, gets the server's own host and
+port. The desktop client has followed these links since its 2004 update, writing the `Location`'s
+target on its socket, fragment included, and gets the section. A browser leaves the fragment off and
+shows the whole topic. The runbooks are printed and filed, so the links stay. Sections are the ones
+above, and `go.cgi` finds a section in whichever topic holds it, with no language of its own. An
+unknown section is `ERROR|E_SECTION|no section <section>`, and a missing or empty one
+`ERROR|E_PARAM|section missing`, both as pipe replies.
 
 ## The month-end extract (2001)
 
@@ -423,4 +428,6 @@ trailer? }`. `runDate` is `YYYYMMDD`; `lastModified` is an ISO 8601 instant, ser
 
 The help topics and `go.cgi` are fixed and take no options. A fragment needs a client that writes
 one: `lane.rawClient(backend.origin)`, in the Node lane. Fetch and `lane.linesClient` leave it off.
-The default listener is enough for these, because `node:http` passes a fragment through.
+The default listener is enough for these, because `node:http` passes a fragment through. It answers
+a target holding raw bytes outside ASCII with its own 400 before any script runs, so a test of such
+a topic or fragment starts the gateway with `{ listener: "socket" }`.
