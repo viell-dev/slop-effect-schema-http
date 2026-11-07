@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Schema } from "effect";
+import { Schema, SchemaTransformation } from "effect";
 import * as Excess from "./excess.js";
 
 const text = Schema.String;
@@ -41,6 +41,21 @@ describe("Excess.choosing", () => {
     expect(Excess.choosing(Schema.Struct({ f: Renamed }).ast)).toBe(true);
     expect(Excess.choosing(Same.ast)).toBe(false);
     expect(Excess.choosing(Schema.fromJsonString(Named).ast)).toBe(false);
+  });
+
+  it("sees a rest on the encoded side, with the same names on both", () => {
+    const optional = Schema.Struct({ a: Schema.optionalKey(text) });
+    const Rest = Schema.StructWithRest(optional, [Schema.Record(text, text)]);
+    const Reading = Rest.pipe(
+      Schema.decodeTo(
+        optional,
+        SchemaTransformation.transform({
+          decode: ({ a }) => (a === undefined ? {} : { a }),
+          encode: (value) => value,
+        }),
+      ),
+    );
+    expect(Excess.choosing(Reading.ast)).toBe(true);
   });
 
   it("tells a choice of member from a choice of side", () => {
@@ -106,6 +121,12 @@ describe("Excess.statedFields", () => {
     expect(Excess.statedFields(Either.ast, new Wide())).toEqual(["a", "b"]);
   });
 
+  it("takes no field the caller left undefined", () => {
+    expect(Excess.statedFields(Either.ast, { a: "1", b: undefined })).toEqual([
+      "a",
+    ]);
+  });
+
   it("takes any key of a record", () => {
     const Open = Schema.Record(text, text);
     expect(Excess.statedFields(Open.ast, { a: "1" })).toEqual(["a"]);
@@ -121,12 +142,18 @@ describe("Excess.statedFields", () => {
 describe("Excess.normalised", () => {
   it("leaves an instance a declaration or an open schema may need", () => {
     const moment = new Date(0);
-    const Moment = Schema.Union([
+    const Open = Schema.Union([
       Schema.Struct({ a: text, when: Schema.Unknown }),
-      Schema.Struct({ b: text, when: Schema.Date }),
+      Schema.Struct({ b: text }),
     ]);
-    const value = { a: "x", when: moment };
-    expect(Excess.normalised([Moment.ast], value)).toBe(value);
+    const open = { a: "x", when: moment };
+    expect(Excess.normalised([Open.ast], open)).toBe(open);
+    const Declared = Schema.Union([
+      Schema.Struct({ a: text, when: Schema.Date }),
+      Schema.Struct({ b: text }),
+    ]);
+    const declared = { a: "x", when: moment };
+    expect(Excess.normalised([Declared.ast], declared)).toBe(declared);
   });
 
   it("keeps the keys of an instance a declaration may need", () => {

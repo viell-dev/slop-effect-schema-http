@@ -5742,6 +5742,48 @@ describe("a caller's field under a union", () => {
           }),
       );
 
+      it.effect("is not lost beside text that reads strictly", () =>
+        Effect.gen(function* () {
+          const Inner = Schema.Union([
+            Schema.Struct({ x: text }),
+            Schema.Struct({ y: text }),
+          ]);
+          const WithText = Schema.Union([
+            Schema.Struct({ f: Schema.fromJsonString(Inner) }),
+            Schema.Struct({ b: text, c: text }),
+          ]);
+          const query = { f: '{"x":"1"}', b: "2" };
+          const url = yield* urlOf(stacked(WithText, Holds), { query });
+          const params = new URL(url, "http://x.test").searchParams;
+          expect(params.get("f")).toBe(query.f);
+          expect(params.get("b")).toBe("2");
+        }),
+      );
+
+      it.effect("leaves a raw value to a renamed schema that allows it", () =>
+        Effect.gen(function* () {
+          const Either = Schema.Union([
+            Schema.Struct({ a: text }),
+            Schema.Struct({ k: text }),
+          ]);
+          const Renamed = Schema.Struct({ b: Schema.optionalKey(text) }).pipe(
+            Schema.encodeKeys({ b: "k" }),
+          );
+          for (const request of [
+            stacked(Either, Renamed),
+            stacked(Renamed, Either),
+          ]) {
+            const url = yield* urlOf(
+              request.pipe(Request.setQuery("k", "raw")),
+              { query: { a: "1" } },
+            );
+            const params = new URL(url, "http://x.test").searchParams;
+            expect(params.get("a")).toBe("1");
+            expect(params.get("k")).toBe("raw");
+          }
+        }),
+      );
+
       it.effect("is taken under its encoded name, in either order", () =>
         Effect.gen(function* () {
           const Either = Schema.Union([
