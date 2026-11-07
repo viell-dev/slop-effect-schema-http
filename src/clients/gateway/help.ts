@@ -88,8 +88,9 @@ const ErrorFromLines = OneErrorLine.pipe(
 );
 
 /**
- * A whole reply: one or more section lines, or exactly one ERROR line. `PipeLine` allows no `|` in
- * a field, so a message echoing a `|` from the target is a decode error here, as anywhere else.
+ * A whole reply: one or more section lines, or exactly one ERROR line. An ERROR line's message is
+ * everything after its second `|`, so one that quotes a `|` from the target, as an unknown section
+ * does, reads whole. A section line has exactly its four fields: its values are the gateway's own.
  */
 export const HelpReply = Lines.pipe(
   Schema.decodeTo(Schema.Union([HelpFromLines, ErrorFromLines])),
@@ -223,6 +224,12 @@ export const questionMarkInFragment = (origin: string, last: Last) =>
 /** A fragment that `URL` would percent-encode, which the request's `hash` keeps as written. */
 export const unencodedFragment = (origin: string, last: Last) =>
   Operation.make(Request.get(`${origin}${ACCOUNTS}#a b"c`), response, {
+    transformClient: last,
+  }).execute(undefined);
+
+/** A fragment holding a `|`, which an unknown section's message quotes as it arrived. */
+export const pipeInFragment = (origin: string, last: Last) =>
+  Operation.make(Request.get(`${origin}${ACCOUNTS}#a|b`), response, {
     transformClient: last,
   }).execute(undefined);
 

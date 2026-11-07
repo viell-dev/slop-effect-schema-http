@@ -43,6 +43,44 @@ describe("help replies", () => {
     expect(encode(error)).toBe(refusal);
   });
 
+  for (const [name, text, code, message] of [
+    [
+      "one |",
+      "ERROR|E_SECTION|no section a|b\n",
+      "E_SECTION",
+      "no section a|b",
+    ],
+    [
+      "several |",
+      "ERROR|E_SECTION|no section a|b|c\n",
+      "E_SECTION",
+      "no section a|b|c",
+    ],
+    [
+      "| at its ends and side by side",
+      "ERROR|E_SECTION||no section a||b|\n",
+      "E_SECTION",
+      "|no section a||b|",
+    ],
+    ["nothing but a |", "ERROR|E_TOPIC||\n", "E_TOPIC", "|"],
+  ] as const)
+    it(`[EXT-9p] HelpReply reads an ERROR message holding ${name} as everything after the second |, and round-trips it`, () => {
+      const error = { _tag: "GatewayError", code, message } as const;
+      expect(decode(text)).toEqual(error);
+      expect(encode(error)).toBe(text);
+    });
+
+  it("[EXT-9p] HelpReply refuses to write a | in an ERROR code, or a line end in its message", () => {
+    for (const error of [
+      { code: "E_SECTION|x", message: "no section a" },
+      { code: "E_SECTION", message: "no section a\nb" },
+      { code: "E_SECTION", message: "no section a\r" },
+    ])
+      expect(() => encode({ _tag: "GatewayError", ...error })).toThrow(
+        /a field holds a separator/,
+      );
+  });
+
   for (const [name, text] of [
     ["no lines", ""],
     ["an empty line", "\n"],
@@ -56,7 +94,11 @@ describe("help replies", () => {
     ["a status other than OK", "ok|accounts|closing|Close.\n"],
     ["an ERROR line without a code", "ERROR||no section x\n"],
     ["an ERROR line without a message", "ERROR|E_SECTION\n"],
-    ["an ERROR line with an extra field", "ERROR|E_SECTION|a|b\n"],
+    ["an ERROR line without a code before a |", "ERROR||a|b\n"],
+    [
+      "an ERROR message cut by a line end, its rest on a line of its own",
+      "ERROR|E_SECTION|no section a\nb\n",
+    ],
     ["two ERROR lines", "ERROR|E_TOPIC|a\nERROR|E_TOPIC|b\n"],
     ["a section after an ERROR line", "ERROR|E_TOPIC|a\nOK|a|b|c\n"],
     ["an ERROR line after a section", "OK|a|b|c\nERROR|E_TOPIC|a\n"],

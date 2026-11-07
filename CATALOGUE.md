@@ -581,6 +581,10 @@ request's lines plus one`
   - `[ERR-1c] a reply that is neither an OK nor an ERROR line is a decode error`
   - Backend conformance (EXT-31c): a message quotes the request unescaped, so it can hold `|` and
     is everything after the line's second `|`. Apache's own 404 and 405 are HTML pages (EXT-31a).
+  - Round trips (`src/clients/gateway/pipe.test.ts`): the consumer's `ErrorLine` reads such a
+    message whole in every pipe reply (EXT-9p over HTTP), and OK lines keep their exact fields:
+    `[ERR-1c] an ERROR line's message is everything after its second |, in a pipe reply and from bytes`
+    and `[ERR-1c] an OK line keeps exactly its fields, so a | in one is still refused`.
 - **STAT-6** A HEAD probe whose facts live only in headers: an ordinary schema over the header map.
   Status: tested.
   - `[STAT-6] a HEAD probe reads the extract's facts from its headers with an ordinary schema`
@@ -1394,17 +1398,16 @@ published `0.1.0`.
 
 #### Fragments
 
-EXT-9a to EXT-9o send a URL fragment. A standard client never sends one, but a client that writes
+EXT-9a to EXT-9p send a URL fragment. A standard client never sends one, but a client that writes
 its own request line can, and a server can read it, as the gateway's
 [help topics](./services/gateway.md#the-help-topics-1998) do. `node:http` passes a fragment through,
 so these start the gateway with `lane.backend("gateway")` and its default listener, unless an entry
 says otherwise. The tests that need the raw client are in `src/scenarios/fragments.node.test.ts`,
 because only Node can send a fragment; the others are in `src/scenarios/fragments.test.ts`, in both
-lanes. The consumer's reader
-of these replies has round-trip and negative tests of its own in
-`src/clients/gateway/help.test.ts`, listed under EXT-9e. `<help>` below is
-`/cgi-bin/help.cgi/accounts`. Its whole topic is the `opening` and `closing` lines, and the
-`closing` line alone is the section.
+lanes. The consumer's reader of these replies has round-trip and negative tests of its own in
+`src/clients/gateway/help.test.ts`, listed under EXT-9e, and for a `|` in a message under EXT-9p.
+`<help>` below is `/cgi-bin/help.cgi/accounts`. Its whole topic is the `opening` and `closing`
+lines, and the `closing` line alone is the section.
 
 - **EXT-9a** A fragment in a base URL or in path output, through the raw client: the server reads it
   and answers one section. Declared as `Request.get("")` with
@@ -1503,6 +1506,24 @@ of these replies has round-trip and negative tests of its own in
   Status: tested.
   - `[EXT-9o] removeHash in Request.mapEffect takes the constructor's fragment off before ${provider} receives the request`
     (`the raw client`, and each provider of the lane)
+- **EXT-9p** A `|` in a fragment, through the raw client: `Request.get("${origin}<help>#a|b")`. The
+  client received `${origin}<help>` with the `hash` `a|b`, and the target is `<help>#a|b`.
+  `help.cgi` quotes the fragment as it arrived and answers `ERROR|E_SECTION|no section a|b`, four
+  fields when split at every `|`. The service page makes an `ERROR` line's message everything after
+  its second `|`, so the consumer's reader joins the fields after the code again, and the contract
+  decodes the code `E_SECTION` and the message `no section a|b`. The reader allowed no `|` in a
+  field and gave a decode error
+  ([#122](https://github.com/viell-dev/slop-effect-schema-http/issues/122)); it now takes the code
+  and message from the first two `|` alone. A section line still has exactly its four fields, and a
+  message that a line end cut, as a decoded `%0A` does, is still refused. Status: tested.
+  - `[EXT-9p] a | in a fragment reaches help.cgi, whose ERROR line quotes it, and the message is everything after the second |`
+    (the same request read as text shows the four fields)
+  - Round trips (`src/clients/gateway/help.test.ts`):
+    `[EXT-9p] HelpReply reads an ERROR message holding ${name} as everything after the second |, and round-trips it`
+    (one `|`, several, `|` at its ends and side by side, and nothing but a `|`), and
+    `[EXT-9p] HelpReply refuses to write a | in an ERROR code, or a line end in its message`. Its
+    negative cases are EXT-9e's `HelpReply refuses ${name}`.
+  - Backend side: EXT-31c holds the gateway to the page's bytes for the same target.
 
 #### Request shapes
 
@@ -3023,3 +3044,5 @@ gateway or settled on the page, as each entry says.
   - Settled on the page: the gateway already wrote `|` as it is; the page said only that errors
     quote a fragment as it arrived. It now says the message is the rest of the line, with the exact
     bytes of `#a|b`, so a reader takes the code and message from the first two `|` alone.
+  - Consumer side: EXT-9p decodes the page's example through the consumer's contract, whose reader
+    gave a decode error on it before.

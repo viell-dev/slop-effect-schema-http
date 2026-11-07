@@ -1,7 +1,9 @@
 /**
  * The gateway's pipe-delimited replies: one line ending in `\n`, fields separated by `|`, `OK|…` on
  * success and `ERROR|<code>|<message>` otherwise, all inside HTTP 200. Status and headers cannot
- * tell the outcomes apart, so the discrimination lives in the schema (ERR-1c).
+ * tell the outcomes apart, so the discrimination lives in the schema (ERR-1c). A message quotes the
+ * request unescaped, so it can hold a `|` of its own: the service page makes it everything after the
+ * line's second `|`. An OK line's fields are the gateway's own values, none of which holds a `|`.
  */
 import { Effect, Schema, SchemaIssue, SchemaTransformation } from "effect";
 import { Body } from "viell-effect-schema-http";
@@ -14,7 +16,11 @@ export const Period = Schema.String.check(
   Schema.isPattern(/^\d{4}(0[1-9]|1[0-2])$/),
 );
 
-/** One reply line split into its fields. Exactly one line, LF-terminated; no field may hold a `|`. */
+/**
+ * One reply line split at every `|`. Exactly one line, LF-terminated; no field holds a `|`, so a
+ * value that does spans several fields, and only the line's own schema can join them again, as
+ * `ErrorLine` does for its message.
+ */
 export const PipeLine = Schema.String.pipe(
   Schema.decodeTo(
     Schema.Array(Schema.String),
@@ -54,19 +60,30 @@ export const GatewayError = Schema.TaggedStruct("GatewayError", {
 });
 export type GatewayError = typeof GatewayError.Type;
 
-const ErrorFields = Schema.Tuple([
-  Schema.Literal("ERROR"),
-  Schema.NonEmptyString,
-  Schema.String,
-]);
+/** `ERROR`, the code, then the message in one field or more, which its own `|` separated. */
+const ErrorFields = Schema.TupleWithRest(
+  Schema.Tuple([Schema.Literal("ERROR"), Schema.NonEmptyString, Schema.String]),
+  [Schema.String],
+);
 
-/** `ERROR|<code>|<message>`. */
+/**
+ * `ERROR|<code>|<message>`, the message being everything after the second `|`: the fields after the
+ * code, joined by the `|` that split them. The code ends at the second `|`, so it never holds one,
+ * and `PipeLine` refuses to write one that does.
+ */
 export const ErrorLine = ErrorFields.pipe(
   Schema.decodeTo(
     GatewayError,
     SchemaTransformation.transform<GatewayError, (typeof ErrorFields)["Type"]>({
-      decode: ([, code, message]) => ({ _tag: "GatewayError", code, message }),
-      encode: ({ code, message }) => ["ERROR", code, message],
+      decode: ([, code, ...message]) => ({
+        _tag: "GatewayError",
+        code,
+        message: message.join("|"),
+      }),
+      encode: ({ code, message }) => {
+        const [first = "", ...rest] = message.split("|");
+        return ["ERROR", code, first, ...rest];
+      },
     }),
   ),
 );
