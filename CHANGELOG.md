@@ -19,6 +19,14 @@
   This call compiled and ran, and it now fails at run time, for the values that reach it. Add a
   member that holds both fields, or send one of them
   ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
+- **Breaking:** refuse a raw edit, after the schema, of a field with a decoding default. A field
+  with `Schema.withDecodingDefaultKey` or one of its relatives is optional on the encoded side, so
+  `Request.setQuery` and the other raw edits got past the check, although the schema always writes
+  that name and the edit never reached the client. It is now `Request.InvalidRequest` on every run,
+  as for any field the schema always writes. Remove the edit, make it before the schema, or supply
+  the value with `Request.mapInput`. A default with the `omit` encoding strategy is not affected,
+  and a field a struct renames with `Schema.encodeKeys` is still not refused
+  ([#120](https://github.com/viell-dev/slop-effect-schema-http/issues/120)).
 - State that a success `retain` rejects drops an earlier retained success for equal input, and what
   a `Request.mapEffect` finds after `Request.unbind` removes the input it reads.
 - Show editor help on the members of public types, such as `execute`, `decoder` and `headerLines`.

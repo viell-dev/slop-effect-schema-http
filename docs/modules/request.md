@@ -445,9 +445,15 @@ JavaScript reads other forms by the engine's rules, and text with no offset in t
 whatever runs the request.
 
 "Required" means the schema always writes the name. A required field with
-`Schema.withConstructorDefault` needs no input and still cannot be removed. To give a required field
-a value without asking the caller, use `Request.mapInput`. A value the schema supplies itself, from
-a constructor or decoding default, counts as written, so it replaces a raw default.
+`Schema.withConstructorDefault` needs no input and still cannot be removed. A field with a decoding
+default such as `Schema.withDecodingDefaultKey` is required too: the caller can leave it out, and
+the schema writes it all the same, unless its `encodingStrategy` is `"omit"`. To give a required
+field a value without asking the caller, use `Request.mapInput`. A value the schema supplies itself,
+from a constructor or decoding default, counts as written, so it replaces a raw default.
+
+A decoding default shows in the field's own encoding, which `Schema.encodeKeys` replaces. A raw edit
+of a field with a default under a struct renamed that way is not refused, and it never reaches the
+client.
 
 The error names the fields and leaves out their values, because a default may be a credential. The
 check runs when the request is prepared, so a mismatch compiles and then fails on every run. It does

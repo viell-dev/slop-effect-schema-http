@@ -161,8 +161,8 @@ export interface Declaration {
  * others, and the names it always writes.
  *
  * @remarks
- * This is a low-level extension type, read from the schema's encoded side when it is bound. Header
- * names are lowercase.
+ * This is a low-level extension type, read from the schema's encoded side and its fields' own
+ * encodings when it is bound. Header names are lowercase.
  */
 export type Shape = Shapes.Shape;
 
