@@ -6,7 +6,7 @@
  * the failed connection closed and a further call on the same client.
  */
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Schedule } from "effect";
+import { Effect, Exit, Schedule } from "effect";
 import { FetchHttpClient, type HttpClient } from "effect/http";
 import { lane } from "#lane";
 import {
@@ -114,6 +114,17 @@ const recovers = (
     else expect(last).toBe(first);
   });
 
+/** A further call on a connection the failure has closed is whole, with its own arrival. */
+const recoversAfter = (
+  backend: Backend,
+  call: Effect.Effect<string, unknown, HttpClient.HttpClient>,
+) =>
+  Effect.gen(function* () {
+    const before = yield* backend.ledger;
+    expect(yield* call).toBe(Bookings.manifestText);
+    expect(yield* backend.ledger).toHaveLength(before.length + 1);
+  });
+
 /** Both parts: the failure under `Policy.none`, and its classification under one retry. */
 const failsAndRecovers = (options: Json, verdict: Verdict) =>
   Effect.gen(function* () {
@@ -140,6 +151,51 @@ const failsAndRecovers = (options: Json, verdict: Verdict) =>
       expect(Bookings.described(again)).toEqual(verdict.failure);
       expect(yield* second.ledger).toHaveLength(1);
       yield* recovers(second, retried.execute(undefined), verdict.connection);
+    }
+  });
+
+/**
+ * `cut-body-reset` waits 50 ms and then resets, and a reset can overtake bytes a client has not read
+ * yet, so on a loaded machine a client can meet the reset first. It has then seen no answer at all,
+ * and what follows is EXT-23f's and not EXT-23a's: Chromium sends the request again and gets the
+ * manifest, and Node's `fetch` fails at dispatch, which is retried. The test accepts those two
+ * orders and no others, and the ledger has to agree with the one it saw.
+ */
+const resetBody = (provider: string) =>
+  Effect.gen(function* () {
+    const bytesFirst = brokenBody(
+      provider,
+      "read ECONNRESET",
+      "read ECONNRESET",
+    );
+    for (const policy of [Policy.none, retrying]) {
+      const backend = yield* region(manifestFault("cut-body-reset"));
+      const manifest = Bookings.manifest({ baseUrl: backend.origin, policy });
+      const exit = yield* Effect.exit(manifest.execute(undefined));
+      const ledger = yield* Bookings.closed(backend, 0);
+      if (Exit.isSuccess(exit)) {
+        expect(inBrowser || policy === retrying).toBe(true);
+        expect(exit.value).toBe(Bookings.manifestText);
+        expect(ledger).toHaveLength(2);
+        expect(ledger[1]?.connection).not.toBe(ledger[0]?.connection);
+      } else {
+        const error = exit.cause.reasons.find(
+          (reason) => reason._tag === "Fail",
+        )?.error;
+        const overtaken =
+          !inBrowser &&
+          provider !== "lines" &&
+          Bookings.described(error).kind === "TransportError";
+        expect(Bookings.described(error)).toEqual(
+          overtaken ? transport : bytesFirst.failure,
+        );
+        expect(Bookings.causes(error)).toEqual(
+          overtaken ? ["fetch failed", "read ECONNRESET"] : bytesFirst.causes,
+        );
+        expect(ledger).toHaveLength(1);
+        expect(policy === Policy.none || !bytesFirst.retried).toBe(true);
+      }
+      yield* recoversAfter(backend, manifest.execute(undefined));
     }
   });
 
@@ -211,12 +267,8 @@ describe(`failures after response headers arrive (${lane.name})`, () => {
     );
 
     it.live(
-      `[EXT-23b] ${provider}: a reset after half the body fails as cut-body does`,
-      () =>
-        failsAndRecovers(
-          manifestFault("cut-body-reset"),
-          brokenBody(provider, "read ECONNRESET", "read ECONNRESET"),
-        ).pipe(Effect.provide(client)),
+      `[EXT-23b] ${provider}: a reset after half the body fails as cut-body does, unless it overtakes the bytes`,
+      () => resetBody(provider).pipe(Effect.provide(client)),
     );
 
     it.live(
