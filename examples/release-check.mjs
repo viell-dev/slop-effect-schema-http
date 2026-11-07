@@ -25,7 +25,7 @@ const getUser = Operation.make(
   Request.get("").pipe(
     api,
     Request.path(
-      Schema.NumberFromString,
+      Schema.FiniteFromString,
       (id, encode) => `/users/${encode(id)}`,
     ),
   ),
