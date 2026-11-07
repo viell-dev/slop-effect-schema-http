@@ -58,8 +58,9 @@ in its `hash` field, so the query goes before it. See
 ### Constructor URLs
 
 A query already in `Request.get("/search?q=Ada+Lovelace")` is passed to the client as written until
-something edits that entry. The `+` and any percent escapes keep their spelling, and so do empty `&`
-segments and a lone `?`. The client can still process the URL afterwards.
+something edits that entry or a schema covers it. The `+` and any percent escapes keep their
+spelling, and so do empty `&` segments and a lone `?`. The client can still process the URL
+afterwards.
 
 Each entry also has a form-decoded name and value, so `Request.setQuery("q", "Grace Hopper")` edits
 this one and leaves any other as written. An edited or added entry goes through `query`, which

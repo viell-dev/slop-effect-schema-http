@@ -498,8 +498,8 @@ describe("Operation.make", () => {
 });
 
 /** What a client receives for a request whose response declares JSON. */
-const sent = <I, E, H extends boolean, Q extends boolean>(
-  request: Request.Request<I, E, never, H, Q>,
+const sent = <I, E>(
+  request: Request.Request<I, E>,
   input: I,
   options?: Operation.Options,
 ) =>
@@ -546,6 +546,28 @@ describe("automatic Accept", () => {
         undefined,
       );
       expect(exchange.request.headers.accept).toBe("");
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/87
+  it.effect("gives way to a default under an omitted schema field", () =>
+    Effect.gen(function* () {
+      const Optional = Schema.Struct({
+        Accept: Schema.optional(Schema.String),
+      });
+      const exchange = yield* sent(
+        get.pipe(
+          Request.setHeader("accept", "text/weird"),
+          Request.headers(Optional),
+        ),
+        { headers: {} },
+      );
+      expect(exchange.request.headers.accept).toBe("text/weird");
+      expect(exchange.headerLines).toEqual([["Accept", "text/weird"]]);
+      const automatic = yield* sent(get.pipe(Request.headers(Optional)), {
+        headers: {},
+      });
+      expect(automatic.request.headers.accept).toBe("application/json");
     }),
   );
 
@@ -640,6 +662,48 @@ describe("automatic Accept", () => {
 });
 
 describe("Operation failures", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/87
+  it.effect("refuses an incompatible shape before anything is sent", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => json(200, {}));
+      const operation = Operation.make(
+        Request.get("https://api.test/x?stray=1").pipe(
+          Request.query(Schema.Struct({ q: Schema.String })),
+        ),
+        Response.status(200, Body.json),
+      );
+      const error = yield* Effect.flip(
+        operation.execute({ query: { q: "a" } }),
+      ).pipe(Effect.provide(server.layer));
+      expect(error).toBeInstanceOf(Request.InvalidRequest);
+      expect(server.exchanges).toEqual([]);
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/87
+  it.effect("leaves a client's own edit outside the check", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => json(200, {}));
+      const operation = Operation.make(
+        Request.get("https://api.test/x").pipe(
+          Request.headers(Schema.Struct({ "X-Trace": Schema.String })),
+        ),
+        Response.status(200, Body.json),
+        {
+          transformClient: HttpClient.mapRequest(
+            HttpClientRequest.setHeader("authorization", "Bearer client"),
+          ),
+        },
+      );
+      yield* operation
+        .execute({ headers: { "X-Trace": "t" } })
+        .pipe(Effect.provide(server.layer));
+      expect(server.exchanges[0]!.request.headers.authorization).toBe(
+        "Bearer client",
+      );
+    }),
+  );
+
   it.effect("refuses invalid input before any dispatch", () =>
     Effect.gen(function* () {
       const server = synthetic(() => json(200, {}));
@@ -2025,9 +2089,7 @@ const dispatch = <I, E, R>(
   });
 
 /** A shared transform that every request of a service applies. */
-const withKey = <I, E, R, H extends boolean>(
-  request: Request.Request<I, E, R, H, false>,
-) =>
+const withKey = <I, E, R>(request: Request.Request<I, E, R>) =>
   request.pipe(
     Request.setQuery("key", "abc"),
     Request.baseUrl("https://api.test/v1"),

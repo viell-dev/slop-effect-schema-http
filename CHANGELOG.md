@@ -45,6 +45,21 @@
   to escape, such as a space, is no longer escaped. `Request.Declaration` requires a new
   `emptyQuery` member and `Draft` a new `queryText` member
   ([#102](https://github.com/viell-dev/slop-effect-schema-http/issues/102)).
+- **Breaking:** let a schema state the shape of its group, instead of owning it. A header or query
+  schema used to replace every raw value silently and take raw setters out of the request's type. A
+  raw value under a name a schema allows is now a default: what the schema writes replaces it, an
+  omitted optional field leaves it in place, and it goes through the schema in both directions, so
+  the request carries what the schema writes. A raw value under a name no schema allows, including
+  one written in the constructor, is `Request.InvalidRequest` before anything is sent, in either
+  order, so `Request.get("/x?a=1").pipe(Request.query(schema))` now fails unless the schema allows
+  `a`. A raw edit of a required field after the schema is `InvalidRequest` too. These checks run
+  when the request is prepared, so a raw setter after a schema now compiles and can fail at run
+  time. Schemas now stack, and `Request.unbind` removes a group's bindings, their input and the
+  shape. Header and query schemas add `InvalidRequest` to the error type and their decoding services
+  to the requirements. `Request<I, E, R, H, Q>` becomes `Request<I, E, R>`, so a five-parameter
+  annotation stops compiling, and `Request.Declaration` and `Draft` replace their `headersBound` and
+  `queryBound` members with `headerShapes`, `queryShapes`, `conflicts`, `declaredQuery` and
+  `unbound` ([#87](https://github.com/viell-dev/slop-effect-schema-http/issues/87)).
 
 ## 0.1.0 — 2026-11-04
 

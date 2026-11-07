@@ -116,8 +116,6 @@ export const make = <
   I,
   E,
   R,
-  H extends boolean,
-  Q extends boolean,
   A,
   E2,
   R2,
@@ -126,7 +124,7 @@ export const make = <
   EP = never,
   RP = never,
 >(
-  request: Request.Request<I, E, R, H, Q>,
+  request: Request.Request<I, E, R>,
   response: Response.Response<A, E2, R2>,
   options?: Options<E3, R3, EP, RP>,
 ): Operation<
