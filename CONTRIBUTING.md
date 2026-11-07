@@ -34,8 +34,8 @@ npm run test:package
 - `npm test`: Vitest behavior tests.
 - `npm run test:release`: reject invalid qualification producers/artifacts, exercise bounded
   registry visibility recovery and terminal integrity/provenance failures, check the read-only
-  workflow, the handover from publication to the site, and every comparison `npm run check-live`
-  makes, against synthetic surfaces.
+  workflow, the handover from publication to the site, that release preparation refuses a stale
+  tested version, and every comparison `npm run check-live` makes, against synthetic surfaces.
 - `npm run test:package`: verify the built tarball in an isolated consumer; run the build first.
 - `npm run format`: apply the configured formatters.
 
@@ -191,9 +191,11 @@ The current release matrix uses Node.js 24.22.2 and the newest Node.js 26 on Win
 4.0.7 and 4.1.2, TypeScript 6.0.3 and 7.0.2 consumers, and Chromium supplied by Playwright 1.65.0.
 Playwright is test infrastructure, not a consumer dependency. The checked-out suite lockfile and
 release workflow own the exact tool versions; record them with qualification evidence when updating
-the matrix. `docs:build` compares these versions with `package.json`, `package-lock.json`, `.nvmrc`,
-`scripts/prepare-release.mjs`, the workflows and the suite's lockfile at its pin. It skips the
-Playwright version, with a note, in a checkout without that commit.
+the matrix. These versions say what the last release was qualified on, so a routine dependency
+update leaves them alone. `npm run release:prepare` compares them with `package.json`,
+`package-lock.json`, `.nvmrc`, its own options, the workflows and the suite's lockfile at its pin,
+and refuses a disagreement. It skips the Playwright version, with a note, in a checkout without that
+commit; release qualification fetches the history that has it.
 
 ## Documentation site
 
@@ -256,12 +258,11 @@ a fresh consumer of the published version and run the documented commands withou
 `docs:build` builds the static site, fails on VitePress dead links or missing snippets, and checks
 rendered internal pages, assets, anchors and package facts. Those facts include the rendered
 `library-version`, the release status paragraphs, every install command, that each page is in the
-site navigation or deliberately unlisted, the tested versions, and that the commands, workflows,
-inputs and jobs named in this guide and RELEASING exist. External links are reviewed separately.
-`docs:dev` starts the local development server; `docs:preview` serves the production build on
-`127.0.0.1`. It uses the Vite preview server shipped with VitePress because this pinned VitePress
-version's own preview command ignores the host option. Keep development and preview servers on
-loopback.
+site navigation or deliberately unlisted, and that the commands, workflows, inputs and jobs named in
+this guide and RELEASING exist. External links are reviewed separately. `docs:dev` starts the local
+development server; `docs:preview` serves the production build on `127.0.0.1`. It uses the Vite
+preview server shipped with VitePress because this pinned VitePress version's own preview command
+ignores the host option. Keep development and preview servers on loopback.
 
 Required pull-request CI runs the example and site build with read-only permissions. Main pushes
 verify changes without deploying unreleased documentation. The separate `pages.yml` workflow runs

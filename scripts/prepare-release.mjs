@@ -11,6 +11,7 @@ import {
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
+import { checkTestedVersions } from "./tested-versions.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 process.chdir(root);
@@ -31,6 +32,7 @@ assert.equal(manifest.version, lock.packages[""].version);
 assert.ok(
   readFileSync("CHANGELOG.md", "utf8").includes(`## ${manifest.version}`),
 );
+checkTestedVersions();
 const commit = git("rev-parse", "HEAD");
 const output = join("artifacts", manifest.version);
 assert.ok(
