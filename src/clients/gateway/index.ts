@@ -10,10 +10,12 @@
  * - `accounts.ts`: the CSV export and German import (HDR-5d, PAY-4b, PAY-5).
  * - `rpc.ts`: XML-RPC (ERR-1b, PAY-3b, PAY-8).
  * - `digest.ts`: the Digest-protected audit report (AUTH-7, RET-4).
+ * - `help.ts`: the help topics and their links to a section, which read the URL fragment (EXT-9).
  */
 export * as Accounts from "./accounts.js";
 export * as Digest from "./digest.js";
 export * as Extract from "./extract.js";
+export * as Help from "./help.js";
 export * as Pipe from "./pipe.js";
 export * as Rpc from "./rpc.js";
 export * as Session from "./session.js";
