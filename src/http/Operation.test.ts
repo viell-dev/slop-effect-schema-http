@@ -4464,7 +4464,7 @@ describe("ways to write a variant", () => {
   });
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/125
-  it("currently refuses flow over the adjustment functions with no operation", () => {
+  it("refuses flow over the adjustment functions with no operation", () => {
     const unwrapped = Operation.map(dataOf);
     const noServer = Response.remove("server");
     compileOnly(() => {
@@ -4480,7 +4480,7 @@ describe("ways to write a variant", () => {
   });
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/125
-  it("currently cannot address a case from a function generic in the cases", () => {
+  it("cannot address a case from a function generic in the cases", () => {
     compileOnly(
       <A, E, R, C extends Response.AnyCase>(
         response: Response.Response<A, E, R, C>,
@@ -4492,7 +4492,7 @@ describe("ways to write a variant", () => {
   });
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/125
-  it("currently needs the pipe around a generic transform to infer its types", () => {
+  it("needs the pipe around a generic transform to infer its types", () => {
     const held = Operation.mapRequest(firstFive);
     const variant = pagedThings.pipe(held);
     expectTypeOf<Services<typeof variant>>().toEqualTypeOf<unknown>();
