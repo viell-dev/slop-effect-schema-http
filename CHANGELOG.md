@@ -60,6 +60,14 @@
   annotation stops compiling, and `Request.Declaration` and `Draft` replace their `headersBound` and
   `queryBound` members with `headerShapes`, `queryShapes`, `conflicts`, `declaredQuery` and
   `unbound` ([#87](https://github.com/viell-dev/slop-effect-schema-http/issues/87)).
+- Build a schema's value before encoding it, so a plain object works for a `Schema.Class`, including
+  a nested one, in `Request.path`, `Request.query`, `Request.headers`, `Body.encodeSchema` and
+  `Body.jsonSchema`, and a field with a constructor default can be left out. Such a call used to
+  compile and then fail with `Expected User`. **Breaking for generic helpers:** these functions need
+  `Schema.Top` rather than `Schema.Constraint`, so a helper written as
+  `<S extends Schema.Constraint>(schema: S) => Body.jsonSchema(schema)` stops compiling.
+  `Body.Codec` and `Body.make` gain a trailing `In` parameter that defaults to `A`, so existing
+  annotations stay valid ([#91](https://github.com/viell-dev/slop-effect-schema-http/issues/91)).
 
 ## 0.1.0 — 2026-11-04
 

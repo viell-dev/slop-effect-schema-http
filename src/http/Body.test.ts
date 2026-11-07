@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import { Effect, Exit, Schema } from "effect";
 import { HttpBody, HttpClientError, UrlParams } from "effect/http";
 import {
@@ -456,6 +456,157 @@ const bigEndianUint64 = (bytes: Uint8Array): bigint =>
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(
     0,
   );
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/91
+describe("a schema's value is built before it is encoded", () => {
+  class User extends Schema.Class<User>("User")({
+    id: Schema.Number,
+    name: Schema.String,
+  }) {}
+  /** A class whose type has more than its fields, so a plain object is not structurally one. */
+  class Member extends Schema.Class<Member>("Member")({
+    id: Schema.Number,
+    name: Schema.String,
+  }) {
+    get label() {
+      return `${this.id}: ${this.name}`;
+    }
+    greet() {
+      return `Hello ${this.name}`;
+    }
+  }
+  const Team = Schema.Struct({ lead: User, size: Schema.Number });
+  const expected = '{"id":1,"name":"Ada"}';
+
+  const encoders = [
+    ["Body.jsonSchema", Body.jsonSchema(User)],
+    ["Body.encodeSchema", Body.json.pipe(Body.encodeSchema(User))],
+  ] as const;
+
+  it.effect.each(encoders)("%s takes a plain object for a class", ([, codec]) =>
+    Effect.gen(function* () {
+      const body = yield* codec.encode({ id: 1, name: "Ada" });
+      expect(textOf(body)).toBe(expected);
+    }),
+  );
+
+  it.effect.each(encoders)("%s takes an existing instance", ([, codec]) =>
+    Effect.gen(function* () {
+      const body = yield* codec.encode(new User({ id: 1, name: "Ada" }));
+      expect(textOf(body)).toBe(expected);
+    }),
+  );
+
+  it.effect.each(encoders)("%s still refuses an invalid object", ([, codec]) =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        codec.encode({ id: "x" as never, name: "Ada" }),
+      );
+      expect(Schema.isSchemaError(error)).toBe(true);
+    }),
+  );
+
+  it.effect("takes a plain object for a nested class", () =>
+    Effect.gen(function* () {
+      const body = yield* Body.jsonSchema(Team).encode({
+        lead: { id: 1, name: "Ada" },
+        size: 2,
+      });
+      expect(textOf(body)).toBe(`{"lead":${expected},"size":2}`);
+    }),
+  );
+
+  it.effect("takes a plain object for a class with a getter and a method", () =>
+    Effect.gen(function* () {
+      const body = yield* Body.jsonSchema(Member).encode({
+        id: 1,
+        name: "Ada",
+      });
+      expect(textOf(body)).toBe(expected);
+    }),
+  );
+
+  it.effect("fills in a field the schema's constructor defaults", () =>
+    Effect.gen(function* () {
+      const Page = Schema.Struct({
+        size: Schema.Number.pipe(
+          Schema.withConstructorDefault(Effect.succeed(25)),
+        ),
+        q: Schema.String,
+      });
+      const codec = Body.jsonSchema(Page);
+      expect(textOf(yield* codec.encode({ q: "a" }))).toBe(
+        '{"size":25,"q":"a"}',
+      );
+      expect(textOf(yield* codec.encode({ size: 5, q: "a" }))).toBe(
+        '{"size":5,"q":"a"}',
+      );
+    }),
+  );
+
+  it.effect("fills in a default for a class", () =>
+    Effect.gen(function* () {
+      class Paging extends Schema.Class<Paging>("Paging")({
+        size: Schema.Number.pipe(
+          Schema.withConstructorDefault(Effect.succeed(25)),
+        ),
+      }) {}
+      const body = yield* Body.jsonSchema(Paging).encode({});
+      expect(textOf(body)).toBe('{"size":25}');
+    }),
+  );
+
+  it.effect("returns an instance when decoding, as before", () =>
+    Effect.gen(function* () {
+      const decoded = yield* Body.jsonSchema(User).decode(reply(expected));
+      expect(decoded).toBeInstanceOf(User);
+    }),
+  );
+
+  it("separates what a codec takes from what it returns", () => {
+    const codec = Body.jsonSchema(Member);
+    expectTypeOf<Parameters<typeof codec.encode>[0]>().toEqualTypeOf<{
+      readonly id: number;
+      readonly name: string;
+    }>();
+    expectTypeOf<
+      Effect.Success<ReturnType<typeof codec.decode>>
+    >().toEqualTypeOf<Member>();
+  });
+
+  it("keeps an annotation with five parameters valid", () => {
+    const codec: Body.Codec<
+      string,
+      never,
+      HttpClientError.HttpClientError,
+      never,
+      never
+    > = Body.text;
+    expectTypeOf<Parameters<typeof codec.encode>[0]>().toEqualTypeOf<string>();
+  });
+
+  it("lets Body.make take more than it returns", () => {
+    const codec = Body.make({
+      encode: (value: string | number) => Body.text.encode(String(value)),
+      decode: (response) => response.text,
+    });
+    expectTypeOf<Parameters<typeof codec.encode>[0]>().toEqualTypeOf<
+      string | number
+    >();
+    expectTypeOf<
+      Effect.Success<ReturnType<typeof codec.decode>>
+    >().toEqualTypeOf<string>();
+  });
+
+  it("needs a full schema, so a generic helper is bound by Schema.Top", () => {
+    const helper = <S extends Schema.Top>(schema: S) => Body.jsonSchema(schema);
+    void helper(User);
+    const narrow = <S extends Schema.Constraint>(schema: S) =>
+      // @ts-expect-error: only `Schema.Top` has `makeEffect`
+      Body.jsonSchema(schema);
+    void narrow;
+  });
+});
 
 describe("non-text payloads through Body.bytes and a schema", () => {
   it.effect("reads Latin-1 text that UTF-8 text decoding would garble", () =>

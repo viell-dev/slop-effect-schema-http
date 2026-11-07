@@ -65,6 +65,12 @@ field. Header names compare without case and keep the spelling they were written
 `Request.path` and `Request.body` add their input to the request, so each can be combined with the
 other bindings.
 
+A schema-backed input takes what the schema's constructor takes, and the library builds the schema's
+value before encoding it. A plain object therefore works for a `Schema.Class`, including one nested
+in a struct, and a field with a constructor default can be left out. These functions need
+`Schema.Top`, the bound that has a constructor. Building and then encoding validates twice, which
+costs microseconds next to a request, so neither step is skipped.
+
 ### A schema states the shape of its group
 
 Schemas are optional to choose and binding when chosen. A field group is a dictionary of names, and

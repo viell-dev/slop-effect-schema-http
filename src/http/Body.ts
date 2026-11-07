@@ -5,6 +5,7 @@ import {
   type HttpClientResponse,
   type UrlParams,
 } from "effect/http";
+import * as Inputs from "./internal/input.js";
 
 /**
  * Turn an application value into a finite outgoing HTTP body.
@@ -37,7 +38,8 @@ export interface Decoder<out A, out E = never, out R = never>
  * An encoder and decoder for the same application value.
  *
  * @remarks
- * Encoding and decoding errors and required services are tracked separately.
+ * Encoding and decoding errors and required services are tracked separately. `In` is what encoding
+ * takes, which is `A` unless the codec accepts more than it decodes to, as {@link jsonSchema} does.
  */
 export interface Codec<
   A,
@@ -45,9 +47,10 @@ export interface Codec<
   DecodeError = never,
   EncodeServices = never,
   DecodeServices = never,
+  In = A,
 >
   extends
-    Encoder<A, EncodeError, EncodeServices>,
+    Encoder<In, EncodeError, EncodeServices>,
     Decoder<A, DecodeError, DecodeServices> {}
 
 /**
@@ -82,7 +85,7 @@ export const decoder = <A, E = never, R = never>(
  *
  * @remarks
  * `mediaType` describes the accepted response representation. Outgoing content metadata comes
- * from the `HttpBody` returned by `encode`.
+ * from the `HttpBody` returned by `encode`. `encode` may take more than `decode` returns.
  */
 export const make = <
   A,
@@ -90,15 +93,16 @@ export const make = <
   DecodeError = never,
   EncodeServices = never,
   DecodeServices = never,
+  In = A,
 >(options: {
   readonly encode: (
-    value: A,
+    value: In,
   ) => Effect.Effect<HttpBody.HttpBody, EncodeError, EncodeServices>;
   readonly decode: (
     response: HttpClientResponse.HttpClientResponse,
   ) => Effect.Effect<A, DecodeError, DecodeServices>;
   readonly mediaType?: string | undefined;
-}): Codec<A, EncodeError, DecodeError, EncodeServices, DecodeServices> => ({
+}): Codec<A, EncodeError, DecodeError, EncodeServices, DecodeServices, In> => ({
   ...Pipeable.Prototype,
   encode: options.encode,
   decode: options.decode,
@@ -277,14 +281,22 @@ export const schema = <S extends Schema.Constraint>(contract: S) => {
  *
  * @remarks
  * The schema's encoded type must match the underlying encoder's input. Returns an encoder only;
- * use {@link schema} for the decoding direction.
+ * use {@link schema} for the decoding direction. The input is what the schema's constructor takes,
+ * so a plain object works for a `Schema.Class`: the library builds the schema's value, then encodes
+ * it. An existing instance works as it is.
  */
-export const encodeSchema = <S extends Schema.Constraint>(contract: S) => {
-  const encode = Schema.encodeEffect(contract);
+export const encodeSchema = <S extends Schema.Top>(contract: S) => {
+  const encode = Inputs.encoder(contract, Schema.encodeEffect(contract));
   return <E, R>(
     self: Encoder<S["Encoded"], E, R>,
-  ): Encoder<S["Type"], E | Schema.SchemaError, R | S["EncodingServices"]> =>
-    encoder((value: S["Type"]) => Effect.flatMap(encode(value), self.encode));
+  ): Encoder<
+    Inputs.Input<S>,
+    E | Schema.SchemaError,
+    R | S["EncodingServices"]
+  > =>
+    encoder((value: Inputs.Input<S>) =>
+      Effect.flatMap(encode(value), self.encode),
+    );
 };
 
 /**
@@ -300,19 +312,25 @@ export const encodeSchema = <S extends Schema.Constraint>(contract: S) => {
  * @remarks
  * Uses `Schema.toCodecJson` to obtain the schema's canonical JSON codec. Encoding failures occur
  * before dispatch; an operation wraps response decoding failures in `Response.DecodeError`.
+ *
+ * Encoding takes what the schema's constructor takes, as {@link encodeSchema} does. Decoding
+ * returns the schema's application type, so a class comes back as an instance.
  */
-export const jsonSchema = <S extends Schema.Constraint>(
+export const jsonSchema = <S extends Schema.Top>(
   contract: S,
 ): Codec<
   S["Type"],
   Schema.SchemaError | HttpBody.HttpBodyError,
   Schema.SchemaError | HttpClientError.HttpClientError,
   S["EncodingServices"],
-  S["DecodingServices"]
+  S["DecodingServices"],
+  Inputs.Input<S>
 > => {
   const codec = Schema.toCodecJson(contract);
+  const encode = Inputs.encoder(contract, Schema.encodeEffect(codec));
   return make({
-    encode: encodeSchema(codec)(json).encode,
+    encode: (value: Inputs.Input<S>) =>
+      Effect.flatMap(encode(value), json.encode),
     decode: json.pipe(schema(codec)).decode,
     mediaType: json.mediaType,
   });
