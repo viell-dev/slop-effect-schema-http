@@ -2,9 +2,13 @@
 
 ## Choose a release
 
-`0.1.0` is the first stable release, available from npm and GitHub. [Getting
+`0.1.0` is the current stable release, available from npm and GitHub. [Getting
 started](./getting-started.md) adds the current stable package to your Effect project. [What's in
 0.1](./release-notes/0.1.md) introduces what the release lets your application do.
+
+`0.2.0` is the next release. It is being prepared and is not published yet, so nothing can install
+it. [What's in 0.2](./release-notes/0.2.md) describes it, including the steps to update an
+application, because it changes existing behavior.
 
 The npm `latest` tag selects the stable release, so ordinary install commands need no version
 suffix. The `rc` tag still identifies `0.1.0-rc.1`; use an explicit prerelease version when
@@ -92,8 +96,9 @@ npm install ./viell-effect-schema-http-0.1.0.tgz
 
 The supported API covers finite-body HTTP contracts, ESM, Node 24 or 26 on Windows/Linux and
 Chromium Fetch with Effect 4. [Limits and recovery](./limits.md#compatibility-and-scope) separates
-application requirements from tested configurations. Compatible fixes use `0.1.x`; a breaking public
-API change requires `0.2.0` and migration guidance.
+application requirements from tested configurations. Compatible fixes raise the patch number and
+breaking changes raise the minor number, so `1.2.3` would be followed by `1.2.4` or `1.3.0`. A
+breaking change comes with migration guidance in its release article.
 
 ## Which version the documentation describes
 
