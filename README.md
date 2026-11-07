@@ -68,9 +68,12 @@ The backends are `node:http` servers on ephemeral loopback ports, started for ea
 refuses or reshapes some requests before a backend sees them, so a test can start any backend with
 `{ listener: "socket" }` instead. That plain socket listener refuses nothing, serves one request per
 connection and records each request's raw `head` in the ledger, and its replies are the same apart
-from `Connection: close`. The backends need no accounts, network access beyond loopback, secrets or
-private data, and they are black boxes: the consumer reaches them only over HTTP. `npm run check`
-runs `scripts/boundaries.mjs`, which
+from `Connection: close`. A backend can also write a raw reply straight to the socket, under either
+listener, for a response that is cut short, malformed or never finished, or for no response at all;
+the [catalogue](./CATALOGUE.md#failures-on-the-wire) says what each of those does to each client.
+The backends need no accounts, network access beyond loopback, secrets or private data, and they
+are black boxes: the consumer reaches them only over HTTP. `npm run check` runs
+`scripts/boundaries.mjs`, which
 resolves every import, following `package.json` `imports` and `tsconfig.json` `paths` aliases: a
 backend may import only Node built-ins, other backend modules and the harness's server and router,
 consumer code may import neither a backend nor a Node-side harness module, and the backend-side

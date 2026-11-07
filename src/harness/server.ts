@@ -38,6 +38,13 @@ export interface Received {
   readonly body: Uint8Array;
   /** Whether the client closed the connection before the server finished its reply. */
   readonly aborted: () => boolean;
+  /**
+   * The connection this request arrived on, numbered from 1 in the order the server first saw a
+   * request on it, so two requests with one number shared a connection.
+   */
+  readonly connection: number;
+  /** Whether that connection is still open, by either side's doing. */
+  readonly connectionOpen: () => boolean;
 }
 
 /** A reply written to the socket as given: status text, raw header lines, and body bytes. */
@@ -49,6 +56,50 @@ export interface Reply {
   readonly body?: string | Uint8Array;
 }
 
+/** Bytes to write. A string is one byte per character, as the ledger reads them. */
+export type Bytes = string | Uint8Array;
+
+/** One step of a {@link RawReply}, in order. */
+export type RawStep =
+  /** Write these bytes. */
+  | Bytes
+  /** Pause for this many milliseconds. */
+  | { readonly wait: number }
+  /** Pause until this settles, such as when a later request releases it. */
+  | { readonly until: Promise<unknown> }
+  /** Write `repeat`, pause for `every` milliseconds, and go on, up to `times` when it is given. */
+  | {
+      readonly repeat: Bytes;
+      readonly every: number;
+      readonly times?: number;
+    };
+
+/**
+ * How a {@link RawReply} leaves the connection: `"close"` ends it in order once everything is
+ * written, `"reset"` ends it abruptly, and `"hold"` leaves it open until the client goes.
+ */
+export type RawEnd = "close" | "reset" | "hold";
+
+/**
+ * A reply written straight to the socket, for what a {@link Reply} cannot say: `node:http` frames
+ * and checks a `Reply`, so it cannot be cut short, malformed or left unfinished. Nothing is added to
+ * a raw reply or checked: no status line, framing, `Date` or `Connection`. It works under either
+ * listener, and the connection serves no further request. A step stops as soon as the client goes,
+ * and the steps after it do not run. `route.ts` has helpers that build the usual shapes.
+ */
+export interface RawReply {
+  /**
+   * The status line, header lines and blank line, as they go on the wire. Empty for a reply that
+   * writes nothing, or a malformed or unfinished head for a test of one. Harness CORS adds its lines
+   * after the first line end here, so keep them in this field rather than in `body`.
+   */
+  readonly head: Bytes;
+  /** What follows the head. Defaults to nothing. */
+  readonly body?: ReadonlyArray<RawStep>;
+  /** Defaults to `"close"`. */
+  readonly end?: RawEnd;
+}
+
 /** What a handler sees besides the request: its abort signal and the server's base URL. */
 export interface Context {
   /** Aborted when the client closes the connection before the reply ends. */
@@ -56,10 +107,14 @@ export interface Context {
   readonly origin: string;
 }
 
-export type Handler = (
+/** Answers a request. `Answer` widens to take in raw replies, as in {@link RawHandler}. */
+export type Handler<Answer = Reply> = (
   request: Received,
   context: Context,
-) => Reply | Promise<Reply>;
+) => Answer | Promise<Answer>;
+
+/** A handler that may answer with a raw reply, which is what `serve` runs. */
+export type RawHandler = Handler<Reply | RawReply>;
 
 export interface Server {
   /** `http://127.0.0.1:<port>`, without a trailing slash. */
@@ -128,6 +183,108 @@ const write = (response: ServerResponse, reply: Reply): void => {
   response.end(reply.body);
 };
 
+/** The bytes of a step, refusing a character that is not one byte. */
+const bytesOf = (bytes: Bytes): Buffer => {
+  if (typeof bytes !== "string") return Buffer.from(bytes);
+  const buffer = Buffer.from(bytes, "latin1");
+  if (buffer.toString("latin1") !== bytes)
+    throw new RangeError(
+      `a raw reply holds a character above U+00FF: ${JSON.stringify(bytes)}`,
+    );
+  return buffer;
+};
+
+/** Resolve when `settled` does, or as soon as `signal` aborts. */
+const until = (settled: Promise<unknown>, signal: AbortSignal): Promise<void> =>
+  new Promise((done) => {
+    const finish = () => {
+      signal.removeEventListener("abort", finish);
+      done();
+    };
+    signal.addEventListener("abort", finish);
+    settled.then(finish, finish);
+  });
+
+/** Resolve after `milliseconds`, or as soon as `signal` aborts, leaving no timer behind. */
+const pause = (milliseconds: number, signal: AbortSignal): Promise<void> => {
+  let timer: NodeJS.Timeout | undefined;
+  return until(
+    new Promise((done) => {
+      timer = setTimeout(done, milliseconds);
+    }),
+    signal,
+  ).finally(() => clearTimeout(timer));
+};
+
+const isBytes = (step: RawStep): step is Bytes =>
+  typeof step === "string" || step instanceof Uint8Array;
+
+/**
+ * Write a raw reply to `socket`, and call `ending` just before the server ends the connection
+ * itself. Its bytes are read before anything is written, so a mistake in a fixture is that fixture's
+ * failure rather than half a reply.
+ */
+const writeRaw = async (
+  socket: Socket,
+  reply: RawReply,
+  signal: AbortSignal,
+  ending: () => void,
+): Promise<void> => {
+  const steps = [reply.head, ...(reply.body ?? [])].map((step) =>
+    isBytes(step)
+      ? bytesOf(step)
+      : "repeat" in step
+        ? { ...step, repeat: bytesOf(step.repeat) }
+        : step,
+  );
+  const flush = (bytes: Buffer) =>
+    new Promise<void>((done) => {
+      if (bytes.length === 0) done();
+      else socket.write(bytes, () => done());
+    });
+  for (const step of steps) {
+    if (signal.aborted) return;
+    if (step instanceof Uint8Array) await flush(step);
+    else if ("wait" in step) await pause(step.wait, signal);
+    else if ("until" in step) await until(step.until, signal);
+    else
+      for (
+        let written = 0;
+        written !== step.times && !signal.aborted;
+        written++
+      ) {
+        await flush(step.repeat);
+        await pause(step.every, signal);
+      }
+  }
+  if (signal.aborted) return;
+  const end = reply.end ?? "close";
+  if (end === "hold") return;
+  ending();
+  if (end === "close") socket.destroySoon();
+  else socket.resetAndDestroy();
+};
+
+/** The abort signal of one exchange, and how a reply of either kind reaches its client. */
+const delivery = (response: ServerResponse, socket: Socket) => {
+  const controller = new AbortController();
+  // A raw reply bypasses `response`, so its own end is not the client going away.
+  let ended = false;
+  response.on("close", () => {
+    if (!response.writableFinished && !ended) controller.abort();
+  });
+  return {
+    controller,
+    reply: async (reply: Reply | RawReply) => {
+      if ("head" in reply)
+        await writeRaw(socket, reply, controller.signal, () => {
+          ended = true;
+        });
+      else write(response, reply);
+    },
+  };
+};
+
 /** What a listener needs from `serve`. */
 interface Exchange {
   /** Put a request on the ledger, as soon as its head has arrived. */
@@ -136,8 +293,10 @@ interface Exchange {
   readonly answer: (
     received: Received,
     signal: AbortSignal,
-    reply: (reply: Reply) => void,
+    reply: (reply: Reply | RawReply) => Promise<void>,
   ) => Promise<void>;
+  /** The number of a connection, as `Received.connection` describes it. */
+  readonly connectionNumber: (socket: Socket) => number;
 }
 
 interface Listening {
@@ -145,12 +304,14 @@ interface Listening {
   readonly closeConnections: () => void;
 }
 
-const httpListener = ({ record, answer }: Exchange): Listening => {
+const httpListener = ({
+  record,
+  answer,
+  connectionNumber,
+}: Exchange): Listening => {
   const server = createServer((request, response) => {
-    const controller = new AbortController();
-    response.on("close", () => {
-      if (!response.writableFinished) controller.abort();
-    });
+    const socket = request.socket as Socket;
+    const { controller, reply } = delivery(response, socket);
     // Recorded at arrival; the body getter shows the bytes received so far.
     const chunks: Array<Buffer> = [];
     let complete: Uint8Array | undefined;
@@ -162,6 +323,8 @@ const httpListener = ({ record, answer }: Exchange): Listening => {
         return complete ?? new Uint8Array(Buffer.concat(chunks));
       },
       aborted: () => controller.signal.aborted,
+      connection: connectionNumber(socket),
+      connectionOpen: () => !socket.destroyed,
     };
     record(received);
     const exchange = async () => {
@@ -173,9 +336,7 @@ const httpListener = ({ record, answer }: Exchange): Listening => {
         controller.abort();
         return;
       }
-      await answer(received, controller.signal, (reply) =>
-        write(response, reply),
-      );
+      await answer(received, controller.signal, reply);
     };
     // Whatever still fails, such as a second write after a partial one, ends the
     // connection rather than escaping as an unhandled rejection.
@@ -219,7 +380,11 @@ const readHead = (head: string) => {
  * target and header lines. The reply goes through Node's own `ServerResponse`, so it has the same
  * lines and framing as under `node:http`, except `Connection: close`.
  */
-const socketListener = ({ record, answer }: Exchange): Listening => {
+const socketListener = ({
+  record,
+  answer,
+  connectionNumber,
+}: Exchange): Listening => {
   const open = new Set<Socket>();
   const server = createSocketServer((socket) => {
     open.add(socket);
@@ -244,10 +409,7 @@ const socketListener = ({ record, answer }: Exchange): Listening => {
       response.shouldKeepAlive = false;
       response.assignSocket(socket);
       response.on("finish", () => socket.end());
-      const controller = new AbortController();
-      response.on("close", () => {
-        if (!response.writableFinished) controller.abort();
-      });
+      const { controller, reply } = delivery(response, socket);
       let body = start.subarray(end + 4, end + 4 + length);
       const received: Received = {
         method,
@@ -258,13 +420,15 @@ const socketListener = ({ record, answer }: Exchange): Listening => {
           return new Uint8Array(body);
         },
         aborted: () => controller.signal.aborted,
+        connection: connectionNumber(socket),
+        connectionOpen: () => !socket.destroyed,
       };
       record(received);
       const exchange = () => {
         // As under `node:http`, whatever still fails ends the connection.
-        answer(received, controller.signal, (reply) =>
-          write(response, reply),
-        ).catch(() => socket.destroy());
+        answer(received, controller.signal, reply).catch(() =>
+          socket.destroy(),
+        );
       };
       if (body.length >= length) return exchange();
       const readBody = (more: Buffer) => {
@@ -291,7 +455,7 @@ const socketListener = ({ record, answer }: Exchange): Listening => {
  * in `127.0.0.0/8` is loopback on Linux and Windows. `listener` defaults to `node:http`.
  */
 export const serve = (
-  handler: Handler,
+  handler: RawHandler,
   host = "127.0.0.1",
   listener: Listener = "http",
 ): Effect.Effect<Server, never, Scope.Scope> =>
@@ -311,7 +475,15 @@ export const serve = (
               include: (received: Received) => boolean,
             ) => ledger.filter(include).length >= count;
             let origin = "";
+            const connections = new WeakMap<Socket, number>();
+            let lastConnection = 0;
             const exchange: Exchange = {
+              connectionNumber: (socket) => {
+                const known = connections.get(socket);
+                if (known !== undefined) return known;
+                connections.set(socket, ++lastConnection);
+                return lastConnection;
+              },
               record: (received) => {
                 ledger.push(received);
                 for (const waiter of waiting.splice(0))
@@ -321,10 +493,10 @@ export const serve = (
               answer: async (received, signal, reply) => {
                 try {
                   const answered = await handler(received, { signal, origin });
-                  if (!signal.aborted) reply(answered);
+                  if (!signal.aborted) await reply(answered);
                 } catch (cause) {
                   if (!signal.aborted)
-                    reply({
+                    await reply({
                       status: 599,
                       statusText: "Fixture Failure",
                       lines: [["Content-Type", "text/plain"]],

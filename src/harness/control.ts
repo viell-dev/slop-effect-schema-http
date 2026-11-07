@@ -4,8 +4,10 @@ import { Effect, Exit, Scope } from "effect";
 import type { Json, Recorded } from "./lane.js";
 import { loadHandler } from "./registry.js";
 import {
-  type Handler,
+  type Bytes,
+  type Lines,
   type Listener,
+  type RawHandler,
   type Received,
   type Server,
   serve,
@@ -25,12 +27,45 @@ const isPreflight = (request: Received): boolean =>
   request.method === "OPTIONS" &&
   first(request.lines, "access-control-request-method") !== undefined;
 
+/** What the harness adds to a reply for `origin`, exposing `names` to the page. */
+const corsLines = (origin: string, names: ReadonlyArray<string>): Lines => [
+  ["Access-Control-Allow-Origin", origin],
+  ["Access-Control-Allow-Credentials", "true"],
+  ...(names.length === 0
+    ? []
+    : [["Access-Control-Expose-Headers", names.join(", ")] as const]),
+  ["Vary", "Origin"],
+];
+
+/**
+ * The head of a raw reply with the harness's CORS lines straight after its status line, so that a
+ * page reads the failure the reply is about rather than a CORS refusal. The names it exposes are
+ * read up to the first blank line, leaving out anything that could not be a header name. A head with
+ * no line end, such as the empty head of a reply that writes nothing, has no place for them.
+ */
+const corsHead = (head: Bytes, origin: string): Bytes => {
+  const text =
+    typeof head === "string" ? head : Buffer.from(head).toString("latin1");
+  const statusLineEnd = text.indexOf("\n") + 1;
+  if (statusLineEnd === 0) return head;
+  const names = text
+    .slice(statusLineEnd)
+    .split(/\r?\n\r?\n/, 1)[0]!
+    .split(/\r?\n/)
+    .map((line) => line.split(":", 1)[0]!)
+    .filter((name) => /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name));
+  const added = corsLines(origin, [...new Set(names)])
+    .map(([name, value]) => `${name}: ${value}\r\n`)
+    .join("");
+  return `${text.slice(0, statusLineEnd)}${added}${text.slice(statusLineEnd)}`;
+};
+
 /**
  * Answer CORS preflights and expose every response header to the test page, so the page sees the
  * backend's own conventions. The ledger leaves the preflights this answers out.
  */
 const withHarnessCors =
-  (handler: Handler): Handler =>
+  (handler: RawHandler): RawHandler =>
   async (request, context) => {
     const origin = first(request.lines, "origin");
     const preflightMethod = first(
@@ -56,20 +91,16 @@ const withHarnessCors =
     }
     const reply = await handler(request, context);
     if (origin === undefined) return reply;
+    if ("head" in reply)
+      return { ...reply, head: corsHead(reply.head, origin) };
     const lines = (reply.lines ?? []).filter(
       ([name]) => !name.toLowerCase().startsWith("access-control-"),
     );
-    const exposed = [...new Set(lines.map(([name]) => name))];
     return {
       ...reply,
       lines: [
         ...lines,
-        ["Access-Control-Allow-Origin", origin],
-        ["Access-Control-Allow-Credentials", "true"],
-        ...(exposed.length === 0
-          ? []
-          : [["Access-Control-Expose-Headers", exposed.join(", ")] as const]),
-        ["Vary", "Origin"],
+        ...corsLines(origin, [...new Set(lines.map(([name]) => name))]),
       ],
     };
   };
@@ -104,6 +135,8 @@ const recorded = (running: Running): ReadonlyArray<Recorded> =>
       head: received.head,
       body: received.body,
       aborted: received.aborted(),
+      connection: received.connection,
+      connectionOpen: received.connectionOpen(),
     }));
 
 const readJson = async (request: IncomingMessage): Promise<unknown> => {
