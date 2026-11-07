@@ -138,11 +138,12 @@ encoded value --> decode --> decoded -> encode --> wire
   `{ limit: "many" }` goes out as `limit=NaN`, and `Schema.FiniteFromString` refuses it. That is a
   property of the definition, and the library does not try to correct it.
 
-The type of an input is `Request.Input<S>`. A mix is one level deep in the type, and a renamed field
-takes its encoded name only when the whole value is on the encoded side. A plain value in a branded
-field compiles, because it is on the encoded side, and it goes through the schema's checks. The
-compiler therefore checks less than it would for the decoded side alone: a string where a number was
-expected compiles, and fails when the request is prepared if the schema refuses it.
+The type of an input is `Request.Input<S>`, and the type of a whole request's input is
+`Request.InputOf<R>`. A mix is one level deep in the type, and a renamed field takes its encoded
+name only when the whole value is on the encoded side. A plain value in a branded field compiles,
+because it is on the encoded side, and it goes through the schema's checks. The compiler therefore
+checks less than it would for the decoded side alone: a string where a number was expected compiles,
+and fails when the request is prepared if the schema refuses it.
 
 ### A schema states the shape of its group
 

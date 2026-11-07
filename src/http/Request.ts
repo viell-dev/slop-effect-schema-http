@@ -718,11 +718,11 @@ const applyDeclaredBodyFields = (
  * The input is an {@link Input} of the schema. Encoding produces ordered header lines. The schema
  * states the shape of the group, whatever the order of the calls: once any schema is bound, every
  * header the request declares must be a name some schema allows. A raw header under such a name
- * is a default: what the schema writes replaces it, and otherwise it goes through the
- * schema, which writes its value, spelling and order. An omitted optional field therefore leaves
- * the default in place. A raw header under a name no schema allows is an {@link InvalidRequest}
- * before anything is sent. A record or `Schema.StructWithRest` allows any name. Names compare
- * without case.
+ * is a default: what the schema writes replaces it, and otherwise it goes through the schema,
+ * which writes its value, spelling and order. An omitted optional field therefore leaves the
+ * default in place. A raw header under a name no schema allows is an {@link InvalidRequest} before
+ * anything is sent. A record or `Schema.StructWithRest` allows any name. Names compare without
+ * case.
  *
  * Under a union, the defaults and what the schema wrote have to fit one member together. A field
  * that would be lost otherwise is an {@link InvalidRequest}, which names that field.

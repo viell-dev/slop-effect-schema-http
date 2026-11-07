@@ -6701,6 +6701,29 @@ describe("a schema states the shape of its group", () => {
   });
 
   describe("outside the check", () => {
+    it.effect("leaves what a union drops from the caller's own value", () =>
+      Effect.gen(function* () {
+        const input = { query: { a: "x", b: "y" } };
+        const narrowFirst = Schema.Union([
+          Schema.Struct({ a: Schema.String }),
+          Schema.Struct({ a: Schema.String, b: Schema.String }),
+        ]);
+        expect(
+          yield* urlOf(
+            Request.get("/x").pipe(Request.query(narrowFirst)),
+            input,
+          ),
+        ).toBe("/x?a=x");
+        const wideFirst = Schema.Union([
+          Schema.Struct({ a: Schema.String, b: Schema.String }),
+          Schema.Struct({ a: Schema.String }),
+        ]);
+        expect(
+          yield* urlOf(Request.get("/x").pipe(Request.query(wideFirst)), input),
+        ).toBe("/x?a=x&b=y");
+      }),
+    );
+
     const Trace = Schema.Struct({
       trace: Schema.optional(Schema.FiniteFromString),
     });
