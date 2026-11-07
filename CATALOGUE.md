@@ -2040,7 +2040,7 @@ value does, and what each service then answers.
   `?wsdl` reaches `/soap/?wsdl`, because the join puts a `/` before it, and the store answers that 404. Status: tested.
   - `[EXT-18c] ${constructor} and ${added} are joined exactly, as ${target}`
   - `[EXT-18c] an apostrophe in a value needs no encoding, so it closes the quote around it`
-  - `[EXT-18c] a ? in a template is URL text: the value in it goes through the path encoder, and a declared query goes after it`
+  - `[EXT-18c] a ? in a template is URL text: a value after it is encoded, and a declared query goes after it`
   - `[EXT-18c] a whole URL after an empty constructor bypasses the base, and one in the constructor takes a template`
   - `[EXT-18c] with a base URL, a query alone belongs in the constructor, because a template gets a / from the join`
 - **EXT-18d** A `//` from a constructor's trailing slash and a piece's leading one. The client
@@ -2195,7 +2195,9 @@ value does, and what each service then answers.
   defined, so changing it later changes nothing. A computation is read on each evaluation, and it
   returns text: one that returns a `Date` is a compile error. Past the types, as from JavaScript or
   a cast, it currently goes out as `String(date)`, which holds the time zone of whatever runs it and
-  not ISO text. Status: tested.
+  not ISO text. The design page says a computation returns text, so this is outside the documented
+  contract, which is why the entry is tested. #132 fixes it, and this pin changes with the next
+  `library-ref` move. Status: tested.
   - `[EXT-22c] a raw Date is read when the request is defined, so changing it later changes nothing`
   - `[EXT-22c] a computation is read on each evaluation, so its text reaches the next request`
   - `[EXT-22c] a computation that returns a Date is a compile error` (type-level)

@@ -111,6 +111,8 @@ describe(`attempt numbers (${lane.name})`, () => {
       Effect.gen(function* () {
         const gone = yield* Effect.scoped(start());
         const standby = yield* start({ longPollHold: 10 });
+        // A reused port would send the first attempt to the standby.
+        expect(standby.origin).not.toBe(gone.origin);
         const answer = yield* Ops.pollEvents(
           connect(gone),
           Policy.make(Schedule.recurs(1)),
