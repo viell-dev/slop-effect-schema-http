@@ -149,8 +149,13 @@ result replaces them. Spread them to keep what you do not change:
 ### Adjust a mapped operation
 
 `Operation.map` and `Operation.mapEffect` keep the parts and record the mapping as a step that runs
-after them. This definition unwraps an envelope and turns a 404 into a failure, and it stays
-adjustable:
+after them, so a mapped operation stays adjustable. This definition unwraps an envelope:
+
+<<< ../../examples/modules/operation.ts#mapped-simple
+
+A mapping can also turn a recognized outcome into a failure. `Operation.mapEffect` takes a function
+that returns an Effect. This one unwraps the envelope and turns a 404 into `NotFound`. It is generic
+in `D`, the type under `data`, so any page can use it, as the rest of this section does:
 
 <<< ../../examples/modules/operation.ts#mapped
 

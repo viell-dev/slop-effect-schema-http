@@ -247,10 +247,16 @@ const patientThings = getThings.pipe(
 );
 // #endregion options
 
-// #region mapped
+// #region mapped-simple
 const ThingPage = Schema.Struct({ data: Schema.Array(Thing) });
-const OptionPage = Schema.Struct({ data: Schema.Array(ThingOption) });
 
+const thingList = Operation.make(
+  Request.get("/things?page=1&limit=25").pipe(api),
+  Response.status(200, Body.jsonSchema(ThingPage)),
+).pipe(Operation.map((page) => page.data));
+// #endregion mapped-simple
+
+// #region mapped
 class NotFound extends Data.TaggedError("NotFound")<{
   readonly detail: string;
 }> {}
@@ -284,6 +290,8 @@ const noNotFound = listThings.pipe(Operation.mapResponse(noMissing));
 // #endregion mapped
 
 // #region unmap
+const OptionPage = Schema.Struct({ data: Schema.Array(ThingOption) });
+
 const asOptionPage = Response.replace(
   200,
   Response.tag("Found", Body.jsonSchema(OptionPage)),
@@ -367,6 +375,14 @@ const dispatched = <A, E>(
   Effect.runPromise(
     effect.pipe(Effect.provideService(HttpClient.HttpClient, provider)),
   );
+
+assert.deepEqual(
+  await dispatched(
+    thingList.execute(undefined),
+    answering(200, { data: [fullThing] }),
+  ),
+  [fullThing],
+);
 
 const sent: Array<string> = [];
 await dispatched(
