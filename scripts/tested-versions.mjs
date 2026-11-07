@@ -120,11 +120,11 @@ export function testedStatements(root = ".") {
 }
 
 /** Throw if a document's current matrix disagrees with the files that set it. */
-export function checkTestedVersions(root = ".") {
+export function checkTestedVersions(root = ".", note = console.log) {
   const { statements, suiteCommit, versions } = testedStatements(root);
   if (!versions.Playwright) {
     const prefix = process.env.GITHUB_ACTIONS === "true" ? "::notice::" : "";
-    console.log(
+    note(
       `${prefix}Skipped the Playwright version: the hostile suite commit ${suiteCommit} is not in this checkout.`,
     );
   }

@@ -347,19 +347,24 @@ fs.appendFileSync(process.env.NPM_CALLS, process.argv.slice(2).join(" ") + "\\n"
 
 test("only the current matrix has to match; a history keeps what it recorded", (t) => {
   const { root, write } = testedFixture(t);
+  // Captured, because this fixture has no suite commit, and in CI a printed note would announce
+  // on every run that the comparison was skipped.
+  const notes = [];
+  const check = () =>
+    checkTestedVersions(root, (note) => {
+      notes.push(note);
+    });
   const recorded = "Qualified on Effect 1.2.3 and TypeScript 1.2.3.\n";
   write("RELEASING.md", `\n## Release history\n\n${recorded}`);
-  checkTestedVersions(root);
+  check();
+  assert.match(notes[0], /Skipped the Playwright version/);
   write("RELEASING.md", recorded);
   assert.throws(
-    () => checkTestedVersions(root),
+    check,
     /RELEASING\.md states Effect 1\.2\.3, which is not a tested version/,
   );
   writeFileSync(join(root, "RELEASING.md"), "# Another layout\n");
-  assert.throws(
-    () => checkTestedVersions(root),
-    /Missing the section "## Prepare a candidate"/,
-  );
+  assert.throws(check, /Missing the section "## Prepare a candidate"/);
 });
 
 test("a dependency update cannot fail the ordinary documentation check", () => {
