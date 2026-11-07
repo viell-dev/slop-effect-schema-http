@@ -1,10 +1,11 @@
 /**
- * EXT-13 and EXT-14h: the declarations of `header-declarations.node.test.ts` through `fetch`, in both
- * lanes; the letters match EXT-12. A platform refuses or adds some of these, so each test states what
- * the client received as well as what arrived: the two differ only by what the platform did.
+ * EXT-13 and EXT-14h: the declarations of `header-declarations.node.test.ts` through `fetch`, in
+ * both lanes; the letters match EXT-12. A platform refuses or adds some of these, so each test
+ * states what the client received as well as what arrived: the two differ only by what the platform
+ * did.
  *
- * Effect's Fetch provider takes a declared `Content-Length` off before `fetch` sees it, so what `fetch`
- * itself does with one needs a client that hands it over: `bareFetch` below.
+ * Effect's Fetch provider takes a declared `Content-Length` off before `fetch` sees it, so what
+ * `fetch` itself does with one needs a client that hands it over: `bareFetch` below.
  */
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Exit, Layer } from "effect";
@@ -14,7 +15,7 @@ import { automatic, type Declared, spelling } from "../clients/echoed.js";
 import { watching } from "../clients/received.js";
 import { bodyText, header, type Recorded } from "../harness/lane.js";
 
-/** `fetch` with a request's headers and bytes exactly as given, which Effect's provider does not do. */
+/** `fetch` with a request's headers and bytes as given, which Effect's provider does not do. */
 const bareFetch: Layer.Layer<HttpClient.HttpClient> = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request, url, signal) =>
@@ -438,7 +439,7 @@ describe(`the spelling of a header name through fetch (${lane.name})`, () => {
   );
 });
 
-/** The code of the Node error behind a failed `fetch`, which Node keeps as the `TypeError`'s cause. */
+/** The code of the Node error behind a failed `fetch`, kept as the `TypeError`'s cause. */
 function transportCode(exit: Exit.Exit<unknown, unknown>): unknown {
   if (!Exit.isFailure(exit)) return undefined;
   const reason = exit.cause.reasons[0];

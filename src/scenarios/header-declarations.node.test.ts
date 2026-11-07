@@ -1,9 +1,9 @@
 /**
- * EXT-12 and EXT-14: what a request's own headers do to the automatic ones, and how a name is spelled,
- * through the raw client. These run in the Node lane only, because only Node has the raw client, and
- * every other client changes what these entries are about: `fetch` adds and lowers, and the
- * line-preserving provider writes its own `Content-Length`. The same declarations through `fetch`, in
- * both lanes, are in `header-declarations.test.ts`.
+ * EXT-12 and EXT-14: what a request's own headers do to the automatic ones, and how a name is
+ * spelled, through the raw client. These run in the Node lane only, because only Node has the raw
+ * client, and every other client changes what these entries are about: `fetch` adds and lowers, and
+ * the line-preserving provider writes its own `Content-Length`. The same declarations through
+ * `fetch`, in both lanes, are in `header-declarations.test.ts`.
  *
  * `echo`'s socket listener records `head`, the request as it arrived, which is the proof here.
  */
@@ -17,7 +17,7 @@ import { bodyText, type RawOptions } from "../harness/lane.js";
 const POST = "POST /shape HTTP/1.1";
 const GET = "GET /shape HTTP/1.1";
 
-/** Send one declaration through the raw client to a fresh `echo`, which must see exactly that one. */
+/** Send one declaration through the raw client to a fresh `echo`, which must see only that one. */
 const sent = (declaration: Declared, options?: RawOptions) =>
   Effect.gen(function* () {
     const echo = yield* lane.backend("echo", undefined, { listener: "socket" });
