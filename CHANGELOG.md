@@ -35,11 +35,12 @@ compiles and still changes your URLs.
   replaces a line spelled differently and takes the new spelling. Client middleware still sees
   lowercase `Headers`, and `fetch` still sends lowercase names
   ([#101](https://github.com/viell-dev/slop-effect-schema-http/issues/101)).
-- **Breaking:** let a request's own headers win over automatic ones. A declared `Accept`,
-  `Content-Type` or `Content-Length` now takes effect, from a raw setter or a header schema, before
-  or after the body, including on multipart and empty bodies. A declaration that used to be ignored
-  now goes out. `Request.removeHeader(name)` now stops the automatic value, and `Request.Compiled`,
-  `Draft` and `Declaration` require a new `removedHeaders` member
+- **Breaking:** let a request's own headers win over automatic ones. A declared `Content-Type` or
+  `Content-Length` now takes effect, as a declared `Accept` already did, from a raw setter or a
+  header schema, before or after the body, including on multipart and empty bodies. A declaration
+  that used to be ignored now goes out. `Request.removeHeader(name)` now stops the automatic value,
+  including `Accept`, and `Request.Compiled`, `Draft` and `Declaration` require a new
+  `removedHeaders` member
   ([#100](https://github.com/viell-dev/slop-effect-schema-http/issues/100)).
 - **Breaking:** pass a constructor query to the client as written until something edits that entry.
   The library used to decode it and render it again, so `?a=1;b=2` became `?a=1%3Bb%3D2`, `?q=a+b`
