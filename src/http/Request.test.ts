@@ -1,7 +1,10 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import {
   Cause,
+  Config,
+  ConfigProvider,
   Context,
+  Data,
   Deferred,
   Effect,
   Exit,
@@ -318,6 +321,543 @@ describe("Request.baseUrl", () => {
       ).toBe("https://legacy.test/cgi-bin/report");
     }),
   );
+
+  // A later call replaces the base, so a relative one cannot extend it. `mapBaseUrl` does that.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/81
+  it.effect("loses the origin when a relative base replaces it", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/users").pipe(
+            Request.baseUrl("https://api.test"),
+            Request.baseUrl("/api/v1"),
+          ),
+          undefined,
+        ),
+      ).toBe("/api/v1/users");
+    }),
+  );
+});
+
+/** Supplies the location of an API once the program runs. */
+class ApiBase extends Context.Service<ApiBase, string>()("test/ApiBase") {}
+
+class BaseUnavailable extends Data.TaggedError("BaseUnavailable") {}
+
+const inEurope = Effect.provideService(ApiBase, "https://eu.test");
+
+/** Supply configuration from a plain object. */
+const configured = (root: unknown) =>
+  Effect.provideService(
+    ConfigProvider.ConfigProvider,
+    ConfigProvider.fromUnknown(root),
+  );
+
+/** A request with a query, under a base in either form. */
+const withBase = (base: string | Effect.Effect<string>) =>
+  Request.get("/things").pipe(
+    Request.setQuery("q", "1"),
+    Request.baseUrl(base),
+  );
+
+const toAdmin = (url: string) => `${url}/admin`;
+
+const toV2 = (url: string) => url.replace(/\/v1$/, "/v2");
+
+/** A base that counts how often it runs. */
+const counted = (url: string) => {
+  const base = {
+    runs: 0,
+    effect: Effect.sync(() => {
+      base.runs++;
+      return url;
+    }),
+  };
+  return base;
+};
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/89
+describe("a base URL from an Effect", () => {
+  const discovered = Effect.gen(function* () {
+    const base = yield* ApiBase;
+    return `${base}/v1`;
+  });
+
+  it.effect("joins what a service supplies", () =>
+    Effect.gen(function* () {
+      const request = Request.get("/things").pipe(Request.baseUrl(discovered));
+      expect(yield* urlOf(request, undefined).pipe(inEurope)).toBe(
+        "https://eu.test/v1/things",
+      );
+    }),
+  );
+
+  it.effect("takes a service or a Config value, as both are Effects", () =>
+    Effect.gen(function* () {
+      const fromService = Request.get("/things").pipe(Request.baseUrl(ApiBase));
+      expect(yield* urlOf(fromService, undefined).pipe(inEurope)).toBe(
+        "https://eu.test/things",
+      );
+
+      const fromConfig = Request.get("/things").pipe(
+        Request.baseUrl(Config.String("API_BASE")),
+      );
+      expect(
+        yield* urlOf(fromConfig, undefined).pipe(
+          configured({ API_BASE: "https://config.test" }),
+        ),
+      ).toBe("https://config.test/things");
+      const error = yield* Effect.flip(
+        urlOf(fromConfig, undefined).pipe(configured({})),
+      );
+      expect(error).toBeInstanceOf(Config.ConfigError);
+    }),
+  );
+
+  it.effect("runs once per evaluation, and not when it is defined", () =>
+    Effect.gen(function* () {
+      const base = counted("https://x.test");
+      const request = Request.get("/things").pipe(Request.baseUrl(base.effect));
+      expect(base.runs).toBe(0);
+      yield* urlOf(request, undefined);
+      expect(base.runs).toBe(1);
+      yield* urlOf(request, undefined);
+      expect(base.runs).toBe(2);
+    }),
+  );
+
+  it.effect("runs after computed fields and the other preparation steps", () =>
+    Effect.gen(function* () {
+      const order: Array<string> = [];
+      const request = Request.get("/things").pipe(
+        Request.baseUrl(
+          Effect.sync(() => {
+            order.push("base");
+            return "https://x.test";
+          }),
+        ),
+        Request.setHeader("x-computed", () => {
+          order.push("computed");
+          return "1";
+        }),
+        Request.mapEffect((native) =>
+          Effect.sync(() => {
+            order.push("edit");
+            return native;
+          }),
+        ),
+      );
+      yield* urlOf(request, undefined);
+      expect(order).toEqual(["computed", "edit", "base"]);
+    }),
+  );
+
+  it.effect("does not run when the input is refused", () =>
+    Effect.gen(function* () {
+      const base = counted("https://x.test");
+      const request = Request.get("/things").pipe(
+        Request.baseUrl(base.effect),
+        Request.query(Schema.Struct({ page: Schema.FiniteFromString })),
+      );
+      const error = yield* Effect.flip(
+        urlOf(request, { query: { page: "many" } }),
+      );
+      expect(error._tag).toBe("SchemaError");
+      expect(base.runs).toBe(0);
+    }),
+  );
+
+  it.effect("fails with its own failure, not an InvalidRequest", () =>
+    Effect.gen(function* () {
+      const failure = new BaseUnavailable();
+      const request = Request.get("/things").pipe(
+        Request.baseUrl(Effect.fail(failure)),
+      );
+      expect(yield* Effect.flip(urlOf(request, undefined))).toBe(failure);
+    }),
+  );
+
+  it.effect("keeps a defect a defect", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        urlOf(
+          Request.get("/things").pipe(Request.baseUrl(Effect.die("broken"))),
+          undefined,
+        ),
+      );
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+    }),
+  );
+
+  it.effect("treats what it supplies exactly as text", () =>
+    Effect.gen(function* () {
+      for (const base of [
+        "https://x.test",
+        "https://x.test/v1/",
+        "https://x.test/v1#top",
+        "https://x.test/v1?key=abc",
+        "https://x.test/a b",
+        "/shared",
+        "",
+      ])
+        expect(
+          yield* targetOf(withBase(Effect.succeed(base)), undefined),
+        ).toEqual(yield* targetOf(withBase(base), undefined));
+    }),
+  );
+
+  it.effect("moves a fragment to the request, with the query before it", () =>
+    Effect.gen(function* () {
+      const request = Request.get("/things").pipe(
+        Request.baseUrl(Effect.succeed("https://x.test/v1#top")),
+        Request.setQuery("q", "1"),
+      );
+      expect(yield* targetOf(request, undefined)).toEqual({
+        url: "https://x.test/v1/things?q=1",
+        hash: "top",
+      });
+    }),
+  );
+
+  it.effect("leaves a query in the base where the join puts it", () =>
+    Effect.gen(function* () {
+      const request = Request.get("/things").pipe(
+        Request.baseUrl(Effect.succeed("https://x.test/v1?key=abc")),
+        Request.setQuery("q", "1"),
+      );
+      expect(yield* urlOf(request, undefined)).toBe(
+        "https://x.test/v1?key=abc/things&q=1",
+      );
+    }),
+  );
+
+  it.effect("goes through a replaced UrlEncoding.join", () =>
+    Effect.gen(function* () {
+      const request = Request.get("/things").pipe(
+        Request.baseUrl(Effect.succeed("https://x.test")),
+      );
+      expect(
+        yield* urlOf(request, undefined).pipe(
+          Effect.provide(
+            UrlEncoding.layer({
+              ...UrlEncoding.defaults,
+              join: (base, path) => `${base}/joined${path}`,
+            }),
+          ),
+        ),
+      ).toBe("https://x.test/joined/things");
+    }),
+  );
+
+  // The join decides whether a base applies, so it has to receive one.
+  it.effect("still runs under an absolute URL, which bypasses it", () =>
+    Effect.gen(function* () {
+      const absolute = Request.get("https://legacy.test/report");
+      const base = counted("https://x.test");
+      expect(
+        yield* urlOf(absolute.pipe(Request.baseUrl(base.effect)), undefined),
+      ).toBe("https://legacy.test/report");
+      expect(base.runs).toBe(1);
+      const error = yield* Effect.flip(
+        urlOf(
+          absolute.pipe(Request.baseUrl(Effect.fail(new BaseUnavailable()))),
+          undefined,
+        ),
+      );
+      expect(error._tag).toBe("BaseUnavailable");
+    }),
+  );
+
+  it.effect("never runs once a later base replaces it", () =>
+    Effect.gen(function* () {
+      const base = counted("https://old.test");
+      const request = Request.get("/things").pipe(
+        Request.baseUrl(base.effect),
+        Request.baseUrl("https://new.test"),
+      );
+      expect(yield* urlOf(request, undefined)).toBe("https://new.test/things");
+      expect(base.runs).toBe(0);
+      expect(
+        yield* urlOf(
+          Request.get("/things").pipe(
+            Request.baseUrl("https://old.test"),
+            Request.baseUrl(Effect.succeed("https://new.test")),
+          ),
+          undefined,
+        ),
+      ).toBe("https://new.test/things");
+    }),
+  );
+
+  it.effect("survives later edits to the request", () =>
+    Effect.gen(function* () {
+      const request = Request.get("/things").pipe(
+        Request.baseUrl(ApiBase),
+        Request.setQuery("a", "1"),
+        Request.setPath("/items"),
+        Request.path`/more`,
+        Request.mapInput<unknown, "input">(() => undefined),
+      );
+      expect(yield* urlOf(request, "input").pipe(inEurope)).toBe(
+        "https://eu.test/items/more?a=1",
+      );
+    }),
+  );
+
+  it("adds its failures and services to the request's type", () => {
+    const start = Request.get("/");
+    expectTypeOf(start.pipe(Request.baseUrl("https://x.test"))).toEqualTypeOf<
+      Request.Request<unknown>
+    >();
+    expectTypeOf(start.pipe(Request.baseUrl(ApiBase))).toEqualTypeOf<
+      Request.Request<unknown, never, ApiBase>
+    >();
+    expectTypeOf(
+      start.pipe(Request.baseUrl(Effect.fail(new BaseUnavailable()))),
+    ).toEqualTypeOf<Request.Request<unknown, BaseUnavailable>>();
+    expectTypeOf(
+      start.pipe(Request.baseUrl(Config.String("API_BASE"))),
+    ).toEqualTypeOf<Request.Request<unknown, Config.ConfigError>>();
+    expectTypeOf(
+      Request.get("/").pipe(
+        Request.query(Schema.Struct({ page: Schema.String })),
+        Request.baseUrl(ApiBase),
+      ),
+    ).toEqualTypeOf<
+      Request.Request<
+        { readonly query: { readonly page: string } },
+        Schema.SchemaError | Request.InvalidRequest,
+        ApiBase
+      >
+    >();
+  });
+
+  it("keeps what a replaced base added, as the types cannot forget it", () => {
+    expectTypeOf(
+      Request.get("/").pipe(
+        Request.baseUrl(ApiBase),
+        Request.baseUrl("https://x.test"),
+      ),
+    ).toEqualTypeOf<Request.Request<unknown, never, ApiBase>>();
+  });
+
+  it("is a compile error to leave out the service", () => {
+    const request = Request.get("/").pipe(Request.baseUrl(ApiBase));
+    // @ts-expect-error: nothing has provided `ApiBase`
+    const unprovided: Effect.Effect<unknown, unknown> = Request.compile(
+      request,
+      undefined,
+    );
+    const provided: Effect.Effect<unknown, unknown> = Request.compile(
+      request,
+      undefined,
+    ).pipe(inEurope);
+    void [unprovided, provided];
+  });
+
+  it("composes in a shared transform", () => {
+    const shared = flow(
+      Request.setHeader("accept-language", "en"),
+      Request.baseUrl(ApiBase),
+    );
+    expectTypeOf(Request.get("/").pipe(shared)).toEqualTypeOf<
+      Request.Request<unknown, never, ApiBase>
+    >();
+  });
+
+  it("takes only text or an Effect of text", () => {
+    // @ts-expect-error: a plain function says what `Effect.sync` already says
+    void Request.baseUrl(() => "https://x.test");
+    // @ts-expect-error: a base URL is text
+    void Request.baseUrl(Effect.succeed(1));
+    expectTypeOf<Request.Declaration["baseUrl"]>().toEqualTypeOf<
+      string | Effect.Effect<string, unknown, unknown>
+    >();
+  });
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/81
+describe("Request.mapBaseUrl", () => {
+  const api = Request.baseUrl("https://api.test/v1");
+  const admin = Request.mapBaseUrl(toAdmin);
+
+  it.effect("extends a text base", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(Request.get("/users").pipe(api, admin), undefined),
+      ).toBe("https://api.test/v1/admin/users");
+    }),
+  );
+
+  it.effect("extends a base from an Effect, keeping what that needs", () =>
+    Effect.gen(function* () {
+      const request = Request.get("/users").pipe(
+        Request.baseUrl(ApiBase),
+        admin,
+      );
+      expect(yield* urlOf(request, undefined).pipe(inEurope)).toBe(
+        "https://eu.test/admin/users",
+      );
+    }),
+  );
+
+  it.effect("changes a prefix rather than extending it", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/users").pipe(api, Request.mapBaseUrl(toV2)),
+          undefined,
+        ),
+      ).toBe("https://api.test/v2/users");
+    }),
+  );
+
+  it.effect("stacks, each call seeing what the last one made", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(
+          Request.get("/users").pipe(
+            api,
+            admin,
+            Request.mapBaseUrl((url) => `${url}/eu`),
+          ),
+          undefined,
+        ),
+      ).toBe("https://api.test/v1/admin/eu/users");
+    }),
+  );
+
+  it.effect("leaves the request it came from alone", () =>
+    Effect.gen(function* () {
+      const users = Request.get("/users").pipe(api);
+      const adminUsers = users.pipe(admin);
+      expect(yield* urlOf(adminUsers, undefined)).toBe(
+        "https://api.test/v1/admin/users",
+      );
+      expect(yield* urlOf(users, undefined)).toBe("https://api.test/v1/users");
+      expect(users.declaration.baseUrl).toBe("https://api.test/v1");
+    }),
+  );
+
+  it.effect("is replaced by a later base URL", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const request = Request.get("/users").pipe(
+        api,
+        Request.mapBaseUrl((url) => {
+          calls++;
+          return `${url}/admin`;
+        }),
+        Request.baseUrl("https://new.test"),
+      );
+      expect(yield* urlOf(request, undefined)).toBe("https://new.test/users");
+      expect(calls).toBe(0);
+    }),
+  );
+
+  it.effect("starts from nothing when no base is set", () =>
+    Effect.gen(function* () {
+      expect(yield* urlOf(Request.get("/users").pipe(admin), undefined)).toBe(
+        "/admin/users",
+      );
+    }),
+  );
+
+  it.effect("runs its function once per evaluation, whichever the form", () =>
+    Effect.gen(function* () {
+      for (const base of ["https://x.test", Effect.succeed("https://x.test")]) {
+        let calls = 0;
+        const request = Request.get("/users").pipe(
+          Request.baseUrl(base),
+          Request.mapBaseUrl((url) => {
+            calls++;
+            return url;
+          }),
+        );
+        expect(calls).toBe(0);
+        yield* urlOf(request, undefined);
+        yield* urlOf(request, undefined);
+        expect(calls).toBe(2);
+      }
+    }),
+  );
+
+  it.effect("makes an exception an InvalidRequest, whichever the form", () =>
+    Effect.gen(function* () {
+      const cause = new Error("no prefix to change");
+      const broken = Request.mapBaseUrl(() => {
+        throw cause;
+      });
+      for (const base of ["https://x.test", Effect.succeed("https://x.test")]) {
+        const error = yield* refusal(
+          Request.get("/users").pipe(Request.baseUrl(base), broken),
+          undefined,
+        );
+        expect(error.cause).toBe(cause);
+      }
+    }),
+  );
+
+  it.effect("does not run its function when the base fails", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const failure = new BaseUnavailable();
+      const request = Request.get("/users").pipe(
+        Request.baseUrl(Effect.fail(failure)),
+        Request.mapBaseUrl((url) => {
+          calls++;
+          return url;
+        }),
+      );
+      expect(yield* Effect.flip(urlOf(request, undefined))).toBe(failure);
+      expect(calls).toBe(0);
+    }),
+  );
+
+  it.effect("receives the whole text, including a fragment or query", () =>
+    Effect.gen(function* () {
+      const seen: Array<string> = [];
+      const request = Request.get("/users").pipe(
+        Request.baseUrl("https://x.test/v1?key=abc#top"),
+        Request.mapBaseUrl((url) => {
+          seen.push(url);
+          return `${url}/admin`;
+        }),
+      );
+      // A fragment ends a URL, so text added after one stays in the fragment.
+      expect(yield* targetOf(request, undefined)).toEqual({
+        url: "https://x.test/v1?key=abc/users",
+        hash: "top/admin",
+      });
+      expect(seen).toEqual(["https://x.test/v1?key=abc#top"]);
+    }),
+  );
+
+  it.effect("goes through a replaced UrlEncoding.join", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(Request.get("/users").pipe(api, admin), undefined).pipe(
+          Effect.provide(
+            UrlEncoding.layer({
+              ...UrlEncoding.defaults,
+              join: (base, path) => `${base}|${path}`,
+            }),
+          ),
+        ),
+      ).toBe("https://api.test/v1/admin|/users");
+    }),
+  );
+
+  it("keeps the request's type", () => {
+    expectTypeOf(Request.get("/").pipe(api, admin)).toEqualTypeOf<
+      Request.Request<unknown>
+    >();
+    expectTypeOf(
+      Request.get("/").pipe(Request.baseUrl(ApiBase), admin),
+    ).toEqualTypeOf<Request.Request<unknown, never, ApiBase>>();
+    // @ts-expect-error: a base URL is text
+    void Request.mapBaseUrl((url) => url.length);
+  });
 });
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/102

@@ -2107,6 +2107,142 @@ const withKey = <I, E, R>(request: Request.Request<I, E, R>) =>
     Request.baseUrl("https://api.test/v1"),
   );
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/89
+describe("Operation with a base URL from an Effect", () => {
+  class ApiBase extends Context.Service<ApiBase, string>()("test/ApiBase") {}
+  class BaseUnavailable extends Data.TaggedError("BaseUnavailable") {}
+
+  const contract = Response.status(204, Body.empty);
+
+  it.effect(
+    "needs the service, and fails with what the base can fail with",
+    () =>
+      Effect.gen(function* () {
+        const located = Operation.make(
+          Request.get("/things").pipe(Request.baseUrl(ApiBase)),
+          contract,
+        );
+        expectTypeOf<
+          Effect.Services<ReturnType<typeof located.execute>>
+        >().toEqualTypeOf<ApiBase | HttpClient.HttpClient>();
+        const failing = Operation.make(
+          Request.get("/things").pipe(
+            Request.baseUrl(Effect.fail(new BaseUnavailable())),
+          ),
+          contract,
+        );
+        expectTypeOf<
+          Extract<
+            Effect.Error<ReturnType<typeof failing.execute>>,
+            BaseUnavailable
+          >
+        >().toEqualTypeOf<BaseUnavailable>();
+
+        const server = synthetic(() => empty(204));
+        yield* located
+          .execute(undefined)
+          .pipe(
+            Effect.provide(server.layer),
+            Effect.provideService(ApiBase, "https://eu.test/v1"),
+          );
+        expect(server.exchanges.map(({ url }) => url)).toEqual([
+          "https://eu.test/v1/things",
+        ]);
+      }),
+  );
+
+  it.effect("resolves it once, so every retry goes to the same base", () =>
+    Effect.gen(function* () {
+      let runs = 0;
+      const base = Effect.sync(() => `https://region-${++runs}.test`);
+      const server = synthetic((_, index) =>
+        index < 2 ? empty(503) : empty(204),
+      );
+      yield* Operation.make(
+        Request.get("/things").pipe(Request.baseUrl(base)),
+        contract,
+        { policy: retries(5) },
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer));
+      expect(runs).toBe(1);
+      expect(server.exchanges.map(({ url }) => url)).toEqual([
+        "https://region-1.test/things",
+        "https://region-1.test/things",
+        "https://region-1.test/things",
+      ]);
+    }),
+  );
+
+  it.effect("resolves it again on each evaluation", () =>
+    Effect.gen(function* () {
+      let runs = 0;
+      const base = Effect.sync(() => `https://region-${++runs}.test`);
+      const server = synthetic(() => empty(204));
+      const operation = Operation.make(
+        Request.get("/things").pipe(Request.baseUrl(base)),
+        contract,
+      );
+      yield* operation.execute(undefined).pipe(Effect.provide(server.layer));
+      yield* operation.execute(undefined).pipe(Effect.provide(server.layer));
+      expect(server.exchanges.map(({ url }) => url)).toEqual([
+        "https://region-1.test/things",
+        "https://region-2.test/things",
+      ]);
+    }),
+  );
+
+  it.effect("sends nothing and retries nothing when the base fails", () =>
+    Effect.gen(function* () {
+      let runs = 0;
+      const failure = new BaseUnavailable();
+      const base = Effect.suspend(() => {
+        runs++;
+        return Effect.fail(failure);
+      });
+      const server = synthetic(() => empty(204));
+      const error = yield* Effect.flip(
+        Operation.make(
+          Request.get("/things").pipe(Request.baseUrl(base)),
+          contract,
+          { policy: retries(5) },
+        )
+          .execute(undefined)
+          .pipe(Effect.provide(server.layer)),
+      );
+      expect(error).toBe(failure);
+      expect(runs).toBe(1);
+      expect(server.exchanges).toHaveLength(0);
+    }),
+  );
+
+  it.effect("runs before the attempt timeout starts", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(204));
+      const fiber = yield* Operation.make(
+        Request.get("/things").pipe(
+          Request.baseUrl(
+            Effect.as(Effect.sleep("1 minute"), "https://slow.test"),
+          ),
+        ),
+        contract,
+        {
+          policy: Policy.make(Schedule.recurs(0), {
+            attemptTimeout: "1 second",
+          }),
+        },
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer), Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(fiber);
+      expect(server.exchanges.map(({ url }) => url)).toEqual([
+        "https://slow.test/things",
+      ]);
+    }),
+  );
+});
+
 describe("Operation URL composition", () => {
   const contract = Response.status(204, Body.empty);
 

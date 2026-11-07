@@ -93,7 +93,11 @@ export interface Declaration {
   readonly url: string;
   /** The fragment written in the constructor, without its `#`. */
   readonly hash: string | undefined;
-  readonly baseUrl: string;
+  /**
+   * The base URL as text, or an Effect that supplies it during preparation. The request's own error
+   * and service types carry what that Effect needs. {@link mapBaseUrl} always leaves an Effect.
+   */
+  readonly baseUrl: string | Effect.Effect<string, unknown, unknown>;
   readonly headers: Fields.Fields;
   readonly query: Fields.Fields<string | null>;
   /** The constructor wrote a `?` with nothing after it, which holds no entries. */
@@ -278,7 +282,7 @@ export const head = (url: string): Request<unknown> => make("HEAD", url);
 export const options = (url: string): Request<unknown> => make("OPTIONS", url);
 
 /**
- * Set the shared origin and fixed path prefix for a request.
+ * Set the shared origin and fixed path prefix for a request, as text or from an Effect.
  *
  * @example
  * ```ts
@@ -288,16 +292,84 @@ export const options = (url: string): Request<unknown> => make("OPTIONS", url);
  * const teams = Request.get("/teams").pipe(api);
  * ```
  *
+ * @example
+ * ```ts
+ * import { Context, Effect } from "effect";
+ * import { Request } from "viell-effect-schema-http";
+ * class ApiHost extends Context.Service<ApiHost, string>()("app/ApiHost") {}
+ * const discovered = Effect.gen(function* () {
+ *   const host = yield* ApiHost;
+ *   return `https://${host}/api/v1`;
+ * });
+ * const users = Request.get("/users").pipe(Request.baseUrl(discovered));
+ * // The request needs ApiHost, as it would need any other service.
+ * ```
+ *
  * @remarks
  * The base is joined after path preparation. With the default URL policy, an absolute request
  * URL bypasses it; a leading `/` on a relative path keeps the base's prefix. Calling this again
- * replaces the base, rather than appending to it. Keep query fields in request combinators.
- * A fragment in the base is taken off before joining and used if the request has none of its own.
+ * replaces the base, rather than appending to it, and {@link mapBaseUrl} extends it. Keep query
+ * fields in request combinators. A fragment in the base is taken off before joining and used if the
+ * request has none of its own.
+ *
+ * An Effect supplies a location that is not known when the request is defined, from a service or a
+ * `Config` value, say. Its failures and services join the request's type, so leaving out a service
+ * is a compile error. It runs once per evaluation, after the input is encoded and before any
+ * attempt, so every retry uses the same base. Its failure is returned as it is, before anything is
+ * sent, and a retry policy does not repeat it. What it supplies is treated exactly as text would
+ * be, including by a replaced `UrlEncoding.join`.
+ *
+ * A location that must change between attempts belongs in `Operation.make`'s `transformClient`. A
+ * base that is replaced never runs, though the request's types keep what it added.
  */
 export const baseUrl =
-  (url: string) =>
-  <I, E, R>(self: Request<I, E, R>): Request<I, E, R> =>
+  <E2 = never, R2 = never>(url: string | Effect.Effect<string, E2, R2>) =>
+  <I, E, R>(self: Request<I, E, R>): Request<I, E | E2, R | R2> =>
     construct({ ...self.declaration, baseUrl: url }, self.prepare);
+
+/** A request's base URL as an Effect, whichever form it was declared in. */
+const resolveBaseUrl = ({ baseUrl: url }: Declaration) =>
+  typeof url === "string" ? Effect.succeed(url) : url;
+
+/**
+ * Change the base URL, whether it is text or an Effect, to extend a prefix or swap part of it.
+ *
+ * @example
+ * ```ts
+ * import { Request } from "viell-effect-schema-http";
+ * const api = Request.baseUrl("https://api.example.test/api/v1");
+ * const toAdmin = (url: string) => `${url}/admin`;
+ * const admin = Request.mapBaseUrl(toAdmin);
+ * const listUsers = Request.get("/users").pipe(api, admin);
+ * // https://api.example.test/api/v1/admin/users
+ * ```
+ *
+ * @remarks
+ * Use it where a request holds a base you cannot read, as an imported definition does, or one that
+ * is not known yet. `f` runs during preparation, once per evaluation, and receives the base as it
+ * stands at this step, so `""` where none is set. That is the whole text, including any query or
+ * fragment in it, and what `f` returns is joined exactly as a base from {@link baseUrl} would be. A
+ * later {@link baseUrl} replaces the result. An exception from `f` is an {@link InvalidRequest}.
+ */
+export const mapBaseUrl =
+  (f: (url: string) => string): Edit =>
+  (self) =>
+    construct(
+      {
+        ...self.declaration,
+        baseUrl: Effect.flatMap(resolveBaseUrl(self.declaration), (url) =>
+          Effect.try({
+            try: () => f(url),
+            catch: (cause) =>
+              new InvalidRequest({
+                message: "Failed to map the request's base URL",
+                cause,
+              }),
+          }),
+        ),
+      },
+      self.prepare,
+    );
 
 /** Header names compare without case; each line keeps the spelling it was given. */
 const foldHeader: Fields.Fold = (name) => name.toLowerCase();
@@ -1265,10 +1337,11 @@ const renderQuery = (draft: Draft, encoding: UrlEncoding.Service): string => {
 const finalize = (
   draft: Draft,
   declaration: Declaration,
+  baseText: string,
   encoding: UrlEncoding.Service,
 ): Compiled => {
   const { request } = draft;
-  const [base, baseFragment] = splitFragment(declaration.baseUrl);
+  const [base, baseFragment] = splitFragment(baseText);
   const [target, targetFragment] = splitFragment(request.url);
   const [url, joinFragment] = splitFragment(encoding.join(base, target));
   const search = renderQuery(draft, encoding);
@@ -1349,10 +1422,11 @@ const fieldProblems = (
  * ```
  *
  * @remarks
- * Each evaluation resolves computed fields and encodes input once. The returned Effect requires
- * any services used by the input schemas or preparation. A declared field that does not fit the
- * schemas bound to its group fails here with {@link InvalidRequest}, whatever the input. Use
- * {@link materialize} when only the native request is needed.
+ * Each evaluation resolves computed fields, encodes input and resolves the base URL once, in that
+ * order. The returned Effect requires any services used by the input schemas, preparation or the
+ * base URL. A declared field that does not fit the schemas bound to its group fails here with
+ * {@link InvalidRequest}, whatever the input. Use {@link materialize} when only the native request
+ * is needed.
  */
 export const compile = Effect.fnUntraced(function* <I, E, R>(
   self: Request<I, E, R>,
@@ -1371,8 +1445,14 @@ export const compile = Effect.fnUntraced(function* <I, E, R>(
   if (problems.length > 0)
     return yield* new InvalidRequest({ message: problems.join(" ") });
   const draft = yield* self.prepare(input, initial);
+  // Only `baseUrl` and `mapBaseUrl` set an Effect, and what it needs is already in `E` and `R`.
+  const baseText = yield* resolveBaseUrl(self.declaration) as Effect.Effect<
+    string,
+    E | InvalidRequest,
+    R
+  >;
   return yield* Effect.try({
-    try: () => finalize(draft, self.declaration, encoding),
+    try: () => finalize(draft, self.declaration, baseText, encoding),
     catch: (cause) =>
       new InvalidRequest({ message: "Failed to encode request URL", cause }),
   });
