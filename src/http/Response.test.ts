@@ -797,7 +797,7 @@ describe("Response case keys", () => {
   });
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/125
-  it("currently refuses flow over edits with no contract to check the keys against", () => {
+  it("refuses flow over edits with no contract to check the keys against", () => {
     const trimmed = flow(
       identity<typeof contract>,
       Response.remove(404),
