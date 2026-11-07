@@ -203,8 +203,8 @@ const readSegment = (segment: string): Fields.Field<string | null> => {
  *
  * @remarks
  * Use `undefined` as input until a binding adds required fields. A relative path can be combined
- * with {@link baseUrl}; {@link path} can supply the complete path from typed input.
- * Custom method strings pass through unchanged.
+ * with {@link baseUrl}, and {@link path} adds to it, so `""` starts a path written whole in a
+ * template. Custom method strings pass through unchanged.
  *
  * A constructor query is passed to the client as written until something edits that entry, so
  * `?a=1;b=2`, `?q=a+b` and `?a=%41` keep their spelling, as do empty `&` segments and a lone `?`.
@@ -771,57 +771,41 @@ export const query = <
     );
 };
 
-/**
- * Bind a schema to `{ path }` input and render the complete request path.
- *
- * @example
- * ```ts
- * import { Schema } from "effect";
- * import { Request } from "viell-effect-schema-http";
- * const user = Request.get("").pipe(
- *   Request.baseUrl("https://api.example.test"),
- *   Request.path(Schema.NumberFromString, (id, encode) => `/users/${encode(id)}`),
- * );
- * // Input: { path: 42 }; URL: https://api.example.test/users/42
- * ```
- *
- * @remarks
- * The value under `path` is an {@link Input} of the schema. A scalar schema takes a scalar;
- * `Schema.Struct({ userId: Schema.NumberFromString })` takes `{ userId: 42 }` or
- * `{ userId: "42" }`. Use a struct to name one path value or group several. Renderer parameter
- * names do not affect the input type.
- *
- * The renderer receives the schema-encoded value and the active path-value encoder. Escape each
- * dynamic value with that encoder. The returned path replaces the constructor's path; it does
- * not append to it. The shared base URL is joined afterwards. Reuse renderer functions for
- * nested resources rather than stacking path bindings. A fragment in the returned path moves to
- * the compiled request's `hash`, so the query still goes before it.
- * Renderer or path-encoding exceptions become {@link InvalidRequest}; schema failures remain
- * `SchemaError` values.
- */
-export const path = <S extends Schema.Top>(
-  contract: S,
-  render: (value: S["Encoded"], encode: UrlEncoding.Service["path"]) => string,
-) => {
-  const encode = Inputs.encoder(contract, Schema.encodeEffect(contract));
-  return <I, E, R>(
+/** A renderer: what to add to the path, from the encoded value and the path-value encoder. */
+type PathRenderer<A> = (
+  value: A,
+  encode: UrlEncoding.Service["path"],
+) => string;
+
+/** Put text after the path so far, exactly as written. */
+const extendPath = (draft: Draft, text: string): Draft => ({
+  ...draft,
+  request: HttpClientRequest.setUrl(
+    draft.request,
+    `${draft.request.url}${text}`,
+  ),
+});
+
+/** Add to the path what `render` makes of the encoded `{ path }` input. */
+const bindPath =
+  <In, A, E2, R2>(
+    encode: (input: In) => Effect.Effect<A, E2, R2>,
+    render: PathRenderer<A>,
+  ) =>
+  <I, E, R>(
     self: Request<I, E, R>,
-  ): Request<
-    I & { readonly path: Input<S> },
-    E | Schema.SchemaError | InvalidRequest,
-    R | S["EncodingServices"] | S["DecodingServices"]
-  > =>
+  ): Request<I & { readonly path: In }, E | E2 | InvalidRequest, R | R2> =>
     construct(
       self.declaration,
       Effect.fnUntraced(function* (
-        input: I & { readonly path: Input<S> },
+        input: I & { readonly path: In },
         draft: Draft,
       ) {
         if (draft.unbound.has("path")) return yield* self.prepare(input, draft);
         const encoded = yield* encode(input.path);
         const encoding = yield* UrlEncoding.UrlEncoding;
         const prepared = yield* self.prepare(input, draft);
-        const url = yield* Effect.try({
+        const added = yield* Effect.try({
           try: () => render(encoded, encoding.path),
           catch: (cause) =>
             new InvalidRequest({
@@ -829,13 +813,233 @@ export const path = <S extends Schema.Top>(
               cause,
             }),
         });
-        return {
-          ...prepared,
-          request: HttpClientRequest.setUrl(prepared.request, url),
-        };
+        return extendPath(prepared, added);
       }),
     );
+
+/** What a {@link PathValue}'s schema may encode to: one value with an obvious URL text. */
+export type PathScalar = string | number | bigint | boolean;
+
+/** A schema that encodes to one {@link PathScalar}, so its value fits in a path. */
+export type PathSchema = Schema.Top &
+  Schema.ConstraintCodec<unknown, PathScalar, unknown, unknown>;
+
+/**
+ * A named value for a {@link path} template.
+ *
+ * @remarks
+ * Declare one with {@link pathValue}. `name` is its field under `path` in the input, and `schema` is
+ * what checks and encodes it.
+ */
+export interface PathValue<
+  K extends string = string,
+  S extends PathSchema = PathSchema,
+> {
+  readonly name: K;
+  readonly schema: S;
+}
+
+/**
+ * Declare a named value for a {@link path} template.
+ *
+ * @example
+ * ```ts
+ * import { Schema } from "effect";
+ * import { Request } from "viell-effect-schema-http";
+ * const customer = Request.pathValue("customer");
+ * const calendar = Request.pathValue("calendar", Schema.FiniteFromString);
+ * const getCalendar = Request.get("").pipe(
+ *   Request.path`/customers/${customer}/calendars/${calendar}`,
+ * );
+ * // Input: { path: { customer: "a/b", calendar: 7 } }
+ * ```
+ *
+ * @remarks
+ * The value arrives under its name in `{ path }`, and without a schema it is a string. A schema has
+ * to encode to one {@link PathScalar}, and a value that gets past that type, as under `Schema.Any`,
+ * is an {@link InvalidRequest}. The input is an {@link Input} of the schema, so it takes either side.
+ * Declare a value once and reuse it across templates and definitions.
+ */
+export const pathValue: {
+  <const K extends string>(name: K): PathValue<K, typeof Schema.String>;
+  <const K extends string, S extends PathSchema>(
+    name: K,
+    schema: S,
+  ): PathValue<K, S>;
+} = (name: string, schema: PathSchema = Schema.String) =>
+  ({ name, schema }) as never;
+
+/** Add fixed text, which needs no input and cannot fail. */
+const fixedPath =
+  (text: string): Edit =>
+  (self) =>
+    construct(self.declaration, (input, draft) =>
+      draft.unbound.has("path")
+        ? self.prepare(input, draft)
+        : Effect.map(self.prepare(input, draft), (prepared) =>
+            extendPath(prepared, text),
+          ),
+    );
+
+const isPathScalar = (value: unknown): value is PathScalar =>
+  ["string", "number", "bigint", "boolean"].includes(typeof value);
+
+/**
+ * Read one value from a `{ path }` input and write it as text.
+ *
+ * @remarks
+ * A struct takes the one field from a `path` that holds others, and names it in an error. An
+ * optional key or `Schema.Any` gets past the type of {@link PathSchema}, so the value is checked
+ * here rather than written as `undefined` or `[object Object]`.
+ */
+const pathValueEncoder = ({ name, schema }: PathValue) => {
+  const contract = Schema.Struct({ [name]: schema });
+  const encode = Inputs.encoder(contract, Schema.encodeEffect(contract));
+  return (input: never) =>
+    Effect.flatMap(encode(input), ({ [name]: value }) =>
+      isPathScalar(value)
+        ? Effect.succeed(String(value))
+        : Effect.fail(
+            new InvalidRequest({
+              message: `The path value ${JSON.stringify(name)} did not encode to one value`,
+            }),
+          ),
+    );
 };
+
+/** Bind a template: each value goes through its own schema, and its text stays as written. */
+const templatePath = (
+  text: TemplateStringsArray,
+  values: ReadonlyArray<PathValue>,
+) => {
+  const encoders = values.map(pathValueEncoder);
+  return encoders.length === 0
+    ? fixedPath(text.raw[0]!)
+    : bindPath(
+        (input: never) => Effect.forEach(encoders, (encode) => encode(input)),
+        (encoded, encode) =>
+          encoded.reduce(
+            (added, value, index) =>
+              `${added}${encode(value)}${text.raw[index + 1]!}`,
+            text.raw[0]!,
+          ),
+      );
+};
+
+const isTemplate = (
+  value: TemplateStringsArray | Schema.Top,
+): value is TemplateStringsArray => Array.isArray(value);
+
+/** Bind a renderer: it receives its schema's encoded value and the path-value encoder. */
+const renderedPath = <S extends Schema.Top>(
+  contract: S,
+  render: PathRenderer<S["Encoded"]>,
+) => bindPath(Inputs.encoder(contract, Schema.encodeEffect(contract)), render);
+
+/**
+ * Add to the request's path, from a template or from a renderer.
+ *
+ * @example
+ * ```ts
+ * import { Schema } from "effect";
+ * import { Request } from "viell-effect-schema-http";
+ * const customer = Request.pathValue("customer");
+ * const calendar = Request.pathValue("calendar", Schema.FiniteFromString);
+ * const getCalendar = Request.get("").pipe(
+ *   Request.baseUrl("https://api.example.test/v1"),
+ *   Request.path`/customers/${customer}/calendars/${calendar}`,
+ * );
+ * // Input: { path: { customer: "a/b", calendar: 7 } }
+ * // URL: https://api.example.test/v1/customers/a%2Fb/calendars/7
+ * ```
+ *
+ * @remarks
+ * The path is the constructor's path followed by what each `path` call adds, in order, joined
+ * exactly as written. The library adds no `/` and removes none, so `/users` and `42` make
+ * `/users42`, and `/users/` and `/42` make `/users//42`. The base URL is joined afterwards. A `?` or
+ * `#` in the text is URL syntax, so a `#` starts the fragment for all that follows it. A fragment
+ * moves to the compiled request's `hash`, so the query still goes before it. The result is passed
+ * to the client as written, and the client may rewrite or refuse it.
+ *
+ * Use a template when the path has a fixed shape. Only a {@link pathValue} can go in one, so each
+ * value has its schema and always goes through the active `UrlEncoding` path encoder, and a run-time
+ * string is a compile error. A template with no values adds fixed text. The text is used as written
+ * and never parsed, so a backslash is a backslash and not an escape. Stacked templates add their
+ * fields to one `path` input, and a name used more than once gets the same value.
+ *
+ * Use a renderer when the shape of the path depends on the value, such as a value holding several
+ * segments or a whole URL. It receives the schema-encoded value and the active path-value encoder,
+ * and escaping each dynamic value is up to it. The value under `path` is an {@link Input} of the
+ * schema, so a scalar schema takes a scalar and a struct takes its fields. A scalar is one value for
+ * the whole `path`, so it does not stack with another scalar of a different type or with a template.
+ *
+ * Encoding does not make a value safe. A `/` in a value cannot add a segment, but `..` and an empty
+ * string have nothing to encode, and the client may resolve a dot segment. Constrain a value from a
+ * user in its schema.
+ *
+ * {@link unbind} removes what earlier calls added, and {@link setPath} replaces the constructor's
+ * text. Renderer or path-encoding exceptions become {@link InvalidRequest}; schema failures remain
+ * `SchemaError` values.
+ */
+export const path: {
+  (text: TemplateStringsArray): Edit;
+  <const V extends readonly [PathValue, ...ReadonlyArray<PathValue>]>(
+    text: TemplateStringsArray,
+    ...values: V
+  ): <I, E, R>(
+    self: Request<I, E, R>,
+  ) => Request<
+    I & {
+      readonly path: {
+        readonly [P in V[number] as P["name"]]: Input<P["schema"]>;
+      };
+    },
+    E | Schema.SchemaError | InvalidRequest,
+    | R
+    | V[number]["schema"]["EncodingServices"]
+    | V[number]["schema"]["DecodingServices"]
+  >;
+  <S extends Schema.Top>(
+    contract: S,
+    render: (
+      value: S["Encoded"],
+      encode: UrlEncoding.Service["path"],
+    ) => string,
+  ): <I, E, R>(
+    self: Request<I, E, R>,
+  ) => Request<
+    I & { readonly path: Input<S> },
+    E | Schema.SchemaError | InvalidRequest,
+    R | S["EncodingServices"] | S["DecodingServices"]
+  >;
+} = (
+  first: TemplateStringsArray | Schema.Top,
+  ...rest: ReadonlyArray<PathValue> | readonly [PathRenderer<never>]
+) =>
+  (isTemplate(first)
+    ? templatePath(first, rest as ReadonlyArray<PathValue>)
+    : renderedPath(first, rest[0] as PathRenderer<unknown>)) as never;
+
+/**
+ * Replace the constructor's path, leaving every {@link path} binding in place.
+ *
+ * @example
+ * ```ts
+ * import { Request } from "viell-effect-schema-http";
+ * const id = Request.pathValue("id");
+ * const current = Request.get("/things").pipe(Request.path`/${id}`);
+ * const legacy = current.pipe(Request.setPath("/legacy/things"));
+ * // Input: { path: { id: "a" } }; URL: /legacy/things/a
+ * ```
+ *
+ * @remarks
+ * Only the path changes. A constructor's query and fragment stay, and a `?` or `#` in this text is
+ * URL text, as it is in {@link path}. To replace a whole path, use {@link unbind} and this together.
+ */
+export const setPath =
+  (url: string): Edit =>
+  (self) =>
+    construct({ ...self.declaration, url }, self.prepare);
 
 /**
  * Bind an encoder to the call's `{ body }` input.
@@ -906,7 +1110,8 @@ export type Unbound<I, K extends Group> = K extends keyof I
  * Takes `"path"`, `"query"`, `"headers"` or `"body"`, and affects only bindings before it. To
  * replace a binding, unbind the group and bind again. Raw declarations stay, and go out unchecked
  * once no schema states the group's shape. A constructor path and query are declarations, so they
- * stay too.
+ * stay too. For `"path"`, the text of earlier {@link path} calls goes with their values, and
+ * {@link setPath} is what changes the constructor's path.
  *
  * Other steps stay as well. A {@link mapEffect} that reads the removed input receives `undefined`
  * for it. After {@link mapInput}, the binding is skipped, but the mapped input keeps whatever the

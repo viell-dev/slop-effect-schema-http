@@ -311,6 +311,60 @@ describe("Operation over real loopback sockets", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/108
+  it.live("Fetch keeps slashes the library passed on, and resolves dots", () =>
+    Effect.gen(function* () {
+      const targets: Array<string | undefined> = [];
+      const { origin } = yield* listen((request, response) => {
+        targets.push(request.url);
+        response.end("ok");
+      });
+      for (const path of [
+        "/a//b",
+        "//a",
+        "/a/",
+        "/a/./b",
+        "/a/../b",
+        "/a/%2e%2e/b",
+        "/a/b/..",
+      ]) {
+        yield* Operation.make(
+          Request.get(`${origin}${path}`),
+          Response.status(200, Body.text),
+        )
+          .execute(undefined)
+          .pipe(Effect.provide(FetchHttpClient.layer));
+      }
+      expect(targets).toEqual([
+        "/a//b",
+        "//a",
+        "/a/",
+        "/a/b",
+        "/b",
+        "/b",
+        "/a/",
+      ]);
+      targets.length = 0;
+      const customer = Request.pathValue("customer");
+      const calendars = Operation.make(
+        Request.get(origin).pipe(
+          Request.path`/customers/${customer}/calendars`,
+        ),
+        Response.status(200, Body.text),
+      );
+      for (const value of ["..", "a/b", ""]) {
+        yield* calendars
+          .execute({ path: { customer: value } })
+          .pipe(Effect.provide(FetchHttpClient.layer));
+      }
+      expect(targets).toEqual([
+        "/calendars",
+        "/customers/a%2Fb/calendars",
+        "/customers//calendars",
+      ]);
+    }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/96
   it.live("Fetch refuses a GET body the library passed on", () =>
     Effect.gen(function* () {
