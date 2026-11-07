@@ -28,14 +28,21 @@ const program = getUser
   .execute({ path: { userId: 42 } })
   .pipe(Effect.provide(FetchHttpClient.layer));
 // Replace the example endpoint with your service, then: await Effect.runPromise(program).
+
+// Adjust the definition where it is used. getUser itself does not change.
+const inFrench = Request.setHeader("accept-language", "fr");
+const getUserInFrench = getUser.pipe(Operation.mapRequest(inFrench));
 ```
 
 Reuse `api` across requests to share the base URL. The path template adds `/users/42` to the empty
 path passed to `Request.get`, and that is joined to the base. The path value's schema turns the
 number into URL text, and the library escapes it. The response schema validates the returned JSON.
 Constructing `program` sends nothing; evaluating it produces a typed user or an Effect failure.
-[Getting started](https://viell-dev.github.io/slop-effect-schema-http/getting-started) supplies a
-complete in-memory example you can run without a server or credentials.
+
+A definition describes the most common request, not the only one. Write it once, near the
+integration, and let each part of your application adjust its request, response or options. [Getting
+started](https://viell-dev.github.io/slop-effect-schema-http/getting-started) supplies a complete
+in-memory example you can run without a server or credentials.
 
 ## Install
 
@@ -45,11 +52,13 @@ In an existing Node.js 24 or 26 ESM project with Effect `^4.0.7`, add the librar
 npm install viell-effect-schema-http
 ```
 
-`0.1.0` is the first stable release. The same package is available as a checksummed [GitHub release
-tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0).
+`0.1.0` is the current release. The same package is available as a checksummed [GitHub release
+tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0). This branch
+documents the next release, `0.2.0`, which is being prepared and is not published yet. [What's in
+0.2](./docs/release-notes/0.2.md) lists what changes, including the example above.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
-24 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
+24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
 limits](https://viell-dev.github.io/slop-effect-schema-http/limits) for tested Effect/compiler
 versions and provider boundaries.
 
@@ -58,20 +67,22 @@ versions and provider boundaries.
 - [Getting started](https://viell-dev.github.io/slop-effect-schema-http/getting-started):
   installation, a runnable example and the expected output.
 - [Usage](https://viell-dev.github.io/slop-effect-schema-http/usage): add PATCH and DELETE actions,
-  share URL descriptions and connect an operation to your HTTP client.
+  share URL descriptions, adjust a definition and connect an operation to your HTTP client.
+- [Recipes](https://viell-dev.github.io/slop-effect-schema-http/recipes): everyday tasks that
+  combine the modules, such as adjusting a definition for one component.
 - [Module guides](https://viell-dev.github.io/slop-effect-schema-http/api): Request, Body, Response,
   Operation, Policy, Interaction, UrlEncoding and Transport, from basic use to advanced behavior.
 - [Limits and recovery](https://viell-dev.github.io/slop-effect-schema-http/limits): compatibility,
-  failure stages and bug reporting.
+  where the library's promise stops, failure stages and bug reporting.
 - [What's in 0.1](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.1) introduces
   the release; [Versions](https://viell-dev.github.io/slop-effect-schema-http/versions) covers
   updates and compatibility policy. [CHANGELOG.md](./CHANGELOG.md) records the detailed history.
 
-The library provides finite-body codecs, typed contracts, ordered response selection, retry policies
-and scoped interaction coordination. It uses the application's HTTP transport and Effect runtime.
-Streaming bodies, server generation and a general cache are outside its scope. The [design
-contract](https://viell-dev.github.io/slop-effect-schema-http/design) explains the precise
-guarantees.
+The library provides finite-body codecs, typed contracts you can adjust where they are used, ordered
+response selection, retry policies and scoped interaction coordination. It uses the application's
+HTTP transport and Effect runtime. Streaming bodies, server generation and a general cache are
+outside its scope. The [design contract](https://viell-dev.github.io/slop-effect-schema-http/design)
+explains the precise guarantees.
 
 ## Project and contribution
 
@@ -81,7 +92,7 @@ tracker](https://github.com/viell-dev/slop-effect-schema-http/issues/2) records 
 release's qualification and publication.
 
 Use [CONTRIBUTING.md](./CONTRIBUTING.md) for checkout setup, verification and pull requests. [Report
-a defect](https://github.com/viell-dev/slop-effect-schema-http/issues) with a small synthetic
-reproduction and library, Effect and environment versions. Include expected and actual results; keep
-credentials and private service data out. For sensitive security reports, use [private vulnerability
-reporting](https://github.com/viell-dev/slop-effect-schema-http/security/advisories/new).
+a defect](https://github.com/viell-dev/slop-effect-schema-http/issues/new?template=bug_report.yml)
+with a small synthetic reproduction and library, Effect and environment versions. Include expected
+and actual results; keep credentials and private service data out. For sensitive security reports,
+follow the [security policy](./SECURITY.md).

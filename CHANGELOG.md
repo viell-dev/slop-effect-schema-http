@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Read [What's in 0.2](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.2) for the
+consumer introduction and migration steps. Start with its section on paths, because one change
+compiles and still changes your URLs.
+
 - Wait for npm version/attestation visibility after publication and provide a read-only recovery
   workflow that verifies the original qualification artifact without another upload
   ([#78](https://github.com/viell-dev/slop-effect-schema-http/issues/78)).
@@ -148,6 +152,18 @@
   field is read from its text. An invalid `Date` has no ISO text, so it goes out as `Invalid Date`,
   and a schema such as `Schema.Date` refuses it before that. Headers stay text, because HTTP date
   headers are not ISO ([#110](https://github.com/viell-dev/slop-effect-schema-http/issues/110)).
+- Add a Recipes page for everyday tasks, each compiled and run with its failure cases, and note
+  Effect's trace headers in the browser limits
+  ([#90](https://github.com/viell-dev/slop-effect-schema-http/issues/90)).
+- Show generators and named transforms in the guides, and lead them with the main workflow: define
+  once, adjust where it is used
+  ([#109](https://github.com/viell-dev/slop-effect-schema-http/issues/109)).
+- State where the library's promise stops, with what the default client does to a path, and
+  recommend a slash convention
+  ([#108](https://github.com/viell-dev/slop-effect-schema-http/issues/108)).
+- Write the release instructions as a general procedure, replacing wording tied to `0.1`, and state
+  the library's direction in the design page. Add a security policy and a bug report form
+  ([#107](https://github.com/viell-dev/slop-effect-schema-http/issues/107)).
 
 ## 0.1.0 — 2026-11-04
 

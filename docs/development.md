@@ -12,8 +12,8 @@ guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTI
 setup, dependency policy, tests, documentation editing and pull requests. Start there when working
 on the library itself.
 
-For a defect report, use [Limits and recovery](./limits.md#report-a-defect). For confusing docs,
-[open a documentation
+For a defect report, use [Limits and recovery](./limits.md#report-a-defect), which also gives the
+route for a security report. For confusing docs, [open a documentation
 issue](https://github.com/viell-dev/slop-effect-schema-http/issues/new?labels=Type%3A%20Documentation)
 with the page, what you were trying to do, and what you expected to learn.
 
