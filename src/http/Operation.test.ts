@@ -2311,7 +2311,11 @@ const compileOnly = (statements: (...values: ReadonlyArray<never>) => void) =>
 
 const wholeNewResponse = () => Response.status(200, Body.text);
 const otherInput = (value: { readonly other: number }) => value;
+const forAnyResponse = (
+  response: Response.Response<unknown, unknown, unknown>,
+) => response.pipe(Response.orElse(Response.status(204, Body.empty)));
 const dropdownReply = () => json(200, page([option(1)]));
+const firstOf = <T>(list: ReadonlyArray<T>) => list[0];
 const listThings = (pageNumber: number) =>
   getThings.pipe(Operation.mapRequest(Request.setQuery({ page: pageNumber })));
 const inList = <I, A, E, R>(operation: Operation.Operation<I, A, E, R>) =>
@@ -3067,6 +3071,16 @@ describe("Operation.unmap", () => {
     }),
   );
 
+  it.effect("changes nothing the second time", () =>
+    Effect.gen(function* () {
+      const server = synthetic(reply);
+      const twice = getThings.pipe(Operation.unmap, Operation.unmap);
+      expect(
+        yield* twice.execute(undefined).pipe(Effect.provide(server.layer)),
+      ).toEqual(page(things));
+    }),
+  );
+
   it.effect("changes nothing on an operation with no step", () =>
     Effect.gen(function* () {
       const server = synthetic(reply);
@@ -3158,6 +3172,50 @@ describe("what fits a mapped operation", () => {
     expectTypeOf<
       Extract<keyof Parameter, `Use Operation.unmap first${string}`>
     >().not.toBeNever();
+  });
+
+  it("compiles a new case whose result already fits", () => {
+    const accepted = Response.status(202, Body.jsonSchema(ThingPage));
+    const variant = getThings.pipe(
+      Operation.mapResponse(Response.orElse(accepted)),
+    );
+    expectTypeOf<Success<typeof variant>>().toEqualTypeOf<
+      Success<typeof getThings>
+    >();
+  });
+
+  it.effect(
+    "compiles an unchanged response, and a new one with the same result",
+    () =>
+      Effect.gen(function* () {
+        const server = synthetic((_, index) =>
+          index === 0 ? reply() : json(201, page(things)),
+        );
+        const same = getThings.pipe(
+          Operation.mapResponse((response) => response),
+        );
+        const moved = getThings.pipe(
+          Operation.mapResponse(() =>
+            Response.status(201, Body.jsonSchema(ThingPage)),
+          ),
+        );
+        for (const operation of [same, moved]) {
+          expect(
+            yield* operation
+              .execute(undefined)
+              .pipe(Effect.provide(server.layer)),
+          ).toEqual(things);
+        }
+      }),
+  );
+
+  it("refuses a function typed for a wider response, mapped or not", () => {
+    compileOnly(() => {
+      // @ts-expect-error the response slot is invariant, so unmap does not help here
+      pagedThings.pipe(Operation.mapResponse(forAnyResponse));
+      // @ts-expect-error the same on a mapped operation
+      getThings.pipe(Operation.mapResponse(forAnyResponse));
+    });
   });
 
   it("compares with the current response, so widening back needs unmap", () => {
@@ -3513,6 +3571,22 @@ describe("ways to write a variant", () => {
         yield* variant.execute(undefined).pipe(Effect.provide(server.layer)),
       ).toBe(2);
       expectTypeOf<Success<typeof variant>>().toEqualTypeOf<number>();
+    }),
+  );
+
+  it.effect("takes a generic function in map", () =>
+    Effect.gen(function* () {
+      const server = synthetic(reply);
+      const firstThing = getThings.pipe(Operation.map(firstOf));
+      expect(
+        yield* firstThing
+          .pipe(Operation.mapRequest(firstFive))
+          .execute(undefined)
+          .pipe(Effect.provide(server.layer)),
+      ).toEqual(thing(1));
+      expectTypeOf<Success<typeof firstThing>>().toEqualTypeOf<
+        typeof Thing.Type | undefined
+      >();
     }),
   );
 

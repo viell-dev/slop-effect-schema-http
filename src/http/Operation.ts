@@ -66,8 +66,9 @@ export interface Operation<
  * The function is suspended until evaluation. This adapter adds no HTTP dispatch, decoding,
  * retry policy or scope management beyond what the supplied function already does.
  *
- * The result has no parts, at compile time or at run time, so `Operation.fromEffect(operation.execute)`
- * seals a definition: it keeps the same types and offers no adjustment.
+ * The result has no parts, at compile time or at run time. So
+ * `Operation.fromEffect(operation.execute)` seals a definition: it keeps the same types and offers
+ * no adjustment.
  */
 export const fromEffect = <I, A, E, R>(
   execute: (input: I) => Effect.Effect<A, E, R>,
@@ -335,14 +336,14 @@ type RequestFailure<Q> =
   Q extends Request.Request<never, infer E, unknown> ? E : never;
 type RequestServices<Q> =
   Q extends Request.Request<never, unknown, infer R> ? R : never;
+// The cases are inferred too, or the check would not resolve while `C` is still generic.
 type ValueOf<S> =
   S extends Response.Response<infer A, unknown, unknown, infer _C> ? A : never;
 type ResponseFailure<S> =
   S extends Response.Response<unknown, infer E, unknown, infer _C> ? E : never;
 type ResponseServices<S> =
   S extends Response.Response<unknown, unknown, infer R, infer _C> ? R : never;
-// Every slot is inferred: `Options` is invariant, and a fixed slot silently gives `never`. The
-// same goes for a response's cases, or the check would not resolve while `C` is still generic.
+// Every slot is inferred: `Options` is invariant, and a fixed slot silently gives `never`.
 type ClientFailure<O> =
   O extends Options<infer E, infer _R, infer _EP, infer _RP> ? E : never;
 type ClientServices<O> =
