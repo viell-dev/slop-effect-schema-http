@@ -1680,9 +1680,9 @@ EXT-12 and EXT-13 cover what the library adds by itself: an operation's `Accept`
 `Content-Type` and `Content-Length`. A request's own declaration wins over these, and
 `Request.removeHeader` stops them, as
 [#100](https://github.com/viell-dev/slop-effect-schema-http/issues/100) decided and the design page
-states under _Bodies_. EXT-12a to EXT-12t go through the raw client, in
+states under _Bodies_. EXT-12a to EXT-12u go through the raw client, in
 `src/scenarios/header-declarations.node.test.ts`, which needs Node because only Node has that
-client, and every other client adds or changes these headers. EXT-13a to EXT-13t go through `fetch`,
+client, and every other client adds or changes these headers. EXT-13a to EXT-13u go through `fetch`,
 in `src/scenarios/header-declarations.test.ts`, in both lanes. The letters match, and
 `src/clients/echoed.ts` holds the declarations they share.
 
@@ -1771,8 +1771,9 @@ header over: "bare `fetch`" below is a small `HttpClient.make` client in the tes
   all five go out, and the server, which believes the line, reads `hel`. Status: tested.
   - `[EXT-12q] a declared Content-Length below the body's goes out, with the whole body, and the server reads that many bytes`
 - **EXT-12r** A `Content-Length` above the body's: the same with `10`. The line goes out, and the
-  server waits for bytes that never come, so no answer arrives. A test stops the request after
-  `arrived(1)`, and nothing has answered it by then. Status: tested.
+  server waits for bytes that never come. `arrived(1)` fires on the head, so the test then waits 300
+  milliseconds for an answer, and none comes. The ledger's body is the five bytes sent, short of the
+  ten the line promised, and the test stops the request. Status: tested.
   - `[EXT-12r] a declared Content-Length above the body's goes out, and the server waits for bytes that never come`
 - **EXT-12s** An empty `Content-Length`: `Request.setHeader("content-length", "")`. `head` has
   `content-length: ` as a line, and the socket listener reads no body. Status: tested.
@@ -1784,6 +1785,10 @@ header over: "bare `fetch`" below is a small `HttpClient.make` client in the tes
   tested.
   - `[EXT-12t] removeHeader("content-length") leaves the provider to frame the body, and this one can decline`
   - `[EXT-12t] the raw client frames a body whose Content-Length the request removed`
+- **EXT-12u** Client middleware removing the automatic value: `transformClient` with
+  `HttpClient.mapRequest(HttpClientRequest.removeHeader("accept"))`. It runs after the operation
+  added `Accept`, so `head` has no other line. Status: tested.
+  - `[EXT-12u] client middleware that removes Accept leaves the request with none`
 - **EXT-13a** EXT-12a through `fetch`: all three reach the client and arrive. Status: tested.
   - `[EXT-13a] a request that declares nothing gets the automatic Accept, Content-Type and Content-Length`
 - **EXT-13b** EXT-12b through `fetch`: no client received an `Accept`, and the platform adds
@@ -1853,6 +1858,9 @@ header over: "bare `fetch`" below is a small `HttpClient.make` client in the tes
 - **EXT-13t** EXT-12t through `fetch`: the client received no `Content-Length`, and the platform
   writes `Content-Length: 5`, in both lanes. A body always goes out framed. Status: limit.
   - `[EXT-13t] removeHeader("content-length") reaches the client with none, and the platform writes the true one`
+- **EXT-13u** EXT-12u through `fetch`: no client received an `Accept`, and the platform adds
+  `Accept: */*`, as in EXT-13b. Status: limit.
+  - `[EXT-13u] client middleware that removes Accept reaches the client with none, and the platform adds its own`
 
 #### Header name spelling
 
@@ -1860,8 +1868,8 @@ EXT-14 covers how a header name is spelled, as
 [#101](https://github.com/viell-dev/slop-effect-schema-http/issues/101) decided: a name keeps the
 spelling it was written with, and names compare without case. EXT-14a to EXT-14g go through the raw
 client, in `src/scenarios/header-declarations.node.test.ts`, on a `GET`; each `head` also ends with
-`accept: text/plain`. EXT-14h goes through `fetch`, in `src/scenarios/header-declarations.test.ts`,
-in both lanes.
+`accept: text/plain`. EXT-14h and EXT-14i go through `fetch`, in
+`src/scenarios/header-declarations.test.ts`, in both lanes.
 
 - **EXT-14a** `Request.setHeader("X-API-Key", "v")`. `head` has `X-API-Key: v`. Status: tested.
   - `[EXT-14a] setHeader keeps the name as written`
@@ -1886,6 +1894,13 @@ in both lanes.
 - **EXT-14h** EXT-14a through `fetch`: the client's lines hold `X-API-Key`, and `x-api-key` arrives,
   because `fetch` receives the normalized view. Status: limit.
   - `[EXT-14h] fetch sends a lowercase name, whatever the client's lines say`
+- **EXT-14i** EXT-14b to EXT-14g through `fetch`: the lines a provider reads with
+  `Transport.headerLines` are the ones the raw client writes in those entries, in both lanes, and
+  `fetch` sends each name in lower case. Only the Node lane can send these lines, so this is where a
+  regression in them that touched only browsers would show. Status: tested.
+  - `[EXT-14i] the client receives the lines ${declaration} leaves, and fetch sends their names in lower case`
+    (`appendHeader`, `a replacing setHeader`, `removeHeader`, `a header schema`,
+    `a raw default under a schema`, `middleware`)
 
 #### Queries as written
 

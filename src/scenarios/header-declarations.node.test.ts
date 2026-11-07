@@ -8,7 +8,7 @@
  * `echo`'s socket listener records `head`, the request as it arrived, which is the proof here.
  */
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber } from "effect";
+import { Duration, Effect, Exit, Fiber, Option } from "effect";
 import { lane } from "#lane";
 import { automatic, type Declared, spelling } from "../clients/echoed.js";
 import { watching } from "../clients/received.js";
@@ -254,11 +254,18 @@ describe("a request's own headers through the raw client (node)", () => {
         const echo = yield* lane.backend("echo", undefined, {
           listener: "socket",
         });
+        const watched = watching();
         const exit = yield* automatic
-          .pRequired(echo.origin, (client) => client)
+          .pRequired(echo.origin, watched.last)
           .pipe(Effect.provide(lane.rawClient!(echo.origin)), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
+        expect(watched.received).toEqual([]);
         expect(yield* echo.ledger).toEqual([]);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        const error = exit.cause.reasons[0];
+        expect(error?._tag).toBe("Fail");
+        if (error?._tag !== "Fail") return;
+        expect((error.error as { _tag: string })._tag).toBe("InvalidRequest");
       }),
   );
 
@@ -304,11 +311,17 @@ describe("a request's own headers through the raw client (node)", () => {
           .r(echo.origin, (client) => client)
           .pipe(Effect.provide(lane.rawClient!(echo.origin)), Effect.forkChild);
         yield* echo.arrived(1);
+        // `arrived` fires on the head, so give an answer time to come. One that came would end this
+        // early, and nothing else can show a server waiting: there is no event for "still waiting".
+        const answer = yield* Fiber.await(waiting).pipe(
+          Effect.timeoutOption(Duration.millis(300)),
+        );
+        expect(Option.isNone(answer)).toBe(true);
         const [entry] = yield* echo.ledger;
         expect(entry!.head).toContain("\r\nContent-Length: 10\r\n");
+        // All five bytes came, which is short of the ten the line promised.
+        expect(bodyText(entry!)).toBe("hello");
         expect(entry!.aborted).toBe(false);
-        // Nothing answers: the fiber is still waiting when it is stopped.
-        expect(waiting.pollUnsafe()).toBeUndefined();
         yield* Fiber.interrupt(waiting);
       }),
   );
@@ -335,6 +348,13 @@ describe("a request's own headers through the raw client (node)", () => {
     POST,
     ["content-type: text/plain", "accept: text/plain", "content-length: 5"],
     "hello",
+  );
+
+  heads(
+    "[EXT-12u] client middleware that removes Accept leaves the request with none",
+    automatic.u,
+    GET,
+    [],
   );
 });
 
