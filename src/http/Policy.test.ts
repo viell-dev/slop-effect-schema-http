@@ -128,27 +128,31 @@ describe("Policy.transient", () => {
     ).toBe(false);
   });
 
-  it("agrees with Effect's own classification", () => {
-    for (let status = 200; status < 600; status++) {
-      expect(Policy.transient(answered(status))).toBe(
-        HttpClient.isTransientResponse(response(empty(status))),
-      );
-    }
-    for (const error of [
-      new Cause.TimeoutError(),
-      clientError(new HttpClientError.TransportError({ request })),
-      clientError(
-        new HttpClientError.InvalidUrlError({ request, cause: "bad" }),
-      ),
-      statusError(503),
-      statusError(404),
-      new Error("other"),
-    ]) {
-      expect(Policy.transient(failed(Cause.fail(error)))).toBe(
-        HttpClient.isTransientError(error),
-      );
-    }
-  });
+  // Effect 4.0.7, the oldest version supported, keeps these functions to itself.
+  it.skipIf(!("isTransientResponse" in HttpClient))(
+    "agrees with Effect's own classification",
+    () => {
+      for (let status = 200; status < 600; status++) {
+        expect(Policy.transient(answered(status))).toBe(
+          HttpClient.isTransientResponse(response(empty(status))),
+        );
+      }
+      for (const error of [
+        new Cause.TimeoutError(),
+        clientError(new HttpClientError.TransportError({ request })),
+        clientError(
+          new HttpClientError.InvalidUrlError({ request, cause: "bad" }),
+        ),
+        statusError(503),
+        statusError(404),
+        new Error("other"),
+      ]) {
+        expect(Policy.transient(failed(Cause.fail(error)))).toBe(
+          HttpClient.isTransientError(error),
+        );
+      }
+    },
+  );
 
   it("does not classify defects or interruptions as transient", () => {
     expect(Policy.transient(failed(Cause.die(new Error("bug"))))).toBe(false);

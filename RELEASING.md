@@ -83,9 +83,11 @@ release runs in this order:
 
    Require the whole run to succeed at the exact merged commit. It repeats candidate preparation on
    Linux and Windows, repeats the build, tests and package check on the newest Node.js 26 on both,
-   and checks all four hostile-suite lanes on Linux against that same library SHA: Node source,
-   Chromium source, packed Node/declarations and the built Chromium app. The suite is pinned to a
-   reviewed commit in the workflow and stays in its independent history. Its package build is
+   runs `npm test` with Effect 4.0.7 and its `@effect/vitest`, because the library reads Effect's
+   schema structure and the peer floor has to pass the behavior tests, not just the consumer
+   fixture, and checks all four hostile-suite lanes on Linux against that same library SHA: Node
+   source, Chromium source, packed Node/declarations and the built Chromium app. The suite is pinned
+   to a reviewed commit in the workflow and stays in its independent history. Its package build is
    independently qualified; the isolated consumers qualify the actual release tarball.
 
    Retain the Actions run and results in the release PR. Pending, skipped or failing required work
