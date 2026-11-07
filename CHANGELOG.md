@@ -1,5 +1,17 @@
 # Change history
 
+## Unreleased
+
+- Correct what the guides say about a declared `Content-Length`. Effect's Fetch client takes a
+  non-empty one off before `fetch` sees it, so `fetch` sends the body's real length, and it neither
+  fails nor stalls there. On Node.js an empty one is a transport failure.
+- State in the Request guide and in editor help that a caller's own field can go, with no error,
+  under a union whose first member is narrower, and that a wider member goes first
+  ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
+- State that a success `retain` rejects drops an earlier retained success for equal input, and what
+  a `Request.mapEffect` finds after `Request.unbind` removes the input it reads.
+- Show editor help on the members of public types, such as `execute`, `decoder` and `headerLines`.
+
 ## 0.2.0 — 2026-11-07
 
 Read [What's in 0.2](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.2) for the
