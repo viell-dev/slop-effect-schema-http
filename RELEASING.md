@@ -58,11 +58,11 @@ release runs in this order:
    ```
 
    This clears only the local generated `dist/`, then runs type/format/lint checks, a fresh build,
-   behavior/socket tests, executable docs, the site/link checks, and a moderate-or-higher dependency
-   audit. It packs once, installs that tarball into an isolated consumer with Effect 4.1.2, verifies
-   strict declarations and every export, and executes the synthetic example. It then installs and
-   verifies the **same bytes** with the Effect 4.0.7 peer floor and a TypeScript 7.0.2 consumer. No
-   package or release is published.
+   behavior/socket tests, the release tooling tests, executable docs, the site/link checks, and a
+   moderate-or-higher dependency audit. It packs once, installs that tarball into an isolated
+   consumer with Effect 4.1.2, verifies strict declarations and every export, and executes the
+   synthetic example. It then installs and verifies the **same bytes** with the Effect 4.0.7 peer
+   floor and a TypeScript 7.0.2 consumer. No package or release is published.
 
    Outputs are under `artifacts/VERSION/`: the `.tgz`, `SHA256SUMS`, `manifest.json` (file list,
    integrity, source commit and tool versions), and `release-check.mjs`. Existing output is refused;
@@ -76,10 +76,11 @@ release runs in this order:
    ```
 
    Require the whole run to succeed at the exact merged commit. It repeats candidate preparation on
-   Linux and Windows, and checks all four hostile-suite lanes on Linux against that same library
-   SHA: Node source, Chromium source, packed Node/declarations and the built Chromium app. The suite
-   is pinned to a reviewed commit in the workflow and stays in its independent history. Its package
-   build is independently qualified; the isolated consumers qualify the actual release tarball.
+   Linux and Windows, repeats the build, tests and package check on the newest Node.js 26 on both,
+   and checks all four hostile-suite lanes on Linux against that same library SHA: Node source,
+   Chromium source, packed Node/declarations and the built Chromium app. The suite is pinned to a
+   reviewed commit in the workflow and stays in its independent history. Its package build is
+   independently qualified; the isolated consumers qualify the actual release tarball.
 
    Retain the Actions run and results in the release PR. Pending, skipped or failing required work
    is not release evidence. A subsequent code or tooling change requires fresh qualification.

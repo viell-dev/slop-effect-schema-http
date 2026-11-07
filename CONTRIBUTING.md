@@ -38,9 +38,10 @@ npm run test:package
 - `npm run test:package`: verify the built tarball in an isolated consumer; run the build first.
 - `npm run format`: apply the configured formatters.
 
-CI requires these verification commands on Linux, plus the documentation checks below. For code
-changes, reproduce the reported behavior first and add a meaningful test at the layer that exposes
-it.
+CI requires these verification commands on Linux, plus the documentation checks below, as its
+`checks` job. Its `node-26` job repeats the build, `npm test` and `npm run test:package` on the
+newest Node.js 26, and is required too. For code changes, reproduce the reported behavior first and
+add a meaningful test at the layer that exposes it.
 
 `.npmrc` sets `ignore-scripts=true`, so no dependency's install script runs. Keep it: none of the
 current dependencies needs one, and a new dependency that does needs a review of what the script
@@ -106,8 +107,10 @@ real servers, or packaged installation.
 checks Node Fetch's followed/manual redirects, cookies with and without an explicit Effect jar,
 multipart boundary/body agreement, repeated request and response lines and header-name spelling
 through a small `node:http` provider, constructor query text, a dropped fragment, kept slashes and
-resolved dot segments in a path, a declared or removed `Content-Type`, Fetch's refusal of a GET
-body, and socket closure when an in-progress buffered or stream body read is interrupted.
+resolved dot segments in a path, a declared or removed `Content-Type`, a declared `Content-Length`
+Effect's Fetch client takes off, Fetch's refusal of a GET body and of a method such as `TRACE`,
+carriage returns and line feeds kept off the wire, and socket closure when an in-progress buffered
+or stream body read is interrupted.
 
 `test/socket.ts` starts fresh servers on ephemeral `127.0.0.1` ports and closes their connections at
 scope exit. Its line-preserving client is a GET-only test control, not a supported transport. Tests
@@ -184,7 +187,7 @@ platforms. The packed lane uses the suite's dependencies; the isolated consumer 
 the package separately from that suite.
 
 The current release matrix uses Node.js 24.22.2 and the newest Node.js 26 on Windows/Linux, Effect
-4.0.7 and 4.1.2, TypeScript 6.0.3 and 7.0.2 consumers, and Chromium supplied by Playwright 1.64.1.
+4.0.7 and 4.1.2, TypeScript 6.0.3 and 7.0.2 consumers, and Chromium supplied by Playwright 1.65.0.
 Playwright is test infrastructure, not a consumer dependency. The checked-out suite lockfile and
 release workflow own the exact tool versions; record them with qualification evidence when updating
 the matrix.
