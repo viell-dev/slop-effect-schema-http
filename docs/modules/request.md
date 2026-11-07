@@ -406,6 +406,10 @@ Under a union, the defaults and the caller's fields have to fit one member toget
 `{ cursor }`, because no member holds both. Leave `page` out of the request, or give the caller a
 variant with `Request.removeQuery("page")`.
 
+The caller's own value is read before any default joins it, and Effect takes the first member that
+fits. Under a union of `{ a }` and `{ a, b }`, a caller's `{ a, b }` fits the first and `b` goes,
+with no error, so put the wider member first.
+
 A default under a field that encodes to a `Date` is read from its text, so `?from=2026-11-07` goes
 out as `from=2026-11-07T00%3A00%3A00.000Z`, and `?from=soon` is an `InvalidRequest`. It is read as
 `Schema.DateFromString` reads it, which is `new Date(text)`. Write ISO text with a `Z` or an offset:

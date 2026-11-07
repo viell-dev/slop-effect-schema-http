@@ -32,7 +32,7 @@ consumer-owned contracts. It adds no transport, runtime, service registry, loggi
 or configuration provider. Where Effect already defines a behavior, the library delegates to it:
 
 - `Body.json` encodes with `HttpBody.json`.
-- `Policy.transient` uses the classification of `HttpClient.retryTransient`.
+- `Policy.transient` follows the classification of `HttpClient.retryTransient`.
 - `Policy.retryAfterDelay` reads `Retry-After` with `Headers.parseRetryAfter`.
 - Requests are dispatched through the `HttpClient` service, so client middleware and providers apply
   unchanged.
@@ -87,15 +87,15 @@ Use raw fields for fixed headers or query parameters, and bind a schema for valu
 caller. Path, query, header and body bindings contribute their corresponding input properties; see
 the [Request examples](./modules/request.md#bind-application-input).
 
-Raw declarations (`setHeader`, `appendHeader`, `removeHeader`, and the query equivalents) take a
-value or a computation. A computation runs once per materialization, and `undefined` omits the
-field. `setHeader` and `setQuery` also take a plain object, whose keys each replace their name in
-key order. Its query values are what a query schema may encode to, or a computation of one such
-value, so `page: 2` writes `page=2`, a `Date` writes ISO text, `null` is a bare key and an array
-repeats the name, at the name's first position. In either group a key set to `undefined` removes
-that name's earlier declarations. Header names compare without case and keep the spelling they were
-written with, so a `setHeader` that replaces an earlier line also replaces its spelling. Query keys
-compare exactly.
+Raw declarations (`setHeader`, `appendHeader` and the query equivalents) take a value or a
+computation. A computation runs once per materialization, and `undefined` omits the field.
+`setHeader` and `setQuery` also take a plain object, whose keys each replace their name in key
+order. Its query values are what a query schema may encode to, or a computation of one such value,
+so `page: 2` writes `page=2`, a `Date` writes ISO text, `null` is a bare key and an array repeats
+the name, at the name's first position. In either group a key set to `undefined` removes that name's
+earlier declarations. Header names compare without case and keep the spelling they were written
+with, so a `setHeader` that replaces an earlier line also replaces its spelling. Query keys compare
+exactly.
 
 `Request.headers` and `Request.query` take a schema whose encoded side fits the representation
 (`Transport.HeaderInput` or `UrlEncoding.QueryInput`); its application side can be any shape.
@@ -280,9 +280,10 @@ declares nothing keeps them, and a request's own declaration wins.
   That is the consumer's choice, and without the boundary the body cannot be read.
 
 A declaration describes a header and never changes the bytes a codec produced, so a declared
-`Content-Length` can disagree with the body. A client can refuse such a request. The body step
-applies these rules itself, so a later `Request.mapEffect` still has the last word on the native
-request, and one before the body sees its edit replaced unless the request removed that name.
+`Content-Length` can disagree with the body. A client can refuse such a request, and Effect's Fetch
+client takes a non-empty one off before `fetch` sees it. The body step applies these rules itself,
+so a later `Request.mapEffect` still has the last word on the native request, and one before the
+body sees its edit replaced unless the request removed that name.
 
 Any method can carry a body, including GET and HEAD. The library passes the request to the client
 and adds no check of its own. A client can still refuse it: `fetch` does so for GET and HEAD, which
@@ -802,7 +803,8 @@ cancellation.
   `Equal.equals` by default, which compares plain objects and arrays structurally.
 - Different input interrupts the active execution.
 - `force` starts fresh work, superseding the active execution and bypassing the retained success.
-- `retain` decides whether a success is kept for reuse; it never changes the returned value.
+- `retain` decides whether a success is kept for reuse; it never changes the returned value. A
+  rejected success drops an earlier retained success for equal input, which it replaces.
 - Failures, defects, and interruptions leave the retained success in place.
 - Each execution belongs to the interaction, not to a caller, and runs in its own child scope.
   Interrupting one waiter never cancels work another waiter shares.
