@@ -213,7 +213,7 @@ assert.equal(
 
 // #region default-fixed
 const listAlwaysFifty = listThings.pipe(
-  Request.mapInput((_: undefined) => ({ query: { limit: 50 } })),
+  Request.mapInput(() => ({ query: { limit: 50 } })),
 );
 // Input: undefined; URL query: ?limit=50
 // #endregion default-fixed
