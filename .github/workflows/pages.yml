@@ -1,6 +1,13 @@
 name: Release documentation
 
+# The site describes the newest stable release, so a verified stable publication deploys it. A run
+# of publish.yml that published nothing or published a prerelease succeeds too, and leaves the site
+# alone. Dispatch by hand to recover, to correct the current release, or before the first stable.
 on:
+  workflow_run:
+    workflows: [Publish qualified npm package]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
@@ -19,20 +26,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ inputs.tag || steps.published.outputs.tag }}
+      ref: ${{ inputs.correction || inputs.tag || steps.published.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Select the release the publication verified
+        id: published
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_RUN: ${{ github.event.workflow_run.id }}
+        run: node scripts/select-published-release.mjs
+
   build:
-    if: github.ref == 'refs/heads/main'
+    needs: resolve
+    if: needs.resolve.outputs.tag != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.correction || inputs.tag }}
+          ref: ${{ needs.resolve.outputs.ref }}
           fetch-depth: 0
           persist-credentials: false
       - name: Verify published version and correction scope
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           test "$RELEASE_TAG" = "$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --slurp | jq -r 'add | map(select(.draft == false)) | sort_by(.published_at) | reverse | (map(select(.prerelease == false)) + map(select(.prerelease == true))) | .[0].tag_name')"
           node --input-type=module -e "import assert from 'node:assert/strict'; import p from './package.json' with {type:'json'}; assert.equal(p.version, process.env.RELEASE_TAG); assert.match(p.version, /^0\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?$/);"

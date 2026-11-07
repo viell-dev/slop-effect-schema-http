@@ -33,8 +33,9 @@ npm run test:package
 - `npm run build`: JavaScript and declaration output in `dist/`.
 - `npm test`: Vitest behavior tests.
 - `npm run test:release`: reject invalid qualification producers/artifacts, exercise bounded
-  registry visibility recovery and terminal integrity/provenance failures, and check the read-only
-  workflow.
+  registry visibility recovery and terminal integrity/provenance failures, check the read-only
+  workflow, the handover from publication to the site, and every comparison `npm run check-live`
+  makes, against synthetic surfaces.
 - `npm run test:package`: verify the built tarball in an isolated consumer; run the build first.
 - `npm run format`: apply the configured formatters.
 
@@ -263,9 +264,10 @@ version's own preview command ignores the host option. Keep development and prev
 loopback.
 
 Required pull-request CI runs the example and site build with read-only permissions. Main pushes
-verify changes without deploying unreleased documentation. The separate `pages.yml` workflow
-validates a published tag or a documentation-only descendant, builds it, and deploys through the
-main-only `github-pages` environment. Only its deployment job receives Pages/OIDC permissions.
+verify changes without deploying unreleased documentation. The separate `pages.yml` workflow runs
+after a verified stable npm publication, or by hand for recovery and corrections. It validates a
+published tag or a documentation-only descendant, builds it, and deploys through the main-only
+`github-pages` environment. Only its deployment job receives Pages/OIDC permissions.
 
 Each page contains `documentation-commit` and `library-version` meta tags. Local dirty builds carry
 `-dirty`; CI rejects that marker. Record and verify the deployed commit and Actions run. Keep
