@@ -21,7 +21,8 @@
   strictly first, on the decoded side and again when it encodes, so a member that keeps every field
   wins, in headers, query, path and bodies, at any depth. The order of the members no longer costs a
   field, and a wider member need not go first. A key no member states is still stripped, as a struct
-  strips it, and a schema with no such choice reads as before
+  strips it, and a schema with no such choice reads as before. An empty union now fails as a
+  `SchemaError`, where it used to die with a defect
   ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
 - **Breaking:** refuse a field no union member can keep. `{ a, b }` under a union of `{ a }` and
   `{ b }` used to send `a` and drop `b`, and a value a wider member refused was dropped the same
@@ -40,9 +41,10 @@
   with `Schema.withDecodingDefaultKey` or one of its relatives is optional on the encoded side, so
   `Request.setQuery` and the other raw edits got past the check, although the schema always writes
   that name and the edit never reached the client. It is now `Request.InvalidRequest` on every run,
-  as for any field the schema always writes. Remove the edit, make it before the schema, or supply
-  the value with `Request.mapInput`. A default with the `omit` encoding strategy is not affected,
-  and a field a struct renames with `Schema.encodeKeys` is still not refused
+  as for any field the schema always writes. Remove the edit, make the field optional so the raw
+  value is a default, or supply the value with `Request.mapInput`. Moving the edit before the schema
+  does not send it. A default with the `omit` encoding strategy is not affected, and a field a
+  struct renames with `Schema.encodeKeys` is still not refused
   ([#120](https://github.com/viell-dev/slop-effect-schema-http/issues/120)).
 - State that a success `retain` rejects drops an earlier retained success for equal input, and what
   a `Request.mapEffect` finds after `Request.unbind` removes the input it reads.
