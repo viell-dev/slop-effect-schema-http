@@ -1,6 +1,6 @@
 /**
- * EXT-9e and EXT-9g: what happens to a fragment when the platform writes the request, in both
- * lanes. The raw client's side of the same declarations is in `fragments.node.test.ts`. Each client
+ * EXT-9e, EXT-9g and EXT-9o: what happens to a fragment when the platform writes the request, in
+ * both lanes. The raw client's side of the same declarations is in `fragments.node.test.ts`. Each client
  * receives what the raw client receives, so a regression that lost a fragment only in a browser
  * shows up here even though no browser ever sends one.
  */
@@ -59,6 +59,71 @@ const cases = [
     `${HELP}?lang=de`,
     german,
   ],
+  [
+    "the constructor with a query",
+    Help.inConstructorWithQuery,
+    `${HELP}?lang=de`,
+    "closing",
+    `${HELP}?lang=de`,
+    german,
+  ],
+  [
+    "the constructor under Request.path",
+    Help.inConstructorUnderPath,
+    `${HELP}?lang=de`,
+    "closing",
+    `${HELP}?lang=de`,
+    german,
+  ],
+  [
+    "a base URL with a path and a query",
+    Help.inBaseUrlWithPath,
+    `${HELP}?lang=de`,
+    "closing",
+    `${HELP}?lang=de`,
+    german,
+  ],
+  [
+    "the constructor over path output",
+    Help.constructorOverPathOutput,
+    HELP,
+    "closing",
+    HELP,
+    english,
+  ],
+  [
+    "path output over the base URL",
+    Help.pathOutputOverBaseUrl,
+    HELP,
+    "closing",
+    HELP,
+    english,
+  ],
+  [
+    "a base URL that was bypassed",
+    Help.inBypassedBaseUrl,
+    HELP,
+    "closing",
+    HELP,
+    english,
+  ],
+  [
+    "a fragment holding a ?",
+    Help.questionMarkInFragment,
+    `${HELP}?lang=de`,
+    "closing?x=1",
+    `${HELP}?lang=de`,
+    german,
+  ],
+  [
+    "a fragment URL would encode",
+    Help.unencodedFragment,
+    HELP,
+    'a b"c',
+    HELP,
+    english,
+  ],
+  ["an empty fragment", Help.emptyFragment, HELP, "", HELP, english],
 ] as const;
 
 const requestLines = (ledger: ReadonlyArray<Recorded>) =>
@@ -85,6 +150,25 @@ describe(`fragments through the platform (${lane.name})`, () => {
             expect(outcome).toEqual({ _tag: "Help", sections });
           }),
       );
+
+  for (const [provider, client] of lane.clients)
+    it.live(
+      `[EXT-9o] removeHash in Request.mapEffect takes the constructor's fragment off before ${provider} receives the request`,
+      () =>
+        Effect.gen(function* () {
+          const gateway = yield* lane.backend("gateway");
+          const watched = watching();
+          const outcome = yield* Help.fragmentRemoved(
+            gateway.origin,
+            watched.last,
+          ).pipe(Effect.provide(client));
+          expect(watched.received).toEqual([
+            { method: "GET", url: `${gateway.origin}${HELP}`, hash: undefined },
+          ]);
+          expect(requestLines(yield* gateway.ledger)).toEqual([`GET ${HELP}`]);
+          expect(outcome).toEqual({ _tag: "Help", sections: english });
+        }),
+    );
 
   it.live(
     "[EXT-9g] fetch follows go.cgi's redirect without the Location's fragment, and help.cgi answers the whole topic",

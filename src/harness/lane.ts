@@ -74,6 +74,15 @@ export interface StartOptions {
   readonly listener?: "http" | "socket";
 }
 
+/** How the raw provider writes a request. */
+export interface RawOptions {
+  /**
+   * `false` adds no `Content-Type` or `Content-Length` for the body, so a request goes out with only
+   * the header lines it has, and `Host` when it has none, and its body bytes after them.
+   */
+  readonly framing?: boolean;
+}
+
 export interface Lane {
   readonly name: "node" | "browser";
   /** Start a backend by name (`identity`, `business`, …) with JSON options, for the current scope. */
@@ -96,10 +105,15 @@ export interface Lane {
    * target is `request.url` without `origin`, then `#` and `request.hash` when there is a hash; a URL
    * that does not start with `origin`, such as `*`, goes on the request line whole. Its header lines
    * are `Transport.headerLines`, with `Host` and `Content-Length` added only when the request has
-   * none and they apply. `src/harness/providers.ts` gives the details.
+   * none and they apply, unless `options` says otherwise. `src/harness/providers.ts` gives the
+   * details.
    */
   readonly rawClient:
-    ((origin: string) => Layer.Layer<HttpClient.HttpClient>) | undefined;
+    | ((
+        origin: string,
+        options?: RawOptions,
+      ) => Layer.Layer<HttpClient.HttpClient>)
+    | undefined;
 }
 
 /** Text of a recorded body. */

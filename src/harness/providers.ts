@@ -11,6 +11,7 @@ import {
   UrlParams,
 } from "effect/http";
 import { Transport } from "viell-effect-schema-http";
+import type { RawOptions } from "./lane.js";
 
 /**
  * Effect's Fetch provider over Node's global `fetch`. Fetch joins repeated request header lines with
@@ -281,7 +282,8 @@ const readFromSocket = (
  *   anywhere else, or one that cannot be parsed, whole, as an absolute-form target.
  * - **Header lines.** `Transport.headerLines`, as `name: value`, with the lines `withFraming` adds
  *   and nothing else: no `Connection`, `User-Agent` or trace headers, since those come from
- *   `HttpClient.make` and `node:http`.
+ *   `HttpClient.make` and `node:http`. With `framing: false` it adds `Host` alone, so a request that
+ *   stopped its automatic `Content-Length` goes out without one, and a body goes out unframed.
  * - **Nothing is refused.** A CR or LF in a method, target, name or value is written like any other
  *   character, so it can end the line it is on. Standard providers refuse these; this one exists
  *   to show what the library passes on, and a real provider that writes bytes must not copy that.
@@ -290,7 +292,10 @@ const readFromSocket = (
  * redirects to the same origin; a redirect elsewhere would go to `origin` as an absolute-form
  * target. Like the line-preserving provider, it reads the whole response and attaches its raw lines.
  */
-export const rawClient = (origin: string): HttpClient.HttpClient => {
+export const rawClient = (
+  origin: string,
+  { framing = true }: RawOptions = {},
+): HttpClient.HttpClient => {
   const { host, hostname, port } = new URL(origin);
   return HttpClient.makeWith<
     never,
@@ -307,9 +312,12 @@ export const rawClient = (origin: string): HttpClient.HttpClient => {
             Buffer.from(
               `${request.method} ${rawTarget(origin, request)} HTTP/1.1\r\n`,
             ),
-            ...withFraming(lines, host, bytes, contentType).map(
-              ([name, value]) => headerLineBytes(`${name}: ${value}\r\n`),
-            ),
+            ...withFraming(
+              lines,
+              host,
+              framing ? bytes : undefined,
+              framing ? contentType : undefined,
+            ).map(([name, value]) => headerLineBytes(`${name}: ${value}\r\n`)),
             Buffer.from("\r\n"),
             bytes ?? new Uint8Array(),
           ]);
@@ -332,5 +340,8 @@ export const rawClient = (origin: string): HttpClient.HttpClient => {
 };
 
 /** The raw provider as a layer. */
-export const rawLayer = (origin: string): Layer.Layer<HttpClient.HttpClient> =>
-  Layer.succeed(HttpClient.HttpClient, rawClient(origin));
+export const rawLayer = (
+  origin: string,
+  options?: RawOptions,
+): Layer.Layer<HttpClient.HttpClient> =>
+  Layer.succeed(HttpClient.HttpClient, rawClient(origin, options));

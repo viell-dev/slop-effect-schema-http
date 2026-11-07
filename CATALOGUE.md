@@ -1386,12 +1386,13 @@ published `0.1.0`.
 
 #### Fragments
 
-EXT-9a to EXT-9g send a URL fragment. A standard client never sends one, but a client that writes
+EXT-9a to EXT-9o send a URL fragment. A standard client never sends one, but a client that writes
 its own request line can, and a server can read it, as the gateway's
 [help topics](./services/gateway.md#the-help-topics-1998) do. `node:http` passes a fragment through,
-so these start the gateway with `lane.backend("gateway")` and its default listener. The tests that
-need the raw client are in `src/scenarios/fragments.node.test.ts`, because only Node can send a
-fragment; the others are in `src/scenarios/fragments.test.ts`, in both lanes. The consumer's reader
+so these start the gateway with `lane.backend("gateway")` and its default listener, unless an entry
+says otherwise. The tests that need the raw client are in `src/scenarios/fragments.node.test.ts`,
+because only Node can send a fragment; the others are in `src/scenarios/fragments.test.ts`, in both
+lanes. The consumer's reader
 of these replies has round-trip and negative tests of its own in
 `src/clients/gateway/help.test.ts`, listed under EXT-9e. `<help>` below is
 `/cgi-bin/help.cgi/accounts`. Its whole topic is the `opening` and `closing` lines, and the
@@ -1423,12 +1424,12 @@ of these replies has round-trip and negative tests of its own in
   `${origin}<help>?lang=de` with the `hash` `closing`, the target is `<help>?lang=de#closing`, and
   the answer is the `closing` line in German. Status: tested.
   - `[EXT-9d] a query goes before a fragment in path output, and help.cgi answers that section in German`
-- **EXT-9e** The declarations of EXT-9a to EXT-9d through every provider of the lane: the platform
-  drops the fragment. Each client received what the raw client received in that entry, the `hash`
-  included. The targets are `<help>` for the base URL, the path output and the constructor, and
-  `<help>?lang=de` for `setHash` and for path output with a query, whose answer is the whole topic
-  in German. Every other answer is the whole topic in English. The same in both lanes, and for
-  `fetch` and `lines` in Node. Status: limit.
+- **EXT-9e** The declarations of EXT-9a to EXT-9d and EXT-9h to EXT-9n through every provider of
+  the lane: the platform drops the fragment. Each client received what the raw client received in
+  that entry, the `hash` included. A browser cannot send a fragment, so this is where a fragment lost
+  only in a browser would show. A target is that entry's without its fragment, and with no `?lang=de`
+  the answer is the whole topic in English; with it, the whole topic in German. The same in both
+  lanes, and for `fetch` and `lines` in Node. Status: limit.
   - `[EXT-9e] ${provider} drops a fragment from ${declaration}, and help.cgi answers without it`
     (provider)
   - `[EXT-9e] HelpReply round-trips a whole topic, keeping the order of its lines`
@@ -1446,6 +1447,54 @@ of these replies has round-trip and negative tests of its own in
   the `Location`'s fragment. The ledger holds `/cgi-bin/go.cgi?section=closing`, then `<help>`, and
   the answer is the whole topic. Status: limit.
   - `[EXT-9g] fetch follows go.cgi's redirect without the Location's fragment, and help.cgi answers the whole topic`
+- **EXT-9h** A fragment in the constructor with a query set on it, through the raw client. Declared
+  as EXT-9c's constructor with `Request.setQuery("lang", "de")`. The client received
+  `${origin}<help>?lang=de` with the `hash` `closing`, the target is `<help>?lang=de#closing`, and
+  the answer is the `closing` line in German. Status: tested.
+  - `[EXT-9h] a constructor's fragment goes after a query set on it, and help.cgi answers that section in German`
+- **EXT-9i** A constructor's query and fragment under `Request.path` and `Request.baseUrl`, through
+  the raw client: both survive the path being replaced. Declared as
+  `Request.get("/elsewhere?lang=de#closing")` with EXT-9a's path binding, `Request.baseUrl(origin)`
+  and the input `{ path: "<help>" }`. The client, the target and the answer are EXT-9h's.
+  Status: tested.
+  - `[EXT-9i] a constructor's query and fragment survive Request.path and the base URL`
+- **EXT-9j** A fragment in a base URL with a path to join and a query, through the raw client: the
+  last row of #83's table. Declared as `Request.get("accounts")` with
+  `Request.baseUrl("${origin}/cgi-bin/help.cgi#closing")` and `Request.setQuery("lang", "de")`. The
+  client, the target and the answer are EXT-9h's. Status: tested.
+  - `[EXT-9j] a joined path and a query both go before a base URL's fragment`
+- **EXT-9k** Fragments in two places, through the raw client: the constructor's wins over path
+  output's, and path output's over the base URL's. A base URL's fragment applies even when an
+  absolute URL bypassed the rest of that base. In each case the winner is `closing`, the loser
+  `opening`, the client received `${origin}<help>` with the `hash` `closing`, the target is
+  `<help>#closing`, and the answer is that section. Status: tested.
+  - `[EXT-9k] the constructor's fragment wins over path output's`
+  - `[EXT-9k] path output's fragment wins over the base URL's`
+  - `[EXT-9k] a base URL's fragment still applies when an absolute URL bypassed that base`
+- **EXT-9l** A `?` inside a fragment, with a query, through the raw client: the `?` stays in the
+  fragment, and the query still gets a `?` of its own, where the library used to write `&`. Declared
+  as EXT-9d with the input `{ path: "<help>#closing?x=1" }`. The client received
+  `${origin}<help>?lang=de` with the `hash` `closing?x=1`, the target is
+  `<help>?lang=de#closing?x=1`, and `help.cgi` answers `ERROR|E_SECTION|no section closing?x=1`.
+  Status: tested.
+  - `[EXT-9l] a ? in a fragment stays in it and the query gets its own, so help.cgi looks up that whole section name`
+- **EXT-9m** A fragment that `URL` would percent-encode, through the raw client:
+  `Request.get("${origin}<help>#a b\"c")`. The `hash` keeps the text as written, and the raw client
+  reads it from there, so the target is `<help>#a b"c`. `node:http` refuses a raw space in a target,
+  so this starts the gateway with `{ listener: "socket" }`. `help.cgi` answers
+  `ERROR|E_SECTION|no section a b"c`. Status: tested.
+  - `[EXT-9m] a fragment reaches the client and the socket as written, with what URL would encode`
+- **EXT-9n** An empty fragment, through the raw client: `Request.get("${origin}<help>#")`. The client
+  received the `hash` `""`, not none, and the target is `<help>#`. `help.cgi` reads an empty fragment
+  as none and answers the whole topic. Status: tested.
+  - `[EXT-9n] an empty fragment reaches the client and the socket, and help.cgi reads it as none`
+- **EXT-9o** Taking a constructor's fragment off: EXT-9c with `Request.mapEffect` applying
+  `HttpClientRequest.removeHash`, the one way to do it, since a fragment on a shared definition is
+  rare enough to need no API of its own. No client received a `hash`, the target is `<help>`, and
+  the answer is the whole topic, through the raw client and every provider of the lane.
+  Status: tested.
+  - `[EXT-9o] removeHash in Request.mapEffect takes the constructor's fragment off before ${provider} receives the request`
+    (`the raw client`, and each provider of the lane)
 
 #### Request shapes
 
