@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import process from "node:process";
 import { test } from "node:test";
+import { fileURLToPath, URL } from "node:url";
 import {
   compareVersions,
   currentlyTests,
   exitCodeOf,
+  githubWith,
   reconcile,
 } from "./check-live.mjs";
 
@@ -44,7 +49,9 @@ function world() {
     tests: { "src/a.test.ts": pinned },
     api: {
       [`repos/${repository}/releases/latest`]: release,
-      [`repos/${repository}/commits/tags/1.2.3`]: { sha: commit },
+      [`repos/${repository}/git/ref/tags/1.2.3`]: {
+        object: { type: "commit", sha: commit },
+      },
       [`repos/${repository}`]: {
         homepage: manifest.homepage,
         description: "A library. Agent-maintained TypeScript library.",
@@ -85,11 +92,18 @@ const check = ({ manifest, readme, labels, tests, api, web }) =>
       })[path],
     testFiles: () =>
       Object.entries(tests).map(([file, text]) => ({ file, text })),
-    github: (...parameters) => {
-      const value = api[parameters.at(-1)];
+    github: githubWith((parameters) => {
+      const path = parameters.at(-1);
+      const value = api[path];
       if (value instanceof Error) throw value;
-      return value;
-    },
+      if (value !== undefined) return JSON.stringify(value);
+      // What gh does with a failed request: it exits with the status on stderr.
+      throw Object.assign(new Error(`Command failed: gh api ${path}`), {
+        stderr: path.includes("/commits/tags/")
+          ? "gh: No commit found for SHA: tags/1.2.3 (HTTP 422)\n"
+          : "gh: Not Found (HTTP 404)\n",
+      });
+    }),
     fetch: async (url) => web[url] ?? new Response(null, { status: 404 }),
   });
 const findings = (report) =>
@@ -161,7 +175,9 @@ test("published surfaces that contradict each other disagree", async () => {
     [(w) => (w.manifest.version = "1.2.2"), /older, at 1\.2\.2/],
     [
       (w) => {
-        w.api[`repos/${repository}/commits/tags/1.2.3`].sha = "b".repeat(40);
+        w.api[`repos/${repository}/git/ref/tags/1.2.3`].object.sha = "b".repeat(
+          40,
+        );
         w.web[asset(w, "manifest.json")] = Response.json({
           version: "1.2.3",
           sourceCommit: "b".repeat(40),
@@ -172,6 +188,12 @@ test("published surfaces that contradict each other disagree", async () => {
         );
       },
       /release target of 1\.2\.3/,
+    ],
+    [
+      (w) => {
+        delete w.api[`repos/${repository}/git/ref/tags/1.2.3`];
+      },
+      /tag 1\.2\.3: does not exist/,
     ],
     [
       (w) => w.api[`repos/${repository}/releases/latest`].assets.pop(),
@@ -337,6 +359,19 @@ test("published surfaces that contradict each other disagree", async () => {
   }
 });
 
+test("an annotated tag is followed to its commit", async () => {
+  const published = world();
+  const tagObject = "c".repeat(40);
+  published.api[`repos/${repository}/git/ref/tags/1.2.3`].object = {
+    type: "tag",
+    sha: tagObject,
+  };
+  published.api[`repos/${repository}/git/tags/${tagObject}`] = {
+    object: { type: "commit", sha: commit },
+  };
+  assert.deepEqual(findings(await check(published)), []);
+});
+
 test("a documentation-only correction of the release is accepted", async () => {
   const published = world();
   const corrected = "b".repeat(40);
@@ -420,4 +455,34 @@ test("a currently test is found in each form the suite writes it", () => {
       ["currently apart from its comment", []],
     ],
   );
+});
+
+test("each script runs when started directly, on every Node.js that engines allows", () => {
+  // With no gh or git on the path nothing can be read, so this needs no network. A script that did
+  // not recognize that it was started would print nothing and exit 0.
+  const start = (script, env = {}) =>
+    spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL(script, import.meta.url))],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: "", Path: "", ...env },
+      },
+    );
+  const live = start("./check-live.mjs");
+  assert.equal(live.status, 1, live.stderr);
+  assert.match(live.stdout, /UNREAD +GitHub release/);
+  const selection = start("./select-published-release.mjs", {
+    PUBLISH_RUN: "1",
+    GITHUB_REPOSITORY: repository,
+  });
+  assert.equal(selection.status, 1);
+  assert.match(selection.stderr, /ENOENT/);
+  // These pass on the pinned Node.js either way; import.meta.main needs 24.2, and engines allows 24.0.
+  for (const script of ["./check-live.mjs", "./select-published-release.mjs"]) {
+    assert.doesNotMatch(
+      readFileSync(new URL(script, import.meta.url), "utf8"),
+      /^if \(import\.meta\.main\)/m,
+    );
+  }
 });

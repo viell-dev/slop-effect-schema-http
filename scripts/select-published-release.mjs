@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import console from "node:console";
 import { appendFileSync } from "node:fs";
 import process from "node:process";
-import { gh } from "./check-live.mjs";
+import { commitOfTag, gh, startedDirectly } from "./check-live.mjs";
 
 // The step of publish.yml that runs only after a real upload and passes only once the registry
 // serves the qualified bytes. A dry run skips it. Its run, job and title otherwise look the same
@@ -43,20 +43,20 @@ export function selectPublishedRelease({ run: id, repository, github }) {
       reason: `${version} is a prerelease; the site keeps describing the newest stable release.`,
     };
   }
-  const tag = github(`repos/${repository}/commits/tags/${version}`);
+  const tagCommit = commitOfTag(github, repository, version);
   assert.ok(
-    tag,
+    tagCommit,
     `npm has ${version}, but its tag does not exist. Create the GitHub release, then dispatch this workflow with tag=${version}.`,
   );
   assert.equal(
-    tag.sha,
+    tagCommit,
     run.head_sha,
     `The tag ${version} is not the commit npm published. Find out which is right before deploying its documentation.`,
   );
   return { tag: version };
 }
 
-if (import.meta.main) {
+if (startedDirectly(import.meta.url)) {
   const { tag, reason } = selectPublishedRelease({
     run: process.env.PUBLISH_RUN,
     repository: process.env.GITHUB_REPOSITORY,
