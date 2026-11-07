@@ -7,6 +7,7 @@ import {
 } from "effect/http";
 import type * as Body from "./Body.js";
 import * as Fields from "./internal/fields.js";
+import * as Shapes from "./internal/shape.js";
 import * as Transport from "./Transport.js";
 import * as UrlEncoding from "./UrlEncoding.js";
 
@@ -14,8 +15,9 @@ import * as UrlEncoding from "./UrlEncoding.js";
  * Request preparation failed before dispatch.
  *
  * @remarks
- * Covers computed-field failures and URL-rendering exceptions. Schema encoding failures remain
- * separate `SchemaError` values.
+ * Covers computed-field failures, URL-rendering exceptions, and fields that do not fit the schemas
+ * bound to their group. Schema failures of the caller's input remain separate `SchemaError` values.
+ * A failed check of a group names its fields and leaves out their values, which may be credentials.
  */
 export class InvalidRequest extends Data.TaggedError("InvalidRequest")<{
   readonly message: string;
@@ -36,12 +38,8 @@ export type FieldValue<A = string> = Fields.Value<A>;
  *
  * @remarks
  * This is a low-level extension type. Prefer {@link make} and the request combinators.
- * `H` and `Q` record whether a schema owns each field group.
  */
-export interface Declaration<
-  H extends boolean = boolean,
-  Q extends boolean = boolean,
-> {
+export interface Declaration {
   readonly method: string;
   readonly url: string;
   /** The fragment written in the constructor, without its `#`. */
@@ -53,11 +51,28 @@ export interface Declaration<
   readonly emptyQuery: boolean;
   /** Lowercase header names the request removed, so the library adds no automatic value. */
   readonly removedHeaders: ReadonlySet<string>;
-  /** Whether a schema owns the header group; raw header setters are then unavailable. */
-  readonly headersBound: H;
-  /** Whether a schema owns the query group; raw query setters are then unavailable. */
-  readonly queryBound: Q;
+  /** The schemas bound to the header group, which together state its shape. */
+  readonly headerShapes: ReadonlyArray<Shape>;
+  /** The schemas bound to the query group, which together state its shape. */
+  readonly queryShapes: ReadonlyArray<Shape>;
+  /** Raw edits made after a schema of a name it always writes, which could never reach the client. */
+  readonly conflicts: ReadonlyArray<
+    readonly [group: "query" | "headers", name: string]
+  >;
 }
+
+/**
+ * What one header or query schema says about its group: the names it allows, whether it allows
+ * others, and the names it always writes.
+ *
+ * @remarks
+ * This is a low-level extension type, read from the schema's encoded side when it is bound. Header
+ * names are lowercase.
+ */
+export type Shape = Shapes.Shape;
+
+/** A part of a request that a binding can supply, and that {@link unbind} can clear. */
+export type Group = "path" | "query" | "headers" | "body";
 
 /**
  * One entry in Effect's native query collection.
@@ -84,8 +99,15 @@ export interface Draft {
   readonly bareKeys: ReadonlySet<UrlParam>;
   /** Native query entries that keep their written text. Replacing an entry loses that text. */
   readonly queryText: ReadonlyMap<UrlParam, string>;
+  /**
+   * Native query entries the request declared, which a bound schema checks. A native edit makes a
+   * new entry, so {@link mapEffect} stays outside the check.
+   */
+  readonly declaredQuery: ReadonlySet<UrlParam>;
   /** Lowercase header names the request removed, so the library adds no automatic value. */
   readonly removedHeaders: ReadonlySet<string>;
+  /** The groups a later {@link unbind} cleared, so their earlier bindings skip themselves. */
+  readonly unbound: ReadonlySet<Group>;
 }
 
 /**
@@ -94,25 +116,18 @@ export interface Draft {
  * @remarks
  * Construction sends nothing. {@link compile} prepares it; `Operation.make` prepares and sends it.
  * `I` is the complete input, `E` its preparation errors, and `R` its required services.
- * `H` and `Q` record whether schemas own the header and query groups.
  * `declaration` and `prepare` are low-level extension points.
  */
-export interface Request<
-  in I,
-  out E = never,
-  out R = never,
-  out H extends boolean = false,
-  out Q extends boolean = false,
->
+export interface Request<in I, out E = never, out R = never>
   extends Pipeable.Pipeable {
-  readonly declaration: Declaration<H, Q>;
+  readonly declaration: Declaration;
   readonly prepare: (input: I, draft: Draft) => Effect.Effect<Draft, E, R>;
 }
 
-const construct = <I, E, R, H extends boolean, Q extends boolean>(
-  declaration: Declaration<H, Q>,
+const construct = <I, E, R>(
+  declaration: Declaration,
   prepare: (input: I, draft: Draft) => Effect.Effect<Draft, E, R>,
-): Request<I, E, R, H, Q> => ({ ...Pipeable.Prototype, declaration, prepare });
+): Request<I, E, R> => ({ ...Pipeable.Prototype, declaration, prepare });
 
 /** Split URL text at its first `#`, which ends the path and query. */
 const splitFragment = (url: string): readonly [string, string | undefined] => {
@@ -141,7 +156,10 @@ const readSegment = (segment: string): Fields.Field<string | null> => {
  * A constructor query is passed to the client as written until something edits that entry, so
  * `?a=1;b=2`, `?q=a+b` and `?a=%41` keep their spelling, as do empty `&` segments and a lone `?`.
  * Each entry also has a form-decoded name and value, which {@link setQuery} and {@link removeQuery}
- * compare against. An entry that is edited, or added, is rendered through `UrlEncoding.query`.
+ * compare against. An entry that is edited, or added, is rendered through `UrlEncoding.query`. An
+ * entry under a name a {@link query} schema allows goes through that schema, and one under a name no
+ * bound schema allows is an incompatible shape. The name is the decoded name, so a written empty
+ * segment counts as a field called `""`.
  *
  * A fragment stays on the request, exactly as written, in the native request's `hash` field. It
  * survives {@link path} and query edits, and wins over a fragment in path output or a base URL.
@@ -161,8 +179,9 @@ export const make = (method: string, url: string): Request<unknown> => {
       query: written === "" ? [] : written.split("&").map(readSegment),
       emptyQuery: start >= 0 && written === "",
       removedHeaders: new Set(),
-      headersBound: false,
-      queryBound: false,
+      headerShapes: [],
+      queryShapes: [],
+      conflicts: [],
     },
     (_, draft) => Effect.succeed(draft),
   );
@@ -224,43 +243,61 @@ export const options = (url: string): Request<unknown> => make("OPTIONS", url);
  */
 export const baseUrl =
   (url: string) =>
-  <I, E, R, H extends boolean, Q extends boolean>(
-    self: Request<I, E, R, H, Q>,
-  ): Request<I, E, R, H, Q> =>
+  <I, E, R>(self: Request<I, E, R>): Request<I, E, R> =>
     construct({ ...self.declaration, baseUrl: url }, self.prepare);
 
 /** Header names compare without case; each line keeps the spelling it was given. */
 const foldHeader: Fields.Fold = (name) => name.toLowerCase();
 
+/** Query names compare exactly. */
+const foldQuery: Fields.Fold = (name) => name;
+
 const editHeaders =
   (
+    edited: ReadonlyArray<string>,
     edit: (fields: Fields.Fields) => Fields.Fields,
     removed: (names: ReadonlySet<string>) => ReadonlySet<string> = (names) =>
       names,
   ) =>
-  <I, E, R, Q extends boolean>(
-    self: Request<I, E, R, false, Q>,
-  ): Request<I, E, R, false, Q> =>
+  <I, E, R>(self: Request<I, E, R>): Request<I, E, R> =>
     construct(
       {
         ...self.declaration,
         headers: edit(self.declaration.headers),
         removedHeaders: removed(self.declaration.removedHeaders),
+        conflicts: [
+          ...self.declaration.conflicts,
+          ...Shapes.required(
+            edited,
+            self.declaration.headerShapes,
+            foldHeader,
+          ).map((name) => ["headers", name] as const),
+        ],
       },
       self.prepare,
     );
 
 const editQuery =
   (
+    names: ReadonlyArray<string>,
     edit: (
       fields: Fields.Fields<string | null>,
     ) => Fields.Fields<string | null>,
   ) =>
-  <I, E, R, H extends boolean>(
-    self: Request<I, E, R, H, false>,
-  ): Request<I, E, R, H, false> =>
+  <I, E, R>(self: Request<I, E, R>): Request<I, E, R> =>
     construct(
-      { ...self.declaration, query: edit(self.declaration.query) },
+      {
+        ...self.declaration,
+        query: edit(self.declaration.query),
+        conflicts: [
+          ...self.declaration.conflicts,
+          ...Shapes.required(
+            names,
+            self.declaration.queryShapes,
+            foldQuery,
+          ).map((name) => ["query", name] as const),
+        ],
+      },
       self.prepare,
     );
 
@@ -270,27 +307,33 @@ const editQuery =
  * @remarks
  * Names compare without case, and the new line keeps the spelling of this call. A declared
  * `Accept`, `Content-Type` or `Content-Length` replaces the automatic value, before or after the
- * body. Unavailable after a header schema is bound.
+ * body.
+ *
+ * With a {@link headers} schema bound, in either order, the name has to be one a schema allows, and
+ * the value is a default that goes through the schema. Setting a name the schema always writes,
+ * after that schema, is an {@link InvalidRequest}, because the value could never reach the client.
  */
 export const setHeader = (name: string, value: FieldValue) =>
-  editHeaders((fields) => Fields.set(fields, name, value, foldHeader));
+  editHeaders([name], (fields) => Fields.set(fields, name, value, foldHeader));
 
 /**
  * Add a raw header line after the existing lines, preserving repetition.
  *
  * @remarks
- * Each line keeps the spelling of its call. Unavailable after a header schema is bound. Sending
- * separate lines requires a provider that supports them; Fetch may combine or restrict headers.
+ * Each line keeps the spelling of its call. A bound {@link headers} schema checks it as it does
+ * {@link setHeader}. Sending separate lines requires a provider that supports them; Fetch may
+ * combine or restrict headers.
  */
 export const appendHeader = (name: string, value: FieldValue) =>
-  editHeaders((fields) => Fields.append(fields, name, value));
+  editHeaders([name], (fields) => Fields.append(fields, name, value));
 
 /**
  * Remove a raw header, or only its declarations with the supplied fixed value.
  *
  * @remarks
- * Names compare without case. Value functions are never evaluated to compare with `value`.
- * Unavailable after a header schema is bound.
+ * Names compare without case. Value functions are never evaluated to compare with `value`. Removing
+ * a name a {@link headers} schema always writes, after that schema, is an {@link InvalidRequest},
+ * because the schema puts the value back. Removing an optional field clears its default.
  *
  * Without a value, this also stops the library's automatic value for that name: an operation's
  * `Accept`, or a body's `Content-Type` and `Content-Length`. It stops only that. A value that a
@@ -300,6 +343,7 @@ export const appendHeader = (name: string, value: FieldValue) =>
  */
 export const removeHeader = (name: string, value?: string) =>
   editHeaders(
+    [name],
     (fields) => Fields.remove(fields, name, value, foldHeader),
     (names) =>
       value === undefined ? new Set([...names, foldHeader(name)]) : names,
@@ -311,44 +355,56 @@ export const removeHeader = (name: string, value?: string) =>
  * @remarks
  * `null` produces a bare key, `""` an empty value, and `undefined` omits the entry. Names compare
  * with an entry's decoded name, so this can replace an entry written in the constructor; other
- * entries stay as written. Unavailable after a query schema is bound.
+ * entries stay as written.
+ *
+ * With a {@link query} schema bound, in either order, the name has to be one a schema allows, and
+ * the value is a default that goes through the schema. Setting a name the schema always writes,
+ * after that schema, is an {@link InvalidRequest}, because the value could never reach the client.
  */
 export const setQuery = (name: string, value: FieldValue<string | null>) =>
-  editQuery((fields) => Fields.set(fields, name, value));
+  editQuery([name], (fields) => Fields.set(fields, name, value));
 
 /**
  * Append a raw query entry, preserving order and repeated names.
  *
  * @remarks
- * Uses the same value rules as {@link setQuery}. Unavailable after a query schema is bound.
+ * Uses the same value rules as {@link setQuery}, and a bound {@link query} schema checks it the same
+ * way.
  */
 export const appendQuery = (name: string, value: FieldValue<string | null>) =>
-  editQuery((fields) => Fields.append(fields, name, value));
+  editQuery([name], (fields) => Fields.append(fields, name, value));
 
 /**
  * Remove a raw query field, or only declarations with the supplied fixed value.
  *
  * @remarks
  * Names compare with case, and both names and values compare with an entry's decoded form. Value
- * functions are not evaluated for comparison. Unavailable after a query schema is bound.
+ * functions are not evaluated for comparison. Removing a name a {@link query} schema always writes,
+ * after that schema, is an {@link InvalidRequest}, because the schema puts the value back. Removing
+ * an optional field clears its default.
  */
 export const removeQuery = (name: string, value?: string | null) =>
-  editQuery((fields) => Fields.remove(fields, name, value));
+  editQuery([name], (fields) => Fields.remove(fields, name, value));
 
+/** Put entries after the existing ones, in place of every entry under the `keys` names. */
 const replaceQuery = (
   draft: Draft,
   entries: ReadonlyArray<
     readonly [string, string | null, written?: string | undefined]
   >,
+  keys: ReadonlySet<string> = new Set(entries.map(([key]) => key)),
 ): Draft => {
   const added = entries.map(([key, value]): UrlParam => [key, value ?? ""]);
-  const keys = new Set(added.map(([key]) => key));
   const bareKeys = new Set(
     Array.from(draft.bareKeys).filter(([key]) => !keys.has(key)),
   );
   const queryText = new Map(
     Array.from(draft.queryText).filter(([[key]]) => !keys.has(key)),
   );
+  const declaredQuery = new Set([
+    ...Array.from(draft.declaredQuery).filter(([key]) => !keys.has(key)),
+    ...added,
+  ]);
   entries.forEach(([, value, written], index) => {
     if (value === null) bareKeys.add(added[index]!);
     if (written !== undefined) queryText.set(added[index]!, written);
@@ -370,8 +426,29 @@ const replaceQuery = (
     ),
     bareKeys,
     queryText,
+    declaredQuery,
   };
 };
+
+/** What a native query entry holds: text, or `null` for a bare key. */
+const queryValue = (draft: Draft, param: UrlParam): string | null =>
+  draft.bareKeys.has(param)
+    ? null
+    : Redacted.isRedacted(param[1])
+      ? Redacted.value(param[1])
+      : param[1];
+
+const listNames = (names: ReadonlyArray<string>): string =>
+  Array.from(new Set(names), (name) => JSON.stringify(name)).join(", ");
+
+/** Names only: a default's value may be a credential, and a schema's error would repeat it. */
+const misfit = (
+  group: string,
+  defaults: ReadonlyArray<readonly [string, unknown]>,
+): InvalidRequest =>
+  new InvalidRequest({
+    message: `These declared ${group} values do not fit the schema bound to that group: ${listNames(defaults.map(([name]) => name))}.`,
+  });
 
 /** Fields a body's encoder supplies unless the request says otherwise. */
 const bodyFields = ["content-type", "content-length"] as const;
@@ -400,8 +477,15 @@ const applyDeclaredBodyFields = (
  * Bind a schema to the call's `{ headers }` input.
  *
  * @remarks
- * Encoding produces ordered header lines. The schema replaces raw header declarations and owns
- * the group: later raw setters or another header schema are unavailable.
+ * Encoding produces ordered header lines. The schema states the shape of the group, whatever the
+ * order of the calls. A raw header under a name it allows is a default: what the schema writes
+ * replaces it, and otherwise it goes through the schema, which writes its value, spelling and order.
+ * An omitted optional field therefore leaves the default in place. A raw header under a name no
+ * schema allows is an {@link InvalidRequest} before anything is sent. A record or
+ * `Schema.StructWithRest` allows any name. Names compare without case.
+ *
+ * Header schemas stack: a second one adds its fields, and together they state the shape. Use
+ * {@link unbind} to start again.
  *
  * A field the schema produces wins over an automatic `Accept`, `Content-Type` or `Content-Length`,
  * whether the schema is bound before or after the body. An optional field the caller leaves out
@@ -418,31 +502,61 @@ export const headers = <
   contract: S,
 ) => {
   const encode = Schema.encodeEffect(contract);
-  return <I, E, R, Q extends boolean>(
-    self: Request<I, E, R, false, Q>,
+  const { shape, settle } = Shapes.bind(contract, foldHeader);
+  return <I, E, R>(
+    self: Request<I, E, R>,
   ): Request<
     I & { readonly headers: S["Type"] },
-    E | Schema.SchemaError,
-    R | S["EncodingServices"],
-    true,
-    Q
+    E | Schema.SchemaError | InvalidRequest,
+    R | S["EncodingServices"] | S["DecodingServices"]
   > =>
     construct(
-      { ...self.declaration, headers: [], headersBound: true },
+      {
+        ...self.declaration,
+        headerShapes: [...self.declaration.headerShapes, shape],
+      },
       Effect.fnUntraced(function* (
         input: I & { readonly headers: S["Type"] },
         draft: Draft,
       ) {
-        const encoded = yield* encode(input.headers);
+        if (draft.unbound.has("headers"))
+          return yield* self.prepare(input, draft);
+        const output = yield* encode(input.headers);
         const prepared = yield* self.prepare(input, draft);
-        const headerLines = Transport.entries(encoded);
+        const names = Shapes.written(output, foldHeader);
+        const defaults = prepared.headerLines.filter(
+          ([name]) =>
+            !names.has(foldHeader(name)) &&
+            Shapes.allows(shape, foldHeader(name)),
+        );
+        const settled = yield* Effect.mapError(settle(output, defaults), () =>
+          misfit("header", defaults),
+        );
+        const lines = Transport.entries(settled);
+        const replaced = new Set([
+          ...names,
+          ...defaults.map(([name]) => foldHeader(name)),
+        ]);
+        const cleared = HttpClientRequest.updateHeaders(
+          prepared.request,
+          (fields) =>
+            prepared.headerLines
+              .map(([name]) => foldHeader(name))
+              .filter((name) => replaced.has(name))
+              .reduce((result, name) => Headers.remove(result, name), fields),
+        );
         return {
           ...prepared,
           request: HttpClientRequest.setHeaders(
-            prepared.request,
-            Transport.toHeaders(headerLines),
+            cleared,
+            Transport.toHeaders(lines),
           ),
-          headerLines,
+          headerLines: [
+            ...prepared.headerLines.filter(
+              ([name]) => !replaced.has(foldHeader(name)),
+            ),
+            ...lines,
+          ],
         };
       }),
     );
@@ -462,9 +576,19 @@ export const headers = <
  * ```
  *
  * @remarks
- * The schema encodes to `UrlEncoding.QueryInput`. It replaces raw query declarations, including
- * the constructor's query string, and owns the group. Later raw setters or another query schema
- * are unavailable. Use {@link mapInput} to supply application defaults.
+ * The schema encodes to `UrlEncoding.QueryInput` and states the shape of the group, whatever the
+ * order of the calls. A raw entry under a name it allows is a default, including one written in the
+ * constructor: what the schema writes replaces it, and otherwise it goes through the schema, which
+ * writes its value and order. An omitted optional field therefore leaves the default in place. A
+ * raw entry under a name no schema allows is an {@link InvalidRequest} before anything is sent. A
+ * record, `Schema.StructWithRest` or a list of pairs allows any name.
+ *
+ * Text under a field that encodes to a number, boolean or bigint is read as one first, and a single
+ * value under a list field fits it. The check is as strict as the schema. A `?` in a base URL or
+ * path output is text in the URL, not a field, so it is outside this check.
+ *
+ * Query schemas stack: a second one adds its fields, and together they state the shape. Use
+ * {@link unbind} to start again, and {@link mapInput} to supply a required field's value.
  */
 export const query = <
   S extends Schema.ConstraintCodec<
@@ -477,24 +601,44 @@ export const query = <
   contract: S,
 ) => {
   const encode = Schema.encodeEffect(contract);
-  return <I, E, R, H extends boolean>(
-    self: Request<I, E, R, H, false>,
+  const { shape, settle } = Shapes.bind(contract, foldQuery);
+  return <I, E, R>(
+    self: Request<I, E, R>,
   ): Request<
     I & { readonly query: S["Type"] },
-    E | Schema.SchemaError,
-    R | S["EncodingServices"],
-    H,
-    true
+    E | Schema.SchemaError | InvalidRequest,
+    R | S["EncodingServices"] | S["DecodingServices"]
   > =>
     construct(
-      { ...self.declaration, query: [], emptyQuery: false, queryBound: true },
+      {
+        ...self.declaration,
+        queryShapes: [...self.declaration.queryShapes, shape],
+      },
       Effect.fnUntraced(function* (
         input: I & { readonly query: S["Type"] },
         draft: Draft,
       ) {
-        const encoded = yield* encode(input.query);
+        if (draft.unbound.has("query"))
+          return yield* self.prepare(input, draft);
+        const output = yield* encode(input.query);
         const prepared = yield* self.prepare(input, draft);
-        return replaceQuery(prepared, UrlEncoding.queryEntries(encoded));
+        const names = Shapes.written(output, foldQuery);
+        const defaults = prepared.request.urlParams.params
+          .filter(
+            (param) =>
+              prepared.declaredQuery.has(param) &&
+              !names.has(param[0]) &&
+              Shapes.allows(shape, param[0]),
+          )
+          .map((param) => [param[0], queryValue(prepared, param)] as const);
+        const settled = yield* Effect.mapError(settle(output, defaults), () =>
+          misfit("query", defaults),
+        );
+        return replaceQuery(
+          prepared,
+          UrlEncoding.queryEntries(settled),
+          new Set([...names, ...defaults.map(([name]) => name)]),
+        );
       }),
     );
 };
@@ -531,14 +675,12 @@ export const path = <S extends Schema.Constraint>(
   render: (value: S["Encoded"], encode: UrlEncoding.Service["path"]) => string,
 ) => {
   const encode = Schema.encodeEffect(contract);
-  return <I, E, R, H extends boolean, Q extends boolean>(
-    self: Request<I, E, R, H, Q>,
+  return <I, E, R>(
+    self: Request<I, E, R>,
   ): Request<
     I & { readonly path: S["Type"] },
     E | Schema.SchemaError | InvalidRequest,
-    R | S["EncodingServices"],
-    H,
-    Q
+    R | S["EncodingServices"]
   > =>
     construct(
       self.declaration,
@@ -546,6 +688,7 @@ export const path = <S extends Schema.Constraint>(
         input: I & { readonly path: S["Type"] },
         draft: Draft,
       ) {
+        if (draft.unbound.has("path")) return yield* self.prepare(input, draft);
         const encoded = yield* encode(input.path);
         const encoding = yield* UrlEncoding.UrlEncoding;
         const prepared = yield* self.prepare(input, draft);
@@ -579,15 +722,16 @@ export const path = <S extends Schema.Constraint>(
  */
 export const body =
   <A, E2, R2>(codec: Body.Encoder<A, E2, R2>) =>
-  <I, E, R, H extends boolean, Q extends boolean>(
-    self: Request<I, E, R, H, Q>,
-  ): Request<I & { readonly body: A }, E | E2, R | R2, H, Q> =>
+  <I, E, R>(
+    self: Request<I, E, R>,
+  ): Request<I & { readonly body: A }, E | E2, R | R2> =>
     construct(
       self.declaration,
       Effect.fnUntraced(function* (
         input: I & { readonly body: A },
         draft: Draft,
       ) {
+        if (draft.unbound.has("body")) return yield* self.prepare(input, draft);
         const encoded = yield* codec.encode(input.body);
         const prepared = yield* self.prepare(input, draft);
         return {
@@ -601,6 +745,63 @@ export const body =
     );
 
 /**
+ * A request's input once {@link unbind} has cleared a group: the same, without that property.
+ *
+ * @remarks
+ * An input left with no properties becomes `unknown`, so `undefined` satisfies it.
+ */
+export type Unbound<I, K extends Group> = K extends keyof I
+  ? [keyof Omit<I, K>] extends [never]
+    ? unknown
+    : Omit<I, K>
+  : I;
+
+/**
+ * Remove a group's earlier bindings, their input and the shape they state.
+ *
+ * @example
+ * ```ts
+ * import { Schema } from "effect";
+ * import { Request } from "viell-effect-schema-http";
+ * const paged = Request.get("https://api.example.test/things").pipe(
+ *   Request.query(Schema.Struct({ page: Schema.NumberFromString })),
+ * );
+ * const sorted = paged.pipe(
+ *   Request.unbind("query"),
+ *   Request.query(Schema.Struct({ sort: Schema.String })),
+ * );
+ * // Input: { query: { sort: "name" } }; URL query: ?sort=name
+ * ```
+ *
+ * @remarks
+ * Takes `"path"`, `"query"`, `"headers"` or `"body"`, and affects only bindings before it. To replace
+ * a binding, unbind the group and bind again. Raw declarations stay, and go out unchecked once no
+ * schema states the group's shape. A constructor path and query are declarations, so they stay too.
+ *
+ * Other steps stay as well. A {@link mapEffect} that reads the removed input receives `undefined`
+ * for it. After {@link mapInput}, the binding is skipped, but the mapped input keeps whatever the
+ * mapping requires. The request's error and service types keep what the removed bindings added.
+ */
+export const unbind =
+  <K extends Group>(group: K) =>
+  <I, E, R>(self: Request<I, E, R>): Request<Unbound<I, K>, E, R> =>
+    construct(
+      {
+        ...self.declaration,
+        headerShapes: group === "headers" ? [] : self.declaration.headerShapes,
+        queryShapes: group === "query" ? [] : self.declaration.queryShapes,
+        conflicts: self.declaration.conflicts.filter(
+          ([owner]) => owner !== group,
+        ),
+      },
+      (input, draft) =>
+        self.prepare(input as I, {
+          ...draft,
+          unbound: new Set([...draft.unbound, group]),
+        }),
+    );
+
+/**
  * Adapt your application's argument to this request's required input.
  *
  * @remarks
@@ -609,9 +810,7 @@ export const body =
  */
 export const mapInput =
   <I, I2>(f: (input: I2) => I) =>
-  <E, R, H extends boolean, Q extends boolean>(
-    self: Request<I, E, R, H, Q>,
-  ): Request<I2, E, R, H, Q> =>
+  <E, R>(self: Request<I, E, R>): Request<I2, E, R> =>
     construct(self.declaration, (input, draft) =>
       Effect.suspend(() => self.prepare(f(input), draft)),
     );
@@ -626,7 +825,8 @@ export const mapInput =
  * applies afterwards.
  *
  * A transform can be reused on requests whose input contains what its function reads. Inline
- * callbacks in `pipe` infer their input from the request.
+ * callbacks in `pipe` infer their input from the request. This is the deliberate way around a
+ * group's schemas: what it edits on the native request is outside their check.
  */
 export const mapEffect =
   <I, E2, R2>(
@@ -635,9 +835,9 @@ export const mapEffect =
       input: I,
     ) => Effect.Effect<HttpClientRequest.HttpClientRequest, E2, R2>,
   ) =>
-  <E, R, H extends boolean, Q extends boolean, I2 extends I = I>(
-    self: Request<I, E, R, H, Q> | Request<I2, E, R, H, Q>,
-  ): Request<I2, E | E2, R | R2, H, Q> =>
+  <E, R, I2 extends I = I>(
+    self: Request<I, E, R> | Request<I2, E, R>,
+  ): Request<I2, E | E2, R | R2> =>
     construct(self.declaration, (input: I2, draft) =>
       Effect.flatMap(self.prepare(input, draft), (prepared) =>
         Effect.map(f(prepared.request, input), (request) => ({
@@ -678,7 +878,9 @@ const initialDraft = (declaration: Declaration): Draft => {
       headerLines,
       bareKeys: new Set(),
       queryText: new Map(),
+      declaredQuery: new Set(),
       removedHeaders: declaration.removedHeaders,
+      unbound: new Set(),
     },
     declaration.query.flatMap((field) =>
       Fields.resolve([field]).map(
@@ -706,14 +908,7 @@ const renderQuery = (draft: Draft, encoding: UrlEncoding.Service): string => {
       endRun();
       parts.push(written);
     } else {
-      run.push([
-        param[0],
-        draft.bareKeys.has(param)
-          ? null
-          : Redacted.isRedacted(param[1])
-            ? Redacted.value(param[1])
-            : param[1],
-      ]);
+      run.push([param[0], queryValue(draft, param)]);
     }
   }
   endRun();
@@ -752,6 +947,45 @@ const finalize = (
   };
 };
 
+/** Why a request's fields cannot be built against their schemas, by name and never by value. */
+const fieldProblems = (
+  declaration: Declaration,
+  draft: Draft,
+): ReadonlyArray<string> =>
+  (
+    [
+      [
+        "query",
+        draft.request.urlParams.params.map(([name]) => name),
+        declaration.queryShapes,
+        foldQuery,
+      ],
+      [
+        "headers",
+        draft.headerLines.map(([name]) => name),
+        declaration.headerShapes,
+        foldHeader,
+      ],
+    ] as const
+  ).flatMap(([group, names, shapes, fold]) => {
+    const conflicts = declaration.conflicts
+      .filter(([owner]) => owner === group)
+      .map(([, name]) => name);
+    const stray = Shapes.outside(names, shapes, fold);
+    return [
+      ...(conflicts.length === 0
+        ? []
+        : [
+            `A schema bound to the ${group} group always writes these names, so a raw edit could never reach the client: ${listNames(conflicts)}. Supply the value as input, set it with Request.mapInput, or use Request.unbind("${group}") first.`,
+          ]),
+      ...(stray.length === 0
+        ? []
+        : [
+            `No schema bound to the ${group} group allows these declared names: ${listNames(stray)}. Add them to a schema, remove them, or use Request.unbind("${group}") first.`,
+          ]),
+    ];
+  });
+
 /**
  * Prepare a request and its header lines without sending it.
  *
@@ -767,17 +1001,12 @@ const finalize = (
  *
  * @remarks
  * Each evaluation resolves computed fields and encodes input once. The returned Effect requires
- * any services used by the input schemas or preparation. Use {@link materialize} when only the
- * native request is needed.
+ * any services used by the input schemas or preparation. A declared field that does not fit the
+ * schemas bound to its group fails here with {@link InvalidRequest}, whatever the input. Use
+ * {@link materialize} when only the native request is needed.
  */
-export const compile = Effect.fnUntraced(function* <
-  I,
-  E,
-  R,
-  H extends boolean,
-  Q extends boolean,
->(
-  self: Request<I, E, R, H, Q>,
+export const compile = Effect.fnUntraced(function* <I, E, R>(
+  self: Request<I, E, R>,
   input: I,
 ): Effect.fn.Return<Compiled, E | InvalidRequest, R> {
   const encoding = yield* UrlEncoding.UrlEncoding;
@@ -789,6 +1018,9 @@ export const compile = Effect.fnUntraced(function* <
         cause,
       }),
   });
+  const problems = fieldProblems(self.declaration, initial);
+  if (problems.length > 0)
+    return yield* new InvalidRequest({ message: problems.join(" ") });
   const draft = yield* self.prepare(input, initial);
   return yield* Effect.try({
     try: () => finalize(draft, self.declaration, encoding),
@@ -803,8 +1035,8 @@ export const compile = Effect.fnUntraced(function* <
  * @remarks
  * Use {@link compile} to retain the original header-line representation as well.
  */
-export const materialize = <I, E, R, H extends boolean, Q extends boolean>(
-  self: Request<I, E, R, H, Q>,
+export const materialize = <I, E, R>(
+  self: Request<I, E, R>,
   input: I,
 ): Effect.Effect<HttpClientRequest.HttpClientRequest, E | InvalidRequest, R> =>
   Effect.map(compile(self, input), (compiled) => compiled.request);

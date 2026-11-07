@@ -60,12 +60,76 @@ value or a computation. A computation runs once per materialization, and `undefi
 field. Header names compare without case and keep the spelling they were written with, so a
 `setHeader` that replaces an earlier line also replaces its spelling. Query keys compare exactly.
 
-Schemas are optional to choose and binding when chosen. `Request.headers` and `Request.query` take a
-schema whose encoded side fits the representation (`Transport.HeaderInput` or
-`UrlEncoding.QueryInput`); its application side can be any shape. Once a schema owns the header or
-query group, it replaces the raw declarations, the raw setters disappear from the request's type,
-and the group cannot be bound a second time. `Request.path` and `Request.body` add their input to
-the request instead, so each can be combined with the other bindings.
+`Request.headers` and `Request.query` take a schema whose encoded side fits the representation
+(`Transport.HeaderInput` or `UrlEncoding.QueryInput`); its application side can be any shape.
+`Request.path` and `Request.body` add their input to the request, so each can be combined with the
+other bindings.
+
+### A schema states the shape of its group
+
+Schemas are optional to choose and binding when chosen. A field group is a dictionary of names, and
+each raw edit produces a new dictionary. A header or query schema states the shape of that
+dictionary, and one that cannot be built against the schema is an error: `Request.InvalidRequest`
+before anything is sent.
+
+- **A raw value under a name a schema allows is a default.** What the schema writes replaces it. If
+  the schema writes nothing under that name, the default stays, so an omitted optional field never
+  removes an inherited value. An empty list counts as written, and leaves no entries.
+- **A default goes through the schema.** The group is decoded and encoded again, together with what
+  the schema wrote, and the request carries the result. A value that does not fit is an error. Raw
+  text cannot get past a schema, and a decoder that accepts more spellings than its encoder writes
+  cannot let a loose spelling out. A default therefore loses its exact text: `?page=02` under a
+  number field goes out as `page=2`, and order and header spelling follow the schema.
+- **A raw value under a name no schema allows is an incompatible shape.** The check looks at the
+  finished declaration, so it does not matter whether a shared transform comes before or after the
+  schema.
+- **A raw edit of a required field is an error.** After a schema, setting a name it always writes
+  could never reach the client, because the caller's value replaces it, and removing that name would
+  change nothing, because the schema puts the value back. An edit of an optional field is allowed:
+  setting it changes the default, removing it clears the default, and callers can still pass that
+  field. This is the one rule that depends on order. Before the schema, a raw value under a required
+  name is an ordinary default that the caller's value replaces.
+- **Schemas stack.** A second `Request.query` or `Request.headers` adds its fields, and together the
+  schemas state the shape. Each takes its own fields from one input, and a default goes through
+  every schema that allows its name.
+- **A schema can allow other names.** A record or `Schema.StructWithRest` allows any name, and
+  values are still checked. Callers can then pass any name as well.
+- **`Request.unbind` removes bindings.** `Request.unbind(group)` makes earlier bindings of that group
+  skip themselves and removes their input type and the shape, so raw values go out unchecked. It
+  takes `"path"`, `"query"`, `"headers"` or `"body"`, and replacing a binding is `unbind` followed by
+  a new one. After `Request.mapInput`, the binding is skipped, but the mapped input keeps whatever
+  the mapping requires. A request's error and service types keep what a removed binding added.
+
+Names are wire names, read from the schema's encoded AST when it is bound. That covers structs,
+classes, renamed fields and unions, where a union allows what any member allows and requires what
+every member writes. Where names cannot be read, as with a record or a list of pairs, the schema
+allows any name. Header names compare without case, and query names compare exactly.
+
+Raw values are text. Where a field encodes to a number, boolean or bigint, the text is read as one
+first, the reverse of how the library writes it, so a schema encoded as a number accepts a default.
+A single raw value under a list field fits that list. A query entry written in the constructor is a
+raw value like any other. Its name is the decoded name, so a written empty segment counts as a field
+named `""`.
+
+The check runs when the request is prepared, not in the editor. A definition's dictionary is
+normally incomplete, because required values come from the caller, and a stacked schema can allow a
+name a later step needs. An edit in a `pipe` returns a `Request`, so a refused edit is a request
+that fails when it runs, on every run and whatever the input. Catching it in the types would need
+field names in the request's type, which stops generic helpers from compiling.
+
+Some things are outside the check:
+
+- Text in the URL is not a field. A `?` in a base URL or in `Request.path` output is not read.
+- `Request.mapEffect` is the deliberate way around a schema, so a native edit is not a declaration.
+  `transformClient` and a client layer work on the prepared request, so the check does not see them.
+- A check is only as strict as its schema. `Schema.NumberFromString` accepts `"two"` as `NaN`.
+
+A failed check names the fields and never includes their values, because a default may be a
+credential. It carries no `cause`, since a schema's error would repeat the value.
+
+Allowing a name also offers it to callers: a schema field is both what the group may hold and what
+the caller may pass. `Request.mapInput` hides a field by fixing its value, and `transformClient` or
+a client layer keeps a value off the request description altogether.
 
 ### Bodies
 
@@ -102,10 +166,9 @@ declares nothing keeps them, and a request's own declaration wins.
 - `Request.removeHeader(name)` stops the automatic value: the request records the name, and the
   library adds nothing for it. It stops only the library's own value. A later declaration, a header
   schema's output or a `Request.mapEffect` edit still goes out, and the client may add its own. A
-  computed value that returns `undefined` declares nothing, so the removal stays in force. A header
-  schema replaces raw declarations, but a removal made before it stays in force for a field the
-  schema leaves out. `Request.removeHeader(name, value)` stops nothing, because the name may still
-  be declared.
+  computed value that returns `undefined` declares nothing, so the removal stays in force, and so
+  does a field a header schema leaves out. `Request.removeHeader(name, value)` stops nothing,
+  because the name may still be declared.
 - A declaration stays on a request with an empty body, including `Body.empty`.
 - On multipart form data, a declared `Content-Type` replaces the one the transport would supply.
   That is the consumer's choice, and without the boundary the body cannot be read.
@@ -157,9 +220,7 @@ transform:
 ```ts
 import { Request } from "viell-effect-schema-http";
 
-const service = <I, E, R, H extends boolean>(
-  request: Request.Request<I, E, R, H, false>,
-) =>
+const service = <I, E, R>(request: Request.Request<I, E, R>) =>
   request.pipe(
     Request.setQuery("key", "abc"),
     Request.baseUrl("https://api.test/v1"),
@@ -195,8 +256,10 @@ A value from `setQuery`, `appendQuery` or a schema goes through `UrlEncoding.que
 data and not written URL text. A custom `UrlEncoding.query` receives only the entries that are not
 kept as written, in order. Written text standing between them splits them into separate calls, so
 the query keeps its order. Written text is what the author wrote, so the library neither re-encodes
-nor validates it. A query schema still replaces the constructor's query, as
-[above](#fields-and-schemas) describes.
+nor validates it, until a query schema covers the entry. [A schema states the
+shape](#a-schema-states-the-shape-of-its-group) of its group, so a written entry goes through a
+schema that allows it, and one no schema allows is an incompatible shape. A lone `?` holds no
+entries, so a schema has nothing to say about it, and it stays until something writes an entry.
 
 A URL that cannot be rendered or encoded fails with `Request.InvalidRequest`.
 

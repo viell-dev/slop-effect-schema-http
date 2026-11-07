@@ -144,6 +144,67 @@ const page = await Effect.runPromise(
 // #endregion query
 assert.equal(page.request.url, "https://api.example.test/users?page=2");
 
+// #region shape
+const ApiHeaders = { authorization: Schema.optional(Schema.String) };
+const Paging = Schema.Struct({
+  limit: Schema.optional(Schema.FiniteFromString),
+});
+const Sorting = Schema.Struct({ sort: Schema.String });
+
+const listThings = Request.get("https://api.example.test/things").pipe(
+  Request.setHeader("authorization", "Bearer token"),
+  Request.setQuery("limit", "25"),
+  Request.headers(Schema.Struct({ ...ApiHeaders, "x-trace": Schema.String })),
+  Request.query(Paging),
+  Request.query(Sorting),
+);
+const listInput = { headers: { "x-trace": "t1" }, query: { sort: "name" } };
+// ?limit=25&sort=name, with authorization and x-trace
+
+const firstFive = listThings.pipe(Request.setQuery("limit", "5")); // Allowed, and checked
+const noLimit = listThings.pipe(Request.removeQuery("limit")); // Allowed
+const stray = listThings.pipe(Request.setQuery("fields", "id")); // InvalidRequest: no schema allows it
+// #endregion shape
+const urlOfList = async (request: typeof listThings) =>
+  (await Effect.runPromise(Request.compile(request, listInput))).request.url;
+assert.equal(
+  await urlOfList(listThings),
+  "https://api.example.test/things?limit=25&sort=name",
+);
+assert.equal(
+  await urlOfList(firstFive),
+  "https://api.example.test/things?limit=5&sort=name",
+);
+assert.equal(
+  await urlOfList(noLimit),
+  "https://api.example.test/things?sort=name",
+);
+assert.equal(
+  (await Effect.runPromise(Effect.flip(Request.compile(stray, listInput))))
+    ._tag,
+  "InvalidRequest",
+);
+
+// #region unbind
+const listByOwner = listThings.pipe(
+  Request.unbind("query"),
+  Request.removeQuery("limit"),
+  Request.query(Schema.Struct({ owner: Schema.String })),
+);
+// Input: { headers: { "x-trace": "t1" }, query: { owner: "ada" } }; URL query: ?owner=ada
+// #endregion unbind
+assert.equal(
+  (
+    await Effect.runPromise(
+      Request.compile(listByOwner, {
+        headers: { "x-trace": "t1" },
+        query: { owner: "ada" },
+      }),
+    )
+  ).request.url,
+  "https://api.example.test/things?owner=ada",
+);
+
 // #region adapt
 const renameUser = updateUser.pipe(
   Request.mapInput((input: { id: number; name: string }) => ({

@@ -19,7 +19,7 @@ comma-joined view used by Effect client middleware.
 
 Lines keep the spelling they were written with, from `Request.setHeader`, `Request.appendHeader` and
 header schemas alike. Comparing two names folds their case, so `Request.setHeader("X-Thing", …)`
-replaces an earlier `x-thing` line.
+replaces an earlier `x-thing` line. A header a schema covers takes the schema's spelling.
 
 A comma in a value is not evidence of separate lines. The library never splits a normalized value to
 guess the original representation.

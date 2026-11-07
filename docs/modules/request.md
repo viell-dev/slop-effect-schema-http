@@ -33,8 +33,8 @@ with a different header leaves the original intact:
 
 <<< ../../examples/modules/request.ts#shared-defaults
 
-This helper supplies raw headers before any header schema is bound. A header schema owns its whole
-group; [schema ownership](#a-schema-owns-its-whole-field-group) explains that boundary.
+A header schema on such a request has to allow these headers. [A schema states the
+shape](#a-schema-states-the-shape-of-its-group) of its group, whichever comes first.
 
 ## Bind application input
 
@@ -76,8 +76,8 @@ same way. Their encoded shapes must fit `Transport.HeaderInput`; query schemas m
 | Binding                        | Input property | What it produces                                  |
 | ------------------------------ | -------------- | ------------------------------------------------- |
 | `Request.path(schema, render)` | `path`         | The renderer's path from the schema-encoded value |
-| `Request.query(schema)`        | `query`        | The complete query group                          |
-| `Request.headers(schema)`      | `headers`      | The complete header group                         |
+| `Request.query(schema)`        | `query`        | Its query entries, and the shape of that group    |
+| `Request.headers(schema)`      | `headers`      | Its header lines, and the shape of that group     |
 | `Request.body(encoder)`        | `body`         | An encoded body                                   |
 
 ### Adapt your application's argument
@@ -106,6 +106,9 @@ names compare without case; query names compare with case.
 A header keeps the spelling you wrote, and a `setHeader` that replaces a line takes the new
 spelling. A provider that sends header lines receives that spelling; `fetch` sends lowercase names.
 
+These helpers also work on a request with a schema bound, within [the shape that schema
+states](#a-schema-states-the-shape-of-its-group).
+
 ## Compose nested resource paths
 
 When endpoints share several parent resource IDs, reuse schema fields and a path-rendering function.
@@ -131,14 +134,86 @@ prefix; reusable renderers handle the variable resource hierarchy.
 
 ## Advanced behavior
 
-### A schema owns its whole field group
+### A schema states the shape of its group
 
-Binding a header or query schema replaces that group's raw declarations, including parameters in the
-constructor URL. It does not merge them with the schema's output. The type system prevents raw
-setters or another schema from being applied to that group afterwards. Put any required fixed values
-in the schema input or adapt the invocation with `mapInput`.
+A header or query group is a dictionary of names, and each edit produces a new one. A schema states
+what that dictionary may hold, and whatever the request ends up declaring has to fit. A request that
+does not fit fails with `Request.InvalidRequest` before anything is sent, whichever comes first, the
+schema or the raw value. Path and body bindings add their own input properties.
 
-Path and body bindings add their own input properties.
+<<< ../../examples/modules/request.ts#shape
+
+Each rule below applies to query entries, including those written in the constructor, and to
+headers:
+
+| The request declares                                    | What happens                                              |
+| ------------------------------------------------------- | --------------------------------------------------------- |
+| A raw value under a name a schema allows                | A default: what the schema writes replaces it             |
+| The same, and the caller leaves that optional field out | The default stays, and goes through the schema            |
+| A raw value that does not fit the schema                | `InvalidRequest`                                          |
+| A raw value under a name no schema allows               | `InvalidRequest`, an incompatible shape                   |
+| A raw edit of a required field, after the schema        | `InvalidRequest`, because it could never reach the client |
+
+A default goes through the schema with the rest of the group, and the request carries what the
+schema writes. `?page=02` under a number field goes out as `page=2`, and order and header spelling
+follow the schema. A check is only as strict as the schema, so `Schema.NumberFromString` accepts
+`"two"` as `NaN` and `Schema.FiniteFromString` refuses it.
+
+"Required" means the schema always writes the name. A required field with
+`Schema.withConstructorDefault` needs no input and still cannot be removed. To give a required field
+a value without asking the caller, use `Request.mapInput`.
+
+The error names the fields and leaves out their values, because a default may be a credential. The
+check runs when the request is prepared, so a mismatch compiles and then fails on every run. It does
+not see what `Request.mapEffect` edits on the native request, what `transformClient` or a client
+layer does afterwards, or text in the URL, such as a `?` in a base URL.
+
+#### Stack schemas
+
+A second `Request.query` or `Request.headers` adds its fields, and together the schemas state the
+shape, so each can be a reusable transform. That also gives a variant its way to add to a typed
+group: stack a small schema, then set the value.
+
+```ts
+import { Schema } from "effect";
+import { Request } from "viell-effect-schema-http";
+
+const paged = Request.get("https://api.example.test/things").pipe(
+  Request.query(Schema.Struct({ page: Schema.NumberFromString })),
+);
+const withFields = paged.pipe(
+  Request.query(Schema.Struct({ fields: Schema.optional(Schema.String) })),
+  Request.setQuery("fields", "id,name"),
+);
+// Input: { query: { page: 1 } }; URL query: ?page=1&fields=id%2Cname
+```
+
+Typing part of a raw group takes the same care. Binding a schema for `cursor` onto a request with a
+raw `?page=1&limit=25` is refused until a schema also allows `page` and `limit`, or they are
+removed.
+
+Where several schemas allow the same name, keep it in a shared constant rather than restating it, as
+`ApiHeaders` does above. A record or `Schema.StructWithRest` allows any name, and still checks each
+value. Callers can then pass any name as well.
+
+#### Start again with unbind
+
+`Request.unbind(group)` removes that group's earlier bindings, their input type and the shape they
+state. It takes `"path"`, `"query"`, `"headers"` or `"body"`. Replacing a binding is `unbind`
+followed by a new one:
+
+<<< ../../examples/modules/request.ts#unbind
+
+Raw values stay, and go out unchecked until a new schema states a shape. After `Request.mapInput`,
+the binding is skipped, but the mapped input keeps whatever the mapping requires, and a request's
+error and service types keep what a removed binding added.
+
+#### Keep a value away from callers
+
+Allowing a name also offers it to callers: the `authorization` field above lets a caller replace the
+shared token. To keep a value out of the caller's hands, fix it with `Request.mapInput`, so the
+field never reaches the input type, or supply it in `transformClient` or a client layer, so it is
+not on the request description at all.
 
 ### A request's own headers win
 
@@ -186,10 +261,10 @@ The library renders URLs through [UrlEncoding](./url-encoding.md). Its defaults 
 order, repetition, bare keys, and empty values. The HTTP provider can still normalize URLs; see [URL
 processing](./url-encoding.md#advanced-url-processing).
 
-A query written in the URL is passed to the client as written until something edits that entry, so
-`?a=1;b=2` and `?q=a+b` keep their spelling. `setQuery`, `appendQuery` and `removeQuery` address an
-entry by its decoded name, and leave the other entries as they are. See [constructor
-URLs](./url-encoding.md#constructor-urls).
+A query written in the URL is passed to the client as written until something edits that entry or a
+schema covers it, so `?a=1;b=2` and `?q=a+b` keep their spelling. `setQuery`, `appendQuery` and
+`removeQuery` address an entry by its decoded name, and leave the other entries as they are. See
+[constructor URLs](./url-encoding.md#constructor-urls).
 
 A fragment stays on the request. The compiled request holds it in `request.hash`, exactly as
 written, and the query goes before it. A constructor fragment survives `Request.path` and query
