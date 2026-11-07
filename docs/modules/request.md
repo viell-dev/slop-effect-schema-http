@@ -47,22 +47,26 @@ This request accepts a numeric user ID and a JSON body:
 
 <<< ../../examples/modules/request.ts#inputs
 
-`Schema.NumberFromString` has an application side of `number` and an encoded side of `string`.
+`Request.pathValue` declares a named value, and `Request.path` is a template that places it. The
+text around `${userId}` is used exactly as written. The value's name is its field under `path`, so
+the call passes `{ path: { userId: 42 } }`. Without a schema, a path value is a string.
+
+`Schema.FiniteFromString` has an application side of `number` and an encoded side of `string`.
 Requests use the encoding direction: `42` becomes `"42"`. [A schema-backed
-input](#a-schema-has-two-sides) also takes `"42"`. The path renderer receives that encoded string;
-`encode(id)` escapes it as a path value. The renderer supplies the whole request path and replaces
-the path passed to `Request.patch`, so the example starts with `""`. The base URL is joined
-afterwards. It does not need to be repeated inside the renderer.
+input](#a-schema-has-two-sides) also takes `"42"`. The encoded value then goes through the [path
+encoder](./url-encoding.md), so a `/` in a value stays part of that value. Only a path value can go
+in a template, so a plain string there is a compile error, and neither step can be forgotten.
+
+The template adds to the path passed to `Request.patch`, so the example starts with `""` and the
+whole path reads in one place. The base URL is joined afterwards. It does not need to be repeated in
+the template.
 
 `Request.body` accepts a [body encoder](./body.md). `Body.jsonSchema` validates the body and encodes
 JSON, including its content type. The two bindings combine, so execution needs both `path` and
 `body`.
 
-The path schema determines the value under `path`. A scalar schema gives `path: 42`; a
-`Schema.Struct({ userId: Schema.NumberFromString })` gives `path: { userId: 42 }`. The renderer's
-parameter name does not change that input type. Use a struct to name a single ID or group several
-path values. The [usage guide](../usage.md#understand-the-input-type) shows the inferred operation
-input; [nested resource paths](#compose-nested-resource-paths) demonstrate several named values.
+The [usage guide](../usage.md#understand-the-input-type) shows the inferred operation input; [nested
+resource paths](#compose-nested-resource-paths) demonstrate several named values.
 
 ### Query parameters and headers
 
@@ -74,12 +78,13 @@ The caller passes a number for `page`, or [its encoded text](#a-schema-has-two-s
 schema writes text. Header schemas work the same way. Their encoded shapes must fit
 `Transport.HeaderInput`; query schemas must encode to `UrlEncoding.QueryInput`.
 
-| Binding                        | Input property | What it produces                                  |
-| ------------------------------ | -------------- | ------------------------------------------------- |
-| `Request.path(schema, render)` | `path`         | The renderer's path from the schema-encoded value |
-| `Request.query(schema)`        | `query`        | Its query entries, and the shape of that group    |
-| `Request.headers(schema)`      | `headers`      | Its header lines, and the shape of that group     |
-| `Request.body(encoder)`        | `body`         | An encoded body                                   |
+| Binding                          | Input property | What it produces                                     |
+| -------------------------------- | -------------- | ---------------------------------------------------- |
+| `` Request.path`/users/${id}` `` | `path`         | Its text, with each value encoded, added to the path |
+| `Request.path(schema, render)`   | `path`         | The renderer's text, added to the path               |
+| `Request.query(schema)`          | `query`        | Its query entries, and the shape of that group       |
+| `Request.headers(schema)`        | `headers`      | Its header lines, and the shape of that group        |
+| `Request.body(encoder)`          | `body`         | An encoded body                                      |
 
 ### Adapt your application's argument
 
@@ -129,28 +134,104 @@ states](#a-schema-states-the-shape-of-its-group).
 
 ## Compose nested resource paths
 
-When endpoints share several parent resource IDs, reuse schema fields and a path-rendering function.
-Each endpoint binds one complete path schema. The calendar endpoint and its event endpoint can share
-the same parent path:
+A child endpoint adds to its parent. Declare each value once, hold each level's template in a
+variable, and add only what is new:
 
 <<< ../../examples/modules/request.ts#nested-paths
 
-The event call supplies all five IDs. Each value is escaped separately, so an ID containing `/`
-stays one path value:
+`getEvent` is `getCalendar` with one more part, and `getCalendar` does not change. The input of each
+is inferred from its templates. The event call supplies all four IDs. Each value is escaped
+separately, so an ID containing `/` stays one path value:
 
 <<< ../../examples/modules/request.ts#nested-input
 
-Pass these request descriptions to `Operation.make` with the responses each endpoint accepts. The
-shared `calendarPath` function defines the parent structure once; a new child endpoint only adds its
-own suffix. Use the supplied `encode` function for each dynamic value, leaving the path separators
-themselves unescaped.
+Pass these request descriptions to `Operation.make` with the responses each endpoint accepts. A
+single shared `Request.baseUrl` handles the fixed prefix, and the templates handle the resource
+hierarchy.
 
-This is ordinary function composition in your application. The library has no combinator that joins
-two `Request` values or appends a typed path binding to another. Repeating `Request.path` replaces
-the rendered path instead of adding a child. A single shared `Request.baseUrl` handles the fixed
-prefix; reusable renderers handle the variable resource hierarchy.
+Give each level its own field name. The same name at two levels is one input value that both
+receive, and the same name with incompatible types makes the input impossible to supply, which shows
+as a compile error at `execute`.
+
+### Add to a path
+
+The path is the constructor's path followed by what each `Request.path` adds, in order, joined
+exactly as written. A fixed start can sit in the constructor, a value can stand inside a segment,
+and fixed text is a template with no values:
+
+<<< ../../examples/modules/request.ts#path-suffix
+
+The library adds no `/` and removes none, so a slash at a boundary is yours to get right:
+
+| Constructor           | Added             | Path                          |
+| --------------------- | ----------------- | ----------------------------- |
+| `/users`              | `/42`             | `/users/42`                   |
+| `""`                  | `/users/1`        | `/users/1`                    |
+| `https://api.test/v1` | `/users/1`        | `https://api.test/v1/users/1` |
+| `/things/42`          | `:archive`        | `/things/42:archive`          |
+| `/a`                  | `/b#x`, then `/c` | `/a/b`, with fragment `x/c`   |
+| `/users/`             | `/42`             | `/users//42`                  |
+| `/users`              | `42`              | `/users42`                    |
+
+A convention keeps this simple, and the library works with any other:
+
+- **Start each piece with `/`, and do not end one with `/`.** So `Request.get("/things")`,
+  `` Request.path`/events` ``, and a renderer returning `` `/${encode(id)}` ``.
+- **A base URL needs neither.** Joining it to the path handles that boundary.
+- **A trailing slash is part of the address.** `/foo` and `/foo/` can be different resources, or the
+  same resource read differently, so the library never adds or removes one. When a server wants one,
+  put it at the very end, on the last piece.
+
+The text between values is not parsed, so `:` and `'` need no escape, and a `\` is a backslash. A
+`?` or `#` is ordinary URL syntax: anything after a `#` belongs to the fragment, as the table shows.
+A constructor's query and fragment are kept apart from the path, so they survive `Request.path`.
+
+The finished path is passed to the client as written, and [the library's promise stops
+there](../limits.md#paths-and-other-requests-passed-on-as-written). Node.js Fetch keeps `//` and a
+trailing slash and resolves dot segments. A server may merge `//`, and another client can differ.
+
+### Change a path in a variant
+
+`Request.unbind("path")` removes what earlier `Request.path` calls added, both their text and their
+input. The constructor's path stays until `Request.setPath` replaces it, and `setPath` leaves the
+bindings in place, so a variant uses whichever it needs, or both to replace a whole path:
+
+<<< ../../examples/modules/request.ts#path-variant
 
 ## Advanced behavior
+
+### Paths whose shape depends on a value
+
+A template has a fixed shape. Use a renderer when the shape itself depends on the value, as with a
+value holding several segments, a whole URL, or a path that branches on a value. `Request.path`
+takes a schema and a function, and adds what the function returns:
+
+<<< ../../examples/modules/request.ts#path-renderer
+
+The renderer receives the schema-encoded value and the active path encoder. Call `encode` on each
+dynamic value and leave the separators unescaped. Nothing makes a renderer do that, which is why a
+template is the first choice for a fixed shape.
+
+The schema determines the value under `path`. A scalar schema takes a scalar, and a struct takes its
+fields; a parameter name in the renderer changes nothing. A scalar has no name, so stacking it with
+a template, or with a scalar of another type, makes the input impossible to supply. Use a struct for
+a renderer that stacks.
+
+A renderer's text is added like any other. After an empty constructor path, a whole URL is the
+request URL, and it [bypasses the base](#url-and-method-limits). After other text it stays part of
+the path, because `/fetch/https://other.test/x` is a legitimate path.
+
+### Encoding does not make a value safe
+
+Encoding stops a `/` in a value from adding a segment. It does not stop everything: `..` and an
+empty string have nothing to encode, so they pass through, and so does a `'` inside
+`` `Customers('${customer}')` ``. With Node.js Fetch, a `..` can leave the resource:
+`/customers/../calendars/7` reaches the server as `/calendars/7`.
+
+A value that comes from a user needs a constraint in its schema. `Schema.TemplateLiteral` states a
+value's shape, and `Schema.String.check` with `Schema.isPattern` does the same for a pattern:
+
+<<< ../../examples/modules/request.ts#path-constraint
 
 ### A schema has two sides
 
@@ -272,7 +353,8 @@ followed by a new one:
 
 Raw values stay, and go out unchecked until a new schema states a shape. After `Request.mapInput`,
 the binding is skipped, but the mapped input keeps whatever the mapping requires, and a request's
-error and service types keep what a removed binding added.
+error and service types keep what a removed binding added. For a path, see [Change a path in a
+variant](#change-a-path-in-a-variant).
 
 #### Keep a value away from callers
 

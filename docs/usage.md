@@ -14,9 +14,10 @@ Start a new ES module (`users.mts` for the Node example) with these imports and 
 
 <<< ../examples/usage.ts#shared
 
-`api` supplies the origin. `userPath` accepts an object with a numeric `userId`, converts the ID
-into URL text and escapes it as a path value. `userBody` describes the user JSON your application
-understands. These are ordinary reusable values, not an API-wide configuration object.
+`api` supplies the origin. `userId` declares a named path value, a number in your application and
+URL text in the request. `userPath` places it in a path template, which converts the ID and escapes
+it as a path value. `userBody` describes the user JSON your application understands. These are
+ordinary reusable values, not an API-wide configuration object.
 
 ## Update a user with PATCH
 
@@ -38,10 +39,10 @@ The pieces now have distinct roles:
 | `Response.status(200, userBody)` | Select HTTP 200 and decode the updated user             |
 | `Operation.make`                 | Combine these descriptions into an executable operation |
 
-`Request.path` supplies the whole path, so the constructor starts with `""`. It renders `/users/42`,
-which joins to `https://api.example.test`. The [Request
-guide](./modules/request.md#share-an-api-base-and-defaults) adds shared headers and [nested resource
-paths](./modules/request.md#compose-nested-resource-paths).
+`Request.path` adds to the constructor's path, and here the template holds the whole path, so the
+constructor starts with `""`. That gives `/users/42`, which joins to `https://api.example.test`. The
+[Request guide](./modules/request.md#share-an-api-base-and-defaults) adds shared headers and [nested
+resource paths](./modules/request.md#compose-nested-resource-paths).
 
 ### Understand the input type
 
@@ -52,14 +53,13 @@ to accept the same input:
 <<< ../examples/usage.ts#input-type
 
 The `&` combines the two required groups into one object. `path` and `body` are the library's
-binding names; `userId` and `name` come from your schemas. `Schema.NumberFromString` accepts a
-number here and encodes it to a string for the path renderer. It also accepts that string, because
-[an input takes either side of its schema](./modules/request.md#a-schema-has-two-sides).
+binding names; `userId` is the name given to `Request.pathValue`, and `name` comes from your schema.
+`Schema.FiniteFromString` accepts a number here and encodes it to a string for the path. It also
+accepts that string, because [an input takes either side of its
+schema](./modules/request.md#a-schema-has-two-sides).
 
-The path input does not have to be an object. Binding `Schema.NumberFromString` directly would
-instead require `{ path: 42 }`; naming the renderer's parameter `userId` would not give that number
-a field name or a distinct user-ID type. Using `Schema.Struct` makes names visible at the call site.
-For several path values, define fields such as `teamId` and `userId` in that schema and call with
+The name you give a path value is the name at the call site, so a call shows which ID is which. For
+several path values, declare each one, place them in the template and call with
 `path: { teamId: 7, userId: 42 }`. The [nested-path
 example](./modules/request.md#compose-nested-resource-paths) shows a complete contract with several
 IDs.
