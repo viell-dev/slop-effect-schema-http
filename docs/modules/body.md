@@ -86,6 +86,8 @@ directions. These are the extension points for service-specific formats.
 Return decoding failures through the Effect error channel so the operation can wrap them in
 `Response.DecodeError`. A thrown exception is an Effect defect. Read the finite body within the
 decoder; the operation releases the attempt's resources before returning its result.
+[Recipes](../recipes.md#a-list-with-a-count-header-and-an-empty-response) show decoders that read a
+header as well as the body.
 
 ### Body metadata
 

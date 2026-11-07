@@ -66,6 +66,11 @@ Fetch makes other choices of its own. It sends lowercase header names, does not 
 refuses a body on GET or HEAD, and refuses a method such as `TRACE`. A service that needs one of
 those needs a provider that can send it.
 
+The library joins path text exactly, so a slash at a boundary is yours to get right. The Request
+guide [recommends a convention](./modules/request.md#add-to-a-path): start each piece with `/`, do
+not end one with `/`, and leave both off a base URL. A trailing slash is part of the address, so put
+one a server wants on the last piece.
+
 Encoding a path value does not make it safe, so [constrain a value from a
 user](./modules/request.md#encoding-does-not-make-a-value-safe) in its schema.
 

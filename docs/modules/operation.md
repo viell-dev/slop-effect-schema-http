@@ -103,7 +103,9 @@ suits the common request never prevents a less common one:
 <<< ../../examples/modules/operation.ts#adjust
 
 The original never changes. `firstFive` is an ordinary `Request` transform, so it works on a request
-before any operation exists too, as in `Request.get("/things").pipe(api, firstFive)`.
+before any operation exists too, as in `Request.get("/things").pipe(api, firstFive)`. [Adjust a
+definition for one component](../recipes.md#adjust-a-definition-for-one-component) shows the whole
+workflow.
 
 ### Choose a style
 

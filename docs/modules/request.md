@@ -34,7 +34,8 @@ with a different header leaves the original intact:
 <<< ../../examples/modules/request.ts#shared-defaults
 
 A header schema on such a request has to allow these headers. [A schema states the
-shape](#a-schema-states-the-shape-of-its-group) of its group, whichever comes first.
+shape](#a-schema-states-the-shape-of-its-group) of its group, whichever comes first. Reusable
+transforms can grow into [a vocabulary for one API](../recipes.md#a-vocabulary-for-one-api).
 
 ### Extend a base
 
@@ -265,9 +266,12 @@ The text between values is not parsed, so `:` and `'` need no escape, and a `\` 
 `?` or `#` is ordinary URL syntax: anything after a `#` belongs to the fragment, as the table shows.
 A constructor's query and fragment are kept apart from the path, so they survive `Request.path`.
 
-The finished path is passed to the client as written, and [the library's promise stops
-there](../limits.md#paths-and-other-requests-passed-on-as-written). Node.js Fetch keeps `//` and a
-trailing slash and resolves dot segments. A server may merge `//`, and another client can differ.
+The finished path is passed to the client as written. The library passes the request you declared to
+the HTTP client you chose, and [its promise stops
+there](../limits.md#paths-and-other-requests-passed-on-as-written). The client may rewrite or refuse
+it, and a server may read it differently. The library does not promise that an unusual request
+works. Node.js Fetch keeps `//` and a trailing slash and resolves dot segments. A server may merge
+`//`, and another client can differ.
 
 ### Change a path in a variant
 
