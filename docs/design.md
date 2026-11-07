@@ -148,7 +148,9 @@ encoded value --> decode --> decoded -> encode --> wire
 - **A key no member states is stripped, as a struct strips it.** That is not a union choosing badly.
   The types did not allow the key, and a stacked schema's fields reach every schema in the group
   this way. So is a key only a member with another tag states, because the tag has already chosen,
-  and a key set to `undefined`, which holds no value to lose.
+  and a key set to `undefined`, which holds no value to lose. An encoded name beside its decoded
+  twin is stripped too, under a union as under a struct: the whole value is not on the encoded side,
+  so the decoded name is the field.
 - **A weak schema lets more through.** `Schema.NumberFromString` turns `"many"` into `NaN`, so
   `{ limit: "many" }` goes out as `limit=NaN`, and `Schema.FiniteFromString` refuses it. That is a
   property of the definition, and the library does not try to correct it.

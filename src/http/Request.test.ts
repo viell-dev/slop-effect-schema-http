@@ -5620,6 +5620,20 @@ describe("a caller's field under a union", () => {
       }),
     );
 
+    it.effect("is refused where only the encoded side shows the member", () =>
+      Effect.gen(function* () {
+        const Either = Schema.Union([
+          Schema.Struct({ a: text }),
+          Schema.Struct({ b: text }).pipe(Schema.encodeKeys({ b: "k" })),
+        ]);
+        expect(
+          yield* schemaFailure(queried(Either), {
+            query: { a: "x", k: "y" },
+          }),
+        ).toContain('["k"]');
+      }),
+    );
+
     it.effect("is refused inside a union of unions", () =>
       Effect.gen(function* () {
         const Nested = Schema.Union([NarrowFirst, Schema.Struct({ c: text })]);
@@ -5683,6 +5697,33 @@ describe("a caller's field under a union", () => {
         expect(yield* urlOf(queried(Apart), { query })).toBe("/x?a=x");
         expect(yield* urlOf(queried(NarrowFirst), { query })).toBe("/x?a=x");
       }),
+    );
+
+    it.effect(
+      "reading a decoded name beside its encoded twin, as a struct does",
+      () =>
+        Effect.gen(function* () {
+          const Renamed = Schema.Struct({ a: text }).pipe(
+            Schema.encodeKeys({ a: "A" }),
+          );
+          const Choice = Schema.Union([Renamed, Schema.Struct({ b: text })]);
+          for (const query of [
+            { a: "1", A: "2" },
+            { a: "1", A: "1" },
+          ]) {
+            expect(yield* urlOf(queried(Renamed), { query })).toBe("/x?A=1");
+            expect(yield* urlOf(queried(Choice), { query })).toBe("/x?A=1");
+          }
+          const InBody = Schema.Struct({ f: NarrowFirst }).pipe(
+            Schema.encodeKeys({ f: "F" }),
+          );
+          const body = { f: { a: "1" }, F: { a: "2" } };
+          const compiled = yield* compile(
+            Request.post("/x").pipe(Request.body(Body.jsonSchema(InBody))),
+            { body },
+          );
+          expect(bodyText(compiled.request)).toBe('{"F":{"a":"1"}}');
+        }),
     );
 
     it.effect("leaving a tag to choose", () =>
