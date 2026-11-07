@@ -82,8 +82,10 @@ export type QueryFields = Readonly<
  * encoded again, with no error. A mix is one level deep in the type. Renamed fields take their
  * encoded names only when the whole value is on the encoded side.
  *
- * Under a union, Effect takes the first member that fits and drops what that member does not state,
- * with no error, so put a wider member before a narrower one.
+ * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
+ * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that
+ * names it, because the types allow that value and any member would lose a field the schema states.
+ * A key no member states is stripped, as a struct strips it, and so is a key the tag has ruled out.
  */
 export type Input<S extends Schema.Top> = Inputs.Input<S>;
 
@@ -736,7 +738,7 @@ const applyDeclaredBodyFields = (
  *
  * Under a union, the defaults and what the schema wrote have to fit one member together. A field
  * that would be lost otherwise is an {@link InvalidRequest}, which names that field. The caller's
- * own value is read before that, as {@link Input} describes, so put a wider member first.
+ * own value is read before that, as {@link Input} describes.
  *
  * Header schemas stack: a second one adds its fields, and together they state the shape. Use
  * {@link unbind} to start again.
@@ -843,7 +845,7 @@ export const headers = <
  *
  * Under a union, the defaults and what the schema wrote have to fit one member together. A field
  * that would be lost otherwise is an {@link InvalidRequest}, which names that field. The caller's
- * own value is read before that, as {@link Input} describes, so put a wider member first.
+ * own value is read before that, as {@link Input} describes.
  *
  * A field can encode to a `Date`, which is written as ISO text. Text under a field that encodes to
  * a number, boolean, bigint or `Date` is read as one first, and a single value under a list field

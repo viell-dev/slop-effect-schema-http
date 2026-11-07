@@ -52,7 +52,8 @@ mix by field, and the underlying encoder receives what the schema writes. A plai
 `Schema.Class`, including one nested in a struct, and a field with a constructor default can be left
 out. An existing instance works as it is, and decoding still returns an instance. With
 `Body.jsonSchema`, the encoded side is the schema's own: a `Schema.Date` field takes a `Date`, not
-the ISO text the JSON carries.
+the ISO text the JSON carries. [Under a union](./request.md#under-a-union), a member that keeps
+every field wins at any depth, and a field no member can keep is a `SchemaError`.
 
 `Body.jsonSchema` uses the schema's canonical JSON codec (`Schema.toCodecJson`). Use the text/bytes
 combinators when your service needs another representation. Effect's [Schema

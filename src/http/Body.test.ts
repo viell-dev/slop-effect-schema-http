@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
-import { Effect, Exit, Schema } from "effect";
+import { Effect, Exit, Option, Schema } from "effect";
 import { HttpBody, HttpClientError, UrlParams } from "effect/http";
 import {
   empty as emptyReply,
@@ -674,6 +674,249 @@ describe("a schema-backed body takes either side of its schema", () => {
     // @ts-expect-error: a boolean is on neither side of the schema
     void codec.encode(true);
   });
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/134
+describe("a caller's field under a union in a body", () => {
+  const NarrowFirst = Schema.Union([
+    Schema.Struct({ a: Schema.String }),
+    Schema.Struct({ a: Schema.String, b: Schema.String }),
+  ]);
+  const Apart = Schema.Union([
+    Schema.Struct({ a: Schema.String }),
+    Schema.Struct({ b: Schema.String }),
+  ]);
+
+  it.effect("keeps it, in both schema encoders", () =>
+    Effect.gen(function* () {
+      for (const encoder of [
+        Body.jsonSchema(NarrowFirst),
+        Body.json.pipe(Body.encodeSchema(NarrowFirst)),
+      ]) {
+        const body = yield* encoder.encode({ a: "x", b: "y" });
+        expect(textOf(body)).toBe('{"a":"x","b":"y"}');
+      }
+    }),
+  );
+
+  it.effect("keeps it in a field, a list and a record", () =>
+    Effect.gen(function* () {
+      const InField = Schema.Struct({ filter: NarrowFirst });
+      expect(
+        textOf(
+          yield* Body.jsonSchema(InField).encode({
+            filter: { a: "x", b: "y" },
+          }),
+        ),
+      ).toBe('{"filter":{"a":"x","b":"y"}}');
+      const List = Schema.Array(NarrowFirst);
+      expect(
+        textOf(
+          yield* Body.jsonSchema(List).encode([{ a: "1" }, { a: "2", b: "3" }]),
+        ),
+      ).toBe('[{"a":"1"},{"a":"2","b":"3"}]');
+      const Named = Schema.Record(Schema.String, NarrowFirst);
+      expect(
+        textOf(
+          yield* Body.jsonSchema(Named).encode({ one: { a: "1", b: "2" } }),
+        ),
+      ).toBe('{"one":{"a":"1","b":"2"}}');
+    }),
+  );
+
+  it.effect("keeps it beside a key no member states, at any depth", () =>
+    Effect.gen(function* () {
+      const InField = Schema.Struct({ filter: NarrowFirst });
+      for (const value of [
+        { filter: { a: "x", b: "y" }, stray: 1 },
+        { filter: { a: "x", b: "y", stray: 1 } },
+      ])
+        expect(textOf(yield* Body.jsonSchema(InField).encode(value))).toBe(
+          '{"filter":{"a":"x","b":"y"}}',
+        );
+      const wider = { a: "x", b: "y", stray: 1 };
+      const inList = yield* Body.jsonSchema(Schema.Array(NarrowFirst)).encode([
+        wider,
+      ]);
+      expect(textOf(inList)).toBe('[{"a":"x","b":"y"}]');
+    }),
+  );
+
+  it.effect("takes a mix by field around a nested union", () =>
+    Effect.gen(function* () {
+      const Numbers = Schema.Union([
+        Schema.Struct({ n: Schema.FiniteFromString }),
+        Schema.Struct({
+          n: Schema.FiniteFromString,
+          d: Schema.FiniteFromString,
+        }),
+      ]);
+      const InField = Schema.Struct({
+        at: Schema.DateFromString,
+        numbers: Numbers,
+      });
+      const at = "2026-11-07T12:00:00.000Z";
+      expect(
+        textOf(
+          yield* Body.jsonSchema(InField).encode({
+            at,
+            numbers: { n: 1, d: 2 },
+          }),
+        ),
+      ).toBe(`{"at":"${at}","numbers":{"n":"1","d":"2"}}`);
+    }),
+  );
+
+  it.effect("keeps a subclass's field under its base class", () =>
+    Effect.gen(function* () {
+      class Base extends Schema.Class<Base>("Base")({ a: Schema.String }) {}
+      class Derived extends Base.extend<Derived>("Derived")({
+        b: Schema.String,
+      }) {}
+      const body = yield* Body.jsonSchema(Schema.Union([Base, Derived])).encode(
+        new Derived({ a: "x", b: "y" }),
+      );
+      expect(textOf(body)).toBe('{"a":"x","b":"y"}');
+    }),
+  );
+
+  it.effect("refuses a field no member can keep, wherever it is", () =>
+    Effect.gen(function* () {
+      for (const encoder of [
+        Body.jsonSchema(Apart),
+        Body.json.pipe(Body.encodeSchema(Apart)),
+      ]) {
+        const error = yield* Effect.flip(encoder.encode({ a: "1", b: "2" }));
+        expect(error).toBeInstanceOf(Schema.SchemaError);
+        expect(String(error)).toContain("No union member holds this field");
+        expect(String(error)).toContain('["b"]');
+      }
+      const inField = yield* Effect.flip(
+        Body.jsonSchema(Schema.Struct({ filter: Apart })).encode({
+          filter: { a: "secret", b: "secret" },
+        }),
+      );
+      expect(String(inField)).toContain('["filter"]["b"]');
+      expect(String(inField)).not.toContain("secret");
+      const inList = yield* Effect.flip(
+        Body.jsonSchema(Schema.Array(Apart)).encode([
+          { a: "1" },
+          { a: "1", b: "2" },
+        ]),
+      );
+      expect(String(inList)).toContain('[1]["b"]');
+    }),
+  );
+
+  it.effect("keeps it or refuses it inside a Map and an Option", () =>
+    Effect.gen(function* () {
+      const InMap = Schema.ReadonlyMap(Schema.String, NarrowFirst);
+      expect(
+        textOf(
+          yield* Body.jsonSchema(InMap).encode(
+            new Map([["k", { a: "x", b: "y" }]]),
+          ),
+        ),
+      ).toBe('[["k",{"a":"x","b":"y"}]]');
+      const refusedInMap = yield* Effect.flip(
+        Body.jsonSchema(Schema.ReadonlyMap(Schema.String, Apart)).encode(
+          new Map([["k", { a: "x", b: "y" }]]),
+        ),
+      );
+      expect(String(refusedInMap)).toContain("No union member holds");
+      const refusedInOption = yield* Effect.flip(
+        Body.jsonSchema(Schema.Option(Apart)).encode(
+          Option.some({ a: "x", b: "y" }),
+        ),
+      );
+      expect(String(refusedInOption)).toContain("No union member holds");
+    }),
+  );
+
+  it.effect("does not let a member that reads no keys state one", () =>
+    Effect.gen(function* () {
+      const WithDate = Schema.Union([Schema.Date, NarrowFirst]);
+      const wider = { a: "x", stray: 1 };
+      expect(
+        textOf(
+          yield* Body.json.pipe(Body.encodeSchema(WithDate)).encode(wider),
+        ),
+      ).toBe('{"a":"x"}');
+    }),
+  );
+
+  it.effect("does not shorten a list to make it fit", () =>
+    Effect.gen(function* () {
+      const Pair = Schema.Tuple([Schema.Struct({ a: Schema.String })]);
+      const Either = Schema.Union([Pair, Schema.Struct({ b: Schema.String })]);
+      const tooLong = [{ a: "1" }, { a: "2" }] as unknown as typeof Either.Type;
+      const error = yield* Effect.flip(Body.jsonSchema(Either).encode(tooLong));
+      expect(error).toBeInstanceOf(Schema.SchemaError);
+    }),
+  );
+
+  it.effect("refuses it where only a read by field can take the value", () =>
+    Effect.gen(function* () {
+      const Mixed = Schema.Struct({
+        at: Schema.DateFromString,
+        limit: Schema.FiniteFromString,
+        filter: Apart,
+      });
+      // `at` is decoded and `limit` encoded, so neither side takes the whole value.
+      const at = new Date("2026-11-07T12:00:00.000Z");
+      const error = yield* Effect.flip(
+        Body.jsonSchema(Mixed).encode({
+          at,
+          limit: "5",
+          filter: { a: "1", b: "2" },
+        }),
+      );
+      expect(String(error)).toContain('["filter"]["b"]');
+      expect(
+        textOf(
+          yield* Body.jsonSchema(Mixed).encode({
+            at,
+            limit: "5",
+            filter: { a: "1" },
+          }),
+        ),
+      ).toBe(
+        '{"at":"2026-11-07T12:00:00.000Z","limit":"5","filter":{"a":"1"}}',
+      );
+    }),
+  );
+
+  it.effect("leaves a struct's excess key and an `Option.none()` alone", () =>
+    Effect.gen(function* () {
+      const Plain = Schema.Struct({ a: Schema.String });
+      const wider = { a: "x", stray: 1 };
+      expect(textOf(yield* Body.jsonSchema(Plain).encode(wider))).toBe(
+        '{"a":"x"}',
+      );
+      const Maybe = Schema.Union([
+        Schema.Struct({ a: Schema.OptionFromOptionalKey(Schema.String) }),
+        Schema.Struct({
+          a: Schema.OptionFromOptionalKey(Schema.String),
+          b: Schema.String,
+        }),
+      ]);
+      expect(
+        textOf(yield* Body.jsonSchema(Maybe).encode({ a: Option.none() })),
+      ).toBe("{}");
+    }),
+  );
+
+  // Only input has a caller to lose a field, so a response still reads as Effect reads it. The
+  // choice of member there is outside this fix.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/134
+  it.effect("currently takes the first member that fits for a response", () =>
+    Effect.gen(function* () {
+      const decoded = yield* Body.jsonSchema(NarrowFirst).decode(
+        reply('{"a":"x","b":"y"}'),
+      );
+      expect(decoded).toEqual({ a: "x" });
+    }),
+  );
 });
 
 describe("non-text payloads through Body.bytes and a schema", () => {

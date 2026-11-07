@@ -372,6 +372,38 @@ Under such a schema, pass the decoded value. Where a group has other fields, a g
 on the encoded side goes through the decoder as a whole, so `{ token: "aGVsbG8=", limit: "5" }`
 reads `token` as encoded.
 
+#### Under a union
+
+Effect takes the first union member that fits and strips what that member does not state. An input
+looks for a member that keeps everything first, so the order of the members does not cost a field:
+
+```ts
+import { Schema } from "effect";
+import { Request } from "viell-effect-schema-http";
+
+const Either = Schema.Union([
+  Schema.Struct({ a: Schema.String }),
+  Schema.Struct({ a: Schema.String, b: Schema.String }),
+]);
+const search = Request.get("https://api.example.test/things").pipe(
+  Request.query(Either),
+);
+// Input: { query: { a: "x", b: "y" } }; URL query: ?a=x&b=y
+```
+
+This applies to both sides of the schema and a mix by field, and at any depth of a body. A field no
+member can keep beside the others is a `SchemaError` before dispatch, which names the field. Under a
+union of `{ a }` and `{ b }`, `{ a, b }` is refused, because either member would lose a field the
+schema states. Add a member that holds both, or send one of them.
+
+A key no member states is stripped, as a struct strips it. So is a key only a member with another
+tag states: where only the `"a"` member has `x`, `{ kind: "b", x }` goes out as `{ kind: "b" }`. The
+types refuse both of these in a literal.
+
+Stacked schemas read one input, so a union takes a sibling's field for a key it does not state, and
+leaves it to that schema. A name both state is the union's to hold, so a union of `{ a }` and
+`{ b }` stacked with `{ b }` refuses `{ a, b }`. Keep a name in one schema.
+
 ### A schema states the shape of its group
 
 In plain terms, once any schema is bound to headers or query, every header or query field the
@@ -405,10 +437,6 @@ Under a union, the defaults and the caller's fields have to fit one member toget
 `{ page, size? }` and `{ cursor }` on a request with `?page=1` takes `{ page: 2 }` and refuses
 `{ cursor }`, because no member holds both. Leave `page` out of the request, or give the caller a
 variant with `Request.removeQuery("page")`.
-
-The caller's own value is read before any default joins it, and Effect takes the first member that
-fits. Under a union of `{ a }` and `{ a, b }`, a caller's `{ a, b }` fits the first and `b` goes,
-with no error, so put the wider member first.
 
 A default under a field that encodes to a `Date` is read from its text, so `?from=2026-11-07` goes
 out as `from=2026-11-07T00%3A00%3A00.000Z`, and `?from=soon` is an `InvalidRequest`. It is read as

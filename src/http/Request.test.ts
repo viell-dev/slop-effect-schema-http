@@ -111,6 +111,22 @@ const refusal = <I, E, R>(request: Request.Request<I, E, R>, input: I) =>
       : Effect.die(error),
   );
 
+/** What a schema said about a caller's value, which comes before any group check. */
+const schemaFailure = <I, E, R>(request: Request.Request<I, E, R>, input: I) =>
+  Effect.flatMap(Effect.flip(compile(request, input)), (error) =>
+    error instanceof Schema.SchemaError
+      ? Effect.succeed(error.message)
+      : Effect.die(error),
+  );
+
+/** A request to `/x` with a query schema bound. */
+const queried = <
+  S extends Schema.Top &
+    Schema.ConstraintCodec<unknown, UrlEncoding.QueryInput, unknown, unknown>,
+>(
+  schema: S,
+) => Request.get("/x").pipe(Request.query(schema));
+
 /** A compiled request's header lines. */
 const linesOf = <I, E, R>(request: Request.Request<I, E, R>, input: I) =>
   Effect.map(compile(request, input), (compiled) => compiled.headerLines);
@@ -5259,6 +5275,676 @@ const withoutQuery = <I, E, R>(request: Request.Request<I, E, R>) =>
   request.pipe(Request.unbind("query"));
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/87
+// https://github.com/viell-dev/slop-effect-schema-http/issues/134
+describe("a caller's field under a union", () => {
+  const text = Schema.String;
+  const NarrowFirst = Schema.Union([
+    Schema.Struct({ a: text }),
+    Schema.Struct({ a: text, b: text }),
+  ]);
+  const Apart = Schema.Union([
+    Schema.Struct({ a: text }),
+    Schema.Struct({ b: text }),
+  ]);
+  const Numbers = Schema.Union([
+    Schema.Struct({ n: Schema.FiniteFromString }),
+    Schema.Struct({ n: Schema.FiniteFromString, d: Schema.FiniteFromString }),
+  ]);
+
+  describe("a member that keeps every field wins", () => {
+    it.effect("over an earlier member that strips one", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(queried(NarrowFirst), { query: { a: "x", b: "y" } }),
+        ).toBe("/x?a=x&b=y");
+      }),
+    );
+
+    it.effect("whatever the order of the members", () =>
+      Effect.gen(function* () {
+        const WideFirst = Schema.Union([
+          Schema.Struct({ a: text, b: text }),
+          Schema.Struct({ a: text }),
+        ]);
+        for (const query of [{ a: "x", b: "y" }, { a: "x" }])
+          expect(yield* urlOf(queried(WideFirst), { query })).toBe(
+            yield* urlOf(queried(NarrowFirst), { query }),
+          );
+      }),
+    );
+
+    it.effect("so a default no longer takes the caller's place", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/x?b=1").pipe(Request.query(NarrowFirst));
+        expect(yield* urlOf(request, { query: { a: "x", b: "y" } })).toBe(
+          "/x?a=x&b=y",
+        );
+        expect(yield* urlOf(request, { query: { a: "x" } })).toBe("/x?a=x&b=1");
+      }),
+    );
+
+    it.effect("on the decoded side, the encoded side, and a mix", () =>
+      Effect.gen(function* () {
+        for (const query of [
+          { n: 1, d: 2 },
+          { n: "1", d: "2" },
+          { n: 1, d: "2" },
+          { n: "1", d: 2 },
+        ])
+          expect(yield* urlOf(queried(Numbers), { query })).toBe("/x?n=1&d=2");
+      }),
+    );
+
+    it.effect("when the encoded step alone would strip it", () =>
+      Effect.gen(function* () {
+        class Base extends Schema.Class<Base>("Base")({ a: text }) {}
+        class Derived extends Base.extend<Derived>("Derived")({ b: text }) {}
+        const request = queried(Schema.Union([Base, Derived]));
+        // A `Derived` is a `Base`, so a value already built fits the first member as it stands.
+        expect(
+          yield* urlOf(request, { query: new Derived({ a: "x", b: "y" }) }),
+        ).toBe("/x?a=x&b=y");
+      }),
+    );
+
+    it.effect("when that member is a record", () =>
+      Effect.gen(function* () {
+        const Open = Schema.Union([
+          Schema.Struct({ a: text }),
+          Schema.Record(text, text),
+        ]);
+        expect(yield* urlOf(queried(Open), { query: { a: "x", b: "y" } })).toBe(
+          "/x?a=x&b=y",
+        );
+      }),
+    );
+
+    it.effect("inside a union of unions", () =>
+      Effect.gen(function* () {
+        const Nested = Schema.Union([NarrowFirst, Schema.Struct({ c: text })]);
+        expect(
+          yield* urlOf(queried(Nested), { query: { a: "x", b: "y" } }),
+        ).toBe("/x?a=x&b=y");
+        expect(yield* urlOf(queried(Nested), { query: { c: "z" } })).toBe(
+          "/x?c=z",
+        );
+      }),
+    );
+
+    it.effect("inside text that holds JSON", () =>
+      Effect.gen(function* () {
+        const request = queried(
+          Schema.Struct({ filter: Schema.fromJsonString(NarrowFirst) }),
+        );
+        const expected = `/x?filter=${encodeURIComponent('{"a":"x","b":"y"}')}`;
+        for (const filter of [{ a: "x", b: "y" }, '{"a":"x","b":"y"}'])
+          expect(yield* urlOf(request, { query: { filter } })).toBe(expected);
+      }),
+    );
+
+    it.effect("in headers", () =>
+      Effect.gen(function* () {
+        const Either = Schema.Union([
+          Schema.Struct({ "x-a": text }),
+          Schema.Struct({ "x-a": text, "x-b": text }),
+        ]);
+        const request = Request.get("/x").pipe(
+          Request.setHeader("X-B", "default"),
+          Request.headers(Either),
+        );
+        expect(
+          yield* linesOf(request, { headers: { "x-a": "1", "x-b": "2" } }),
+        ).toEqual([
+          ["x-a", "1"],
+          ["x-b", "2"],
+        ]);
+      }),
+    );
+
+    it.effect("in a path renderer", () =>
+      Effect.gen(function* () {
+        const request = Request.get("").pipe(
+          Request.path(NarrowFirst, (value) =>
+            "b" in value ? `/${value.a}/${value.b}` : `/${value.a}`,
+          ),
+        );
+        expect(yield* urlOf(request, { path: { a: "x", b: "y" } })).toBe(
+          "/x/y",
+        );
+        expect(yield* urlOf(request, { path: { a: "x" } })).toBe("/x");
+      }),
+    );
+
+    it.effect("in a template value that encodes to text", () =>
+      Effect.gen(function* () {
+        const filter = Request.pathValue(
+          "filter",
+          Schema.fromJsonString(NarrowFirst),
+        );
+        const request = Request.get("").pipe(Request.path`/f/${filter}`);
+        expect(
+          yield* urlOf(request, { path: { filter: { a: "x", b: "y" } } }),
+        ).toBe(`/f/${encodeURIComponent('{"a":"x","b":"y"}')}`);
+      }),
+    );
+
+    it("takes every field in the type", () => {
+      void takes(NarrowFirst)({ a: "x", b: "y" });
+      void takes(NarrowFirst)({ a: "x" });
+      void takes(Numbers)({ n: 1, d: "2" });
+    });
+  });
+
+  describe("beside a stacked schema", () => {
+    const Sibling = Schema.Struct({ c: text });
+
+    it.effect("a sibling's field does not stop the choice", () =>
+      Effect.gen(function* () {
+        const input = { query: { a: "x", b: "y", c: "z" } };
+        expect(
+          yield* urlOf(
+            Request.get("/x").pipe(
+              Request.query(NarrowFirst),
+              Request.query(Sibling),
+            ),
+            input,
+          ),
+        ).toBe("/x?a=x&b=y&c=z");
+        expect(
+          yield* urlOf(
+            Request.get("/x").pipe(
+              Request.query(Sibling),
+              Request.query(NarrowFirst),
+            ),
+            input,
+          ),
+        ).toBe("/x?c=z&a=x&b=y");
+      }),
+    );
+
+    it.effect("two unions each make their own choice", () =>
+      Effect.gen(function* () {
+        const Other = Schema.Union([
+          Schema.Struct({ c: text }),
+          Schema.Struct({ c: text, d: text }),
+        ]);
+        expect(
+          yield* urlOf(
+            Request.get("/x").pipe(
+              Request.query(NarrowFirst),
+              Request.query(Other),
+            ),
+            { query: { a: "x", b: "y", c: "z", d: "w" } },
+          ),
+        ).toBe("/x?a=x&b=y&c=z&d=w");
+      }),
+    );
+
+    it.effect("a sibling's field stays out of a member's encoded names", () =>
+      Effect.gen(function* () {
+        const Renamed = Schema.Union([
+          Schema.Struct({ a: text }).pipe(Schema.encodeKeys({ a: "A" })),
+          Schema.Struct({ a: text, b: text }).pipe(
+            Schema.encodeKeys({ a: "A", b: "B" }),
+          ),
+        ]);
+        expect(
+          yield* urlOf(
+            Request.get("/x").pipe(
+              Request.query(Renamed),
+              Request.query(Sibling),
+            ),
+            { query: { A: "x", B: "y", c: "z" } },
+          ),
+        ).toBe("/x?A=x&B=y&c=z");
+      }),
+    );
+
+    it.effect("a field the union cannot hold is still refused", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/x").pipe(
+          Request.query(Apart),
+          Request.query(Sibling),
+        );
+        expect(
+          yield* schemaFailure(request, { query: { a: "x", b: "y", c: "z" } }),
+        ).toContain('["b"]');
+        expect(yield* urlOf(request, { query: { a: "x", c: "z" } })).toBe(
+          "/x?a=x&c=z",
+        );
+      }),
+    );
+
+    it.effect("works for headers too", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/x").pipe(
+          Request.headers(
+            Schema.Union([
+              Schema.Struct({ "x-a": text }),
+              Schema.Struct({ "x-a": text, "x-b": text }),
+            ]),
+          ),
+          Request.headers(Schema.Struct({ "x-c": text })),
+        );
+        expect(
+          yield* linesOf(request, {
+            headers: { "x-a": "1", "x-b": "2", "x-c": "3" },
+          }),
+        ).toEqual([
+          ["x-a", "1"],
+          ["x-b", "2"],
+          ["x-c", "3"],
+        ]);
+      }),
+    );
+
+    // A union sees the whole input and cannot tell that a sibling holds a name it states too.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/134
+    it.effect("currently refuses a name a sibling also states", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/x").pipe(
+          Request.query(Apart),
+          Request.query(Schema.Struct({ b: text })),
+        );
+        expect(
+          yield* schemaFailure(request, { query: { a: "x", b: "y" } }),
+        ).toContain('["b"]');
+      }),
+    );
+  });
+
+  describe("a field no member can keep", () => {
+    it.effect("is refused before anything is sent, and named", () =>
+      Effect.gen(function* () {
+        const message = yield* schemaFailure(queried(Apart), {
+          query: { a: "secret-a", b: "secret-b" },
+        });
+        expect(message).toContain("No union member holds this field");
+        expect(message).toContain('["b"]');
+        expect(message).not.toContain("secret");
+      }),
+    );
+
+    it.effect("is refused in headers and in a path", () =>
+      Effect.gen(function* () {
+        const Either = Schema.Union([
+          Schema.Struct({ "x-a": text }),
+          Schema.Struct({ "x-b": text }),
+        ]);
+        const headers = Request.get("/x").pipe(Request.headers(Either));
+        expect(
+          yield* schemaFailure(headers, {
+            headers: { "x-a": "1", "x-b": "2" },
+          }),
+        ).toContain('["x-b"]');
+        const path = Request.get("").pipe(Request.path(Apart, () => "/x"));
+        expect(
+          yield* schemaFailure(path, { path: { a: "1", b: "2" } }),
+        ).toContain('["b"]');
+      }),
+    );
+
+    it.effect("is refused on the encoded side, by its encoded name", () =>
+      Effect.gen(function* () {
+        const Renamed = Schema.Union([
+          Schema.Struct({ a: text }).pipe(Schema.encodeKeys({ a: "A" })),
+          Schema.Struct({ b: text }).pipe(Schema.encodeKeys({ b: "B" })),
+        ]);
+        expect(
+          yield* schemaFailure(queried(Renamed), {
+            query: { A: "x", B: "y" },
+          }),
+        ).toContain('["B"]');
+      }),
+    );
+
+    it.effect("is refused in a mix by field", () =>
+      Effect.gen(function* () {
+        const Mixed = Schema.Union([
+          Schema.Struct({
+            n: Schema.FiniteFromString,
+            d: Schema.FiniteFromString,
+            a: text,
+          }),
+          Schema.Struct({
+            n: Schema.FiniteFromString,
+            d: Schema.FiniteFromString,
+            b: text,
+          }),
+        ]);
+        expect(
+          yield* schemaFailure(queried(Mixed), {
+            query: { n: 1, d: "2", a: "x", b: "y" },
+          }),
+        ).toContain('["b"]');
+      }),
+    );
+
+    it.effect("is refused inside a union of unions", () =>
+      Effect.gen(function* () {
+        const Nested = Schema.Union([NarrowFirst, Schema.Struct({ c: text })]);
+        expect(
+          yield* schemaFailure(queried(Nested), {
+            query: { a: "x", c: "z" },
+          }),
+        ).toContain('["c"]');
+      }),
+    );
+
+    it.effect("is refused where a wider member refuses its value", () =>
+      Effect.gen(function* () {
+        const Wider = Schema.Union([
+          Schema.Struct({ a: text }),
+          Schema.Struct({ a: text, b: Schema.FiniteFromString }),
+        ]);
+        expect(
+          yield* schemaFailure(queried(Wider), {
+            query: { a: "x", b: "many" },
+          }),
+        ).toContain('["b"]');
+      }),
+    );
+
+    it.effect("reads as any other failure if no member fits at all", () =>
+      Effect.gen(function* () {
+        const message = yield* schemaFailure(queried(Numbers), {
+          query: { n: "many" },
+        });
+        expect(message).toContain("Expected number");
+        expect(message).not.toContain("No union member holds");
+      }),
+    );
+  });
+
+  describe("a field the schema never held is not this refusal", () => {
+    it.effect("stripping a key no member states, as a struct does", () =>
+      Effect.gen(function* () {
+        const query = { a: "x", z: "stray" };
+        expect(yield* urlOf(queried(Apart), { query })).toBe("/x?a=x");
+        expect(
+          yield* urlOf(queried(Schema.Struct({ a: text })), { query }),
+        ).toBe("/x?a=x");
+      }),
+    );
+
+    it.effect("keeping the rest of the fields beside such a key", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(queried(NarrowFirst), {
+            query: { a: "x", b: "y", z: "stray" },
+          }),
+        ).toBe("/x?a=x&b=y");
+      }),
+    );
+
+    it.effect("taking `undefined` as no field", () =>
+      Effect.gen(function* () {
+        const query = { a: "x", b: undefined };
+        expect(yield* urlOf(queried(Apart), { query })).toBe("/x?a=x");
+        expect(yield* urlOf(queried(NarrowFirst), { query })).toBe("/x?a=x");
+      }),
+    );
+
+    it.effect("leaving a tag to choose", () =>
+      Effect.gen(function* () {
+        const Tagged = Schema.Union([
+          Schema.Struct({ kind: Schema.Literal("a"), x: text }),
+          Schema.Struct({ kind: Schema.Literal("b") }),
+        ]);
+        // The tag has already ruled out the member that states `x`, and the types refuse it in a
+        // literal, so it comes in a wider value.
+        const query = { kind: "b", x: "y" } as const;
+        expect(yield* urlOf(queried(Tagged), { query })).toBe("/x?kind=b");
+      }),
+    );
+  });
+
+  describe("input that must keep working", () => {
+    it.effect("a transformation of a member's field", () =>
+      Effect.gen(function* () {
+        const Shout = text.pipe(
+          Schema.decodeTo(
+            text,
+            SchemaTransformation.transform({
+              decode: (value) => value.toLowerCase(),
+              encode: (value) => value.toUpperCase(),
+            }),
+          ),
+        );
+        const Either = Schema.Union([
+          Schema.Struct({ a: Shout }),
+          Schema.Struct({ a: Shout, b: Shout }),
+        ]);
+        expect(
+          yield* urlOf(queried(Either), { query: { a: "x", b: "y" } }),
+        ).toBe("/x?a=X&b=Y");
+      }),
+    );
+
+    it.effect("a renamed field, on each side", () =>
+      Effect.gen(function* () {
+        const Renamed = Schema.Union([
+          Schema.Struct({ a: text }).pipe(Schema.encodeKeys({ a: "A" })),
+          Schema.Struct({ a: text, b: text }).pipe(
+            Schema.encodeKeys({ a: "A", b: "B" }),
+          ),
+        ]);
+        for (const query of [
+          { a: "x", b: "y" },
+          { A: "x", B: "y" },
+        ])
+          expect(yield* urlOf(queried(Renamed), { query })).toBe("/x?A=x&B=y");
+        expect(yield* urlOf(queried(Renamed), { query: { A: "x" } })).toBe(
+          "/x?A=x",
+        );
+      }),
+    );
+
+    it.effect("`Option.none()`, which writes no key", () =>
+      Effect.gen(function* () {
+        const Maybe = Schema.OptionFromOptionalKey(text);
+        const Either = Schema.Union([
+          Schema.Struct({ a: Maybe }),
+          Schema.Struct({ a: Maybe, b: text }),
+        ]);
+        expect(
+          yield* urlOf(queried(Either), { query: { a: Option.none() } }),
+        ).toBe("/x");
+        expect(
+          yield* urlOf(queried(Either), {
+            query: { a: Option.none(), b: "y" },
+          }),
+        ).toBe("/x?b=y");
+        expect(
+          yield* urlOf(queried(Either), {
+            query: { a: Option.some("x"), b: "y" },
+          }),
+        ).toBe("/x?a=x&b=y");
+      }),
+    );
+
+    it.effect("a class, as an instance and as a plain value", () =>
+      Effect.gen(function* () {
+        class First extends Schema.Class<First>("First")({ a: text }) {}
+        class Second extends Schema.Class<Second>("Second")({ b: text }) {}
+        const request = queried(Schema.Union([First, Second]));
+        for (const query of [{ a: "x" }, new First({ a: "x" })])
+          expect(yield* urlOf(request, { query })).toBe("/x?a=x");
+        for (const query of [{ b: "y" }, new Second({ b: "y" })])
+          expect(yield* urlOf(request, { query })).toBe("/x?b=y");
+      }),
+    );
+
+    it.effect("a class with a property of its own", () =>
+      Effect.gen(function* () {
+        class Counted extends Schema.Class<Counted>("Counted")({ a: text }) {
+          readonly reads = 1;
+        }
+        class Other extends Schema.Class<Other>("Other")({ b: text }) {}
+        expect(
+          yield* urlOf(queried(Schema.Union([Counted, Other])), {
+            query: new Counted({ a: "x" }),
+          }),
+        ).toBe("/x?a=x");
+      }),
+    );
+
+    it.effect("a member that drops a field by design", () =>
+      Effect.gen(function* () {
+        const Legacy = Schema.Struct({
+          a: text,
+          legacy: Schema.optionalKey(text),
+        }).pipe(
+          Schema.decodeTo(
+            Schema.Struct({ a: text }),
+            SchemaTransformation.transform({
+              decode: ({ a }) => ({ a }),
+              encode: ({ a }) => ({ a }),
+            }),
+          ),
+        );
+        const request = queried(
+          Schema.Union([Legacy, Schema.Struct({ legacy: text, c: text })]),
+        );
+        expect(
+          yield* urlOf(request, { query: { a: "x", legacy: "old" } }),
+        ).toBe("/x?a=x");
+      }),
+    );
+
+    it.effect(
+      "a member whose transformation hands on more than it states",
+      () =>
+        Effect.gen(function* () {
+          const Spread = Schema.Struct({ a: text }).pipe(
+            Schema.decodeTo(
+              Schema.Struct({ b: text }),
+              SchemaTransformation.transform({
+                decode: (value): { readonly b: string } => ({
+                  ...value,
+                  b: value.a,
+                }),
+                encode: (value): { readonly a: string } => ({
+                  ...value,
+                  a: value.b,
+                }),
+              }),
+            ),
+          );
+          const request = queried(
+            Schema.Union([Spread, Schema.Struct({ a: text, c: text })]),
+          );
+          expect(yield* urlOf(request, { query: { a: "x" } })).toBe("/x?a=x");
+        }),
+    );
+
+    it.effect("a schema with the same type on both sides", () =>
+      Effect.gen(function* () {
+        const Coded = Schema.StringFromBase64;
+        const Either = Schema.Union([
+          Schema.Struct({ s: Coded }),
+          Schema.Struct({ s: Coded, t: text }),
+        ]);
+        expect(yield* urlOf(queried(Either), { query: { s: "hi" } })).toBe(
+          "/x?s=aGk%3D",
+        );
+        expect(
+          yield* urlOf(queried(Either), { query: { s: "hi", t: "y" } }),
+        ).toBe("/x?s=aGk%3D&t=y");
+      }),
+    );
+
+    it.effect(
+      "a schema's encoder, which runs once where nothing is stripped",
+      () =>
+        Effect.gen(function* () {
+          let writes = 0;
+          const Counted = text.pipe(
+            Schema.decodeTo(
+              text,
+              SchemaTransformation.transform({
+                decode: (value) => value,
+                encode: (value) => {
+                  writes += 1;
+                  return value;
+                },
+              }),
+            ),
+          );
+          const Wide = Schema.Union([
+            Schema.Struct({ a: Counted }),
+            Schema.Struct({ a: Counted, b: text }),
+          ]);
+          yield* urlOf(queried(Wide), { query: { a: "x", b: "y" } });
+          expect(writes).toBe(1);
+          writes = 0;
+          yield* urlOf(queried(Schema.Struct({ a: Counted })), {
+            query: { a: "x" },
+          });
+          expect(writes).toBe(1);
+        }),
+    );
+
+    it.effect("a union with no choice between objects", () =>
+      Effect.gen(function* () {
+        const Nullable = Schema.Struct({
+          a: Schema.NullOr(text),
+          b: Schema.optional(Schema.Union([text, Schema.Array(text)])),
+        });
+        expect(
+          yield* urlOf(queried(Nullable), {
+            query: { a: null, b: ["x", "y"], z: "stray" } as never,
+          }),
+        ).toBe("/x?a&b=x&b=y");
+      }),
+    );
+
+    it.effect("a schema that suspends", () =>
+      Effect.gen(function* () {
+        interface Tree {
+          readonly a: string;
+          readonly next?: Tree;
+        }
+        const Tree: Schema.Codec<Tree> = Schema.Struct({
+          a: text,
+          next: Schema.optionalKey(Schema.suspend(() => Tree)),
+        });
+        const body = Request.post("/x").pipe(
+          Request.body(Body.jsonSchema(Tree)),
+        );
+        const compiled = yield* compile(body, {
+          body: { a: "1", next: { a: "2" } },
+        });
+        expect(bodyText(compiled.request)).toBe('{"a":"1","next":{"a":"2"}}');
+      }),
+    );
+
+    it.effect("a schema whose steps take time", () =>
+      Effect.gen(function* () {
+        const Later = text.pipe(
+          Schema.decodeTo(
+            text,
+            SchemaTransformation.transformEffect({
+              decode: (value) => Effect.as(Effect.yieldNow, value),
+              encode: (value) => Effect.as(Effect.yieldNow, value),
+            }),
+          ),
+        );
+        const Either = Schema.Union([
+          Schema.Struct({ a: Later }),
+          Schema.Struct({ a: Later, b: text }),
+        ]);
+        expect(
+          yield* urlOf(queried(Either), { query: { a: "x", b: "y" } }),
+        ).toBe("/x?a=x&b=y");
+        expect(
+          yield* urlOf(queried(Either), { query: { a: "x", z: "stray" } }),
+        ).toBe("/x?a=x");
+      }),
+    );
+  });
+});
+
 describe("a schema states the shape of its group", () => {
   const Authorization = { Authorization: Schema.optional(Schema.String) };
   const shared = Request.setHeader("Authorization", "Bearer shared");
@@ -6797,31 +7483,6 @@ describe("a schema states the shape of its group", () => {
   });
 
   describe("outside the check", () => {
-    // Effect reads the caller's value before any default joins it. The design page states the limit.
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/134
-    it.effect("currently leaves what a union drops from a caller's value", () =>
-      Effect.gen(function* () {
-        const input = { query: { a: "x", b: "y" } };
-        const narrowFirst = Schema.Union([
-          Schema.Struct({ a: Schema.String }),
-          Schema.Struct({ a: Schema.String, b: Schema.String }),
-        ]);
-        expect(
-          yield* urlOf(
-            Request.get("/x").pipe(Request.query(narrowFirst)),
-            input,
-          ),
-        ).toBe("/x?a=x");
-        const wideFirst = Schema.Union([
-          Schema.Struct({ a: Schema.String, b: Schema.String }),
-          Schema.Struct({ a: Schema.String }),
-        ]);
-        expect(
-          yield* urlOf(Request.get("/x").pipe(Request.query(wideFirst)), input),
-        ).toBe("/x?a=x&b=y");
-      }),
-    );
-
     const Trace = Schema.Struct({
       trace: Schema.optional(Schema.FiniteFromString),
     });

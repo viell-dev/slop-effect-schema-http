@@ -134,6 +134,21 @@ encoded value --> decode --> decoded -> encode --> wire
   through the decoder as a whole, so a shared-type field in it is read as encoded.
 - **Both routes validate.** An encoded value goes through the decoder, so text cannot get past a
   schema. A value on neither side is a compile error.
+- **A union keeps what the caller gave.** Effect takes the first member that fits and strips what
+  that member does not state, when it reads a value and again when it encodes one. A schema with a
+  choice between objects is therefore read strictly first, through both steps, so a member that
+  keeps every field wins over an earlier one that would strip one, at any depth. A schema with no
+  such choice skips this and reads as it always did. Under such a union a schema's own steps can run
+  more than once for a value the strict read refuses.
+- **A field no member can keep is an error.** Under `Union([Struct({ a }), Struct({ b })])`,
+  `{ a, b }` is a `SchemaError` before dispatch, naming the field that would go. The types allow
+  that value, and whichever member took it would lose a field the schema states, so the choice
+  cannot be made for the caller. A field a wider member states and refuses the value of is the same
+  case.
+- **A key no member states is stripped, as a struct strips it.** That is not a union choosing badly.
+  The types did not allow the key, and a stacked schema's fields reach every schema in the group
+  this way. So is a key only a member with another tag states, because the tag has already chosen,
+  and a key set to `undefined`, which holds no value to lose.
 - **A weak schema lets more through.** `Schema.NumberFromString` turns `"many"` into `NaN`, so
   `{ limit: "many" }` goes out as `limit=NaN`, and `Schema.FiniteFromString` refuses it. That is a
   property of the definition, and the library does not try to correct it.
@@ -220,13 +235,12 @@ Some things are outside the check:
   after the schema to survive under such a name. `transformClient` and a client layer work on the
   prepared request, so the check does not see them.
 - A check is only as strict as its schema. `Schema.NumberFromString` accepts `"two"` as `NaN`.
-- The caller's own value is read before any default joins it, and Effect takes the first union
-  member that fits. Under `Union([Struct({ a }), Struct({ a, b })])`, `{ a, b }` fits the first and
-  `b` goes, with or without a default, and a default under that name then takes the caller's place.
-  Put the wider member first.
 - "Required" is read from the encoded side. A field with `Schema.withDecodingDefaultKey` is optional
   there, so a raw edit of it after the schema is not refused, although the schema always writes it
   and the edit never reaches the client.
+- A union reads the whole input and cannot see which names a stacked schema holds. A name both state
+  is the union's to hold, so a union of `{ a }` and `{ b }` stacked with `{ b }` refuses `{ a, b }`.
+  Keep a name in one schema.
 - A schema that encodes to an iterable other than a list of pairs, such as a `Map`, cannot take
   defaults, because they are added as pairs. A default under it fails the check.
 
