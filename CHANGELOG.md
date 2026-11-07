@@ -40,8 +40,7 @@ compiles and still changes your URLs.
   header schema, before or after the body, including on multipart and empty bodies. A declaration
   that used to be ignored now goes out. `Request.removeHeader(name)` now stops the automatic value,
   including `Accept`, and `Request.Compiled`, `Draft` and `Declaration` require a new
-  `removedHeaders` member
-  ([#100](https://github.com/viell-dev/slop-effect-schema-http/issues/100)).
+  `removedHeaders` member ([#100](https://github.com/viell-dev/slop-effect-schema-http/issues/100)).
 - **Breaking:** pass a constructor query to the client as written until something edits that entry.
   The library used to decode it and render it again, so `?a=1;b=2` became `?a=1%3Bb%3D2`, `?q=a+b`
   became `?q=a%20b`, `?a=1&&b=2` lost a segment and a lone `?` disappeared. Each entry keeps its
