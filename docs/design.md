@@ -257,6 +257,9 @@ Some things are outside the check:
   fields with their encoded forms. Under `Schema.encodeKeys`, a field with a decoding default
   therefore reads as optional, so a raw edit of it after the schema is not refused, although the
   edit never reaches the client.
+- An optional key with `Schema.withConstructorDefault` reads as optional on both sides, and only the
+  constructor writes it. A raw edit of it after the schema is not refused, and it never reaches the
+  client.
 - A union chooses its member before it can know what a stacked schema took. A union of `{ b }` and
   `{ a, c }` stacked with `{ b }` takes the first member for `{ a, b, c }`, so `a` and `c` are
   refused, although the second member and the stacked schema could hold it all between them.

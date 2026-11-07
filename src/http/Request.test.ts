@@ -5854,7 +5854,7 @@ describe("a caller's field under a union", () => {
 
       // A union reads its input before it can know what the others took, so it stays with the
       // member it chose. The design page states the limit.
-      // https://github.com/viell-dev/slop-effect-schema-http/issues/134
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/143
       it.effect("currently does not change the member a union chooses", () =>
         Effect.gen(function* () {
           const Either = Schema.Union([
@@ -7649,7 +7649,7 @@ describe("a schema states the shape of its group", () => {
 
       // A struct-level transformation replaces the fields with their encoded forms, so the
       // encoding that shows the default is out of sight. The design page states the limit.
-      // https://github.com/viell-dev/slop-effect-schema-http/issues/120
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/143
       it.effect("currently misses a field that a struct renames", () =>
         Effect.gen(function* () {
           const Renamed = Limited.pipe(
@@ -7665,6 +7665,30 @@ describe("a schema states the shape of its group", () => {
             ),
           ).toBe("/x?page_size=25");
         }),
+      );
+
+      // An optional key reads as optional on both sides, and only the constructor writes it, so
+      // this edit is lost as the decoding default's was. The design page states the limit.
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+      it.effect(
+        "currently misses an optional key with a constructor default",
+        () =>
+          Effect.gen(function* () {
+            const Defaulted = Schema.Struct({
+              limit: Schema.optionalKey(Schema.String).pipe(
+                Schema.withConstructorDefault(twentyFive),
+              ),
+            });
+            expect(
+              yield* urlOf(
+                Request.get("/x").pipe(
+                  Request.query(Defaulted),
+                  Request.setQuery("limit", "5"),
+                ),
+                { query: {} },
+              ),
+            ).toBe("/x?limit=25");
+          }),
       );
     });
 
