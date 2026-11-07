@@ -446,9 +446,10 @@ Typing part of a raw group takes the same care. Binding a schema for `cursor` on
 raw `?page=1&limit=25` is refused until a schema also allows `page` and `limit`, or they are
 removed.
 
-Where several schemas allow the same name, keep it in a shared constant rather than restating it, as
-`ApiHeaders` does above. A record or `Schema.StructWithRest` allows any name, and still checks each
-value. Callers can then pass any name as well.
+Where several schemas allow the same name, keep it in a shared constant rather than restating it.
+`ApiHeaders` above is one: a plain object of fields, not a schema, spread into each `Schema.Struct`
+that allows them. A record or `Schema.StructWithRest` allows any name, and still checks each value.
+Callers can then pass any name as well.
 
 An open schema, such as a record, sees every field of the input, so its value type has to accept the
 other schemas' fields.
