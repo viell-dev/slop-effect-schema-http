@@ -64,6 +64,12 @@ compiles and still changes your URLs.
   annotation stops compiling, and `Request.Declaration` and `Draft` replace their `headersBound` and
   `queryBound` members with `headerShapes`, `queryShapes`, `conflicts`, `declaredQuery` and
   `unbound` ([#87](https://github.com/viell-dev/slop-effect-schema-http/issues/87)).
+- Refuse a group that would lose a field under a union. Effect strips what a union member does not
+  state, so a raw default in one member and a caller's field in another lost one of them with no
+  error: `?page=1` under `{ page } | { cursor }` sent `page` and dropped the caller's `cursor`. The
+  whole group is now matched first, so a later member that holds all of it is used, and otherwise
+  the request fails with `Request.InvalidRequest`, naming the field that would be lost and never its
+  value.
 - Build a schema's value before encoding it, so a plain object works for a `Schema.Class`, including
   a nested one, in `Request.path`, `Request.query`, `Request.headers`, `Body.encodeSchema` and
   `Body.jsonSchema`, and a field with a constructor default can be left out. Such a call used to

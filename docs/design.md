@@ -158,6 +158,13 @@ an error: `Request.InvalidRequest` before anything is sent.
   text cannot get past a schema, and a decoder that accepts more spellings than its encoder writes
   cannot let a loose spelling out. A default therefore loses its exact text: `?page=02` under a
   number field goes out as `page=2`, and order and header spelling follow the schema.
+- **A default cannot push a field out.** Effect strips what a union member does not state, so a
+  group whose default and caller's field sit in different members would lose one of them with no
+  error. The whole group is matched first, so a member that holds all of it wins over an earlier
+  member that holds part of it. If no member holds it, a field the schema does not write back is an
+  error naming that field, whichever side it came from. Under
+  `Union([Struct({ page, size? }), Struct({ cursor })])` a shared `?page=1` takes `{ page: 2 }` and
+  refuses `{ cursor }`, because no member holds both.
 - **A raw value under a name no schema allows is an incompatible shape.** The check looks at the
   finished declaration, so it does not matter whether a shared transform comes before or after the
   schema.
@@ -207,6 +214,9 @@ Some things are outside the check:
   after the schema to survive under such a name. `transformClient` and a client layer work on the
   prepared request, so the check does not see them.
 - A check is only as strict as its schema. `Schema.NumberFromString` accepts `"two"` as `NaN`.
+- The caller's own value is read before any default joins it, and Effect takes the first union
+  member that fits. Under `Union([Struct({ a }), Struct({ a, b })])`, `{ a, b }` fits the first and
+  `b` goes, with or without a default. Put the wider member first.
 - "Required" is read from the encoded side. A field with `Schema.withDecodingDefaultKey` is optional
   there, so a raw edit of it after the schema is not refused, although the schema always writes it
   and the edit never reaches the client.

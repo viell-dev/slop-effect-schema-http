@@ -654,6 +654,15 @@ const misfit = (
     message: `The ${group} group cannot be built against its schema with these declared values: ${listNames(defaults.map(([name]) => name))}.`,
   });
 
+/** Names only, and only those that would go: what the schema kept fits it. */
+const lostFields = (
+  group: string,
+  names: ReadonlyArray<string>,
+): InvalidRequest =>
+  new InvalidRequest({
+    message: `The ${group} group cannot be built against its schema: with the rest of the group, these fields would be lost: ${listNames(names)}.`,
+  });
+
 /** Fields a body's encoder supplies unless the request says otherwise. */
 const bodyFields = ["content-type", "content-length"] as const;
 
@@ -688,6 +697,9 @@ const applyDeclaredBodyFields = (
  * the default in place. A raw header under a name no schema allows is an {@link InvalidRequest}
  * before anything is sent. A record or `Schema.StructWithRest` allows any name. Names compare
  * without case.
+ *
+ * Under a union, the defaults and what the schema wrote have to fit one member together. A field
+ * that would be lost otherwise is an {@link InvalidRequest}, which names that field.
  *
  * Header schemas stack: a second one adds its fields, and together they state the shape. Use
  * {@link unbind} to start again.
@@ -736,10 +748,9 @@ export const headers = <
         const settled = yield* Effect.mapError(settle(output, defaults), () =>
           misfit("header", defaults),
         );
-        // A default the schema does not write would be lost, as a member of a union can lose it.
-        const kept = Shapes.written(settled, foldHeader);
-        if (defaults.some(([name]) => !kept.has(foldHeader(name))))
-          return yield* misfit("header", defaults);
+        // A field the schema does not write back would be lost, as a union member can lose one.
+        const lost = Shapes.lost(output, defaults, settled, foldHeader);
+        if (lost.length > 0) return yield* lostFields("header", lost);
         const lines = Transport.entries(settled);
         const replaced = new Set([
           ...names,
@@ -792,6 +803,9 @@ export const headers = <
  * is an {@link InvalidRequest} before anything is sent. A record, `Schema.StructWithRest` or a list
  * of pairs allows any name.
  *
+ * Under a union, the defaults and what the schema wrote have to fit one member together. A field
+ * that would be lost otherwise is an {@link InvalidRequest}, which names that field.
+ *
  * A field can encode to a `Date`, which is written as ISO text. Text under a field that encodes to
  * a number, boolean, bigint or `Date` is read as one first, and a single value under a list field
  * fits it. Date text is read as `Schema.DateFromString` reads it. The check is as strict as the
@@ -842,10 +856,9 @@ export const query = <
         const settled = yield* Effect.mapError(settle(output, defaults), () =>
           misfit("query", defaults),
         );
-        // A default the schema does not write would be lost, as a member of a union can lose it.
-        const kept = Shapes.written(settled, foldQuery);
-        if (defaults.some(([name]) => !kept.has(foldQuery(name))))
-          return yield* misfit("query", defaults);
+        // A field the schema does not write back would be lost, as a union member can lose one.
+        const lost = Shapes.lost(output, defaults, settled, foldQuery);
+        if (lost.length > 0) return yield* lostFields("query", lost);
         return replaceQuery(
           prepared,
           UrlEncoding.queryEntries(settled),

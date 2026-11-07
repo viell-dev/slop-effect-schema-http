@@ -179,19 +179,37 @@ export const required = (
     shapes.some((shape) => shape.required.has(fold(name))),
   );
 
+/** The names a schema's output holds a value under, as the schema spells them. */
+const writtenNames = (output: object): ReadonlyArray<string> =>
+  (Symbol.iterator in output
+    ? Array.from(output as Iterable<readonly [string, unknown]>)
+    : Object.entries(output)
+  )
+    .filter(([, value]) => value !== undefined)
+    .map(([name]) => name);
+
 /**
  * The names a schema's output writes, in their compared form. A name with no value writes nothing,
  * so a default stays, while an empty list is the caller saying there are no entries.
  */
 export const written = (output: object, fold: Fold): ReadonlySet<string> =>
-  new Set(
-    (Symbol.iterator in output
-      ? Array.from(output as Iterable<readonly [string, unknown]>)
-      : Object.entries(output)
-    )
-      .filter(([, value]) => value !== undefined)
-      .map(([name]) => fold(name)),
+  new Set(writtenNames(output).map(fold));
+
+/**
+ * What went into `settle` and is gone from what came out, in the spelling it went in with. A schema
+ * can write less than it was given, and that must not pass as a group that was built.
+ */
+export const lost = (
+  output: object,
+  defaults: ReadonlyArray<readonly [string, unknown]>,
+  settled: object,
+  fold: Fold,
+): ReadonlyArray<string> => {
+  const kept = written(settled, fold);
+  return [...writtenNames(output), ...defaults.map(([name]) => name)].filter(
+    (name) => !kept.has(fold(name)),
   );
+};
 
 /**
  * Read what a schema says about its group, and build what it sends.
@@ -200,6 +218,10 @@ export const written = (output: object, fold: Fold): ReadonlySet<string> =>
  * `settle` adds defaults to what the schema wrote and takes the whole group through the schema in
  * both directions. A decoder may accept more spellings than its encoder writes, so a default that
  * decodes is not yet what the schema sends.
+ *
+ * Effect strips what a union member does not state, so the first member that fits part of the group
+ * would win over a later one that holds all of it. `settle` therefore looks for such a member first.
+ * Without one it takes the looser match, and {@link lost} tells the caller what that left out.
  */
 export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
   const reading = read(SchemaAST.toEncoded(contract.ast));
@@ -239,13 +261,18 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
           : entries[0],
       ]),
     );
-    return Effect.flatMap(
-      decode(
-        Symbol.iterator in output
-          ? [...(output as unknown as Iterable<unknown>), ...pairs]
-          : { ...output, ...record },
-      ),
-      (decoded) => encode(decoded) as Effect.Effect<W, Schema.SchemaError>,
+    const group =
+      Symbol.iterator in output
+        ? [...(output as unknown as Iterable<unknown>), ...pairs]
+        : { ...output, ...record };
+    const through = (options?: SchemaAST.ParseOptions) =>
+      Effect.flatMap(
+        decode(group, options),
+        (decoded) =>
+          encode(decoded, options) as Effect.Effect<W, Schema.SchemaError>,
+      );
+    return Effect.catch(through({ onExcessProperty: "error" }), () =>
+      through(),
     );
   };
   return { shape, settle };
