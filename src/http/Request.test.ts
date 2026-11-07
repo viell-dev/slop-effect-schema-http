@@ -2370,6 +2370,27 @@ describe("a path template", () => {
       }),
     );
 
+    it.effect(
+      "uses fixed text exactly as written, even an invalid escape",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* urlOf(
+              Request.get("").pipe(Request.path`/a\b/\u`),
+              undefined,
+            ),
+          ).toBe("/a\\b/\\u");
+        }),
+    );
+
+    it.effect("adds nothing when it is empty", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(Request.get("/a").pipe(Request.path``), undefined),
+        ).toBe("/a");
+      }),
+    );
+
     it.effect("can be a named transform that definitions share", () =>
       Effect.gen(function* () {
         const atThing = Request.path`/things/${thing}`;
