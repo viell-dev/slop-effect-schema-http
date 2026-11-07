@@ -3634,6 +3634,110 @@ describe("what fits a mapped operation", () => {
     });
   });
 
+  it("refuses a result that really is `unknown` or `any`, however it arrives", () => {
+    const unknownResult: Response.Response<unknown, unknown> = Response.status(
+      200,
+      Body.json,
+    );
+    const allUnknown: WideResponse = unknownResult;
+    const anyResult: Response.Response<any, unknown> = unknownResult;
+    const anything: any = unknownResult;
+    compileOnly(() => {
+      // @ts-expect-error a response annotated with an unknown result
+      getThings.pipe(Operation.mapResponse(() => unknownResult));
+      // @ts-expect-error every slot unknown, as a failed inference would leave them
+      getThings.pipe(Operation.mapResponse(() => allUnknown));
+      // @ts-expect-error a response annotated with an `any` result
+      getThings.pipe(Operation.mapResponse(() => anyResult));
+      // @ts-expect-error a function that returns `any`, which gives nothing to infer from
+      getThings.pipe(Operation.mapResponse(() => anything));
+      // @ts-expect-error the same from the response it was given
+      getThings.pipe(Operation.mapResponse((response) => response as any));
+      getThings.pipe(
+        // @ts-expect-error a schema with an unknown result
+        Operation.mapResponse(
+          Response.replace(200, Body.jsonSchema(Schema.Unknown)),
+        ),
+      );
+    });
+  });
+
+  it("keeps a real `unknown` result where nothing is mapped", () => {
+    const anything: any = Response.status(200, Body.json);
+    const plain = Operation.make(
+      Request.get("https://api.test/things"),
+      Response.status(200, Body.jsonSchema(ThingPage)),
+    );
+    const variant = plain.pipe(
+      Operation.mapResponse(Response.replace(200, Body.json)),
+    );
+    expectTypeOf<Success<typeof variant>>().toEqualTypeOf<unknown>();
+    const loose = plain.pipe(Operation.mapResponse(() => anything));
+    expectTypeOf<Success<typeof loose>>().toEqualTypeOf<unknown>();
+  });
+
+  // Each `@ts-expect-error` covers the one line after it, so a second error at the operation, on
+  // the line before, would fail this test.
+  it("reports a key it cannot address as that key and nothing else", () => {
+    const widened: number = 200;
+    const either = 200 as 200 | 404;
+    compileOnly(() => {
+      getThings.pipe(
+        Operation.mapResponse(
+          // @ts-expect-error a key the contract lacks
+          Response.replace(500, Body.text),
+        ),
+      );
+      getThings.pipe(
+        Operation.mapResponse(
+          // @ts-expect-error the same when removing
+          Response.remove(500),
+        ),
+      );
+      search.pipe(
+        Operation.mapResponse(
+          // @ts-expect-error the same on a contract with several cases
+          Response.replace(201, Body.text),
+        ),
+      );
+      getThings.pipe(
+        Operation.mapResponse((response) =>
+          response.pipe(
+            // @ts-expect-error the same in an arrow function
+            Response.replace(500, Body.text),
+          ),
+        ),
+      );
+      getThings.pipe(
+        Operation.mapResponse(
+          // @ts-expect-error a key widened to `number`
+          Response.replace(widened, Body.text),
+        ),
+      );
+      search.pipe(
+        Operation.mapResponse(
+          // @ts-expect-error a union of keys
+          Response.remove(either),
+        ),
+      );
+    });
+  });
+
+  it("states the missing case in the compile error", () => {
+    const missing = Response.replace(500, Body.text);
+    type Parameter = Parameters<
+      typeof missing<
+        string,
+        never,
+        never,
+        Response.Case<200, string, never, never>
+      >
+    >[0];
+    expectTypeOf<
+      Extract<keyof Parameter, `This contract has no case${string}`>
+    >().not.toBeNever();
+  });
+
   it("names the way out first in the compile error", () => {
     const refused = Operation.mapResponse(
       (response: Response.Response<string>) =>

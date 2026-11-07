@@ -504,14 +504,22 @@ interface NoLongerFits<A> {
  * @remarks
  * With no step, `T` is `undefined` and anything fits. With a step, `A2` must be something the
  * current response could produce. An `any` result proves nothing, so it does not fit either.
+ *
+ * `W` is everything the function returned, and stays `never` when nothing was inferred from it.
+ * That means the function itself does not compile, as with a key the contract lacks. `A2` then
+ * reads `unknown` for no reason of its own, so the rule stands aside and leaves the function's own
+ * error as the only one. A function that returns a response, or `any`, always gives `W` a value, so
+ * a result that really is `unknown` is still refused.
  */
-export type Fits<A2, A, T> = [T] extends [undefined]
+export type Fits<A2, A, T, W = unknown> = [T] extends [undefined]
   ? unknown
-  : 0 extends 1 & A2
-    ? NoLongerFits<A2>
-    : [A2] extends [A]
-      ? unknown
-      : NoLongerFits<A2>;
+  : [W] extends [never]
+    ? unknown
+    : 0 extends 1 & A2
+      ? NoLongerFits<A2>
+      : [A2] extends [A]
+        ? unknown
+        : NoLongerFits<A2>;
 
 /**
  * Derive a variant with a changed response. A recorded result step stays, and has to fit.
@@ -551,14 +559,15 @@ export const mapResponse =
     E2,
     R2,
     C2 extends Response.AnyCase,
+    W = never,
   >(
     f: (
       response: Response.Response<A, E, R, C>,
-    ) => Response.Response<A2, E2, R2, C2>,
+    ) => Response.Response<A2, E2, R2, C2> & W,
   ) =>
   <B, Q, O, T>(
     self: Adjustable<B, Parts<Q, Response.Response<A, E, R, C>, O, T>> &
-      Fits<A2, A, T>,
+      Fits<A2, A, T, W>,
   ): Derived<
     [T] extends [undefined] ? A2 : B,
     Q,

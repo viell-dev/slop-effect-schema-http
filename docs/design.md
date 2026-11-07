@@ -747,7 +747,8 @@ nothing to record, so it is wrapped as an ordinary function.
 - **Anything else is a compile error**, whose last line starts with the instruction to use
   `Operation.unmap`. That covers a new shape and a new case whose result does not fit. The check
   compares with the current response, so widening back after narrowing needs `Operation.unmap` as
-  well.
+  well. It stands aside when the function given to `mapResponse` does not compile, so a key the
+  contract lacks gets its own error alone: nothing is known about that function's result.
 - **`Operation.unmap` removes every step**, and the operation returns what its response decodes.
   Together with `Operation.map` it reaches any response, so the fit check blocks nothing.
 
