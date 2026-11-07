@@ -3235,10 +3235,26 @@ describe("a schema states the shape of its group", () => {
       }),
     );
 
-    it.effect("counts a written empty segment as a field with no name", () =>
+    it.effect(
+      "leaves a written empty segment alone, because it names no field",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* urlOf(Request.get("/things?&&").pipe(Request.query(Limit)), {
+              query: {},
+            }),
+          ).toBe("/things?&&");
+          const open = Request.get("/things?a=1&").pipe(
+            Request.query(Schema.Record(Schema.String, Schema.String)),
+          );
+          expect(yield* urlOf(open, { query: {} })).toContain("a=1");
+        }),
+    );
+
+    it.effect("still counts an empty name that was written with a value", () =>
       Effect.gen(function* () {
         const error = yield* refusal(
-          Request.get("/things?limit=1&").pipe(Request.query(Limit)),
+          Request.get("/things?=1").pipe(Request.query(Limit)),
           { query: {} },
         );
         expect(error.message).toContain('""');
@@ -3425,7 +3441,7 @@ describe("a schema states the shape of its group", () => {
 
     // A field with a decoding default is optional on the encoded side, which is where "required" is
     // read, so this edit is lost without an error. The design page states the limit.
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/87
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/120
     it.effect("currently misses a field with a decoding default", () =>
       Effect.gen(function* () {
         const request = Request.get("/things").pipe(
@@ -3778,7 +3794,7 @@ describe("a schema states the shape of its group", () => {
     );
 
     // Defaults are added as pairs, which only a list of pairs reads. The design page states the limit.
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/87
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/120
     it.effect(
       "currently cannot take a default under a schema encoded as a Map",
       () =>
