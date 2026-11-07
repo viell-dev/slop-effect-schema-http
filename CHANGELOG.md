@@ -93,9 +93,10 @@ compiles and still changes your URLs.
   removed. `Request.path` used to replace whatever came before it. **Code that relied on that still
   compiles and now asks for a different URL.** `Request.get("/users")` with a renderer returning
   `/users/1` now asks for `/users/users/1`, and a second `Request.path` adds to the first instead of
-  replacing it. Check every `Request.path` whose constructor has a non-empty path, and every stacked
-  call. A `Request.path` after `Request.get("")` is unchanged, and a constructor's query and
-  fragment still survive ([#82](https://github.com/viell-dev/slop-effect-schema-http/issues/82)).
+  replacing it. Find these by reading: check every `Request.path` whose constructor has path text,
+  even a placeholder or text that only carries a query or fragment, and every stacked call. A
+  `Request.path` after `Request.get("")` is unchanged, and a constructor's query and fragment still
+  survive ([#82](https://github.com/viell-dev/slop-effect-schema-http/issues/82)).
 - Write a path as a template. `Request.path` also works as a tagged template, with values declared
   by `Request.pathValue(name, schema?)`, so a child endpoint adds to its parent with no schema
   spread or hand-written renderer, and the input is inferred. Each value goes through its own

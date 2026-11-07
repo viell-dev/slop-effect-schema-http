@@ -258,6 +258,9 @@ A convention keeps this simple, and the library works with any other:
 - **A base URL needs neither.** Joining it to the path handles that boundary, and puts a `/` before
   a path that has none. So with a base URL, write a query on its own in the constructor, as
   `Request.get("?wsdl")`, because a template would give `/?wsdl`.
+- **A constructor's path is real text.** A label such as `/users/:id` or `{location}` is part of the
+  URL. Use `""` when `Request.path` holds the whole path, and leave out any path text when a
+  constructor only carries a query or fragment, as in `Request.get("?lang=de#closing")`.
 - **A trailing slash is part of the address.** `/foo` and `/foo/` can be different resources, or the
   same resource read differently, so the library never adds or removes one. When a server wants one,
   put it at the very end, on the last piece.
@@ -270,8 +273,8 @@ The finished path is passed to the client as written. The library passes the req
 the HTTP client you chose, and [its promise stops
 there](../limits.md#paths-and-other-requests-passed-on-as-written). The client may rewrite or refuse
 it, and a server may read it differently. The library does not promise that an unusual request
-works. Node.js Fetch keeps `//` and a trailing slash and resolves dot segments. A server may merge
-`//`, and another client can differ.
+works. Fetch keeps `//` and a trailing slash and resolves dot segments, in Node.js and in Chromium.
+A server may merge `//`, and another client can differ.
 
 ### Change a path in a variant
 
@@ -293,7 +296,8 @@ takes a schema and a function, and adds what the function returns:
 
 The renderer receives the schema-encoded value and the active path encoder. Call `encode` on each
 dynamic value and leave the separators unescaped. Nothing makes a renderer do that, which is why a
-template is the first choice for a fixed shape.
+template is the first choice for a fixed shape. Text chosen at run time also needs a renderer, as in
+a helper that takes a suffix, because a template's text is fixed when it is written.
 
 The schema determines the value under `path`. A scalar schema takes a scalar, and a struct takes its
 fields; a parameter name in the renderer changes nothing. A scalar has no name, so stacking it with
@@ -308,7 +312,7 @@ the path, because `/fetch/https://other.test/x` is a legitimate path.
 
 Encoding stops a `/` in a value from adding a segment. It does not stop everything: `..` and an
 empty string have nothing to encode, so they pass through, and so does a `'` inside
-`` `Customers('${customer}')` ``. With Node.js Fetch, a `..` can leave the resource:
+`` `Customers('${customer}')` ``. With Fetch, a `..` can leave the resource:
 `/customers/../calendars/7` reaches the server as `/calendars/7`.
 
 A value that comes from a user needs a constraint in its schema. `Schema.TemplateLiteral` states a
@@ -499,6 +503,9 @@ only once per evaluation.
 and [`Request.mapBaseUrl`](#extend-a-base) extends it. With the default URL encoding, an absolute
 request URL bypasses the base. A relative path is appended to the base; a leading `/` does not
 discard the base's path prefix.
+
+A relative URL with no base behaves differently on each platform. Node refuses it as an invalid URL.
+A browser resolves it against the page, so the request goes to the page's own server, with no error.
 
 The library renders URLs through [UrlEncoding](./url-encoding.md). Its defaults preserve entry
 order, repetition, bare keys, and empty values. The HTTP provider can still normalize URLs; see [URL
