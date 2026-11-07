@@ -6139,6 +6139,12 @@ describe("a caller's field under a union", () => {
               query: { a: "x", b: "y", c: "z" },
             }),
           ).toBe("/x?a=x&c=z&b=y");
+          // Binding the member you mean leaves nothing to choose.
+          expect(
+            yield* urlOf(stacked(Schema.Struct({ a: text, c: text }), Holds), {
+              query: { a: "x", b: "y", c: "z" },
+            }),
+          ).toBe("/x?a=x&c=z&b=y");
         }),
       );
     });
@@ -6225,33 +6231,61 @@ describe("a caller's field under a union", () => {
       }),
     );
 
-    it.effect("is refused inside text that holds JSON", () =>
+    it.effect(
+      "is refused under a field that holds JSON, but not in its text",
+      () =>
+        Effect.gen(function* () {
+          const InText = Schema.Struct({
+            filter: Schema.fromJsonString(Apart),
+          });
+          const decoded = yield* schemaFailure(queried(InText), {
+            query: { filter: { a: "1", b: "2" } },
+          });
+          expect(decoded).toContain('["filter"]["b"]');
+          const url = yield* urlOf(queried(InText), {
+            query: { filter: '{"a":"1","b":"2"}' },
+          });
+          expect(new URL(url, "http://x.test").searchParams.get("filter")).toBe(
+            '{"a":"1"}',
+          );
+        }),
+    );
+
+    it.effect("is ruled out by a tag that is a union of literals", () =>
       Effect.gen(function* () {
-        const InText = Schema.Struct({ filter: Schema.fromJsonString(Apart) });
-        const message = yield* schemaFailure(queried(InText), {
-          query: { filter: '{"a":"1","b":"2"}' },
-        });
-        expect(message).toContain('["filter"]');
-        const decoded = yield* schemaFailure(queried(InText), {
-          query: { filter: { a: "1", b: "2" } },
-        });
-        expect(decoded).toContain('["filter"]["b"]');
+        const Tagged = Schema.Union([
+          Schema.Struct({ kind: Schema.Literals(["a", "b"]), x: text }),
+          Schema.Struct({ kind: Schema.Literal("c") }),
+        ]);
+        const query = { kind: "c", x: "1" } as const;
+        expect(yield* urlOf(queried(Tagged), { query })).toBe("/x?kind=c");
+        expect(
+          yield* urlOf(queried(Tagged), { query: { kind: "b", x: "1" } }),
+        ).toBe("/x?kind=b&x=1");
       }),
     );
 
-    it.effect("is refused in text under a struct that renames", () =>
-      Effect.gen(function* () {
-        // The encoded side of `filter` is a plain string, which would read any text.
-        const Renamed = Schema.Struct({
-          filter: Schema.fromJsonString(Apart),
-          c: text,
-        }).pipe(Schema.encodeKeys({ c: "C" }));
-        expect(
-          yield* schemaFailure(queried(Renamed), {
-            query: { filter: '{"a":"1","b":"2"}', c: "x" },
-          }),
-        ).toContain('["filter"]');
-      }),
+    it.effect(
+      "is refused if the union writes another object under its name",
+      () =>
+        Effect.gen(function* () {
+          const Inner = Schema.Struct({ x: text });
+          const Swapped = Schema.Union([
+            Schema.Struct({ a: Inner }).pipe(Schema.encodeKeys({ a: "b" })),
+            Schema.Struct({ b: Inner, c: text }),
+          ]);
+          const request = Request.post("/x").pipe(
+            Request.body(Body.jsonSchema(Swapped)),
+          );
+          expect(
+            yield* schemaFailure(request, {
+              body: { a: { x: "1" }, b: { x: "2" } },
+            }),
+          ).toContain('["b"]');
+          expect(
+            yield* bodyOf(request, { body: { a: { x: "1" }, b: { x: "1" } } }),
+          ).toBe('{"b":{"x":"1"}}');
+        }),
     );
 
     it.effect("is refused where only the encoded side shows the member", () =>
@@ -6900,16 +6934,14 @@ describe("a field outside a value's keys", () => {
     }),
   );
 
-  // An `Option` is a declaration, so nothing here can reach the value in it without reading what
-  // Effect holds there, and a strict read does not see an accessor as excess. The design page
-  // states the limit. https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect("currently misses an accessor on a value in an Option", () =>
+  it.effect("leaves an accessor in an Option to the schema's own reading", () =>
     Effect.gen(function* () {
       const InOption = Schema.Struct({ who: Schema.Option(NarrowFirst) });
-      const { request } = yield* compile(posted(InOption), {
-        body: { who: Option.some(new Person()) },
-      });
-      expect(bodyText(request)).not.toContain("ada");
+      expect(
+        yield* bodyOf(posted(InOption), {
+          body: { who: Option.some(new Person()) },
+        }),
+      ).toBe('{"who":{"_tag":"Some","value":{"id":"1"}}}');
     }),
   );
 
@@ -7080,7 +7112,7 @@ describe("a value on the encoded side stays there", () => {
     }),
   );
 
-  it.effect("refuses a union in text it cannot read under a wire name", () =>
+  it.effect("leaves text under a wire name to the schema's own reading", () =>
     Effect.gen(function* () {
       const Apart = Schema.Union([
         Schema.Struct({ a: text }),
@@ -7089,87 +7121,12 @@ describe("a value on the encoded side stays there", () => {
       const InText = Schema.Struct({ f: Schema.fromJsonString(Apart) }).pipe(
         Schema.encodeKeys({ f: "F" }),
       );
-      const request = queried(InText);
-      const one = '{"a":"1"}';
-      const both = '{"a":"1","b":"2"}';
-      const url = yield* urlOf(request, { query: { F: one } });
-      expect(new URL(url, "http://x.test").searchParams.get("F")).toBe(one);
-      expect(yield* schemaFailure(request, { query: { F: both } })).toContain(
-        '["F"]',
-      );
-    }),
-  );
-
-  it.effect("refuses a union in text below a union under a wire name", () =>
-    Effect.gen(function* () {
-      const Apart = Schema.Union([
-        Schema.Struct({ a: text }),
-        Schema.Struct({ b: text }),
-      ]);
-      const Deep = Schema.Struct({
-        f: Schema.Union([
-          Schema.Struct({ g: Schema.fromJsonString(Apart) }),
-          Schema.Struct({ h: text }),
-        ]),
-      }).pipe(Schema.encodeKeys({ f: "F" }));
-      const request = Request.post("/x").pipe(
-        Request.body(Body.jsonSchema(Deep)),
-      );
-      expect(
-        yield* schemaFailure(request, {
-          body: { F: { g: '{"a":"1","b":"2"}' } },
-        }),
-      ).toContain('["F"]["g"]');
-      expect(yield* sentBy(Deep, { F: { g: '{"a":"1"}' } })).toBe(
-        '{"F":{"g":"{\\"a\\":\\"1\\"}"}}',
-      );
-    }),
-  );
-
-  it.effect("does not let another member's text answer for this one", () =>
-    Effect.gen(function* () {
-      const Rivals = Schema.Union([
-        Schema.Struct({
-          b: text,
-          a: Schema.fromJsonString(
-            Schema.Union([
-              Schema.Struct({ d: text }),
-              Schema.Struct({ e: Schema.optionalKey(text) }),
-            ]),
-          ),
-        }),
-        Schema.Struct({
-          a: Schema.fromJsonString(Schema.Struct({ c: text })),
-          z: text,
-        }),
-      ]);
-      expect(
-        yield* schemaFailure(queried(Rivals), {
-          query: { b: "s", a: '{"c":"s"}' },
-        }),
-      ).toContain('["a"]');
-    }),
-  );
-
-  it.effect("does not let a loose write answer for text it would strip", () =>
-    Effect.gen(function* () {
-      const Inner = Schema.Union([
-        Schema.Struct({ a: Schema.optionalKey(text) }),
-        Schema.Struct({ a: Schema.optionalKey(text), d: text }).pipe(
-          Schema.encodeKeys({ d: "D" }),
-        ),
-      ]);
-      const Holder = Schema.Struct({
-        f: Schema.fromJsonString(Inner),
-        g: Renamed,
+      const url = yield* urlOf(queried(InText), {
+        query: { F: '{"a":"1","b":"2"}' },
       });
-      // The twin in `g` makes the whole strict read fail, so `f` is read loosely and is compared.
-      expect(
-        yield* schemaFailure(
-          Request.post("/x").pipe(Request.body(Body.jsonSchema(Holder))),
-          { body: { f: '{"a":"1","D":"s"}', g: { a: "1", A: "2" } } },
-        ),
-      ).toContain('["f"]');
+      expect(new URL(url, "http://x.test").searchParams.get("F")).toBe(
+        '{"a":"1"}',
+      );
     }),
   );
 
@@ -7192,21 +7149,17 @@ describe("a value on the encoded side stays there", () => {
     }),
   );
 
-  it.effect("keeps it inside an Option, and refuses what it cannot read", () =>
+  it.effect("leaves an Option of it to the schema's own reading", () =>
     Effect.gen(function* () {
-      const request = Request.post("/x").pipe(
-        Request.body(
-          Body.jsonSchema(Schema.Struct({ f: Schema.Option(Renamed) })),
-        ),
+      const InOption = Schema.Struct({ f: Schema.Option(Renamed) });
+      expect(Excess.choosing(InOption.ast)).toBe(false);
+      for (const value of [{ A: "x" }, { A: "x", z: "z" }])
+        expect(yield* sentBy(InOption, { f: Option.some(value) })).toBe(
+          '{"f":{"_tag":"Some","value":{}}}',
+        );
+      expect(yield* sentBy(InOption, { f: Option.none() })).toBe(
+        '{"f":{"_tag":"None"}}',
       );
-      const { request: compiled } = yield* compile(request, {
-        body: { f: Option.some({ A: "x" }) },
-      });
-      expect(bodyText(compiled)).toContain('"A":"x"');
-      const stray = { A: "x", z: "1" };
-      expect(
-        yield* schemaFailure(request, { body: { f: Option.some(stray) } }),
-      ).toContain('["f"]');
     }),
   );
 

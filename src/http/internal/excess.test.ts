@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Schema, SchemaTransformation } from "effect";
+import { Effect, Option, Schema, SchemaTransformation } from "effect";
 import * as Excess from "./excess.js";
+import * as Shapes from "./shape.js";
 
 const text = Schema.String;
 const Either = Schema.Union([
@@ -11,19 +12,50 @@ const Either = Schema.Union([
 const read = (value: unknown) => Excess.normalised([Either.ast], value);
 
 const gone = (given: object, value: object, output: object) =>
-  Excess.missing([Either.ast], given, value, output).map(({ path }) => path);
+  Excess.missing([Either.ast], given, value, output);
 
-describe("Excess.assume", () => {
-  it("passes readings that hold", () => {
-    expect(() => {
-      Excess.assume({ "a reading": true });
-    }).not.toThrow();
+// The library reads Effect's schema structure, which a newer Effect could change. A reading that
+// came back empty would fall back to Effect's own reading with no error, so these say it held. They
+// run in CI, on the oldest Effect in release qualification, and on each Dependabot bump.
+describe("the reading of Effect's schema structure", () => {
+  const narrow = Schema.Struct({ a: text });
+  const renamed = narrow.pipe(Schema.encodeKeys({ a: "A" }));
+
+  it("sees a choice where it can see, and none where it cannot", () => {
+    expect(Excess.choosing(Either.ast)).toBe(true);
+    expect(Excess.choosing(Schema.NullOr(narrow).ast)).toBe(false);
+    expect(Excess.choosing(renamed.ast)).toBe(true);
+    expect(Excess.choosesMember(renamed.ast)).toBe(false);
+    expect(Excess.choosing(Schema.Array(Either).ast)).toBe(true);
+    expect(Excess.choosing(Schema.Option(Either).ast)).toBe(false);
   });
 
-  it("stops at a reading that does not, and names it", () => {
-    expect(() => {
-      Excess.assume({ "a reading": true, "another reading": false });
-    }).toThrow(/cannot read this version of Effect.*another reading/);
+  it("keeps a later member's field in a strict read", () => {
+    expect(
+      Schema.decodeUnknownSync(Either)({ a: "", b: "" }, Excess.strict),
+    ).toHaveProperty("b");
+  });
+
+  it("finds a member's field, an unstated key and a lost field", () => {
+    expect(read({ a: "", z: "" })).not.toHaveProperty("z");
+    expect(read({ a: "", b: "" })).toHaveProperty("b");
+    expect(gone({ a: "", b: "" }, { a: "" }, { a: "" })).toHaveLength(1);
+  });
+
+  it("reads which fields are always written", () => {
+    const fallback = Effect.succeed("");
+    const { shape } = Shapes.bind(
+      Schema.Struct({
+        always: text,
+        defaulted: text.pipe(Schema.withDecodingDefaultKey(fallback)),
+        maybe: Schema.OptionFromOptionalKey(text),
+        omitted: text.pipe(
+          Schema.withDecodingDefaultKey(fallback, { encodingStrategy: "omit" }),
+        ),
+      }),
+      (name) => name,
+    );
+    expect(shape.required).toEqual(new Set(["always", "defaulted"]));
   });
 });
 
@@ -274,12 +306,7 @@ describe("Excess.missing", () => {
       Schema.Struct({ b: text }),
     ]);
     expect(
-      Excess.missing(
-        [Swapped.ast],
-        { a: "1", b: "2" },
-        { a: "1" },
-        { b: "1" },
-      ).map(({ path }) => path),
+      Excess.missing([Swapped.ast], { a: "1", b: "2" }, { a: "1" }, { b: "1" }),
     ).toEqual([["b"]]);
   });
 
@@ -298,35 +325,46 @@ describe("Excess.missing", () => {
         [{ a: "x" }, { a: "x", b: "y" }],
         [{ a: "x" }, { a: "x" }],
         [{ a: "x" }, { a: "x" }],
-      ).map(({ path }) => path),
+      ),
     ).toEqual([[1, "b"]]);
   });
 
-  it("hands back what it cannot compare, with what can read it", () => {
-    const InText = Schema.Struct({ filter: Schema.fromJsonString(Either) });
-    const [found, ...others] = Excess.missing(
-      [InText.ast],
-      { filter: "{ }" },
-      { filter: {} },
-      { filter: "{}" },
-    );
-    expect(others).toEqual([]);
-    expect(found?.path).toEqual(["filter"]);
-    expect(found?.value).toBe("{ }");
-    expect(found?.output).toBe("{}");
-    expect(found?.types).toHaveLength(1);
-  });
-
-  it("has nothing to say about text that came out as it went in", () => {
+  it("leaves what it cannot see to the schema", () => {
     const InText = Schema.Struct({ filter: Schema.fromJsonString(Either) });
     expect(
       Excess.missing(
         [InText.ast],
-        { filter: "{}" },
-        { filter: {} },
-        { filter: "{}" },
+        { filter: '{"a":"1","b":"2"}' },
+        { filter: { a: "1" } },
+        { filter: '{"a":"1"}' },
       ),
     ).toEqual([]);
+    const InOption = Schema.Struct({ filter: Schema.Option(Either) });
+    expect(
+      Excess.missing(
+        [InOption.ast],
+        { filter: Option.some({ a: "1", b: "2" }) },
+        { filter: Option.some({ a: "1" }) },
+        { filter: Option.some({ a: "1" }) },
+      ),
+    ).toEqual([]);
+  });
+
+  it("compares an object under a decoded name as well", () => {
+    const Inner = Schema.Struct({ x: text });
+    const Swapped = Schema.Union([
+      Schema.Struct({ a: Inner }).pipe(Schema.encodeKeys({ a: "b" })),
+      Schema.Struct({ b: Inner }),
+    ]);
+    const lost = (b: string) =>
+      Excess.missing(
+        [Swapped.ast],
+        { a: { x: "1" }, b: { x: b } },
+        { a: { x: "1" } },
+        { b: { x: "1" } },
+      );
+    expect(lost("2")).toEqual([["b"]]);
+    expect(lost("1")).toEqual([]);
   });
 
   it("has nothing to say about a value with no choice under it", () => {

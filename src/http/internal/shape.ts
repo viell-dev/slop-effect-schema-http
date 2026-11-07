@@ -104,33 +104,6 @@ const read = (ast: SchemaAST.AST): Reading => {
       : { fields: new Map(), rest: [], open: true, required: new Set() };
 };
 
-let readable = false;
-
-/** Read a few fields once, so a change in Effect fails loudly here and not silently in a call. */
-const checkReadable = (): void => {
-  if (readable) return;
-  readable = true;
-  const text = Schema.String;
-  const fallback = Effect.succeed("");
-  const { required } = read(
-    Schema.Struct({
-      always: text,
-      defaulted: text.pipe(Schema.withDecodingDefaultKey(fallback)),
-      maybe: Schema.OptionFromOptionalKey(text),
-      omitted: text.pipe(
-        Schema.withDecodingDefaultKey(fallback, { encodingStrategy: "omit" }),
-      ),
-    }).ast,
-  );
-  Excess.assume({
-    "a required field reads as always written": required.has("always"),
-    "a decoding default reads as always written": required.has("defaulted"),
-    "an Option does not read as always written": !required.has("maybe"),
-    "the omit strategy does not read as always written":
-      !required.has("omitted"),
-  });
-};
-
 const takesList = (ast: SchemaAST.AST): boolean =>
   ast._tag === "Arrays" || (ast._tag === "Union" && ast.types.some(takesList));
 
@@ -314,7 +287,6 @@ export const lost = (
  * Without one it takes the looser match, and {@link lost} tells the caller what that left out.
  */
 export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
-  checkReadable();
   const reading = read(contract.ast);
   const spelling = new Map(
     Array.from(reading.fields.keys(), (name) => [fold(name), name] as const),
