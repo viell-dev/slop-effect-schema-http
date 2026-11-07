@@ -124,7 +124,7 @@ export const Listing = Element.pipe(
 
 const allprop = `<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:allprop/></D:propfind>`;
 
-/** The `allprop` request body; the codec owns its XML content type. */
+/** The `allprop` request body; the codec supplies its XML content type. */
 const allpropBody = Body.encoder<"allprop">(() =>
   Effect.sync(() => HttpBody.text(allprop, "application/xml; charset=utf-8")),
 );

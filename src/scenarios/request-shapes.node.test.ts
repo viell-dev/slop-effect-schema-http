@@ -20,6 +20,7 @@ const notFound = Response.status(404, Body.text);
 const sentWith = <I, E, R>(
   build: (origin: string) => Request.Request<I, E, R>,
   input: I,
+  answer = "Not Found",
 ) =>
   Effect.gen(function* () {
     const echo = yield* lane.backend("echo", undefined, { listener: "socket" });
@@ -29,13 +30,14 @@ const sentWith = <I, E, R>(
     })
       .execute(input)
       .pipe(Effect.provide(lane.rawClient!(echo.origin)));
-    expect(text).toBe("Not Found");
+    expect(text).toBe(answer);
     const [entry, ...rest] = yield* echo.ledger;
     expect(rest).toEqual([]);
     expect(watched.received).toHaveLength(1);
     return {
       entry: entry!,
       received: watched.received[0]!,
+      details: watched.details[0]!,
       origin: echo.origin,
       host: new URL(echo.origin).host,
     };
@@ -79,6 +81,39 @@ const sends = (
 
 const withMethod = (method: string) => (url: string) =>
   Request.make(method, url);
+
+/** An entry whose request has a body, on a method `fetch` refuses one on. */
+const bodied = (
+  title: string,
+  method: string,
+  declare: (url: string) => Request.Request<unknown>,
+  answer: string,
+) =>
+  it.live(title, () =>
+    Effect.gen(function* () {
+      const { entry, received, details, origin, host } = yield* sentWith(
+        (base) => declare(`${base}/shape`).pipe(Request.body(Body.text)),
+        { body: "hello" },
+        answer,
+      );
+      expect(received).toEqual({
+        method,
+        url: `${origin}/shape`,
+        hash: undefined,
+      });
+      expect(details.body).toBe("hello");
+      expect(entry.head).toBe(
+        headOf(
+          `${method} /shape HTTP/1.1`,
+          `host: ${host}`,
+          "content-type: text/plain",
+          "content-length: 5",
+          "accept: text/plain",
+        ),
+      );
+      expect(bodyText(entry)).toBe("hello");
+    }),
+  );
 
 describe("request shapes through the raw client (node)", () => {
   sends(
@@ -377,4 +412,18 @@ describe("request shapes through the raw client (node)", () => {
           );
         }),
     );
+
+  bodied(
+    "[EXT-10w] the raw client sends a GET with a body",
+    "GET",
+    Request.get,
+    "Not Found",
+  );
+  // A HEAD reply has no body, so the answer to one is empty.
+  bodied(
+    "[EXT-10x] the raw client sends a HEAD with a body",
+    "HEAD",
+    Request.head,
+    "",
+  );
 });

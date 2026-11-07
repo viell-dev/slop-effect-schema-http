@@ -34,6 +34,7 @@ const attemptWith = <I, E, R>(
       exit,
       ledger: yield* echo.ledger,
       received: watched.received[0]!,
+      details: watched.details[0]!,
       origin: echo.origin,
       host: new URL(echo.origin).host,
     };
@@ -106,6 +107,46 @@ const refuses = (
 
 const withMethod = (method: string) => (url: string) =>
   Request.make(method, url);
+
+/** An entry whose body `fetch` refuses on this method, after the client received all of it. */
+const refusesBody = (
+  title: string,
+  method: string,
+  declare: (url: string) => Request.Request<unknown>,
+) =>
+  it.live(title, () =>
+    Effect.gen(function* () {
+      const { exit, ledger, received, details, origin } = yield* attemptWith(
+        (base) => declare(`${base}/shape`).pipe(Request.body(Body.text)),
+        { body: "hello" },
+      );
+      expect(received).toEqual({
+        method,
+        url: `${origin}/shape`,
+        hash: undefined,
+      });
+      expect(details.body).toBe("hello");
+      expect(details.headers).toEqual({
+        "content-type": "text/plain",
+        "content-length": "5",
+        accept: "text/plain",
+      });
+      expect(ledger).toEqual([]);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
+      const error = exit.cause.reasons[0];
+      expect(error?._tag).toBe("Fail");
+      if (error?._tag !== "Fail") return;
+      expect(error.error._tag).toBe("HttpClientError");
+      if (error.error._tag !== "HttpClientError") return;
+      expect(error.error.reason._tag).toBe("TransportError");
+      if (error.error.reason._tag !== "TransportError") return;
+      // Each platform words it in its own way around the same sentence.
+      expect(String(error.error.reason.cause)).toContain(
+        "GET/HEAD method cannot have body",
+      );
+    }),
+  );
 
 describe(`request shapes through fetch (${lane.name})`, () => {
   arrives(
@@ -340,4 +381,15 @@ describe(`request shapes through fetch (${lane.name})`, () => {
         expect(entry.target).toBe(`/shape${query}`);
       }),
     );
+
+  refusesBody(
+    "[EXT-11w] fetch refuses a GET with a body as a transport error after the client received it",
+    "GET",
+    Request.get,
+  );
+  refusesBody(
+    "[EXT-11x] fetch refuses a HEAD with a body as a transport error after the client received it",
+    "HEAD",
+    Request.head,
+  );
 });
