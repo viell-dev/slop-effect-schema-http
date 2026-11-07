@@ -1,10 +1,10 @@
 # Effect Schema HTTP: hostile-API integration suite
 
 This branch holds a server-backed integration suite for
-[Effect Schema HTTP](https://github.com/viell-dev/slop-effect-schema-http). Five synthetic backends
+[Effect Schema HTTP](https://github.com/viell-dev/slop-effect-schema-http). Six synthetic backends
 reproduce the conventions of real APIs that a client does not control: an identity provider, a SOAP
-document store, a JSON business API, a CGI reporting gateway, and a notification service. Each one
-carries decades of plausible historical accidents. The suite checks that one consumer can talk to
+document store, a JSON business API, a CGI reporting gateway, a notification service, and a regional
+booking service. Each one carries decades of plausible historical accidents. The suite checks that one consumer can talk to
 all of them through the library's public API, without escaping it.
 
 Real APIs are where the suite starts, not where it stops. Its purpose is to cover every odd, bad or

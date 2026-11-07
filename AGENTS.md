@@ -40,7 +40,8 @@ the scenarios. The library's own design, which these tests are judged against, i
   their helpers (EXT-6a to EXT-6e). The `replay` backend serves recordings to consumer tests.
   `readers.node.test.ts` holds the backend side's regression cases for the store's and the
   gateway's XML readers and the store's bundle writer, beside the consumer side's corpora
-  (EXT-3 to EXT-5).
+  (EXT-3 to EXT-5). `bookings.node.test.ts` holds the `bookings` backend, which imitates no recorded
+  software, to its service page, byte for byte (EXT-29).
 
 ## Rules
 

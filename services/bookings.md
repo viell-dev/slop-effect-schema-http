@@ -30,7 +30,8 @@ integrator keeps a list and asks each one in turn. Every region serves the same 
 Anything else answers 404 with `text/plain` `Not Found`, or 405 with `Allow` for another method on
 a path. Berth reads no credential: production terminals authenticate at a gateway outside the
 region, and it passes `Authorization`, `Cookie` and `X-Agent-Key` through unread. A region sets no
-cookies.
+cookies. Unless a section below says otherwise, an answer states its `Content-Length`, apart from a
+204, which has none, and leaves the connection open for the next request.
 
 ## Health (2012)
 
@@ -69,7 +70,8 @@ A commit answers `201 Created` with `Location: /v1/bookings/<id>`, relative, and
 An id is the region, a hyphen and a six-digit count from 1 in commit order, so a repeated booking
 shows as a second id, and the region that made it shows in the id. A body that is not such an
 object answers 400 `application/json` `{ "error": "invalid_booking" }`, and nothing is committed.
-Berth does not refuse a second booking of the same slot: operators overbook on purpose.
+Any other member of the object is ignored. Berth does not refuse a second booking of the same slot:
+operators overbook on purpose.
 
 `GET /v1/bookings` answers 200 with every booking committed in this region, in commit order, each
 with `replayed` false:
@@ -87,9 +89,9 @@ the reply. A client that gets no answer cannot tell from that whether its bookin
 ## Repeat keys (2019)
 
 After a retry storm double-booked a whole week at one terminal, bookings gained an
-`Idempotency-Key` line: up to 64 letters, digits and hyphens. A key with anything else answers 400
-`{ "error": "invalid_key" }`. A booking without a key behaves as above, and the key field of its
-booking is `null`.
+`Idempotency-Key` line: one to 64 ASCII letters, digits and hyphens. A key with anything else, or
+nothing at all, answers 400 `{ "error": "invalid_key" }`. A booking without a key behaves as above,
+and the key field of its booking is `null`.
 
 | The key is                           | Answer                                                                      |
 | ------------------------------------ | --------------------------------------------------------------------------- |
@@ -98,16 +100,21 @@ booking is `null`.
 | Known here, with other body bytes    | 409 `{ "error": "key_reused" }`, and nothing committed                      |
 | Known to the peer                    | 200, the peer's booking with `replayed` true, and `Idempotent-Replay: true` |
 
+A region reads the key first, then this region's own record of it, and only then the body. So a key
+known here with other bytes answers 409 even when those bytes are no booking, and a body that would
+answer 400 is never asked about at the peer.
+
 `GET /v1/keys/<key>` answers 200 with the booking committed under that key in this region, with
 `replayed` false, or 404 `{ "error": "unknown_key" }`. It is how a client finds out what happened
 to a booking whose answer it lost, and how a region asks its peer.
 
 A region can have one peer. Before it commits a keyed booking, a region with a peer asks it with
-`GET /v1/keys/<key>`, over a plain HTTP link of its own. A 200 means the peer already has the
-booking. Anything else, including a link that cannot connect or has not answered within a second,
-counts as the peer not knowing the key, and the region commits. Bodies are not compared across
-regions. The design note of 2019 says a region must never stop taking bookings because its peer is
-down, so a key protects a client only as far as that link holds.
+`GET /v1/keys/<key>`, over a plain HTTP link of its own, which follows no redirect and reads no
+gzip. A 200 holding a booking means the peer already has it. Anything else counts as the peer not
+knowing the key, and the region commits. That includes a 200 holding something else, an answer cut
+short, a link that cannot connect, and one that has not finished answering within a second. Bodies
+are not compared across regions. The design note of 2019 says a region must never stop taking
+bookings because its peer is down, so a key protects a client only as far as that link holds.
 
 ## The edge
 
@@ -141,8 +148,10 @@ that checked only the status booked into nothing. Faults `parked` and `other-ser
 
 ### Faults
 
-Below, A is the region's answer to the request and B its body. A head written here has A's status
-line and A's lines, with the framing the table says, and no others.
+Below, A is the region's answer to the request and B its body. A's lines leave out its framing and
+include any the [CORS filter](#cors-2017) gave it. A head written here has A's status line, then
+A's lines, then the framing the table says, and no others, except on the complete answers listed
+after the table.
 
 | Fault             | What the client receives                                                                                                                                                |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -169,8 +178,12 @@ line and A's lines, with the framing the table says, and no others.
 | `other-service`   | Instead of A, a complete 200 `application/json` with the body `{"service":"tides","status":"ok"}`.                                                                      |
 
 `gzip`, the `gzip-` faults, `bad-gateway`, `unavailable`, `parked` and `other-service` are complete
-answers, on a connection that stays open as any other's. Every other fault ends the connection, or
-leaves it unusable.
+answers, on a connection that stays open as any other's. Each states its `Content-Length`, and the
+server's own lines follow the ones above: `Date`, then `Connection`, and `Keep-Alive` when the
+connection stays open. Every other fault ends the connection, or leaves it unusable.
+
+A chunk of nothing would be the last chunk, so `cut-chunked` writes no chunk for an empty half, and
+on an answer with no body it writes the head alone.
 
 ## The manifest (2006)
 
@@ -181,18 +194,21 @@ firmware carried.
 
 ## The availability board (2015)
 
-`GET /v1/availability?terminal=<name>` answers 200 `application/json` with a terminal's open slots:
+`GET /v1/availability?terminal=<name>` answers 200 `application/json` with a terminal's open slots,
+which are the same four for any name:
 
 ```json
 { "terminal": "rotterdam", "open": ["06:00", "07:00", "08:00", "09:00"] }
 ```
 
 The wallboards at the terminals poll it, and the board writes its answer as it reads each gate
-system. A terminal whose gate system has stalled is held: its answer goes out with `Content-Length`
-and the first half of its body, rounded down, and then waits. `POST
+system. A terminal whose gate system has stalled is held: its answer goes out with `Content-Length`,
+`Connection: close` and the first half of its body, rounded down, and then waits. `POST
 /v1/availability/release?terminal=<name>` answers 204 and lets every answer waiting for that
-terminal finish with the rest of its body, on the connection it started on. A client that goes away
-first ends the wait. The next request for a held terminal is held again.
+terminal finish with the rest of its body, on the connection it started on, which then closes. A
+client that goes away first ends the wait. The next request for a held terminal is held again. A
+fault on a held terminal's answer takes its place, so nothing waits. Either request with no
+`terminal`, or an empty one, answers 404 with `text/plain` `Not Found`.
 
 ## Moved paths (2016)
 
@@ -208,7 +224,8 @@ other route, and edge faults apply to its answers as to any other.
 passes on without reading, and the job's authors each had their own idea of a head. Each export
 below is written as it stands, with nothing added, and the connection closes after it. `J` is the
 eleven bytes `{"ok":true}`, and `CT` is the line `Content-Type: application/json`. Lines end in CRLF
-and the head ends with a blank line unless the row says otherwise. An unknown name answers 404.
+and the head ends with a blank line unless the row says otherwise. In `bare-lf`, LF alone ends the
+status line and the blank line too. An unknown name answers 404, as anything else does.
 
 | Name                 | Status line       | Lines of the head                                                                         | Body                                  |
 | -------------------- | ----------------- | ----------------------------------------------------------------------------------------- | ------------------------------------- |
@@ -243,16 +260,28 @@ pause at it, so that the two sides arrive apart. They end with the last chunk.
 | `split-bom`   | The bytes EF BB BF, then `ok`                          | After one byte, inside the byte-order mark      |
 | `cut-utf8`    | `Gr`, then byte C3, the first half of `ü`, three bytes | Not chunked: `Content-Length: 3`, written whole |
 
+A fault reads an export as it reads any other answer. A's status line is the row's, A's lines are
+the row's without `Content-Length` and `Transfer-Encoding`, and B is the body without its chunks. A
+head a fault writes ends its lines in CRLF, and an export's `gzip` faults still close the connection
+after them.
+
 ## CORS (2017)
 
 A region answers CORS itself only where its operators turned the filter on. Without it, a region
 sends no CORS lines and answers `OPTIONS` like any other method on a path.
 
 With it, `OPTIONS` on any path answers 204 and goes to no edge fault, with
-`Access-Control-Allow-Origin` echoing the request's `Origin`, `Access-Control-Allow-Methods: GET,
-POST`, `Access-Control-Allow-Headers` naming the list the region was given, joined with `, `, and
-`Vary: Origin`. Any other answer with an `Origin` gains `Access-Control-Allow-Origin` and
-`Vary: Origin`, unless it is a fault's own page or head, which the filter never sees.
+`Access-Control-Allow-Origin` echoing the request's `Origin` when it has one,
+`Access-Control-Allow-Methods: GET, POST`, `Access-Control-Allow-Headers` naming the list the region
+was given, joined with `, `, and `Vary: Origin`.
+
+Any other answer of the region to a request with an `Origin` gains `Access-Control-Allow-Origin`,
+echoing it, and `Vary: Origin`, after its own lines. It gains nothing else: no
+`Access-Control-Expose-Headers` and no `Access-Control-Allow-Credentials`. Those lines are part of
+A, so a fault that writes A's lines keeps them. The filter never sees what the edge writes for
+itself, which is the heads of `cut-head` and `cut-unavailable` and the pages of `bad-gateway`,
+`unavailable`, `parked` and `other-service`. It adds nothing to an export either, which nothing
+reads.
 
 The filter's list was written for the 2017 single-page app and never updated, so a client that adds
 headers it does not name, such as trace headers, is refused at the preflight and finds a working
@@ -267,8 +296,10 @@ bookings. Options are plain JSON, and every member is optional.
 - `edge`: the edge's rules, a list of `{ route, fault, phase?, after?, times? }`. A request is
   matched against the list in order. A rule that matches counts the request, and the first rule
   that has counted past its `after` and has `times` left applies, with the rules below it not
-  consulted. A request that no rule takes goes on as normal. `OPTIONS` matches no rule when the CORS
-  filter is on.
+  consulted. That choice is made once, when the request arrives, over the whole list whatever each
+  rule's phase, so a `phase: "before"` rule below the rule that applies does not act. A request that
+  no rule takes goes on as normal. `OPTIONS` matches no rule when the CORS filter is on. A rule that
+  breaks what follows is a mistake in the options, and the start fails.
   - `route`: `"<METHOD> <path>"`, such as `"POST /v1/bookings"`, with the path compared to the
     request's without its query, or `"*"` for every request.
   - `fault`: a name from the table of [faults](#faults).
@@ -291,8 +322,9 @@ bookings. Options are plain JSON, and every member is optional.
 - `held`: terminal names whose [availability answers](#the-availability-board-2015) are held.
   Defaults to none.
 - `cors`: `{ allowHeaders: [...] }` turns on the [CORS filter](#cors-2017) with that list. Defaults
-  to off. It matters only under the start option `{ cors: "backend" }`; otherwise the browser lane's
-  harness answers CORS, and this filter never sees a preflight.
+  to off. In the browser lane, set it only with the start option `{ cors: "backend" }`. Otherwise
+  the lane's harness answers CORS, so this filter never sees a preflight, and a head a fault writes
+  would carry both sets of lines, which a browser refuses.
 
 For example, a region that commits the first booking and loses its answer, and whose peer holds the
 keys:

@@ -2218,7 +2218,7 @@ replies [AGENTS.md](./AGENTS.md) describes. The consumer is `src/clients/booking
 scenarios are in `src/scenarios/`, in `wire-failures.test.ts`, `ambiguous-writes.test.ts`,
 `redirect-chains.test.ts`, `later-calls.test.ts`, `response-metadata.test.ts` and
 `discovery.test.ts`, with a `.node.test.ts` beside any of them for what needs Node. They run in both
-lanes unless an entry says otherwise.
+lanes unless an entry says otherwise. EXT-29 is the backend side's own check of `bookings`.
 
 Each entry separates two things, because a failure here can be either:
 
@@ -2631,3 +2631,12 @@ applies to attempts, and the attempt number in `transformClient` starts at 1 for
   classifier: `closed` on the first candidate's `POST`, and `transformClient` choosing the candidate
   from its second argument. As EXT-24e, with `X-Attempt` on both ledgers. A retry after two failures
   reaches a third candidate. Status: pending.
+
+#### The backend held to its page
+
+- **EXT-29** The `bookings` backend against its [service page](./services/bookings.md), byte for
+  byte over a raw socket: every route, the rows of the repeat-key table, the peer link, moved paths,
+  the availability board, each export, each fault, the rules' `phase`, `after` and `times`, and the
+  CORS filter. Every expected answer is written out from the page and the gzip streams are damaged
+  in the test, so nothing is shared with the backend, and `date` is the only mask. Backend-side, in
+  `src/conformance/bookings.node.test.ts`, Node lane. Status: tested.
