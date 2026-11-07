@@ -1,6 +1,10 @@
 # Change history
 
-## Unreleased
+## 0.3.0 — 2026-11-07
+
+Read [What's in 0.3](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.3) for the
+consumer introduction and migration steps. Start with its section on unions, because a call that
+compiles can now fail at run time for some values.
 
 - Test the library's reading of Effect's schema structure, which keeps a field from being lost, in
   CI and on each dependency update. Release qualification also runs the behavior tests on Effect

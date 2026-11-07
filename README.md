@@ -54,11 +54,11 @@ In an existing Node.js 24 or 26 ESM project with Effect `^4.0.7`, add the librar
 npm install viell-effect-schema-http
 ```
 
-`0.2.0` is the current release. The same package is available as a checksummed [GitHub release
-tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.2.0). It changes
+`0.3.0` is the current release. The same package is available as a checksummed [GitHub release
+tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.3.0). It changes
 existing behavior, so read [What's in
-0.2](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.2) before you update from
-`0.1`.
+0.3](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.3) before you update from
+`0.2`.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and

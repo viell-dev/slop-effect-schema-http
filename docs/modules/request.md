@@ -658,5 +658,5 @@ constructing them. `declaration.baseUrl` is text or an Effect, so to change a ba
 a request, use `Request.mapBaseUrl` rather than reading it.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.2.0/src/http/Request.ts) for
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.3.0/src/http/Request.ts) for
 all types and overloads.
