@@ -177,8 +177,8 @@ A convention keeps this simple, and the library works with any other:
 
 - **Start each piece with `/`, and do not end one with `/`.** So `Request.get("/things")`,
   `` Request.path`/events` ``, and a renderer returning `` `/${encode(id)}` ``.
-- **A base URL needs neither.** Joining it to the path handles that boundary, and puts a `/` before a
-  path that has none. So with a base URL, write a query on its own in the constructor, as
+- **A base URL needs neither.** Joining it to the path handles that boundary, and puts a `/` before
+  a path that has none. So with a base URL, write a query on its own in the constructor, as
   `Request.get("?wsdl")`, because a template would give `/?wsdl`.
 - **A trailing slash is part of the address.** `/foo` and `/foo/` can be different resources, or the
   same resource read differently, so the library never adds or removes one. When a server wants one,
