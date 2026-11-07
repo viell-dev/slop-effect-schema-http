@@ -1,6 +1,6 @@
 /**
  * The CGI reporting gateway: one router for the scripts, the XML-RPC endpoint and the audit
- * endpoint, wrapped in the `delays` hold. `cgi.ts` holds what the scripts share, `files.ts` the
+ * endpoint, with Apache's 404 and 405 pages for what no route takes, wrapped in the `delays` hold. `cgi.ts` holds what the scripts share, `files.ts` the
  * extract and CSV formats, `help.ts` the help topics and their links, `xmlrpc.ts` the XML-RPC reader
  * and writer, and `digest.ts` the audit endpoint's authentication. Every call to {@link handler}
  * creates fresh state.
@@ -8,7 +8,7 @@
  * Service documentation: services/gateway.md
  */
 import { randomBytes } from "node:crypto";
-import { router } from "../../harness/route.js";
+import { type Route, router } from "../../harness/route.js";
 import {
   type Handler,
   header,
@@ -18,12 +18,14 @@ import {
 } from "../../harness/server.js";
 import {
   apachePage,
+  escapeHtml,
   hold,
   movedPage,
   parseQuery,
   pipe,
   pipeError,
   queryString,
+  utf8,
 } from "./cgi.js";
 import { digest } from "./digest.js";
 import {
@@ -114,9 +116,44 @@ const legacy = (request: Received, origin: string): Reply => {
   );
 };
 
+/**
+ * Apache's own answer to a request no script takes: its 405 page, with `Allow` naming the methods
+ * of the routes for that path, or its 404 page when no route has the path. Both name the path as it
+ * arrived, escaped, and the 405 page the method as it arrived, unescaped, as Apache 1.3 writes it.
+ */
+const refusal = (routes: ReadonlyArray<Route>, request: Received): Reply => {
+  const target = path(request);
+  const allowed = routes
+    .filter((route) =>
+      typeof route.path === "string"
+        ? route.path === target
+        : route.path.test(target),
+    )
+    .map((route) => route.method);
+  return allowed.length > 0
+    ? apachePage(
+        405,
+        "Method Not Allowed",
+        `The requested method ${request.method} is not allowed for the URL ${escapeHtml(target)}.`,
+        [["Allow", allowed.join(", ")]],
+      )
+    : apachePage(
+        404,
+        "Not Found",
+        `The requested URL ${escapeHtml(target)} was not found on this server.`,
+      );
+};
+
 export const handler = (options: Options = {}): Handler => {
+  // Query values are bytes, so stored text is compared as its UTF-8 bytes.
   const sessions = new Set<string>(
-    options.token === undefined ? [] : [options.token],
+    options.token === undefined ? [] : [utf8(options.token)],
+  );
+  const users = new Map(
+    Object.entries(options.users ?? {}).map(([name, password]) => [
+      utf8(name),
+      utf8(password),
+    ]),
   );
   let accounts: ReadonlyArray<Account> = options.accounts ?? [];
   const extracts = options.extracts ?? {};
@@ -137,7 +174,7 @@ export const handler = (options: Options = {}): Handler => {
     const password = query.get("passwd");
     if (user === undefined || password === undefined || user === "")
       return pipeError("E_PARAM", "user and passwd required");
-    if (options.users?.[user] !== password)
+    if (users.get(user) !== password)
       return pipeError("E_AUTH", "invalid user or password");
     const id = randomBytes(12).toString("hex");
     sessions.add(id);
@@ -213,7 +250,7 @@ export const handler = (options: Options = {}): Handler => {
     if (parseQuery(request.target).get("locale") !== "de_DE")
       return pipeError("E_PARAM", "only locale=de_DE imports are supported");
     const result = importGerman(request.body);
-    if ("refusal" in result) return pipeError("E_FORMAT", result.refusal);
+    if ("refusal" in result) return pipeError("E_FORMAT", utf8(result.refusal));
     accounts = result.accounts;
     return pipe("OK", result.accounts.length);
   };
@@ -318,7 +355,7 @@ export const handler = (options: Options = {}): Handler => {
     return pipe("OK", period, trailer.count, trailer.cents);
   };
 
-  const routes = router([
+  const table: ReadonlyArray<Route> = [
     { method: "GET", path: "/cgi-bin/login.cgi", handle: login },
     { method: "GET", path: "/cgi-bin/report.cgi", handle: report },
     {
@@ -341,7 +378,8 @@ export const handler = (options: Options = {}): Handler => {
     },
     { method: "POST", path: "/RPC2", handle: rpc },
     { method: "GET", path: "/admin/audit.cgi", handle: audit },
-  ]);
+  ];
+  const routes = router(table, (request) => refusal(table, request));
 
   const delays = (options.delays ?? []).map((delay) => ({
     delay,
