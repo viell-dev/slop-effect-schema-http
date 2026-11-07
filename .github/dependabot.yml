@@ -7,6 +7,7 @@ updates:
     target-branch: main
     schedule:
       interval: monthly
+    labels: ["Type: Maintenance"]
     groups:
       npm:
         patterns: ["*"]
@@ -20,6 +21,7 @@ updates:
     target-branch: main
     schedule:
       interval: monthly
+    labels: ["Type: Maintenance"]
     groups:
       actions:
         patterns: ["*"]
@@ -28,6 +30,7 @@ updates:
     target-branch: hostile-servers-test
     schedule:
       interval: monthly
+    labels: ["Type: Maintenance"]
     groups:
       npm:
         patterns: ["*"]
@@ -41,6 +44,7 @@ updates:
     target-branch: hostile-servers-test
     schedule:
       interval: monthly
+    labels: ["Type: Maintenance"]
     groups:
       actions:
         patterns: ["*"]
