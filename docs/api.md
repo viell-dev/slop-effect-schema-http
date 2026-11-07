@@ -10,8 +10,8 @@ describes the answers, and `Operation` executes them together.
 | ----------------------------------- | ----------------------------------------------------------------------------------------- |
 | [Request](./modules/request.md)     | Set a method and URL, bind path/query/header/body input, and inspect the prepared request |
 | [Body](./modules/body.md)           | Read and write JSON, text, bytes and forms; validate and transform with schemas           |
-| [Response](./modules/response.md)   | Select by status or headers, tag alternatives, and handle decoding failures               |
-| [Operation](./modules/operation.md) | Supply an HTTP client, execute the contract, and compose results and errors               |
+| [Response](./modules/response.md)   | Select by status or headers, tag alternatives, replace or remove cases, and read failures |
+| [Operation](./modules/operation.md) | Supply an HTTP client, execute the contract, adjust a definition, and compose results     |
 
 ## Control repeated work
 

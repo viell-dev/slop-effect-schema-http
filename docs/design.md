@@ -12,6 +12,9 @@ these guarantees follow the [compatibility policy](./versions.md#compatibility-p
 3. Pair them with `Operation.make`, supply an Effect HTTP client, and evaluate `execute(input)`.
 4. Receive a validated value or a typed failure. Add a retry policy or interaction only when needed.
 
+A definition written once can be [adjusted where it is used](#variants), and the original never
+changes.
+
 Request encoding is **materialization**: turning a description and input into the native request. An
 **attempt** sends that request and decodes its answer. A **scope** owns the resources that must be
 released when an attempt ends. The sections below refine those steps.
@@ -495,6 +498,32 @@ The media types of the declared decoders form the operation's automatic `Accept`
 [body fields](#bodies), a request's own declaration wins, an optional schema field left out counts
 as nothing declared, and `Request.removeHeader("accept")` stops the automatic value.
 
+### Cases and keys
+
+A contract is an ordered list of cases, available as `cases`, and `select` and `accepts` are
+computed from it. Each case has a key. A status case is keyed by its status, and a `Response.when`
+case by its `key` option, or by nothing without one. Tags stay labels on results, because they are
+optional and can repeat.
+
+- **`Response.replace(key, decoder)`** changes one case's decoder. The case keeps its position and
+  its match rule, because order is priority. If a key appears twice, the first position stays and
+  the others go.
+- **`Response.remove(key)`** removes every case with that key, so a matching response falls through
+  to a later case or to `UnexpectedResponse`.
+- **Adding a case** is `Response.orElse`, or placing the new case first. Replacing never adds one,
+  so a typo cannot leave the old case in place.
+- **The type follows the cases.** A contract's fourth type parameter records each case, so a
+  replaced or removed case leaves the result, failure and service types.
+- **A key is one literal the contract declares.** A key that is absent, widened to `number` or
+  `string`, or a union is a compile error, whether it is passed in or is the case's own key. A union
+  is refused because the type would drop every member while only the value passed is touched at run
+  time. A key that gets past the types throws when the contract is built, so nothing fails silently.
+- **An annotation drops the keys.** `Response.Response<A, E, R>` has no keys to address, which is one
+  way to seal a contract.
+
+Because keys are part of the type, two contracts with different cases are different types. A `let`
+cannot hold one and then the other, and `Operation.make` refuses a conditional between them.
+
 ### In a browser
 
 The HTTP provider and browser determine which response facts are visible. In a Fetch-backed browser
@@ -558,6 +587,54 @@ that nothing was sent. Use `Policy.none` for a single attempt, or supply a `whil
 to the operation's repeat semantics. Its `Reason` contains metadata and failures, not the request
 method or decoded result; the method can be captured from the operation's known configuration.
 Decisions that need the decoded value belong in the consumer's composition outside this classifier.
+
+### Variants
+
+`Operation.make` keeps what it was built from in `parts`, as `request`, `response`, `options` and
+`step`. `Operation.mapRequest`, `Operation.mapResponse` and `Operation.mapOptions` each take the
+current part and return a new one. A plan stays a plan: each builds a new operation through
+`Operation.make`, so the automatic `Accept` follows the response, and the original never changes.
+
+The library adds no limit of its own on what a variant can change. An author who wants to offer less
+exports a function with the parameters they choose, or seals a definition with
+`Operation.fromEffect(operation.execute)`, which keeps the same types and has no parts, at compile
+time or at run time. Annotating a value as a plain `Operation<I, A, E, R>` hides its parts from the
+compiler only. Deriving from a value with no parts is a compile error, and one that gets past the
+types throws.
+
+A generic transform needs a `pipe` around it to learn its types. Hold the `Request` or `Response`
+transform in a variable rather than the `Operation.mapRequest` call, which on its own has no
+operation to infer from. A function given to `Operation.mapResponse` has to be generic, or typed for
+the operation's own response: a wider parameter is refused, mapped or not, because the response slot
+is invariant.
+
+### Recorded result steps
+
+`Operation.map` and `Operation.mapEffect` keep the parts and record a **step**, the conversion to
+run after them. Two maps combine into one step, so the type does not grow. A value with no parts has
+nothing to record, so it is wrapped as an ordinary function.
+
+- **A step runs once, after the retries.** It is outside the attempt's scope and timeout. Its
+  failure arrives as itself, never triggers a retry, and is not wrapped in `Response.DecodeError`. A
+  resource it opens belongs to the caller's scope.
+- **A step's failures and services stay through a variant** and leave with `Operation.unmap`.
+- **`mapRequest` and `mapOptions` always work on a mapped operation**, because they cannot change
+  what the step receives.
+- **`mapResponse` works when the new result fits.** The new result type must be assignable to the
+  current response's result type, and not `any`, which proves nothing. So a same-shape replace, a
+  removal or a stricter schema for the same shape compiles, and the step keeps running. That is what
+  keeps a recognized outcome a failure: a `mapEffect` that fails on a 404 still fails after that
+  case is replaced with the same shape.
+- **Anything else is a compile error**, whose last line starts with the instruction to use
+  `Operation.unmap`. That covers a new shape and a new case whose result does not fit. The check
+  compares with the current response, so widening back after narrowing needs `Operation.unmap` as
+  well.
+- **`Operation.unmap` removes every step**, and the operation returns what its response decodes.
+  Together with `Operation.map` it reaches any response, so the fit check blocks nothing.
+
+The check is compile-time only. A cast gets past it, and the step then receives a shape it was not
+written for, as with any cast. A step applies to the whole result: a conversion that belongs to one
+case goes in that case's decoder with `Body.map`, and a replace takes it with the case.
 
 ### Error and service types
 
