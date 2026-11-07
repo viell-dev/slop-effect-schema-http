@@ -95,11 +95,16 @@ export interface Options<
    * Applied after request preparation, suitable for fresh credentials or URL-dependent signatures.
    * Run a signer after other request edits it must cover. Native status filters can reject responses
    * before the declared response contract sees them.
+   * `attempt` starts at `1` and matches the `http.attempt` log annotation. A function with an optional
+   * second parameter of its own receives the number there, so wrap one in an arrow function.
    * Appending native URL parameters can reserialize the entire query as form data, changing bare keys and
    * escapes. Prefer Request query combinators, or preserve the query text when editing the URL directly.
    */
   readonly transformClient?:
-    | ((client: HttpClient.HttpClient) => HttpClient.HttpClient.With<E, R>)
+    | ((
+        client: HttpClient.HttpClient,
+        attempt: number,
+      ) => HttpClient.HttpClient.With<E, R>)
     | undefined;
 }
 
@@ -198,7 +203,8 @@ export const make = <
             > =
               options?.transformClient === undefined
                 ? HttpClient.withScope(client).execute
-                : HttpClient.withScope(options.transformClient(client)).execute;
+                : HttpClient.withScope(options.transformClient(client, attempt))
+                    .execute;
             // A fresh request identity keeps the scoped abort controller of this attempt separate.
             const received = yield* send(
               HttpClientRequest.setHeaders(prepared, {}),

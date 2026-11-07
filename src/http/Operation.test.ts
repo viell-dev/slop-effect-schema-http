@@ -2243,6 +2243,236 @@ describe("Operation with a base URL from an Effect", () => {
   );
 });
 
+/** Options that record the attempt number each call of `transformClient` receives. */
+const noting = () => {
+  const attempts: Array<number> = [];
+  return {
+    attempts,
+    transformClient: (client: HttpClient.HttpClient, attempt: number) => {
+      attempts.push(attempt);
+      return client;
+    },
+  };
+};
+
+/** Middleware that sends how many retries came before this attempt. */
+const countAttempt = (attempt: number) =>
+  HttpClient.mapRequest(
+    HttpClientRequest.setHeader("x-retry-count", String(attempt - 1)),
+  );
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/99
+describe("transformClient and the attempt number", () => {
+  const contract = Response.status(204, Body.empty);
+
+  it.effect("counts each attempt from 1", () =>
+    Effect.gen(function* () {
+      const { attempts, transformClient } = noting();
+      const server = synthetic((_, index) =>
+        index < 2 ? empty(503) : empty(204),
+      );
+      yield* Operation.make(Request.get("https://api.test/"), contract, {
+        policy: retries(5),
+        transformClient,
+      })
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer));
+      expect(attempts).toEqual([1, 2, 3]);
+    }),
+  );
+
+  it.effect("is 1 on a single attempt", () =>
+    Effect.gen(function* () {
+      const { attempts, transformClient } = noting();
+      yield* Operation.make(Request.get("https://api.test/"), contract, {
+        transformClient,
+      })
+        .execute(undefined)
+        .pipe(Effect.provide(synthetic(() => empty(204)).layer));
+      expect(attempts).toEqual([1]);
+    }),
+  );
+
+  it.effect("goes on counting after a timeout", () =>
+    Effect.gen(function* () {
+      const { attempts, transformClient } = noting();
+      const server = synthetic((_, index) =>
+        index === 0 ? Effect.never : empty(204),
+      );
+      const fiber = yield* Operation.make(
+        Request.get("https://api.test/"),
+        contract,
+        {
+          policy: Policy.make(Schedule.recurs(1), {
+            attemptTimeout: "1 second",
+          }),
+          transformClient,
+        },
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer), Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(fiber);
+      expect(attempts).toEqual([1, 2]);
+      expect(server.exchanges).toHaveLength(2);
+    }),
+  );
+
+  it.effect("goes on counting after a transport failure", () =>
+    Effect.gen(function* () {
+      const { attempts, transformClient } = noting();
+      const server = synthetic((exchange, index) =>
+        index === 0
+          ? Effect.fail(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({
+                  request: exchange.request,
+                }),
+              }),
+            )
+          : empty(204),
+      );
+      yield* Operation.make(Request.get("https://api.test/"), contract, {
+        policy: retries(1),
+        transformClient,
+      })
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer));
+      expect(attempts).toEqual([1, 2]);
+    }),
+  );
+
+  it.effect("starts again at 1 on each evaluation", () =>
+    Effect.gen(function* () {
+      const { attempts, transformClient } = noting();
+      const operation = Operation.make(
+        Request.get("https://api.test/"),
+        contract,
+        { transformClient },
+      );
+      const server = synthetic(() => empty(204));
+      yield* operation.execute(undefined).pipe(Effect.provide(server.layer));
+      yield* operation.execute(undefined).pipe(Effect.provide(server.layer));
+      expect(attempts).toEqual([1, 1]);
+    }),
+  );
+
+  it.effect("matches the http.attempt log annotation", () =>
+    Effect.gen(function* () {
+      const { attempts, transformClient } = noting();
+      const log = recording();
+      const server = synthetic((_, index) =>
+        index === 0 ? Effect.never : empty(204),
+      );
+      const fiber = yield* Operation.make(
+        Request.get("https://api.test/"),
+        contract,
+        {
+          policy: Policy.make(Schedule.recurs(1), {
+            attemptTimeout: "1 second",
+          }),
+          transformClient,
+        },
+      )
+        .execute(undefined)
+        .pipe(
+          Effect.provide(server.layer),
+          Effect.provide(log.layer),
+          Effect.provideService(References.MinimumLogLevel, "Debug"),
+          Effect.forkChild,
+        );
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(fiber);
+      expect(
+        log.records
+          .filter(({ message }) => message === "HTTP attempt started")
+          .map(({ annotations }) => annotations["http.attempt"]),
+      ).toEqual(attempts);
+    }),
+  );
+
+  it.effect("moves to the next server on a retry", () =>
+    Effect.gen(function* () {
+      const servers = ["https://eu.test", "https://ap.test"];
+      const onServer = (attempt: number) =>
+        HttpClient.mapRequest(
+          HttpClientRequest.prependUrl(
+            servers[(attempt - 1) % servers.length]!,
+          ),
+        );
+      const server = synthetic((exchange) =>
+        exchange.url.startsWith("https://ap.test") ? empty(204) : empty(503),
+      );
+      yield* Operation.make(Request.get("/things"), contract, {
+        policy: retries(1),
+        transformClient: (client, attempt) => onServer(attempt)(client),
+      })
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer));
+      expect(server.exchanges.map(({ url }) => url)).toEqual([
+        "https://eu.test/things",
+        "https://ap.test/things",
+      ]);
+    }),
+  );
+
+  it.effect("adds a retry-count header without touching the request", () =>
+    Effect.gen(function* () {
+      const server = synthetic((_, index) =>
+        index === 0 ? empty(503) : empty(204),
+      );
+      yield* Operation.make(Request.get("https://api.test/"), contract, {
+        policy: retries(1),
+        transformClient: (client, attempt) => countAttempt(attempt)(client),
+      })
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer));
+      expect(
+        server.exchanges.map(({ request }) => request.headers["x-retry-count"]),
+      ).toEqual(["0", "1"]);
+    }),
+  );
+
+  it("keeps taking a function of the client alone", () => {
+    void Operation.make(Request.get("/"), contract, {
+      transformClient: HttpClient.filterStatusOk,
+    });
+    void Operation.make(Request.get("/"), contract, {
+      transformClient: (client) => client,
+    });
+    void Operation.make(Request.get("/"), contract, {
+      // @ts-expect-error: the attempt number is a number
+      transformClient: (client: HttpClient.HttpClient, attempt: string) => {
+        void attempt;
+        return client;
+      },
+    });
+  });
+
+  // It compiles with or without the attempt number, so only the arrow function keeps the default.
+  it.effect("gives a function's own second parameter the number", () =>
+    Effect.gen(function* () {
+      const limits: Array<number> = [];
+      const limited = (client: HttpClient.HttpClient, limit = 10) => {
+        limits.push(limit);
+        return client;
+      };
+      const server = synthetic(() => empty(204));
+      yield* Operation.make(Request.get("https://api.test/"), contract, {
+        transformClient: limited,
+      })
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer));
+      yield* Operation.make(Request.get("https://api.test/"), contract, {
+        transformClient: (client) => limited(client),
+      })
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer));
+      expect(limits).toEqual([1, 10]);
+    }),
+  );
+});
+
 describe("Operation URL composition", () => {
   const contract = Response.status(204, Body.empty);
 
