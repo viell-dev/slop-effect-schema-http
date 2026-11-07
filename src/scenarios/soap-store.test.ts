@@ -1501,7 +1501,7 @@ describe(`soap-store (${lane.name})`, () => {
 
     for (const [client, layer] of lane.clients)
       it.live(
-        `[QRY-1] currently, client middleware that appends a URL parameter re-serialises the query and ?wsdl becomes ?wsdl= (#24); editing the URL text keeps it (${client})`,
+        `[QRY-1] client middleware that appends a URL parameter re-serialises the query and ?wsdl becomes ?wsdl=; editing the URL text keeps it (${client})`,
         () =>
           Effect.gen(function* () {
             const backend = yield* start();
