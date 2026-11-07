@@ -20,6 +20,7 @@ import {
 import { HttpClientRequest, UrlParams } from "effect/http";
 import { bodyText } from "../../test/support.js";
 import * as Body from "./Body.js";
+import * as Excess from "./internal/excess.js";
 import * as Request from "./Request.js";
 import * as UrlEncoding from "./UrlEncoding.js";
 
@@ -5741,22 +5742,59 @@ describe("a caller's field under a union", () => {
           }),
       );
 
-      it.effect("is lost if a schema only allows its name", () =>
+      it.effect("is taken under its encoded name, in either order", () =>
         Effect.gen(function* () {
           const Either = Schema.Union([
             Schema.Struct({ a: text }),
             Schema.Struct({ k: text }),
           ]);
-          // Read on the decoded side this takes nothing, although `k` is its name on the wire.
-          const Allows = Schema.Struct({ b: Schema.optionalKey(text) }).pipe(
+          const Renamed = Schema.Struct({ b: Schema.optionalKey(text) }).pipe(
             Schema.encodeKeys({ b: "k" }),
           );
           const query = { a: "1", k: "2" };
+          expect(yield* urlOf(stacked(Either, Renamed), { query })).toBe(
+            "/x?a=1&k=2",
+          );
+          expect(yield* urlOf(stacked(Renamed, Either), { query })).toBe(
+            "/x?k=2&a=1",
+          );
+        }),
+      );
+
+      it.effect("is taken if a union writes it under another name", () =>
+        Effect.gen(function* () {
+          const Moved = Schema.Union([
+            Schema.Struct({ b: text }).pipe(Schema.encodeKeys({ b: "B" })),
+            Schema.Struct({ c: text }),
+          ]);
+          const query = { a: "x", b: "y" };
+          expect(yield* urlOf(stacked(Apart, Moved), { query })).toBe(
+            "/x?a=x&B=y",
+          );
+          expect(yield* urlOf(stacked(Moved, Apart), { query })).toBe(
+            "/x?B=y&a=x",
+          );
+        }),
+      );
+
+      it.effect("is lost if a schema only allows its name", () =>
+        Effect.gen(function* () {
+          // Names compare without case, so this allows `x-b`, but it reads the key `X-B`.
+          const Allows = Schema.Struct({ "X-B": Schema.optionalKey(text) });
+          const headers = { "x-a": "1", "x-b": "2" };
           for (const request of [
-            stacked(Either, Allows),
-            stacked(Allows, Either),
+            Request.get("/x").pipe(
+              Request.headers(ApartHeaders),
+              Request.headers(Allows),
+            ),
+            Request.get("/x").pipe(
+              Request.headers(Allows),
+              Request.headers(ApartHeaders),
+            ),
           ])
-            expect(yield* schemaFailure(request, { query })).toContain('["k"]');
+            expect(yield* schemaFailure(request, { headers })).toContain(
+              '["x-b"]',
+            );
         }),
       );
 
@@ -6607,6 +6645,486 @@ describe("a caller's field under a union", () => {
       }),
     );
   });
+});
+
+describe("a field outside a value's keys", () => {
+  const text = Schema.String;
+  const NarrowFirst = Schema.Union([
+    Schema.Struct({ id: text }),
+    Schema.Struct({ id: text, name: text }),
+  ]);
+  const Apart = Schema.Union([
+    Schema.Struct({ id: text }),
+    Schema.Struct({ name: text }),
+  ]);
+  class Person {
+    readonly id = "1";
+    get name() {
+      return "ada";
+    }
+  }
+  const posted = <
+    S extends Schema.Top & {
+      readonly DecodingServices: never;
+      readonly EncodingServices: never;
+    },
+  >(
+    schema: S,
+  ) => Request.post("/x").pipe(Request.body(Body.jsonSchema(schema)));
+  const sent = <I, E>(request: Request.Request<I, E>, input: I) =>
+    Effect.map(compile(request, input), ({ request: compiled }) =>
+      bodyText(compiled),
+    );
+
+  it.effect("keeps an accessor on a class, under a union", () =>
+    Effect.gen(function* () {
+      expect(yield* sent(posted(NarrowFirst), { body: new Person() })).toBe(
+        '{"id":"1","name":"ada"}',
+      );
+    }),
+  );
+
+  it.effect("keeps it at any depth", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* sent(posted(Schema.Struct({ who: NarrowFirst })), {
+          body: { who: new Person() },
+        }),
+      ).toBe('{"who":{"id":"1","name":"ada"}}');
+      expect(
+        yield* sent(posted(Schema.Array(NarrowFirst)), {
+          body: [new Person()],
+        }),
+      ).toBe('[{"id":"1","name":"ada"}]');
+    }),
+  );
+
+  it.effect("keeps it by its encoded name", () =>
+    Effect.gen(function* () {
+      class Wire {
+        get A() {
+          return "x";
+        }
+      }
+      const Renamed = Schema.Struct({ a: Schema.optionalKey(text) }).pipe(
+        Schema.encodeKeys({ a: "A" }),
+      );
+      expect(yield* sent(posted(Renamed), { body: new Wire() })).toBe(
+        '{"A":"x"}',
+      );
+    }),
+  );
+
+  it.effect("keeps an inherited field and a hidden one", () =>
+    Effect.gen(function* () {
+      const inherited: { readonly id: string; readonly name: string } =
+        Object.create(
+          { name: "ada" },
+          {
+            id: { value: "1", enumerable: true },
+          },
+        );
+      expect(yield* sent(posted(NarrowFirst), { body: inherited })).toBe(
+        '{"id":"1","name":"ada"}',
+      );
+      const hidden: { readonly id: string; readonly name: string } =
+        Object.defineProperty({ id: "1" }, "name", { value: "ada" }) as never;
+      expect(yield* sent(posted(NarrowFirst), { body: hidden })).toBe(
+        '{"id":"1","name":"ada"}',
+      );
+    }),
+  );
+
+  it.effect("is refused if no member holds it with the rest", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* schemaFailure(posted(Apart), { body: new Person() }),
+      ).toContain('["name"]');
+    }),
+  );
+
+  it.effect("is not taken by a stacked schema that does not state it", () =>
+    Effect.gen(function* () {
+      class Group {
+        readonly a = "1";
+        readonly b = "2";
+        readonly c = "3";
+      }
+      const Either = Schema.Union([
+        Schema.Struct({ a: text }),
+        Schema.Struct({ b: text }),
+      ]);
+      const Other = Schema.Struct({ c: text });
+      for (const request of [stacked(Either, Other), stacked(Other, Either)])
+        expect(yield* schemaFailure(request, { query: new Group() })).toContain(
+          '["b"]',
+        );
+    }),
+  );
+
+  it.effect("keeps it on a plain struct, field by field", () =>
+    Effect.gen(function* () {
+      // One field on each side, so neither side reads the whole value.
+      class Mixed {
+        get a() {
+          return 1;
+        }
+        get b() {
+          return "2";
+        }
+      }
+      const Counts = Schema.Struct({
+        a: Schema.optionalKey(Schema.FiniteFromString),
+        b: Schema.optionalKey(Schema.FiniteFromString),
+      });
+      expect(Excess.choosing(Counts.ast)).toBe(false);
+      expect(yield* sent(posted(Counts), { body: new Mixed() })).toBe(
+        '{"a":"1","b":"2"}',
+      );
+    }),
+  );
+
+  it.effect("keeps it inside an instance a declaration could read", () =>
+    Effect.gen(function* () {
+      class Thing extends Schema.Class<Thing>("OutsideKeysDeclared")({
+        who: Schema.optionalKey(NarrowFirst),
+      }) {}
+      const Either = Schema.Union([Thing, Schema.Struct({ other: text })]);
+      class Wrapper {
+        readonly who = new Person();
+      }
+      expect(yield* sent(posted(Either), { body: new Wrapper() })).toBe(
+        '{"who":{"id":"1","name":"ada"}}',
+      );
+    }),
+  );
+
+  it.effect("compares an instance a class could read as well", () =>
+    Effect.gen(function* () {
+      class Thing extends Schema.Class<Thing>("OutsideKeysCompared")({
+        a: Schema.optionalKey(Schema.FiniteFromString),
+        b: Schema.optionalKey(Schema.FiniteFromString),
+      }) {}
+      // The list as a whole fits no side, and this member's encoded side would strip it all. The
+      // types refuse a mix inside a list, so it comes in a wider value.
+      const Either = Schema.Union([
+        Thing,
+        Schema.Struct({ z: Schema.optionalKey(text) }).pipe(
+          Schema.encodeKeys({ z: "Z" }),
+        ),
+      ]);
+      class Mixed {
+        readonly a = 1;
+        readonly b = "2";
+      }
+      expect(
+        yield* schemaFailure(posted(Schema.Array(Either)), {
+          body: [new Mixed() as never],
+        }),
+      ).toContain('[0]["a"]');
+    }),
+  );
+
+  it.effect("strips a key of a class instance that nothing states", () =>
+    Effect.gen(function* () {
+      class Wider {
+        readonly id = "1";
+        readonly extra = "z";
+      }
+      expect(yield* sent(posted(NarrowFirst), { body: new Wider() })).toBe(
+        '{"id":"1"}',
+      );
+      class Renaming {
+        readonly A = "x";
+        readonly extra = "z";
+      }
+      const Renamed = Schema.Struct({ a: Schema.optionalKey(text) }).pipe(
+        Schema.encodeKeys({ a: "A" }),
+      );
+      expect(yield* sent(posted(Renamed), { body: new Renaming() })).toBe(
+        '{"A":"x"}',
+      );
+    }),
+  );
+
+  it.effect("leaves a class instance the schema states as it is", () =>
+    Effect.gen(function* () {
+      class Thing extends Schema.Class<Thing>("OutsideKeysThing")({
+        id: text,
+      }) {}
+      const Either = Schema.Union([Thing, Schema.Struct({ name: text })]);
+      expect(
+        yield* sent(posted(Either), { body: new Thing({ id: "1" }) }),
+      ).toBe('{"id":"1"}');
+    }),
+  );
+});
+
+describe("a value on the encoded side stays there", () => {
+  const text = Schema.String;
+  const Renamed = Schema.Struct({ a: Schema.optionalKey(text) }).pipe(
+    Schema.encodeKeys({ a: "A" }),
+  );
+  const reshaped = <E, T>(
+    from: Schema.Codec<E, E>,
+    to: Schema.Codec<T, T>,
+    decode: (value: E) => T,
+    encode: (value: T) => E,
+  ) =>
+    from.pipe(
+      Schema.decodeTo(to, SchemaTransformation.transform({ decode, encode })),
+    );
+  const sent = <
+    S extends Schema.Top & {
+      readonly DecodingServices: never;
+      readonly EncodingServices: never;
+    },
+  >(
+    schema: S,
+    body: Request.Input<S>,
+  ) =>
+    Effect.map(
+      compile(Request.post("/x").pipe(Request.body(Body.jsonSchema(schema))), {
+        body,
+      }),
+      ({ request }) => bodyText(request),
+    );
+
+  it.effect("keeps an optional field given by its encoded name", () =>
+    Effect.gen(function* () {
+      const request = queried(Renamed);
+      expect(yield* urlOf(request, { query: { A: "x" } })).toBe("/x?A=x");
+      expect(yield* urlOf(request, { query: { a: "x" } })).toBe("/x?A=x");
+      expect(yield* urlOf(request, { query: {} })).toBe("/x");
+    }),
+  );
+
+  it.effect("keeps it beside a field with one name", () =>
+    Effect.gen(function* () {
+      const Wider = Schema.Struct({
+        a: Schema.optionalKey(text),
+        b: Schema.optionalKey(text),
+      }).pipe(Schema.encodeKeys({ a: "A" }));
+      expect(yield* urlOf(queried(Wider), { query: { A: "x", b: "y" } })).toBe(
+        "/x?A=x&b=y",
+      );
+    }),
+  );
+
+  it.effect("keeps it in headers", () =>
+    Effect.gen(function* () {
+      const Named = Schema.Struct({ "x-a": Schema.optionalKey(text) }).pipe(
+        Schema.encodeKeys({ "x-a": "x-wire" }),
+      );
+      expect(
+        yield* linesOf(Request.get("/x").pipe(Request.headers(Named)), {
+          headers: { "x-wire": "1" },
+        }),
+      ).toEqual([["x-wire", "1"]]);
+    }),
+  );
+
+  it.effect("keeps it at any depth, and in a class's field", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* sent(Schema.Struct({ f: Renamed }), { f: { A: "x" } }),
+      ).toBe('{"f":{"A":"x"}}');
+      expect(yield* sent(Schema.Array(Renamed), [{ A: "x" }])).toBe(
+        '[{"A":"x"}]',
+      );
+      class Held extends Schema.Class<Held>("HeldRenamed")({ f: Renamed }) {}
+      expect(yield* sent(Held, { f: { A: "x" } })).toBe('{"f":{"A":"x"}}');
+    }),
+  );
+
+  it.effect("keeps it from a constructor default that would stand in", () =>
+    Effect.gen(function* () {
+      const Defaulted = Schema.Struct({
+        a: text.pipe(Schema.withConstructorDefault(Effect.succeed("d"))),
+      }).pipe(Schema.encodeKeys({ a: "A" }));
+      const request = queried(Defaulted);
+      expect(yield* urlOf(request, { query: { A: "x" } })).toBe("/x?A=x");
+      expect(yield* urlOf(request, { query: {} })).toBe("/x?A=d");
+    }),
+  );
+
+  it.effect("keeps what a transformation between objects renames", () =>
+    Effect.gen(function* () {
+      const Reshaped = reshaped(
+        Schema.Struct({ x: Schema.optionalKey(text) }),
+        Schema.Struct({ y: Schema.optionalKey(text) }),
+        ({ x }) => (x === undefined ? {} : { y: x }),
+        ({ y }) => (y === undefined ? {} : { x: y }),
+      );
+      expect(yield* urlOf(queried(Reshaped), { query: { x: "1" } })).toBe(
+        "/x?x=1",
+      );
+      expect(yield* urlOf(queried(Reshaped), { query: { y: "1" } })).toBe(
+        "/x?x=1",
+      );
+    }),
+  );
+
+  it.effect("keeps a field only the encoded side states", () =>
+    Effect.gen(function* () {
+      const Fewer = reshaped(
+        Schema.Struct({
+          a: Schema.optionalKey(text),
+          b: Schema.optionalKey(text),
+        }),
+        Schema.Struct({ a: Schema.optionalKey(text) }),
+        ({ a, b }) => {
+          const value = a ?? b;
+          return value === undefined ? {} : { a: value };
+        },
+        (value) => value,
+      );
+      expect(yield* urlOf(queried(Fewer), { query: { b: "1" } })).toBe(
+        "/x?a=1",
+      );
+    }),
+  );
+
+  it.effect("keeps a field under a record on the encoded side", () =>
+    Effect.gen(function* () {
+      const FromRecord = reshaped(
+        Schema.Record(text, text),
+        Schema.Struct({ y: Schema.optionalKey(text) }),
+        ({ x }) => (x === undefined ? {} : { y: x }),
+        ({ y }) => (y === undefined ? {} : { x: y }),
+      );
+      expect(yield* urlOf(queried(FromRecord), { query: { x: "1" } })).toBe(
+        "/x?x=1",
+      );
+    }),
+  );
+
+  it.effect("keeps a field under a union on the encoded side", () =>
+    Effect.gen(function* () {
+      const FromEither = reshaped(
+        Schema.Union([Schema.Struct({ x: Schema.optionalKey(text) }), text]),
+        Schema.Struct({ y: Schema.optionalKey(text) }),
+        (value) =>
+          typeof value === "string"
+            ? { y: value }
+            : value.x === undefined
+              ? {}
+              : { y: value.x },
+        ({ y }) => (y === undefined ? {} : { x: y }),
+      );
+      expect(yield* sent(FromEither, { x: "1" })).toBe('{"x":"1"}');
+    }),
+  );
+
+  it.effect("refuses a union in text it cannot read under a wire name", () =>
+    Effect.gen(function* () {
+      const Apart = Schema.Union([
+        Schema.Struct({ a: text }),
+        Schema.Struct({ b: text }),
+      ]);
+      const InText = Schema.Struct({ f: Schema.fromJsonString(Apart) }).pipe(
+        Schema.encodeKeys({ f: "F" }),
+      );
+      const request = queried(InText);
+      const one = '{"a":"1"}';
+      const both = '{"a":"1","b":"2"}';
+      const url = yield* urlOf(request, { query: { F: one } });
+      expect(new URL(url, "http://x.test").searchParams.get("F")).toBe(one);
+      expect(yield* schemaFailure(request, { query: { F: both } })).toContain(
+        '["F"]',
+      );
+    }),
+  );
+
+  it.effect("reads a union under a wire name, and names the field", () =>
+    Effect.gen(function* () {
+      const Apart = Schema.Union([
+        Schema.Struct({ a: text }),
+        Schema.Struct({ b: text }),
+      ]);
+      const Plain = Schema.Struct({ f: Apart }).pipe(
+        Schema.encodeKeys({ f: "F" }),
+      );
+      expect(yield* sent(Plain, { F: { b: "2" } })).toBe('{"F":{"b":"2"}}');
+      expect(
+        yield* schemaFailure(
+          Request.post("/x").pipe(Request.body(Body.jsonSchema(Plain))),
+          { body: { F: { a: "1", b: "2" } } },
+        ),
+      ).toContain('["F"]["b"]');
+    }),
+  );
+
+  it.effect("keeps it inside an Option, and refuses what it cannot read", () =>
+    Effect.gen(function* () {
+      const request = Request.post("/x").pipe(
+        Request.body(
+          Body.jsonSchema(Schema.Struct({ f: Schema.Option(Renamed) })),
+        ),
+      );
+      const { request: compiled } = yield* compile(request, {
+        body: { f: Option.some({ A: "x" }) },
+      });
+      expect(bodyText(compiled)).toContain('"A":"x"');
+      const stray = { A: "x", z: "1" };
+      expect(
+        yield* schemaFailure(request, { body: { f: Option.some(stray) } }),
+      ).toContain('["f"]');
+    }),
+  );
+
+  it.effect("still strips a key neither side states", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(queried(Renamed), { query: { a: "x", stray: "z" } }),
+      ).toBe("/x?A=x");
+      expect(
+        yield* urlOf(queried(Renamed), { query: { A: "x", stray: "z" } }),
+      ).toBe("/x?A=x");
+    }),
+  );
+
+  it.effect("still strips a stray key inside text, as a struct does", () =>
+    Effect.gen(function* () {
+      const InText = Schema.Struct({
+        f: Schema.fromJsonString(Schema.Struct({ g: Renamed })),
+      });
+      const { request } = yield* compile(queried(InText), {
+        query: { f: '{"g":{"A":"x"},"z":"1"}' },
+      });
+      expect(new URL(request.url, "http://x.test").searchParams.get("f")).toBe(
+        '{"g":{"A":"x"}}',
+      );
+    }),
+  );
+
+  it.effect("reads the decoded name beside its encoded twin", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(queried(Renamed), { query: { a: "1", A: "2" } }),
+      ).toBe("/x?A=1");
+    }),
+  );
+
+  it.effect("refuses a value that mixes two renamed fields' names", () =>
+    Effect.gen(function* () {
+      const Both = Schema.Struct({
+        a: Schema.optionalKey(text),
+        b: Schema.optionalKey(text),
+      }).pipe(Schema.encodeKeys({ a: "A", b: "B" }));
+      expect(
+        yield* schemaFailure(queried(Both), { query: { a: "1", B: "2" } }),
+      ).toContain('["B"]');
+    }),
+  );
+
+  it.effect("stays on the plain read for a struct with one set of names", () =>
+    Effect.gen(function* () {
+      const Same = Schema.Struct({ a: Schema.optionalKey(text) });
+      expect(Excess.choosing(Same.ast)).toBe(false);
+      expect(yield* urlOf(queried(Same), { query: { a: "x" } })).toBe("/x?a=x");
+    }),
+  );
 });
 
 describe("a schema states the shape of its group", () => {

@@ -73,9 +73,11 @@ export const toDecoded = <S extends Schema.Top>(
   const decode = Schema.decodeUnknownEffect(contract);
   const byField = Effect.fnUntraced(function* (input: object) {
     const output: Record<PropertyKey, unknown> = { ...input };
+    // A field need not be a key, as an accessor on a class is not, so it comes from `input`.
+    const fields: Record<PropertyKey, unknown> = input as never;
     for (const { name, type } of Excess.fieldsOf(contract.ast))
-      if (output[name] !== undefined)
-        output[name] = yield* fromPart(type, output[name], options);
+      if (fields[name] !== undefined)
+        output[name] = yield* fromPart(type, fields[name], options);
     return yield* make(output);
   });
   const byMember = (input: object) =>
@@ -150,8 +152,9 @@ const stripping = <S extends Schema.Top, A, R>(
  * @remarks
  * Effect takes the first union member that fits and strips what that member does not state, on the
  * decoded side and again when it encodes, so a later member that holds everything would lose to an
- * earlier one that holds part of it. So a schema with such a choice reads what the caller means
- * strictly, through both steps, and a read that passes has stripped nothing.
+ * earlier one that holds part of it. A value on a schema's encoded side can lose to its decoded side
+ * in the same way, where the two state different names. So a schema with either choice reads what
+ * the caller means strictly, through both steps, and a read that passes has stripped nothing.
  *
  * A value that cannot be read that way is read as Effect reads it, and the result is compared with
  * what went in, so what is lost is what actually went, not what a failure suggests would. The write
@@ -202,15 +205,18 @@ export const reader = <S extends Schema.Top, A, R>(
     R | S["DecodingServices"]
   > => {
     const given = Excess.normalised([contract.ast], input);
-    const meant = given as Input<S>;
+    // A strict read cannot see a field outside a value's keys, so no read may start from `input`.
+    const seen = (
+      given === input ? input : Excess.exposed([contract.ast], input)
+    ) as Input<S>;
     return Effect.catch(
       Effect.map(
         given === input
           ? kept(input)
-          : Effect.catch(kept(meant), () => kept(input)),
+          : Effect.catch(kept(given as Input<S>), () => kept(seen)),
         keepsAll,
       ),
-      () => compared(input, given),
+      () => compared(seen, given),
     );
   };
 };

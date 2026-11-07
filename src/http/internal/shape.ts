@@ -94,18 +94,9 @@ const readUnion = (members: ReadonlyArray<Reading>): Reading => {
   };
 };
 
-/**
- * The node a schema's encoding ends at. `toEncoded` gives the same names, but it flattens each
- * field's own encoding away, and that encoding is how {@link writesOptional} reads a field.
- */
-const encodedEnd = (ast: SchemaAST.AST): SchemaAST.AST => {
-  const last = ast.encoding?.at(-1);
-  return last === undefined ? ast : encodedEnd(last.to);
-};
-
 /** Read a schema's encoded side. Where names cannot be read, the schema allows any name. */
 const read = (ast: SchemaAST.AST): Reading => {
-  const end = encodedEnd(ast);
+  const end = Excess.encodedEnd(ast);
   return end._tag === "Objects"
     ? readObjects(end)
     : end._tag === "Union"
@@ -330,15 +321,13 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
   );
   const decode = Schema.decodeUnknownEffect(contract);
   const encode = Schema.encodeEffect(contract);
-  const chooses = Excess.choosing(contract.ast);
+  const chooses = Excess.choosesMember(contract.ast);
   const shape: Shape = {
     names: new Set(spelling.keys()),
     open: reading.open,
     required: new Set(Array.from(reading.required, fold)),
     chooses,
   };
-  // A member a union did not take states a name it does not hold, so a union goes by what it wrote.
-  const held = chooses ? [] : Excess.decodedNames(contract.ast);
   /**
    * The caller's fields this schema took: what it wrote, and any it states and the caller gave,
    * which may be written under another name or not at all. What it would lose is not among them.
@@ -351,12 +340,7 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
     new Set(
       [
         ...writtenNames(output),
-        ...held.filter(
-          (name) =>
-            typeof input === "object" &&
-            input !== null &&
-            (input as Record<string, unknown>)[name] !== undefined,
-        ),
+        ...Excess.statedFields(contract.ast, input),
       ].filter((name) => !losing.some(([key]) => key === name)),
     );
   const settle = <W extends object, A>(

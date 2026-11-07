@@ -80,7 +80,8 @@ export type QueryFields = Readonly<
  * A value that fits the decoded side is read as decoded. Under a schema whose two sides share a
  * type, such as one from text to text, an already encoded value fits the decoded side, so it is
  * encoded again, with no error. A mix is one level deep in the type. Renamed fields take their
- * encoded names only when the whole value is on the encoded side.
+ * encoded names only when the whole value is on the encoded side, and a value on that side stays
+ * there, even if it would fit the decoded side by losing them.
  *
  * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that

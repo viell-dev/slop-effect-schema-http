@@ -32,9 +32,132 @@ describe("Excess.choosing", () => {
     expect(Excess.choosing(Either.ast)).toBe(true);
     expect(Excess.choosing(text.ast)).toBe(false);
   });
+
+  it("sees a choice of side as well as a choice of member", () => {
+    const Named = Schema.Struct({ a: text });
+    const Renamed = Named.pipe(Schema.encodeKeys({ a: "A" }));
+    class Same extends Schema.Class<Same>("SameNames")({ a: text }) {}
+    expect(Excess.choosing(Renamed.ast)).toBe(true);
+    expect(Excess.choosing(Schema.Struct({ f: Renamed }).ast)).toBe(true);
+    expect(Excess.choosing(Same.ast)).toBe(false);
+    expect(Excess.choosing(Schema.fromJsonString(Named).ast)).toBe(false);
+  });
+
+  it("tells a choice of member from a choice of side", () => {
+    const Renamed = Schema.Struct({ a: text }).pipe(
+      Schema.encodeKeys({ a: "A" }),
+    );
+    expect(Excess.choosesMember(Renamed.ast)).toBe(false);
+    expect(Excess.choosesMember(Either.ast)).toBe(true);
+  });
+});
+
+describe("Excess.exposed", () => {
+  class Wide {
+    readonly a = "x";
+    get b() {
+      return "y";
+    }
+  }
+
+  it("returns the value itself if nothing is outside its keys", () => {
+    const value = { a: "x", stray: "z", b: undefined };
+    expect(Excess.exposed([Either.ast], value)).toBe(value);
+  });
+
+  it("brings out a field and leaves the rest as it was given", () => {
+    expect(Excess.exposed([Either.ast], new Wide())).toEqual({
+      a: "x",
+      b: "y",
+    });
+  });
+
+  it("leaves a key a normalised value would lose", () => {
+    const value = { a: "x", stray: "z", held: new Wide() };
+    expect(
+      Excess.exposed([Schema.Struct({ a: text, held: Either }).ast], value),
+    ).toEqual({ a: "x", stray: "z", held: { a: "x", b: "y" } });
+  });
+});
+
+describe("Excess.statedFields", () => {
+  it("takes the fields of a group under either name", () => {
+    const Renamed = Schema.Struct({ a: text }).pipe(
+      Schema.encodeKeys({ a: "A" }),
+    );
+    expect(
+      Excess.statedFields(Renamed.ast, {
+        a: "1",
+        A: "2",
+        z: "3",
+        b: undefined,
+      }),
+    ).toEqual(["a", "A"]);
+  });
+
+  it("takes a field outside the keys, and no key the schema does not state", () => {
+    class Wide {
+      readonly a = "x";
+      readonly stray = "z";
+      get b() {
+        return "y";
+      }
+    }
+    expect(Excess.statedFields(Either.ast, new Wide())).toEqual(["a", "b"]);
+  });
+
+  it("takes any key of a record", () => {
+    const Open = Schema.Record(text, text);
+    expect(Excess.statedFields(Open.ast, { a: "1" })).toEqual(["a"]);
+  });
+
+  it("finds no fields in a list or in text", () => {
+    const Pairs = Schema.Array(Schema.Tuple([text, text]));
+    expect(Excess.statedFields(Pairs.ast, [["a", "1"]])).toEqual([]);
+    expect(Excess.statedFields(text.ast, "a")).toEqual([]);
+  });
 });
 
 describe("Excess.normalised", () => {
+  it("leaves an instance a declaration or an open schema may need", () => {
+    const moment = new Date(0);
+    const Moment = Schema.Union([
+      Schema.Struct({ a: text, when: Schema.Unknown }),
+      Schema.Struct({ b: text, when: Schema.Date }),
+    ]);
+    const value = { a: "x", when: moment };
+    expect(Excess.normalised([Moment.ast], value)).toBe(value);
+  });
+
+  it("keeps the keys of an instance a declaration may need", () => {
+    class Foo {
+      readonly x = "1";
+    }
+    const Either = Schema.Union([
+      Schema.instanceOf(Foo),
+      Schema.Struct({ a: Schema.optionalKey(text) }),
+    ]);
+    const value = new Foo();
+    expect(Excess.normalised([Either.ast], value)).toBe(value);
+  });
+
+  it("reads a class instance only a struct can read as a plain object", () => {
+    class Wide {
+      readonly a = "x";
+      readonly stray = "z";
+    }
+    expect(Excess.normalised([Either.ast], new Wide())).toEqual({ a: "x" });
+  });
+
+  it("does not take an object's prototype for a field", () => {
+    const Named = Schema.Union([
+      Schema.Struct({ ["__proto__"]: Schema.optionalKey(text) }),
+      Schema.Struct({ a: text }),
+    ]);
+    const value = { a: "x" };
+    expect(Excess.normalised([Named.ast], value)).toBe(value);
+  });
+
   it("returns the value itself if there is nothing to take out", () => {
     const value = { a: "x", b: "y" };
     expect(read(value)).toBe(value);
