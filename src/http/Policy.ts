@@ -59,6 +59,10 @@ const isTransientError = (error: unknown): boolean =>
  * The statuses are 408, 429, 500, 502, 503 and 504, matching Effect's transient classification.
  * A declared response with one of these statuses is eligible even when decoding succeeded.
  * This does not check the method or whether repeating a remote action is safe.
+ *
+ * It reads what the client reports, and clients differ. A body cut off after its headers is a
+ * decoding failure through `fetch`, which is not eligible, and a transport failure through a client
+ * that reads the whole response first, which is.
  */
 export const transient = (reason: Reason): boolean => {
   if (
@@ -107,6 +111,10 @@ export const make = <Out, E = never, R = never>(
 
 /**
  * One attempt, with no retry and no library-imposed timeout.
+ *
+ * @remarks
+ * This is one attempt by the library, not one send. A client can send a request again by itself, as
+ * Chromium does, a POST included, when a reused connection ends with no response.
  */
 export const none: Policy = make(Schedule.recurs(0));
 
