@@ -9,7 +9,14 @@ import { connect, type AddressInfo } from "node:net";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schedule } from "effect";
 import { proxyMiddleware } from "./proxy.js";
-import { type Reply, serve } from "./server.js";
+import {
+  chunk as chunkOf,
+  lastChunk,
+  noReply,
+  rawHead,
+  truncated,
+} from "./route.js";
+import { type RawReply, type Reply, serve } from "./server.js";
 
 /** The proxy mounted in a plain Node server, as the browser server mounts it. */
 const proxyServer = Effect.acquireRelease(
@@ -91,6 +98,31 @@ const exchange = (port: number, request: string) =>
 
 const names = (lines: RawResponse["lines"]) =>
   lines.map(([name]) => name.toLowerCase());
+
+/** Every byte the proxy wrote, however the connection ended, failing if it never ends. */
+const everything = (port: number, target: string) =>
+  Effect.promise(
+    () =>
+      new Promise<string>((resolve) => {
+        const socket = connect(port, "127.0.0.1", () =>
+          socket.write(
+            [
+              `GET /__proxy/${target} HTTP/1.1`,
+              `Host: localhost:${port}`,
+              "Connection: close",
+              "",
+              "",
+            ].join("\r\n"),
+          ),
+        );
+        const chunks: Array<Buffer> = [];
+        socket.on("data", (data: Buffer) => chunks.push(data));
+        socket.on("error", () => undefined);
+        socket.on("close", () =>
+          resolve(Buffer.concat(chunks).toString("latin1")),
+        );
+      }),
+  ).pipe(Effect.timeout("2 seconds"));
 
 describe("same-origin proxy", () => {
   it.live(
@@ -284,6 +316,53 @@ describe("same-origin proxy", () => {
           }),
         );
         expect(aborted).toBe(true);
+      }),
+  );
+
+  const plain = [["Content-Type", "text/plain"]] as const;
+
+  for (const [what, reply, ending] of [
+    [
+      "a body cut short",
+      truncated(200, plain, "hello world", 5),
+      /\r\n\r\nhello$/,
+    ],
+    [
+      "a chunk with a bad terminator",
+      {
+        head: rawHead(200, [...plain, ["Transfer-Encoding", "chunked"]]),
+        body: [chunkOf("hello", "XX"), chunkOf("world"), lastChunk],
+      },
+      /\r\n\r\n(?:5\r\nhello\r\n)?$/,
+    ],
+  ] as const satisfies ReadonlyArray<readonly [string, RawReply, RegExp]>)
+    it.live(
+      `${what} after a head ends the page's connection unfinished, and the head has passed`,
+      () =>
+        Effect.gen(function* () {
+          const proxy = yield* proxyServer;
+          const backend = yield* serve(() => reply);
+          const seen = yield* everything(
+            proxy.port,
+            `${new URL(backend.origin).host}/`,
+          );
+          expect(seen).toMatch(/^HTTP\/1\.1 200 OK\r\n/);
+          expect(seen).toMatch(ending);
+        }),
+    );
+
+  it.live(
+    "a backend that closes with no response is a 502, because the page's connection has an answer to give",
+    () =>
+      Effect.gen(function* () {
+        const proxy = yield* proxyServer;
+        const backend = yield* serve(() => noReply());
+        const seen = yield* everything(
+          proxy.port,
+          `${new URL(backend.origin).host}/`,
+        );
+        expect(seen).toMatch(/^HTTP\/1\.1 502 Bad Gateway\r\n/);
+        expect(backend.ledger).toHaveLength(1);
       }),
   );
 });

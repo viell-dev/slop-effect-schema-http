@@ -38,6 +38,17 @@ export interface Recorded {
   readonly body: Uint8Array;
   /** Whether the client had closed the connection before the reply ended, when the ledger was read. */
   readonly aborted: boolean;
+  /**
+   * The connection this request arrived on, numbered from 1 for each backend, so two requests with
+   * one number shared a connection. In the browser lane a preflight the harness answers takes a
+   * number too, though it is left out of the ledger, so numbers need not be consecutive.
+   */
+  readonly connection: number;
+  /**
+   * Whether that connection was still open when the ledger was read, whichever side closed it. A
+   * server learns of a client's close when the socket does, so read the ledger until it shows.
+   */
+  readonly connectionOpen: boolean;
 }
 
 export interface Backend {

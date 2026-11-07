@@ -266,6 +266,8 @@ describe("harness", () => {
             ],
             body: btoa(partial),
             aborted: true,
+            connection: 1,
+            connectionOpen: false,
           },
         ]);
         expect(rejections.seen).toEqual([]);
