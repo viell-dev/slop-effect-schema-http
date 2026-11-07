@@ -87,8 +87,8 @@ export type QueryFields = Readonly<
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that
  * names it, because the types allow that value and any member would lose a field the schema states.
  * A key no member states is stripped, as a struct strips it, and so is a key the tag has ruled out.
- * A key set to `undefined` is no field. In a header or query group, a field a schema stacked with the
- * union takes is not lost.
+ * A key set to `undefined` is no field, and an accessor on a class is one, as it is to a struct. In a
+ * header or query group, a field a schema stacked with the union takes is not lost.
  */
 export type Input<S extends Schema.Top> = Inputs.Input<S>;
 

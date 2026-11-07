@@ -372,6 +372,28 @@ Under such a schema, pass the decoded value. Where a group has other fields, a g
 on the encoded side goes through the decoder as a whole, so `{ token: "aGVsbG8=", limit: "5" }`
 reads `token` as encoded.
 
+#### When the two sides state different names
+
+A value on the encoded side stays there, even if it would fit the decoded side by losing names, so a
+renamed optional field keeps its value and a constructor default does not take its place:
+
+```ts
+import { Schema } from "effect";
+import { Request } from "viell-effect-schema-http";
+
+const Renamed = Schema.Struct({ a: Schema.optionalKey(Schema.String) }).pipe(
+  Schema.encodeKeys({ a: "A" }),
+);
+const search = Request.get("https://api.example.test/things").pipe(
+  Request.query(Renamed),
+);
+// Input: { query: { A: "x" } }; URL query: ?A=x
+```
+
+This applies at any depth and to a transformation between objects. A value takes its names from one
+side, so `{ a: "x", B: "y" }`, which mixes the names of two renamed fields, is a `SchemaError` that
+names `B`.
+
 #### Under a union
 
 Effect takes the first union member that fits and strips what that member does not state. An input
@@ -399,10 +421,15 @@ schema states. Add a member that holds both, or send one of them.
 A key no member states is stripped, as a struct strips it. So is a key only a member with another
 tag states: where only the `"a"` member has `x`, `{ kind: "b", x }` goes out as `{ kind: "b" }`. The
 types refuse both of these in a literal. A key set to `undefined` is no field, so
-`{ a, b: undefined, c }` reads as `{ a, c }`.
+`{ a, b: undefined, c }` reads as `{ a, c }`. A field need not be a key: an accessor on a class and
+an inherited field count, as they do for a struct, and a class instance only a struct can read reads
+as a plain object.
 
 Text that holds JSON, a `Map` and an `Option` cannot be compared with what came out, so a value
-inside one has to read strictly. There even a key no member states is a `SchemaError`.
+inside one has to read strictly. There even a key no member states is a `SchemaError`. The same goes
+for text under a field's wire name, where the field holds a union, and for a `Map` or an `Option` of
+a renamed struct. An accessor on a value inside a `Map` or an `Option` can still be lost, because a
+strict read does not see it. Use a plain value there.
 
 Stacked schemas read one input, and a field stays with the schema that took it. A union takes a
 sibling's field for a key it does not state, and a field it would lose is not lost if a stacked

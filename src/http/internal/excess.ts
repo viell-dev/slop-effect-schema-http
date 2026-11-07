@@ -96,7 +96,7 @@ export const fieldsOf = (
 const isObject = (value: unknown): value is Record<PropertyKey, unknown> =>
   typeof value === "object" && value !== null;
 
-/** A plain object or a list, which can be taken apart. A class instance has to stay one. */
+/** A plain object or a list, which can be taken apart. A class instance needs a reason to be. */
 const isPlain = (value: unknown): value is Record<PropertyKey, unknown> => {
   if (!isObject(value)) return false;
   if (Array.isArray(value)) return true;
@@ -348,7 +348,7 @@ export const missing = (
 };
 
 const notHeld = new SchemaIssue.InvalidValue({
-  message: "No union member holds this field with the rest of the value",
+  message: "The schema cannot keep this field with the rest of the value",
 });
 
 /** A refusal that names the fields and, like any other schema failure here, leaves out values. */

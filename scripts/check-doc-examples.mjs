@@ -132,7 +132,7 @@ const skippedFences = {
   // The 0.1 side of each before-and-after. That API is gone, so this code cannot compile.
   "docs/release-notes/0.2.md: ts [0.1]": 16,
   // The 0.2 side of each before-and-after, which behaves differently on purpose.
-  "docs/release-notes/0.3.md: ts [0.2]": 4,
+  "docs/release-notes/0.3.md: ts [0.2]": 5,
 };
 const fencesIn = (content) => {
   const fences = [];

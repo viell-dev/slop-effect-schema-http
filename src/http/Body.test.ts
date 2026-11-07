@@ -788,7 +788,7 @@ describe("a caller's field under a union in a body", () => {
       ]) {
         const error = yield* Effect.flip(encoder.encode({ a: "1", b: "2" }));
         expect(error).toBeInstanceOf(Schema.SchemaError);
-        expect(String(error)).toContain("No union member holds this field");
+        expect(String(error)).toContain("The schema cannot keep this field");
         expect(String(error)).toContain('["b"]');
       }
       const inField = yield* Effect.flip(
@@ -823,13 +823,13 @@ describe("a caller's field under a union in a body", () => {
           new Map([["k", { a: "x", b: "y" }]]),
         ),
       );
-      expect(String(refusedInMap)).toContain("No union member holds");
+      expect(String(refusedInMap)).toContain("The schema cannot keep");
       const refusedInOption = yield* Effect.flip(
         Body.jsonSchema(Schema.Option(Apart)).encode(
           Option.some({ a: "x", b: "y" }),
         ),
       );
-      expect(String(refusedInOption)).toContain("No union member holds");
+      expect(String(refusedInOption)).toContain("The schema cannot keep");
     }),
   );
 

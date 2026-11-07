@@ -32,6 +32,22 @@
   schema with no such choice reads as before. An empty union now fails as a `SchemaError`, where it
   used to die with a defect
   ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
+- Keep a field a strict read could not see. Where a schema's two sides state different names, a
+  value on the encoded side could fit the decoded side by losing them, with no union involved:
+  `{ A: "x" }` under a struct that renames an optional `a` to `A` sent nothing, a constructor
+  default went out in the caller's place, and so did a raw value under `A`. Such a schema is now
+  read strictly too, at any depth, so the value goes through the decoder and keeps its field. The
+  same goes for a transformation between objects. A struct reads a stated name however a value holds
+  it, so an accessor on a class, an inherited field and one that is not enumerable are now fields
+  under such a schema, and a value read field by field keeps them on a plain struct too. An ordinary
+  class instance that only a struct can read reads as a plain object there, so a key nothing states
+  is stripped.
+- **Breaking:** refuse what such a read would still lose. A value that mixes the names of two
+  renamed fields, such as `{ a, B }`, used to lose `B`, and it is now a `SchemaError` that names it.
+  A `Map` or an `Option` of a renamed struct has to read strictly, so a key the schema does not
+  state is refused there. So does text under a field's wire name where the field holds a union,
+  because the name does not say which field it is. An accessor on a value inside a `Map` or an
+  `Option` can still be lost.
 - **Breaking:** refuse a field no union member can keep. `{ a, b }` under a union of `{ a }` and
   `{ b }` used to send `a` and drop `b`, and a value a wider member refused was dropped the same
   way. It is now a `SchemaError` before anything is sent, which names the field and never its value.
