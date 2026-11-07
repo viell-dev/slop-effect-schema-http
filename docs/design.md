@@ -222,7 +222,8 @@ Some things are outside the check:
 - A check is only as strict as its schema. `Schema.NumberFromString` accepts `"two"` as `NaN`.
 - The caller's own value is read before any default joins it, and Effect takes the first union
   member that fits. Under `Union([Struct({ a }), Struct({ a, b })])`, `{ a, b }` fits the first and
-  `b` goes, with or without a default. Put the wider member first.
+  `b` goes, with or without a default, and a default under that name then takes the caller's place.
+  Put the wider member first.
 - "Required" is read from the encoded side. A field with `Schema.withDecodingDefaultKey` is optional
   there, so a raw edit of it after the schema is not refused, although the schema always writes it
   and the edit never reaches the client.

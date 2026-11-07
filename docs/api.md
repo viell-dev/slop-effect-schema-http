@@ -1,8 +1,8 @@
 # Modules
 
-The guides below describe the public API on `main`, which is ahead of the `0.1.0` release. Start
-with the four modules that make one HTTP operation: `Request` describes what to send, `Body` reads
-and writes its payload, `Response` describes the answers, and `Operation` executes them together.
+The guides below describe the public API of `0.2.0`. Start with the four modules that make one HTTP
+operation: `Request` describes what to send, `Body` reads and writes its payload, `Response`
+describes the answers, and `Operation` executes them together.
 
 ## Build and execute a contract
 

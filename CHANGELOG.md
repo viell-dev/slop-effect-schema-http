@@ -1,6 +1,6 @@
 # Change history
 
-## Unreleased
+## 0.2.0 — 2026-11-07
 
 Read [What's in 0.2](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.2) for the
 consumer introduction and migration steps. Start with its section on paths, because one change
