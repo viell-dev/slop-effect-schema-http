@@ -6063,6 +6063,29 @@ describe("a schema states the shape of its group", () => {
     );
 
     it.effect(
+      "leaves a written empty segment behind the entries a schema covers",
+      () =>
+        Effect.gen(function* () {
+          const Both = Schema.Struct({
+            page: Schema.optional(Schema.FiniteFromString),
+            tail: Schema.optional(Schema.String),
+          });
+          expect(
+            yield* urlOf(
+              Request.get("/things?page=02&&tail=1").pipe(Request.query(Both)),
+              { query: {} },
+            ),
+          ).toBe("/things?&page=2&tail=1");
+          expect(
+            yield* urlOf(
+              Request.get("/things?page=02&&&tail=1").pipe(Request.query(Both)),
+              { query: {} },
+            ),
+          ).toBe("/things?&&page=2&tail=1");
+        }),
+    );
+
+    it.effect(
       "leaves a written empty segment alone, because it names no field",
       () =>
         Effect.gen(function* () {

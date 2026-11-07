@@ -33,9 +33,11 @@ with a different header leaves the original intact:
 
 <<< ../../examples/modules/request.ts#shared-defaults
 
-A header schema on such a request has to allow these headers. [A schema states the
-shape](#a-schema-states-the-shape-of-its-group) of its group, whichever comes first. Reusable
-transforms can grow into [a vocabulary for one API](../recipes.md#a-vocabulary-for-one-api).
+A header schema on such a request has to allow these headers: once any schema is bound to headers or
+query, every header or query field the request declares must be a name some schema allows. That is
+what [a schema states the shape](#a-schema-states-the-shape-of-its-group) of its group means,
+whichever comes first. Reusable transforms can grow into [a vocabulary for one
+API](../recipes.md#a-vocabulary-for-one-api).
 
 ### Extend a base
 
@@ -155,7 +157,9 @@ and both end up as the same text:
 | A schema from `Date` to your own date type, such as `Schema.DateTimeUtcFromDate` | Your type, or a `Date` | ISO text            |
 
 Each is a [schema-backed input](#a-schema-has-two-sides), so the last two take either side. An
-invalid `Date` fails each of them with a `SchemaError`.
+invalid `Date` fails each of them with a `SchemaError`. `Schema.Date` in a query still takes a
+`Date` and not text, because its encoded side is a `Date`, and `Schema.DateFromString` is the one
+that takes text too.
 
 Headers stay text. Date headers such as `If-Modified-Since` use the HTTP date format, not ISO, so a
 header schema has to write its own text, as `Schema.DateTimeUtcFromHttpDate` does.
@@ -369,6 +373,9 @@ on the encoded side goes through the decoder as a whole, so `{ token: "aGVsbG8="
 reads `token` as encoded.
 
 ### A schema states the shape of its group
+
+In plain terms, once any schema is bound to headers or query, every header or query field the
+request declares must be a name some schema allows.
 
 A header or query group is a dictionary of names, and each edit produces a new one. A schema states
 what that dictionary may hold, and whatever the request ends up declaring has to fit. A request that
