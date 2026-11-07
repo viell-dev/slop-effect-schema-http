@@ -2217,8 +2217,9 @@ runtime. They all run against the regional booking service, `bookings`, document
 replies [AGENTS.md](./AGENTS.md) describes. The consumer is `src/clients/bookings/`, and the
 scenarios are in `src/scenarios/`, in `wire-failures.test.ts`, `ambiguous-writes.test.ts`,
 `redirect-chains.test.ts`, `later-calls.test.ts`, `response-metadata.test.ts` and
-`discovery.test.ts`, with a `.node.test.ts` beside any of them for what needs Node. They run in both
-lanes unless an entry says otherwise. EXT-29 is the backend side's own check of `bookings`.
+`discovery.test.ts`, with a `.browser.test.ts` or a `.node.test.ts` beside one of them for what needs
+that lane. They run in both lanes unless an entry says otherwise. EXT-29 is the backend side's own
+check of `bookings`.
 
 Each entry separates two things, because a failure here can be either:
 
@@ -2230,12 +2231,11 @@ Each entry separates two things, because a failure here can be either:
   pins it for each lane. Do not carry a result from one lane to the other, or from `fetch` to
   `lines`.
 
-The results under Provider were measured on 2026-11-07 with the library at the commit in
-`library-ref`, Effect 4.1.2, Node.js 24.22.2 and Chromium 158, against the harness's own fixture,
-`src/harness/fixtures/raw-replies.ts`, and bare `fetch` where an entry has no provider to go through.
-`bookings` did not exist yet, so a test asserts what its lane really gives; where that differs from
-an entry, find out why before changing either. `src/harness/raw-replies.test.ts` keeps the bare
-`fetch` results under test.
+The results under Provider were measured on 2026-11-07 through `bookings` and its consumer, with the
+library at the commit in `library-ref`, Effect 4.1.2, Node.js 24.22.2 and Chromium 158, and the tests
+each entry names keep them under test. A test asserts what its lane really gives; where that differs
+from an entry, find out why before changing either. `src/harness/raw-replies.test.ts` keeps the same
+answers under test against bare `fetch`, through the harness's own fixture.
 
 This table is what each kind of answer does to each client. `DecodeError` means
 `Response.DecodeError` whose cause is an `HttpClientError` with a `DecodeError` reason, and
@@ -2267,11 +2267,17 @@ What a browser cannot show, whichever answer it meets:
   the connection ends before any response, a POST included, so one library attempt can arrive twice.
   A preflight is enough to warm that connection. Only the ledger shows it, in the two arrivals and
   their different `connection` numbers. A backend behind the socket listener closes every connection
-  after one request, so no connection is reused and this stops; that is the control.
+  after one request, so no connection is reused and this stops; that is the control. Node's clients
+  do not do this: a POST lost on a connection already used arrives once, through `fetch` and `lines`.
 - **A head of its own.** Harness CORS writes its lines straight after a raw head's status line, or a
   page could read nothing at all of a raw reply. A cut or malformed head therefore reaches a page
   with CORS lines a real one would not have, and the same answer under `{ cors: "backend" }` is a
-  `TransportError`. A body's bytes are unaffected.
+  `TransportError`. A body's bytes are unaffected. Under `{ cors: "backend" }`, `cut-body` keeps the
+  filter's lines, so a page fails it at the body, and only what the edge writes for itself is a CORS
+  refusal.
+- **Headers the filter does not expose.** With no `Access-Control-Expose-Headers`, a page under the
+  region's own CORS cannot read `Location`, `Idempotent-Replay` or `Retry-After`, so it tells a
+  replay from a commit only by the booking's `replayed`.
 - **A failure through the same-origin proxy.** The proxy is `node:http` on both sides, so it reads an
   answer before a page does and frames it again. An answer that fails before its head is complete,
   or whose head `node:http` refuses, is a `502` with the proxy's text, which a page reads as an
@@ -2288,6 +2294,11 @@ The suite's backends are plain HTTP, so none of this covers TLS: a bad certifica
 cut during a handshake. [#97](https://github.com/viell-dev/slop-effect-schema-http/issues/97) saw a
 bad certificate fail as a `TransportError` on Node.js, outside the suite.
 
+A limit below that waits for a request to come back, or to reach a backend at all, is sized for a
+slow runner rather than taken from the entry's point: a request aborted before it arrived leaves
+nothing in a ledger, and an answer that has to finish has to fit inside its attempt. The answers
+these tests time out never finish, so a longer limit changes nothing else.
+
 #### Failures after response headers arrive
 
 Unless an entry says otherwise, `bookings` starts with one `edge` rule on `GET /v1/manifest` with
@@ -2300,8 +2311,10 @@ through every provider of the lane, in two parts:
    same failure if it does not.
 
 After either part it reads the ledger until the failed arrival shows `connectionOpen` false, and
-then a further call on the same client gets the whole manifest, with its own arrival. The manifest's
-text comes from its rule on the service page, written out by the test.
+then a further call on the same client gets the whole manifest, with its own arrival on a new
+connection. A gzip fault is the exception: its framing is whole, so even a stream that cannot be read
+leaves the connection open, in both lanes and through every provider, and the further call reuses
+it. The manifest's text comes from its rule on the service page, written out by the test.
 
 The library promises the same thing throughout, so entries do not repeat it: a value reaches the
 caller only from a body the decoder could read, no live response crosses a failure, the attempt's
@@ -2313,67 +2326,127 @@ errors and the statuses 408, 429, 500, 502, 503 and 504.
   its `metadata`, not retried, in both lanes (Node's cause is `terminated`, then `other side closed`;
   Chromium's is `Failed to fetch`). `lines` is a `TransportError` with the cause `aborted` and no
   metadata, retried. The same failure on the wire gets opposite verdicts, because `Policy.transient`
-  reads a transport error and not a failed body. Status: pending.
+  reads a transport error and not a failed body. Under `{ cors: "backend" }` a page gets the same
+  `DecodeError`, because this head keeps the filter's lines. Status: tested.
+  - `[EXT-23a] ${provider}: cut-body stops at 450 of 900 bytes and is a DecodeError at the body, not retried` (`fetch`)
+  - `[EXT-23a] ${provider}: cut-body stops at 450 of 900 bytes and is a TransportError before any response, retried` (`lines`)
+  - `[EXT-23a] under the region's own CORS cut-body keeps the filter's lines, so it is a failed body and not a CORS refusal` (Chromium)
+  - `[EXT-23a] through the same-origin proxy cut-body fails at the body as it does for a page reaching the region directly` (Chromium)
 - **EXT-23b** `cut-body-reset`: EXT-23a ended by a reset. Provider: as EXT-23a, with Node's cause
-  `read ECONNRESET`. Status: pending.
-- **EXT-23c** `cut-chunked`: one chunk and no last chunk. Provider: as EXT-23a. Status: pending.
+  `read ECONNRESET`, under `terminated` through `fetch` and alone through `lines`. Status: tested.
+  - `[EXT-23b] ${provider}: a reset after half the body fails as cut-body does`
+- **EXT-23c** `cut-chunked`: one chunk and no last chunk. Provider: as EXT-23a. Status: tested.
+  - `[EXT-23c] ${provider}: a chunk with no last chunk fails as cut-body does`
+  - `[EXT-23c] through the same-origin proxy cut-chunked fails at the body as it does for a page reaching the region directly` (Chromium)
 - **EXT-23d** `bad-chunk`: a chunk followed by `XX`. Provider: as EXT-23a, with Node's cause naming
-  the parser's refusal, `Expected LF after chunk data`, under `fetch` and under `lines`. Status:
-  pending.
+  the parser's refusal, `Expected LF after chunk data`, in the words of each client: under
+  `terminated` as `Response does not match the HTTP/1.1 protocol (…)` through `fetch`, and as
+  `Parse Error: …` through `lines`. Status: tested.
+  - `[EXT-23d] ${provider}: a chunk followed by XX fails as cut-body does, with the parser's refusal in Node`
+  - `[EXT-23d] through the same-origin proxy bad-chunk fails at the body as it does for a page reaching the region directly` (Chromium)
 - **EXT-23e** `cut-head`: a status line and part of a header name, then an orderly close. Provider:
-  in Node, a `TransportError` with no metadata, retried, through both providers. Chromium takes the
-  cut head for a complete one, so under harness CORS `Body.text` gives the empty string with no
-  failure, one arrival; start it with `{ cors: "backend" }` as well, where the same answer is a
-  `TransportError` because no CORS line arrived. Status: pending.
+  in Node, a `TransportError` with no metadata, retried, through both providers (`fetch failed`, then
+  `other side closed`; `socket hang up` through `lines`). Chromium takes the cut head for a complete
+  one, so under harness CORS `Body.text` gives the empty string with no failure, one arrival; under
+  `{ cors: "backend" }` the same answer is a `TransportError`, retried, because no CORS line arrived.
+  Status: tested.
+  - `[EXT-23e] ${provider}: a cut head is a TransportError with no metadata, retried` (Node)
+  - `[EXT-23e] ${provider}: Chromium takes a cut head under harness CORS for a complete one, an empty body with no failure` (Chromium)
+  - `[EXT-23e] under the region's own CORS a cut head is a TransportError, because no CORS line arrived, and it is retried` (Chromium)
+  - `[EXT-23e] through the same-origin proxy cut-head is a 502 from the proxy, an ordinary response a retry repeats` (Chromium)
 - **EXT-23f** `closed` and `reset`: no answer at all to a read. Provider: `TransportError` with no
   metadata, retried, through every provider. In Chromium the first `GET` follows a preflight on the
   same connection, so the browser sends it again by itself: with `times: 1` the second sending gets
   the manifest and the library sees a success, with two arrivals and no failure, and it takes
-  `times: 2` to see the `TransportError`. Status: pending.
+  `times: 2` to see the `TransportError`, with two arrivals, after which one retry is a third.
+  Status: tested.
+  - `[EXT-23f] ${provider}: ${fault} is a TransportError with no metadata, retried` (Node)
+  - `[EXT-23f] ${provider}: ${fault} on one GET is hidden, because Chromium sends it again on a new connection and the library sees a success` (Chromium)
+  - `[EXT-23f] ${provider}: it takes ${fault} twice for a page to see a TransportError, and one retry then gets the manifest` (Chromium)
+  - `[EXT-23f] through the same-origin proxy ${fault} is a 502 from the proxy, an ordinary response a retry repeats` (Chromium)
 - **EXT-23g** `cut-unframed`: half the manifest with no length, then an orderly close. No client can
   tell this from a whole answer, which is why it is here: the control for EXT-23a. Provider: every
   provider gives 450 bytes of text as a success, with one arrival. A decoder that needs the whole
   document has to check for itself, so a test also runs it through a consumer check that counts 100
-  lines and fails as a `DecodeError`. Status: pending.
+  lines and fails as a `DecodeError`, not retried. Status: limit.
+  - `[EXT-23g] ${provider}: an answer with no framing that stops half-way is a success holding 450 bytes`
+  - `[EXT-23g] ${provider}: only the consumer's own check of the lines finds it, as a DecodeError, not retried`
+  - `[EXT-23g] through the same-origin proxy an answer with no framing that stops half-way is still a success` (Chromium)
+  - `[EXT-23g] the manifest check refuses a cut, a short count and a stray line`
 - **EXT-23h** `gzip`: a valid stream, the control for EXT-23i to EXT-23k. Provider: `fetch` gives the
   manifest in both lanes. `lines` asks for nothing and decompresses nothing, so `Body.text` gives the
   stream read as text with no failure, and `Body.bytes` gives bytes starting 1F 8B. A provider that
-  needs the text has to decompress it itself. Status: pending.
+  needs the text has to decompress it itself, as a test does with `DecompressionStream`. Status:
+  tested.
+  - `[EXT-23h] ${provider}: a valid gzip stream gives the manifest` (`fetch`)
+  - `[EXT-23h] ${provider}: asks for nothing and decompresses nothing, so Body.text is the stream read as text` (`lines`)
+  - `[EXT-23h] ${provider}: Body.bytes is the stream itself, which the consumer can decompress` (`lines`)
+  - `[EXT-23h] through the same-origin proxy gzip gives the manifest, as it does for a page` (Chromium)
 - **EXT-23i** `gzip-magic` and `gzip-block`: a stream that is not gzip, and one whose first block
   cannot be read. Provider: `fetch` is a `DecodeError`, not retried, with Node's cause
-  `incorrect header check` or `invalid block type`. `lines`: as EXT-23h, a success holding the
-  stream. Status: pending.
+  `incorrect header check` or `invalid block type` under `terminated`, and the connection stays open
+  for the next call. `lines`: as EXT-23h, a success holding the stream. Status: tested.
+  - `[EXT-23i] ${provider}: ${fault} is a DecodeError, not retried, with Node's cause naming it` (`fetch`)
+  - `[EXT-23i] ${provider}: ${fault} is a success holding the stream` (`lines`)
+  - `[EXT-23i] through the same-origin proxy ${fault} fails at the body as it does for a page reaching the region directly` (Chromium)
 - **EXT-23j** `gzip-checksum`: all of the text, and a wrong CRC. Provider: Node's `fetch` is a
-  `DecodeError` with the cause `incorrect data check`. Chromium never checks, so it gives the
-  manifest with no failure. `lines`: as EXT-23h. Status: pending.
+  `DecodeError` with the cause `incorrect data check`, and the connection stays open. Chromium never
+  checks, so it gives the manifest with no failure. `lines`: as EXT-23h. Status: limit.
+  - `[EXT-23j] ${provider}: gzip-checksum is a DecodeError in Node, with the cause incorrect data check` (`fetch` in Node)
+  - `[EXT-23j] ${provider}: Chromium never checks the CRC, so gzip-checksum gives the manifest with no failure` (Chromium)
+  - `[EXT-23j] ${provider}: gzip-checksum is a success holding the stream` (`lines`)
+  - `[EXT-23j] through the same-origin proxy gzip-checksum gives the manifest, as it does for a page` (Chromium)
 - **EXT-23k** `gzip-truncated` and `gzip-trailer`: a stream that stops, under framing that says it is
   whole. Provider: neither `fetch` checks that a stream ended, so `gzip-trailer` gives the manifest
   with no failure, and `gzip-truncated` gives the start of the manifest as a success, shorter than
-  900 bytes, in both lanes. Assert that it is a proper prefix, not its length, which depends on
-  zlib. `lines`: as EXT-23h. Status: pending.
-- **EXT-23l** `trickle`, with no `times`, under `attemptTimeout: "150 millis"` and under a caller's
+  900 bytes, in both lanes (349 bytes when measured). Assert that it is a proper prefix, not its
+  length, which depends on zlib. `lines`: as EXT-23h. Status: limit.
+  - `[EXT-23k] ${provider}: gzip-trailer gives the manifest with no failure, because nothing checks that a stream ended` (`fetch`)
+  - `[EXT-23k] ${provider}: gzip-truncated gives a proper prefix of the manifest as a success` (`fetch`)
+  - `[EXT-23k] ${provider}: ${fault} is a success holding the stream` (`lines`)
+  - `[EXT-23k] through the same-origin proxy gzip-trailer gives the manifest, as it does for a page` (Chromium)
+  - `[EXT-23k] through the same-origin proxy gzip-truncated gives part of the manifest as a success` (Chromium)
+- **EXT-23l** `trickle`, with no `times`, under `attemptTimeout: "1 second"` and under a caller's
   `Effect.timeout`. Library: an attempt timeout covers the body too, a timed-out attempt is
   transient, and a caller's limit is not retried. Each attempt's arrival ends with `aborted` true and
-  `connectionOpen` false. With `Policy.make(Schedule.recurs(1), { attemptTimeout: "150 millis" })`
+  `connectionOpen` false. With `Policy.make(Schedule.recurs(1), { attemptTimeout: "1 second" })`
   there are two arrivals on two connections, then a `TimeoutError`; a caller's timeout has one
   arrival. A `while` classifier that records `Reason.metadata` sees status 200 through `fetch`,
-  because the head arrived, and none through `lines`, which is still reading. Status: pending.
+  because the head arrived, and none through `lines`, which is still reading. A `Fetch` of the test's
+  own shows the request's signal already aborted when that classifier runs. Every manifest answer
+  trickles under this rule, so the further call reads `GET /v1/health`. Status: tested.
+  - `[EXT-23l] ${provider}: trickle under an attempt timeout is a TimeoutError on two connections, and a classifier sees ${seen}`
+  - `[EXT-23l] ${provider}: a caller's Effect.timeout around trickle is not retried`
+  - `[EXT-23l] ${provider}: an attempt's request is already aborted when its outcome is classified` (`fetch`)
+  - `[EXT-23l] through the same-origin proxy trickle under an attempt timeout is a TimeoutError` (Chromium)
 - **EXT-23m** `hang`: EXT-23l with no head at all, so the classifier sees no metadata through any
-  provider. Status: pending.
+  provider. Status: tested.
+  - `[EXT-23m] ${provider}: hang under an attempt timeout is a TimeoutError on two connections, and a classifier sees no metadata`
+  - `[EXT-23m] ${provider}: a caller's Effect.timeout around hang is not retried`
+  - `[EXT-23m] through the same-origin proxy hang under an attempt timeout is a TimeoutError` (Chromium)
 - **EXT-23n** A cut body on a status the contract does not declare: `cut-body` on
   `GET /v1/bookings/missing`, whose 404 is not in a contract of `Response.status(200, Body.text)`.
   Library: an unmatched body is drained, and a drain that fails is a `Response.DecodeError`, with
   status 404 in its `metadata`, not an `UnexpectedResponse`. Provider: `lines` has read the body
-  before the library selects anything, so it is a `TransportError` as in EXT-23a. Status: pending.
+  before the library selects anything, so it is a `TransportError` as in EXT-23a, and its retry gets
+  the whole 404 as an `UnexpectedResponse`. Status: tested.
+  - `[EXT-23n] ${provider}: a cut body on a status the contract does not declare fails the drain, a DecodeError with status 404` (`fetch`)
+  - `[EXT-23n] ${provider}: a cut body on a status the contract does not declare is a TransportError, because the body was read before anything was selected` (`lines`)
 - **EXT-23o** A cut body on a transient status: `cut-unavailable`, a 503 that stops half-way, under a
   contract that declares it, with `retryAfter: false` in the policy, because its head says
   `Retry-After: 60`. Library: `Policy.transient` reads the status from the `metadata` of a failure
   too, so through `fetch` this `DecodeError` is retried where EXT-23a's is not. Two arrivals, and the
-  second gets the manifest. Status: pending.
+  second gets the manifest. Provider: under `{ cors: "backend" }` this head has no CORS lines, so a
+  page gets a `TransportError` with no status, which is retried all the same. Status: tested.
+  - `[EXT-23o] ${provider}: a 503 cut half-way is a DecodeError that Policy.transient retries by the status in its metadata, and the retry gets the manifest` (`fetch`)
+  - `[EXT-23o] ${provider}: a 503 cut half-way is a TransportError, retried, and the retry gets the manifest` (`lines`)
+  - `[EXT-23o] under the region's own CORS a cut 503 has no CORS lines, so a page gets a TransportError with no status, retried all the same` (Chromium)
 - **EXT-23p** A body that never ends on an undeclared status: `trickle` on
   `GET /v1/bookings/missing`, with no `times`. Library: draining holds the attempt open, as the limits
   page warns, so only `attemptTimeout` or the caller's limit ends it, as a `TimeoutError`. Status:
-  pending.
+  tested.
+  - `[EXT-23p] ${provider}: a body that never ends on an undeclared status holds the attempt until its timeout`
+  - `[EXT-23p] ${provider}: so does a caller's limit`
 
 #### Ambiguous completion of writes
 
@@ -2392,50 +2465,99 @@ Library, throughout: a request is prepared once per evaluation, so each attempt 
 body and the same computed headers; `Policy.transient` does not look at the method; and a transport
 error says nothing about whether the server acted.
 
+In Chromium a rule on a lost `POST` meets the browser's own second sending first, so an entry here
+states the policy's result behind the socket listener, in either lane, where no connection is
+reused, and what Chromium makes of the same rule on a reused connection.
+
 - **EXT-24a** Committed, then nothing: `{ "route": "POST /v1/bookings", "fault": "closed" }` with
   `Policy.none`. In Node, through each provider, a `TransportError`, one arrival and one booking: the
-  write happened and the caller was told it failed. Provider: in Chromium, two arrivals on two
-  connections, two bookings and one `TransportError`, from one attempt. Behind the socket listener,
-  in either lane, one arrival and one booking. Status: pending.
+  write happened and the caller was told it failed. That holds on a connection already used too.
+  Provider: in Chromium, two arrivals on two connections, with the same body and the same `X-Attempt`,
+  two bookings and one `TransportError`, from one attempt. Behind the socket listener, in either
+  lane, one arrival and one booking. Under `{ cors: "backend" }` the region's own preflight warms the
+  connection in the same way. Status: tested.
+  - `[EXT-24a] ${provider}: the write happened and the caller was told it failed: one arrival, one booking and a TransportError` (Node)
+  - `[EXT-24a] ${provider}: on a connection already used it stays one arrival, because Node's clients do not send a request again` (Node)
+  - `[EXT-24a] ${provider}: Chromium sends a lost POST twice on two connections, so one attempt makes two bookings and one TransportError` (Chromium)
+  - `[EXT-24a] ${provider}: behind the socket listener no connection is reused, so one arrival and one booking`
+  - `[EXT-24a] under the region's own CORS a preflight warms the connection too, so a lost POST arrives twice` (Chromium)
+  - `[EXT-24a] the page's own examples round-trip through their schemas`
+  - `[EXT-24a] a draft needs three non-empty strings`
+  - `[EXT-24a] a booking without a key says null, and anything else must be a key`
 - **EXT-24b** The same with `times: 1` in Chromium: the browser's own second sending gets a 201, so
   the library reports a success for `eu-000002` while `eu-000001` also exists. Nothing tells the
-  caller. Chromium only; Node's result is EXT-24a's. Status: pending.
+  caller, and `Policy.none` does not stop it, because the library made one attempt. Behind the socket
+  listener the same rule reaches the caller as a `TransportError` with one booking. Chromium only;
+  Node's result is EXT-24a's. Status: limit.
+  - `[EXT-24b] the browser's own second sending gets a 201, so the library reports a success while an earlier booking also exists` (Chromium)
+  - `[EXT-24b] behind the socket listener nothing is reused, so the same rule reaches the caller as a TransportError with one booking` (Chromium)
 - **EXT-24c** The control for EXT-24a: `phase: "before"`. The caller sees the same failure, and
-  nothing is committed. The ledger shows the arrival and `GET /v1/bookings` shows no booking, so the
-  failure alone cannot tell the two apart. Status: pending.
+  nothing is committed. The ledger shows the arrival, two of them in Chromium, and `GET /v1/bookings`
+  shows no booking, so the failure alone cannot tell the two apart. Status: tested.
+  - `[EXT-24c] ${provider}: with the fault before the region the caller sees the same failure, and nothing is committed`
 - **EXT-24d** A retry on the same region with no key: `times: 1`, `Policy.make(Schedule.recurs(1))`.
-  Two bookings with two ids and the same fields, and the caller sees the second as a success.
-  Status: pending.
+  Two bookings with two ids and the same fields, and the caller sees the second as a success. The
+  second arrival carries the first's body and is stamped `2`. Provider: on a reused connection in
+  Chromium the browser's own second sending takes the 201, so the policy never retries: the same two
+  bookings, with both arrivals stamped `1`. Status: tested.
+  - `[EXT-24d] ${provider}: a retry with no key makes two bookings with two ids and the same fields, and the caller sees the second as a success` (behind the socket listener)
+  - `[EXT-24d] ${provider}: Chromium's own second sending gets the 201, so the policy never retries and two bookings exist` (Chromium)
+  - `[EXT-24d] an id is a region, a hyphen and six digits`
 - **EXT-24e** A retry that moves to another region with no key. `eu` has the fault, and the second
   attempt goes to `us`. One arrival and one booking at each, numbered `1` and `2` in `X-Attempt`, so
-  the first server did not "do nothing". Status: pending.
+  the first server did not "do nothing". Provider: on a reused connection Chromium commits twice at
+  `eu` before the attempt fails and moves. Status: tested.
+  - `[EXT-24e] ${provider}: a retry that moves region with no key leaves a booking at each, so the first server did not do nothing` (behind the socket listener)
+  - `[EXT-24e] ${provider}: on a reused connection Chromium commits twice at the first region before the attempt fails and moves` (Chromium)
 - **EXT-24f** A retry on the same region with a repeat key, computed as a request field. Library:
   computed once per evaluation, so both arrivals carry one key. Two arrivals, one booking, and the
-  second answer is 200 with `Idempotent-Replay: true` and `replayed` true. Status: pending.
+  second answer is 200 with `Idempotent-Replay: true` and `replayed` true. A key the schema refuses
+  is a `SchemaError` with nothing sent. Provider: under `{ cors: "backend" }` a page cannot read
+  `Idempotent-Replay` or `Location`, so only `replayed` says it was a replay. Status: tested.
+  - `[EXT-24f] ${provider}: a key computed as a request field is computed once, so a retry replays: two arrivals, one key and one booking`
+  - `[EXT-24f] ${provider}: a key the schema refuses is a SchemaError before dispatch, with nothing sent`
+  - `[EXT-24f] a contract of 201 alone reads a replay as unexpected, so a caller has to declare both`
+  - `[EXT-24f] under the region's own CORS a page reads a replay from the booking alone, because Idempotent-Replay is not exposed` (Chromium)
+  - `[EXT-24f] a repeat key is one to 64 letters, digits and hyphens`
 - **EXT-24g** The control for EXT-24f: a key written per attempt by `transformClient`. Each attempt
-  has its own key, so two bookings: a key only helps if it outlives the attempt. Status: pending.
+  has its own key, so two bookings: a key only helps if it outlives the attempt. Provider: on a
+  reused connection Chromium's own second sending repeats the attempt's key, so that sending replays
+  and there is one booking. Status: tested.
+  - `[EXT-24g] ${provider}: a key written per attempt changes between attempts, so the retry makes a second booking` (behind the socket listener)
+  - `[EXT-24g] ${provider}: on a reused connection Chromium's own second sending repeats the attempt's key, so that sending replays` (Chromium)
 - **EXT-24h** A retry that moves region, with a key and a working link: `us` starts with `peer` set
   to `eu`'s origin. The booking committed at `eu` is what the caller gets back from `us`, with
   `replayed` true. `eu`'s ledger shows the `GET /v1/keys/<key>`, and `us` has no booking. Status:
-  pending.
+  tested.
+  - `[EXT-24h] ${provider}: with a working link a retry that moves region gets back the booking committed at the first`
 - **EXT-24i** The same with the link down: `peer` names a closed port. The key protects nothing, and
   each region has a booking under the same key, so the caller holds `us`'s and `eu`'s also exists.
-  Status: pending.
-- **EXT-24j** A committed write whose body is cut after the head: `cut-body` on the `POST`, under
-  `Policy.make(Schedule.recurs(1))` and no key. Provider: `fetch` is a `DecodeError` with status 201
-  in its `metadata`, not retried, so one booking. `lines` is a `TransportError`, retried, so two. The
-  same answer duplicates a booking through one provider and not the other. Status: pending.
-- **EXT-24k** A timed-out write: `hang`, after the commit, under `attemptTimeout: "150 millis"` and
+  Status: tested.
+  - `[EXT-24i] ${provider}: with the link down the key protects nothing, and each region has a booking under it`
+- **EXT-24j** A committed write whose body is cut after the head: `cut-body` on the `POST`, with
+  `times: 1`, under `Policy.make(Schedule.recurs(1))` and no key. Provider: `fetch` is a `DecodeError`
+  with status 201 in its `metadata`, not retried, so one booking. `lines` is a `TransportError`,
+  retried, so two. The same answer duplicates a booking through one provider and not the other.
+  Status: tested.
+  - `[EXT-24j] ${provider}: a committed write whose body is cut is a DecodeError with status 201, not retried, so one booking` (`fetch`)
+  - `[EXT-24j] ${provider}: a committed write whose body is cut is a TransportError, retried, so two bookings` (`lines`)
+- **EXT-24k** A timed-out write: `hang`, after the commit, under `attemptTimeout: "2 seconds"` and
   `Policy.make(Schedule.recurs(1))` with `times: 1`. The first arrival ends `aborted`, and the retry
   makes a second booking, though the caller sees one success. A caller's `Effect.timeout` around
-  `Policy.none` leaves one booking and a `TimeoutError`. Status: pending.
+  `Policy.none` leaves one booking and a `TimeoutError`. Status: tested.
+  - `[EXT-24k] ${provider}: an attempt timeout on a committed write makes a second booking, though the caller sees one success`
+  - `[EXT-24k] ${provider}: a caller's timeout around one attempt leaves one booking and a TimeoutError`
 - **EXT-24l** Finding out, instead of repeating: EXT-24a with a key, then `GET /v1/keys/<key>` on
   the region, which answers the booking. A 404 from the same read after `phase: "before"` says it
   was not committed. This is the consumer's own composition; the library offers no such step.
-  Status: pending.
+  Status: tested.
+  - `[EXT-24l] ${provider}: reading the key answers the booking a lost answer left behind`
+  - `[EXT-24l] ${provider}: the same read after a fault before the region is a 404, so it was not committed`
 - **EXT-24m** A key reused with another body: a second evaluation with the same key and another
   `slot`. 409 `key_reused`, nothing committed, and not retried by `Policy.transient`. Status:
-  pending.
+  tested.
+  - `[EXT-24m] ${provider}: a key reused with another body is a 409, commits nothing and is not retried`
+  - `[EXT-24m] a refusal names one of the page's errors`
 
 #### Redirect chains with state
 
@@ -2448,7 +2570,8 @@ The providers are: `fetch`, which follows by itself in both lanes; in Node, `lin
 through `FetchHttpClient.RequestInit` and `followRedirects`. A test states which. Chromium's manual
 mode gives an opaque answer, as STAT-10 records, so it cannot be followed there. The request carries
 `Authorization: Bearer secret`, `X-Agent-Key: agent-1` and, in Node, `Cookie: session=1`, which
-Chromium would drop (TRN-1). Results for `Cookie` have not been measured yet.
+Chromium would drop (TRN-1). Every Node provider treats `Cookie` as it treats `Authorization`: it
+reaches each recipient on the origin and stops at the origin.
 
 Each region's `redirects` option gives the chain, and the last hop is a real route, so what a chain
 does to a booking shows in `GET /v1/bookings`.
@@ -2457,28 +2580,55 @@ does to a booking shows in `GET /v1/bookings`.
   Provider: every provider arrives at the target as `GET`, with no body and no `Content-Type` or
   `Content-Length`, keeping `Authorization` and `X-Agent-Key`. That `GET` is the booking list, so the
   caller gets a 200 and nothing is committed: under a contract of 201, an `UnexpectedResponse` with
-  status 200; the booking is lost without a transport failure. Status: pending.
+  status 200; the booking is lost without a transport failure. Status: limit.
+  - `[EXT-25a] ${name}: a POST through ${status} arrives as a GET of the list, so a contract of 201 gets an UnexpectedResponse and the booking is lost`
 - **EXT-25b** A POST through 307 and 308, on one origin. Provider: every provider keeps the method,
-  body and every header, and one booking is committed. Status: pending.
+  body and every header, and one booking is committed. Status: tested.
+  - `[EXT-25b] ${name}: a POST through ${status} keeps its method, body and every header, and one booking is committed`
 - **EXT-25c** A same-origin hop and then a cross-origin hop, by 307: `eu`'s `/v1/reserve` to its
   `/v1/transfer` to `us`'s `/v1/bookings`. Provider: `Authorization` reaches both `eu` recipients and
   not `us`, with `followRedirects` and with `fetch`. `X-Agent-Key` reaches all three through every
   provider, because no client knows it is a credential: that is the forwarding to watch. The body
   arrives at all three, and one booking is committed at `us`. In Chromium, `us` sees `Origin: null`.
-  Status: pending.
+  Status: limit.
+  - `[EXT-25c] ${name}: a same-origin hop then a cross-origin hop by 307 keeps the body and X-Agent-Key throughout, and Authorization stops at the origin`
 - **EXT-25d** The same chain by 302: the cross-origin hop arrives as `GET`, with `X-Agent-Key` and
-  without `Authorization`, and nothing is committed anywhere. Status: pending.
+  without `Authorization`, and nothing is committed anywhere. Status: limit.
+  - `[EXT-25d] ${name}: the same chain by 302 reaches the other region as a GET, with X-Agent-Key and without Authorization, and nothing is committed anywhere`
 - **EXT-25e** A loop on one origin: `/v1/a` to `/v1/b` to `/v1/a`, by 302. Provider: `fetch` is a
   `TransportError` after 21 arrivals, with Node's cause `redirect count exceeded`.
   `followRedirects` stops after 11 arrivals and returns the last 302, so a contract of 200 gives an
-  `UnexpectedResponse` with status 302. Status: pending.
+  `UnexpectedResponse` with status 302. Status: limit.
+  - `[EXT-25e] ${name}: a loop is a TransportError after 21 arrivals` (`fetch`)
+  - `[EXT-25e] ${name}: a loop stops after 11 arrivals and hands back the last 302` (`followRedirects`)
 - **EXT-25f** A loop of POSTs by 307: every arrival carries the body, and nothing is committed.
-  Provider: as EXT-25e for the counts. Status: pending.
+  Provider: as EXT-25e for the counts, with a last status of 307. Status: limit.
+  - `[EXT-25f] ${name}: a loop of POSTs by 307 carries the body on every arrival and commits nothing`
 - **EXT-25g** A timeout during a redirected body: `/v1/reports/today` to `/v1/manifest` by 302, with
   `trickle` on the manifest. Library: one attempt covers the chain, so `attemptTimeout` ends it as a
   `TimeoutError`, and a retry starts again at the first URL. The ledger holds the two hops twice, in
   order; the first hop's arrivals are not aborted, and each manifest arrival ends `aborted` with its
-  connection closed. Status: pending.
+  connection closed. Status: tested.
+  - `[EXT-25g] ${name}: one attempt covers a chain, so a timeout in the redirected body retries from the first URL`
+- **EXT-25h** What an attempt's scope releases after `HttpClient.followRedirects`, Node lane only:
+  the chain of EXT-25g, with a decoder that refuses the last hop's answer without reading it, and
+  `HttpClient.filterStatusOk` rejecting a 404 at the end of a chain. Library: no live response crosses
+  a failure, because the attempt's scope closes and releases it before the outcome is classified.
+  That holds with no redirect: the request's abort signal is set when `while` runs, and the arrival
+  ends `aborted`. After a redirect it does not. The signals read `[true, false]` at that moment, so
+  the last hop's request is still running, the arrival still showed `aborted` false and its connection
+  open 1.5 seconds later, and only garbage collection or the end of the body releases it. The cause
+  is Effect's: `withScope` ties an abort controller to the request an attempt starts with, and
+  `followRedirects` makes a new request for each hop without carrying that controller over, as
+  `withCookiesRef` does. The last test shows it with no library at all, as
+  `HttpClient.withScope(HttpClient.followRedirects(client))`. An attempt timeout and an interruption
+  still end the body, because they reach it directly, so what stays open is an answer nothing is
+  reading. Suspected defect, reported but with no issue yet. Status: defect.
+  - `[EXT-25h] with no redirect a refused answer's request is aborted by the time its outcome is classified`
+  - `[EXT-25h] currently, a redirected answer refused unread is still running when its outcome is classified, against the design's promise`
+  - `[EXT-25h] currently, so is one that filterStatusOk rejects after a redirect, the same thing through ordinary middleware`
+  - `[EXT-25h] currently, Effect alone does the same: withScope over followRedirects does not abort the last hop when its scope closes`
+  - `[EXT-25h] an attempt timeout still ends a redirected answer, because interruption reaches its body`
 
 #### Failures that threaten later calls
 
@@ -2495,28 +2645,40 @@ execution, retains only successes, and waits for superseded work's finalizers on
 - **EXT-26a** Repeated interruption during body reading: `trickle` on `GET /v1/manifest` with
   `times: 3`. Three calls are each interrupted once their heads are in. Each arrival ends `aborted`
   with its connection closed, and the fourth call returns the whole manifest. `lines` holds no head
-  until the body ends, so there it is interrupted on arrival. Status: pending.
+  until the body ends, so there it is interrupted on arrival. Status: tested.
+  - `[EXT-26a] ${provider}: three calls interrupted once their heads are in each leave a closed connection, and the fourth gets the whole manifest` (`fetch`)
+  - `[EXT-26a] ${provider}: three calls interrupted on arrival each leave a closed connection, and the fourth gets the whole manifest` (`lines`)
 - **EXT-26b** Interruption during retry backoff: `unavailable` with `times: 1`, under a policy with a
-  long delay, interrupted once the first answer is in. After a bounded wait the ledger still holds one
+  delay of a second and `retryAfter: false`, interrupted once the classifier has seen the first
+  answer. After a wait past that delay, which nothing else can signal, the ledger still holds one
   arrival, so no timer fired a late attempt, and a new evaluation succeeds with the attempt number
-  `1`. Status: pending.
+  `1`. Status: tested.
+  - `[EXT-26b] ${provider}: an interrupt during retry backoff leaves no timer to fire a late attempt, and a new evaluation starts at attempt 1`
 - **EXT-26c** Superseding an interaction during a body read: `held: ["rotterdam"]`. `run("rotterdam")`
   reaches its held body, then `run("hamburg")` supersedes it. The first caller ends interrupted, its
   arrival `aborted` with its connection closed, and `hamburg` is the retained success. A later
-  `run("rotterdam")` is a new arrival, not a stale value. Status: pending.
+  `run("rotterdam")` is a new arrival, not a stale value. `close` during the same held body ends the
+  caller and the connection in the same way, and a later `run` is `Interaction.Closed`. Status:
+  tested.
+  - `[EXT-26c] ${provider}: superseding an interaction during a held body ends the old caller and its connection, and a later run is a new arrival`
+  - `[EXT-26c] ${provider}: closing the interaction during a held body ends its caller and its connection`
 - **EXT-26d** Superseding an interaction while the old response is completing: as EXT-26c, with
   `POST /v1/availability/release?terminal=rotterdam` sent beside `run("hamburg")`, so the old body may
-  finish first or be aborted first. The test asserts what holds in both orders: the `hamburg` caller
-  gets `hamburg`, the old caller never gets a value later than that, the retained success is
-  `hamburg`, and no held answer stays open. Status: pending.
+  finish first or be aborted first, and sent before it, which favours the other order. The test
+  asserts what holds in both orders: the `hamburg` caller gets `hamburg`, the old caller never gets a
+  value later than that, the retained success is `hamburg`, and no held answer stays open. Status:
+  tested.
+  - `[EXT-26d] ${provider}: with the release ${order} the new caller gets hamburg and keeps it, the old one gets nothing later, and no held answer stays open`
 - **EXT-26e** A failed body under an `Interaction`: a retained success for one terminal, then
   `force` with `cut-body` on the next `GET /v1/availability` (`after: 1`, `times: 1`). The failure
   reaches the caller, and the retained success stays, so the next `run` needs no request. Status:
-  pending.
+  tested.
+  - `[EXT-26e] ${provider}: a failed body under force reaches the caller and leaves the retained success, so the next run needs no request`
 - **EXT-26f** Attempts that time out in a row: `trickle` with `times: 3`, under
-  `Policy.make(Schedule.recurs(3), { attemptTimeout: "100 millis" })`. Four arrivals on four
+  `Policy.make(Schedule.recurs(3), { attemptTimeout: "1 second" })`. Four arrivals on four
   connections, the first three `aborted` and closed, and the fourth answers the whole manifest.
-  Status: pending.
+  Status: tested.
+  - `[EXT-26f] ${provider}: attempts that time out in a row leave four arrivals on four connections, and the fourth is whole`
 
 #### Malformed response metadata and decoding boundaries
 
@@ -2528,26 +2690,36 @@ accepts, once more with the decoder the contract would really use.
 
 The classification follows from the comparison. Where the library and the control agree, the result
 is the provider's, and the test pins it. Where they differ, that is a suspected library defect, under
-the Mismatches rule. Library, throughout: selection sees only what the provider exposed, normalized
-headers join repeated lines with `, `, provider lines are an `Option`, and `Body.text` is the
-provider's `response.text`.
+the Mismatches rule. They agreed on every export when measured. Library, throughout: selection sees
+only what the provider exposed, normalized headers join repeated lines with `, `, provider lines are
+an `Option`, and `Body.text` is the provider's `response.text`.
 
 - **EXT-27a** Conflicting `Content-Type` lines: `two-types`. Provider: every client accepts it and
   joins them, so `metadata.headers["content-type"]` is `text/plain, application/json`, and only
   `lines` still has two lines, through `Transport.responseHeaderLines`. A selection rule that compares
   the whole value matches neither, and one that tests the media type must say what it does with a
-  list. The body decodes. Status: pending.
+  list. The body decodes. Status: limit.
+  - `[EXT-27a] ${provider}: conflicting Content-Type lines are joined, and only lines still has them apart`
+  - `[EXT-27a] ${provider}: a rule that compares the whole value matches neither type, and one that reads the list has to say so`
 - **EXT-27b** One `Content-Type` twice: `same-type-twice`, as EXT-27a, joined into
-  `application/json, application/json`. Status: pending.
+  `application/json, application/json`. Status: limit.
+  - `[EXT-27b] ${provider}: one Content-Type twice is joined as well`
 - **EXT-27c** No `Content-Type`, and an unknown charset: `no-type` and `odd-charset`. Provider: every
   client gives the bytes as UTF-8 text, ignoring the charset. `Body.jsonSchema` decodes both, because
-  it reads no content type. Status: pending.
+  it reads no content type. Status: limit.
+  - `[EXT-27c] ${provider}: no Content-Type gives UTF-8 text, and Body.jsonSchema decodes it because it reads no content type`
+  - `[EXT-27c] ${provider}: an unknown charset is ignored, so the bytes are UTF-8 text`
 - **EXT-27d** Header bytes outside ASCII: `latin1-value` and `utf8-value`. Provider: every client
   reads a value as Latin-1, so byte FC is `ü`, and UTF-8's C3 BC arrives as `Ã¼`. The library passes
-  that on unchanged, and repair is the consumer's. Status: pending.
+  that on unchanged, and repair is the consumer's. Status: limit.
+  - `[EXT-27d] ${provider}: byte FC in a value reads as Latin-1, a u with two dots`
+  - `[EXT-27d] ${provider}: UTF-8 in a value also reads as Latin-1, unchanged by the library, and repair is the consumer's`
 - **EXT-27e** Heads every client refuses: `nul-value`, `two-lengths` and `no-version`. Provider: a
   `TransportError` everywhere, retried by `Policy.transient`, with a cause in Node that names the
-  refusal. Status: pending.
+  refusal: the parser's words through `lines`, as `Parse Error: Duplicate Content-Length`, and through
+  `fetch` under `fetch failed`, where `two-lengths` says the body's length does not match
+  `content-length`. Status: limit.
+  - `[EXT-27e] ${provider}: ${name} is refused by every client, a TransportError that a retry repeats`
 - **EXT-27f** Heads Node refuses and Chromium reads: `ctl-value`, `folded-value`, `bare-lf`,
   `no-colon`, `same-length-twice`, `length-and-chunked`, `bad-status` and `status-99`. Provider: in
   Node, a `TransportError` through both providers, each with a cause naming the rule. Chromium keeps
@@ -2555,20 +2727,35 @@ provider's `response.text`.
   `no-colon` line, shows `11, 11` for `same-length-twice`, goes by the chunks in `length-and-chunked`, reads
   `bad-status` as 200 with empty status text, and hands over a status of 99. These run with harness
   CORS, so the page can read them at all. A 99 matches no declared case, so a contract of 200 gives an
-  `UnexpectedResponse`. Status: pending.
+  `UnexpectedResponse`. Status: limit.
+  - `[EXT-27f] ${provider}: Node refuses ${name}, with a cause naming the rule` (Node)
+  - `[EXT-27f] Chromium keeps a control character in a value, which Node refuses` (Chromium)
+  - `[EXT-27f] Chromium unfolds a folded value into a b` (Chromium)
+  - `[EXT-27f] Chromium accepts a head that ends its lines in LF` (Chromium)
+  - `[EXT-27f] Chromium ignores a line with no colon` (Chromium)
+  - `[EXT-27f] Chromium shows one length twice as 11, 11` (Chromium)
+  - `[EXT-27f] Chromium goes by the chunks when a length and chunks disagree` (Chromium)
+  - `[EXT-27f] Chromium reads a status of abc as 200 with empty status text` (Chromium)
+  - `[EXT-27f] Chromium hands over a status of 99, which matches no declared case` (Chromium)
 - **EXT-27g** Heads every client accepts: `no-reason`, with empty status text, and `http10`, whose
-  body ends with the connection. Status: pending.
+  body ends with the connection. Status: limit.
+  - `[EXT-27g] ${provider}: a status line with no reason is accepted, with empty status text`
+  - `[EXT-27g] ${provider}: an HTTP/1.0 answer with no length ends with its connection`
 - **EXT-27h** A character split across chunks: `split-utf8` and `split-emoji`. Library: `Body.text`
   is the provider's, and it gives the text whole. The control decodes the same bytes at once. A
   streaming decoder would have to carry the bytes over; the library has none, because bodies are
-  finite. Status: pending.
+  finite. Status: tested.
+  - `[EXT-27h] ${provider}: ${name} gives the text whole, as a decoder of all the bytes at once does`
 - **EXT-27i** A byte-order mark split across chunks: `split-bom`. Library: `Body.text` on a Fetch
   provider strips it, as its documentation says, so the text is `ok`, and the split changes nothing.
   `Body.bytes` keeps all five bytes, and the control's `TextDecoder` with `ignoreBOM` keeps the mark.
-  `lines` gives the same, because its `Response` is a Fetch one. Status: pending.
+  `lines` gives the same, because its `Response` is a Fetch one. Status: tested.
+  - `[EXT-27i] ${provider}: Body.text strips a byte-order mark split across chunks, and Body.bytes and the control keep it`
 - **EXT-27j** A character cut at the end of a body: `cut-utf8`, under valid framing. Library:
   `Body.text` gives `Gr` and U+FFFD with no failure, as documented. A decoder over `Body.bytes` with
-  `new TextDecoder("utf-8", { fatal: true })` fails as a `Response.DecodeError`. Status: pending.
+  `new TextDecoder("utf-8", { fatal: true })` fails as a `Response.DecodeError`. Status: tested.
+  - `[EXT-27j] ${provider}: Body.text gives U+FFFD for a character cut at the end of a body, with no failure`
+  - `[EXT-27j] ${provider}: a strict decoder over Body.bytes fails the same answer as a DecodeError`
 
 #### A client that finds its API at runtime
 
@@ -2587,50 +2774,84 @@ applies to attempts, and the attempt number in `transformClient` starts at 1 for
 
 - **EXT-28a** Candidates that refuse or reset, then one that works: a closed port, and
   `{ "route": "*", "fault": "reset" }`. A `TransportError` for each in both lanes, then the last is
-  chosen. Status: pending.
+  chosen. Chromium sends the `GET` to the region that resets twice, as EXT-23f pins. When no candidate
+  counts, the search fails as the consumer's own `NoRegion`, saying what each did. Status: tested.
+  - `[EXT-28a] ${provider}: a closed port and a reset are each a TransportError, and the last candidate is chosen`
+  - `[EXT-28a] ${provider}: when no candidate counts the search fails as NoRegion, saying what each did`
 - **EXT-28b** A candidate that hangs, under a bounded `attemptTimeout`: `hang` on `*`. A `TimeoutError`,
-  then it moves on, in both lanes. Status: pending.
+  then it moves on, in both lanes. Status: tested.
+  - `[EXT-28b] ${provider}: a candidate that hangs is a TimeoutError under its limit, and the search moves on`
 - **EXT-28c** A candidate that answers 502: `bad-gateway` on `*`, under `{ cors: "backend" }`, with
   `cors: { allowHeaders: ["b3", "traceparent"] }`, so that the preflight passes and the answer is
   what fails. Node: `UnexpectedResponse` with status 502. Chromium: `TransportError`, because the
   edge's page has no CORS lines and the page never sees it. The ledger holds the `GET` in both. Both
-  move on. Status: pending.
+  move on. Status: tested.
+  - `[EXT-28c] ${provider}: an edge's 502 is an UnexpectedResponse with its status, and the search moves on` (Node)
+  - `[EXT-28c] ${provider}: an edge's 502 is a TransportError, because its page has no CORS lines, and the search moves on` (Chromium)
 - **EXT-28d** A candidate that answers 200 with something else: `parked` and `other-service`, set up
-  as EXT-28c. Node: `DecodeError`. Chromium: `TransportError`, for the same reason. Both move on.
-  Status: pending.
+  as EXT-28c. Node: `DecodeError`, from `Body.json` for the page and from the schema for the other
+  service's JSON. Chromium: `TransportError`, for the same reason. Both move on. Under harness CORS a
+  page reads both, so each is the same `DecodeError` in either lane. Status: tested.
+  - `[EXT-28d] ${provider}: ${fault} answers 200 with something else, a DecodeError, and the search moves on` (Node)
+  - `[EXT-28d] ${provider}: ${fault} answers 200 with something else, a TransportError for want of CORS lines, and the search moves on` (Chromium)
+  - `[EXT-28d] ${provider}: under harness CORS a page reads both, so each is a DecodeError in either lane`
+  - `[EXT-28d] health refuses what a parked page or another service would say`
 - **EXT-28e** A correct answer without CORS lines: a healthy region with no `cors` option, under
   `{ cors: "backend" }`. Node accepts it. Chromium: `TransportError`, then it moves on. The ledger
   holds only the refused `OPTIONS`. With trace propagation off the `GET` needs no preflight, so it
   arrives and is answered, and the browser withholds a good answer: the same `TransportError`.
-  Status: pending.
+  Status: tested.
+  - `[EXT-28e] ${provider}: a correct answer without CORS lines is accepted` (Node)
+  - `[EXT-28e] ${provider}: a correct answer without CORS lines is refused at its preflight, so the search moves on` (Chromium)
+  - `[EXT-28e] ${provider}: with trace propagation off the GET needs no preflight and is accepted` (Node)
+  - `[EXT-28e] ${provider}: with trace propagation off the GET needs no preflight and arrives and is answered, and the browser withholds a good answer` (Chromium)
 - **EXT-28f** A region that does not allow `b3` and `traceparent`: `cors: { allowHeaders:
 ["content-type"] }`, under `{ cors: "backend" }`. Node accepts it. Chromium's preflight fails, so
   it looks dead, and with `HttpClient.TracerPropagationEnabled` off for that client the same region
-  is chosen. Status: pending.
+  is chosen. Status: tested.
+  - `[EXT-28f] ${provider}: a region that does not allow the trace lines is accepted` (Node)
+  - `[EXT-28f] ${provider}: a region that does not allow the trace lines looks dead to a page` (Chromium)
+  - `[EXT-28f] ${provider}: with trace propagation off the same region is chosen`
 - **EXT-28g** Parallel calls during discovery: several calls before a base is known, through
   `Effect.cached` or an equivalent of the consumer's. One discovery: each candidate's ledger has one
-  health arrival. Status: pending.
-- **EXT-28h** The chosen region resets during a session, a write included: `reset` on `*` with
-  `after: 2`, and a call and a booking that move to the next candidate, by `transformClient` and the
-  attempt number, in both lanes. The ledgers of both regions and `GET /v1/bookings` on both say what
-  really happened to the write, as EXT-24e does. Status: pending.
+  health arrival. Status: tested.
+  - `[EXT-28g] ${provider}: parallel calls before a base is known make one discovery`
+- **EXT-28h** The chosen region resets during a session, a write included: `reset` on the session's
+  routes, `GET /v1/manifest` with `after: 1` and `POST /v1/bookings`, and a call and a booking that
+  move to the next candidate, by `transformClient` and the attempt number, in both lanes. A rule on
+  `*` would also take the test's own `GET /v1/bookings`, and how many of those a `times` must spare
+  depends on what Chromium sends again. The ledgers of both regions and `GET /v1/bookings` on both
+  say what really happened to the write, as EXT-24e does: in Node a booking at each, and in Chromium
+  two at the first. Status: tested.
+  - `[EXT-28h] ${provider}: when the chosen region resets, a read and a booking move on by their attempt number, and the write stands at both regions`
 - **EXT-28i** The chosen region hangs during a session: as EXT-28h with `hang`, under an
-  `attemptTimeout`. The hung arrival ends `aborted`, with its connection closed. Status: pending.
+  `attemptTimeout`. The hung arrival ends `aborted`, with its connection closed. Status: tested.
+  - `[EXT-28i] ${provider}: when the chosen region hangs, each hung arrival ends aborted and closed, and the attempt moves on`
 - **EXT-28j** A definition that keeps a fixed base under `prependUrl`: the prefix goes in front of a
-  whole URL, so the request goes to a wrong URL with no error from the library. Provider: pin each
-  lane's result, and the ledger of the region it should have reached shows nothing. Status: pending.
+  whole URL, so the request goes to a wrong URL with no error from the library. Provider: both lanes
+  send it to the chosen region with the target `/<wanted origin>/v1/health`, which answers 404, so the
+  caller gets an `UnexpectedResponse`, and the ledger of the region it should have reached shows
+  nothing. Status: limit.
+  - `[EXT-28j] ${provider}: a fixed base under prependUrl goes to a wrong URL with no error from the library`
 - **EXT-28k** No base added at all. Node: `InvalidUrlError`, in `HttpClientError`. Chromium: the
   relative URL resolves against the page, so the call goes to the page's own server, with no error
-  from the library, and the regions' ledgers stay empty. Status: pending.
+  from the library; that server answers 404, an `UnexpectedResponse`, and the regions' ledgers stay
+  empty. Status: limit.
+  - `[EXT-28k] ${provider}: no base at all is an InvalidUrlError, and no region hears of it` (Node)
+  - `[EXT-28k] ${provider}: no base at all resolves against the page, so the call reaches the page's own server, and no region hears of it` (Chromium)
 - **EXT-28l** A definition with `Request.baseUrl` and a service, the form for a location known late.
   Library: it runs once per evaluation, every retry uses that base, and it cannot move during
   retries, so the service supplies the chosen region and a failed lookup comes back as its own
   failure with nothing sent. The client route of EXT-28h stays, because only it can move a call
-  between attempts. Status: pending.
+  between attempts. Status: tested.
+  - `[EXT-28l] ${provider}: a base from a service runs once, so every retry uses it and a call cannot move between attempts`
+  - `[EXT-28l] ${provider}: a lookup that fails comes back as itself, with nothing sent`
 - **EXT-28m** A write moving between attempts by the attempt number alone, with no state in a
   classifier: `closed` on the first candidate's `POST`, and `transformClient` choosing the candidate
   from its second argument. As EXT-24e, with `X-Attempt` on both ledgers. A retry after two failures
-  reaches a third candidate. Status: pending.
+  reaches a third candidate. Status: tested.
+  - `[EXT-28m] ${provider}: a write moves between attempts by its number alone, with no state in a classifier`
+  - `[EXT-28m] ${provider}: a retry after two failures reaches a third candidate`
 
 #### The backend held to its page
 
