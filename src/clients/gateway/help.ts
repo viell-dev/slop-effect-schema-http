@@ -9,7 +9,7 @@
  * client received, and leaves the client itself to the caller: what arrives is the provider's
  * doing.
  */
-import { Schema, SchemaTransformation } from "effect";
+import { Effect, Schema, SchemaTransformation } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 import { ErrorLine, GatewayError, PipeLine } from "./pipe.js";
@@ -149,6 +149,99 @@ export const inMiddleware = (origin: string, last: Last) =>
           HttpClient.mapRequest(client, HttpClientRequest.setHash("closing")),
         ),
     },
+  ).execute(undefined);
+
+/** The fragment in the constructor beside a query, which goes before it. */
+export const inConstructorWithQuery = (origin: string, last: Last) =>
+  Operation.make(
+    Request.get(`${origin}${ACCOUNTS}#closing`).pipe(
+      Request.setQuery("lang", "de"),
+    ),
+    response,
+    { transformClient: last },
+  ).execute(undefined);
+
+/** A constructor's query and fragment, which survive `Request.path` replacing its path. */
+export const inConstructorUnderPath = (origin: string, last: Last) =>
+  Operation.make(
+    Request.get("/elsewhere?lang=de#closing").pipe(
+      Request.path(Schema.String, (path) => path),
+      Request.baseUrl(origin),
+    ),
+    response,
+    { transformClient: last },
+  ).execute({ path: ACCOUNTS });
+
+/** The fragment in a base URL with a path to join after it and a query: both go before it. */
+export const inBaseUrlWithPath = (origin: string, last: Last) =>
+  Operation.make(
+    Request.get("accounts").pipe(
+      Request.baseUrl(`${origin}/cgi-bin/help.cgi#closing`),
+      Request.setQuery("lang", "de"),
+    ),
+    response,
+    { transformClient: last },
+  ).execute(undefined);
+
+/** Fragments in the constructor and in path output: the constructor's wins. */
+export const constructorOverPathOutput = (origin: string, last: Last) =>
+  Operation.make(
+    Request.get("/elsewhere#closing").pipe(
+      Request.path(Schema.String, (path) => path),
+      Request.baseUrl(origin),
+    ),
+    response,
+    { transformClient: last },
+  ).execute({ path: `${ACCOUNTS}#opening` });
+
+/** Fragments in path output and in the base URL: path output's wins. */
+export const pathOutputOverBaseUrl = (origin: string, last: Last) =>
+  Operation.make(
+    pathOutput.pipe(Request.baseUrl(`${origin}#opening`)),
+    response,
+    { transformClient: last },
+  ).execute({ path: `${ACCOUNTS}#closing` });
+
+/** The fragment of a base URL that an absolute request URL bypassed, which still applies. */
+export const inBypassedBaseUrl = (origin: string, last: Last) =>
+  Operation.make(
+    Request.get(`${origin}${ACCOUNTS}`).pipe(
+      Request.baseUrl("http://elsewhere.test/#closing"),
+    ),
+    response,
+    { transformClient: last },
+  ).execute(undefined);
+
+/** A fragment holding a `?`, which stays in it, with a query that needs a `?` of its own. */
+export const questionMarkInFragment = (origin: string, last: Last) =>
+  Operation.make(
+    pathOutput.pipe(Request.baseUrl(origin), Request.setQuery("lang", "de")),
+    response,
+    { transformClient: last },
+  ).execute({ path: `${ACCOUNTS}#closing?x=1` });
+
+/** A fragment that `URL` would percent-encode, which the request's `hash` keeps as written. */
+export const unencodedFragment = (origin: string, last: Last) =>
+  Operation.make(Request.get(`${origin}${ACCOUNTS}#a b"c`), response, {
+    transformClient: last,
+  }).execute(undefined);
+
+/** An empty fragment, which is a fragment as far as the request goes. */
+export const emptyFragment = (origin: string, last: Last) =>
+  Operation.make(Request.get(`${origin}${ACCOUNTS}#`), response, {
+    transformClient: last,
+  }).execute(undefined);
+
+/** A constructor's fragment taken off again, in the one place that can see it. */
+export const fragmentRemoved = (origin: string, last: Last) =>
+  Operation.make(
+    Request.get(`${origin}${ACCOUNTS}#closing`).pipe(
+      Request.mapEffect((request) =>
+        Effect.succeed(HttpClientRequest.removeHash(request)),
+      ),
+    ),
+    response,
+    { transformClient: last },
   ).execute(undefined);
 
 /** `go.cgi`'s link to the `closing` section. Following its 302 is up to the client. */

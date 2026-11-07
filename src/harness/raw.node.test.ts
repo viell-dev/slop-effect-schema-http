@@ -255,6 +255,34 @@ describe("raw provider", () => {
   );
 
   it.live(
+    "adds no framing with framing: false, and still writes the body and a Host",
+    () =>
+      Effect.gen(function* () {
+        const server = yield* serve(ok, undefined, "socket");
+        yield* Operation.make(
+          Request.post(`${server.origin}/doc`).pipe(
+            Request.removeHeader("content-type"),
+            Request.removeHeader("content-length"),
+            Request.body(Body.text),
+          ),
+          Response.status(200, Body.text),
+        )
+          .execute({ body: "gone" })
+          .pipe(Effect.provide(rawLayer(server.origin, { framing: false })));
+        const [entry] = server.ledger;
+        expect(entry!.head).toBe(
+          [
+            "POST /doc HTTP/1.1",
+            `host: ${hostOf(server.origin)}`,
+            "accept: text/plain",
+          ].join("\r\n"),
+        );
+        // The socket listener frames a body only by `Content-Length`, so it reads none here.
+        expect(entry!.body).toHaveLength(0);
+      }),
+  );
+
+  it.live(
     "writes a header line as Latin-1, or as UTF-8 if it does not fit",
     () =>
       Effect.gen(function* () {
