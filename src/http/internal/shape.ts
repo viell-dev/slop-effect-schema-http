@@ -14,6 +14,14 @@ export interface Shape {
   readonly chooses: boolean;
 }
 
+/** What the schemas stacked on a group have told each other. */
+export interface Taken {
+  /** The fields of the caller's input a schema took. Only this says a field is not lost. */
+  readonly fields: ReadonlySet<PropertyKey>;
+  /** The compared names schemas with no union allow. Each settles a raw value under its names. */
+  readonly settled: ReadonlySet<string>;
+}
+
 /** What a schema's encoded side states, in the schema's own spelling. */
 interface Reading {
   /** Each stated name, with its encoded type in every union member that states it. */
@@ -103,6 +111,33 @@ const read = (ast: SchemaAST.AST): Reading => {
     : end._tag === "Union"
       ? readUnion(end.types.map(read))
       : { fields: new Map(), rest: [], open: true, required: new Set() };
+};
+
+let readable = false;
+
+/** Read a few fields once, so a change in Effect fails loudly here and not silently in a call. */
+const checkReadable = (): void => {
+  if (readable) return;
+  readable = true;
+  const text = Schema.String;
+  const fallback = Effect.succeed("");
+  const { required } = read(
+    Schema.Struct({
+      always: text,
+      defaulted: text.pipe(Schema.withDecodingDefaultKey(fallback)),
+      maybe: Schema.OptionFromOptionalKey(text),
+      omitted: text.pipe(
+        Schema.withDecodingDefaultKey(fallback, { encodingStrategy: "omit" }),
+      ),
+    }).ast,
+  );
+  Excess.assume({
+    "a required field reads as always written": required.has("always"),
+    "a decoding default reads as always written": required.has("defaulted"),
+    "an Option does not read as always written": !required.has("maybe"),
+    "the omit strategy does not read as always written":
+      !required.has("omitted"),
+  });
 };
 
 const takesList = (ast: SchemaAST.AST): boolean =>
@@ -231,32 +266,33 @@ export const written = (output: object, fold: Fold): ReadonlySet<string> =>
 
 const noNames: ReadonlySet<PropertyKey> = new Set();
 
-/** The names a schema's decoded side states, which a caller can use as well as the wire names. */
-const decodedNames = (ast: SchemaAST.AST): ReadonlyArray<string> =>
-  ast._tag === "Objects"
-    ? ast.propertySignatures.map(({ name }) => String(name))
-    : ast._tag === "Union"
-      ? ast.types.flatMap(decodedNames)
-      : ast._tag === "Declaration" && ast.encoding !== undefined
-        ? decodedNames(ast.encoding[0].to)
-        : [];
-
 /**
- * The names other schemas in the group took, in their compared form. A value one of them holds is
- * that schema's, not a default for this one.
+ * The names a raw value does not concern a union under, in their compared form: what another schema
+ * took from the caller, and what a schema with no union settles itself. A schema with no choice
+ * settles its own defaults, so nothing is left to it by this.
  */
 export const others = (
-  all: ReadonlySet<PropertyKey> | undefined,
-  own: ReadonlySet<PropertyKey> | undefined,
+  shape: Shape,
+  taken: Taken | undefined,
   fold: Fold,
 ): ReadonlySet<PropertyKey> =>
-  all === undefined || own === undefined
+  !shape.chooses || taken === undefined
     ? noNames
-    : new Set(
-        Array.from(all)
-          .filter((name) => !own.has(name))
-          .map((name) => (typeof name === "string" ? fold(name) : name)),
-      );
+    : new Set([
+        ...Array.from(taken.fields, (name) =>
+          typeof name === "string" ? fold(name) : name,
+        ),
+        ...taken.settled,
+      ]);
+
+/** The record once a schema has added what it took. */
+export const taking = (
+  taken: Taken | undefined,
+  own: ReadonlySet<PropertyKey>,
+): Taken => ({
+  fields: new Set([...(taken?.fields ?? []), ...own]),
+  settled: taken?.settled ?? new Set(),
+});
 
 /**
  * What went into `settle` and is gone from what came out, in the spelling it went in with. A schema
@@ -287,13 +323,14 @@ export const lost = (
  * Without one it takes the looser match, and {@link lost} tells the caller what that left out.
  */
 export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
+  checkReadable();
   const reading = read(contract.ast);
   const spelling = new Map(
     Array.from(reading.fields.keys(), (name) => [fold(name), name] as const),
   );
   const decode = Schema.decodeUnknownEffect(contract);
   const encode = Schema.encodeEffect(contract);
-  const chooses = Excess.holdsChoice(contract.ast);
+  const chooses = Excess.choosing(contract.ast);
   const shape: Shape = {
     names: new Set(spelling.keys()),
     open: reading.open,
@@ -301,7 +338,7 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
     chooses,
   };
   // A member a union did not take states a name it does not hold, so a union goes by what it wrote.
-  const held = chooses ? [] : decodedNames(contract.ast);
+  const held = chooses ? [] : Excess.decodedNames(contract.ast);
   /**
    * The caller's fields this schema took: what it wrote, and any it states and the caller gave,
    * which may be written under another name or not at all. What it would lose is not among them.

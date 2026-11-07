@@ -1,4 +1,4 @@
-import { Effect, Schema, SchemaAST } from "effect";
+import { Effect, Exit, Schema, type SchemaAST } from "effect";
 import * as Excess from "./excess.js";
 
 /** What a schema's constructor takes. This is the one place that names the `~`-prefixed key. */
@@ -51,123 +51,49 @@ export type Input<S extends Schema.Top> = EitherSide<
   S["Encoded"]
 >;
 
-/** The fields of a struct or class, as they are declared, with each field's own encoding. */
-const fieldsOf = (
-  ast: SchemaAST.AST,
-): ReadonlyArray<{
-  readonly name: PropertyKey;
-  readonly type: SchemaAST.AST;
-}> =>
-  ast._tag === "Objects"
-    ? ast.propertySignatures
-    : ast._tag === "Declaration" && ast.encoding !== undefined
-      ? fieldsOf(ast.encoding[0].to)
-      : [];
-
-/** How one pass reads a value. */
-interface Pass {
-  /** What each parse takes. */
-  readonly options?: SchemaAST.ParseOptions;
-  /** Whether to go on field by field or member by member after the value as a whole. */
-  readonly pieces: boolean;
-  /** What to report once a later route has failed as well. */
-  readonly either: (
-    first: Schema.SchemaError,
-    next: Schema.SchemaError,
-  ) => Schema.SchemaError;
-}
-
-/** Effect's own reading, which strips. Reporting the first route keeps existing failures as they read. */
-const stripping: Pass = { pieces: true, either: (first) => first };
-
-/** A whole value with nothing stripped, which stops at the first key it would have to strip. */
-const keeping: Pass = {
-  options: Excess.strict,
-  pieces: false,
-  either: (first) => first,
-};
-
-/**
- * The same, reporting every key on both sides, which is how to tell what no member states. It reads
- * the value whole so that a tag can rule members out, as a read in pieces does not.
- */
-const surveying: Pass = {
-  options: Excess.complete,
-  pieces: false,
-  either: Excess.either,
-};
-
-/** The last strict reading, which also takes a mix by field. Reading in pieces is the slow part. */
-const reporting: Pass = {
-  options: Excess.complete,
-  pieces: true,
-  either: Excess.either,
-};
-
 /**
  * Bring a value on either side of a schema to its decoded side.
  *
  * @remarks
  * A value that fits the decoded side is read as decoded, so it is encoded once. Anything else goes
  * through the decoder as a whole, then field by field. Both routes validate, and a value that fits
- * neither fails with the decoded side's error, so existing failures read the same.
+ * neither fails with the decoded side's error, so existing failures read the same. `options` go to
+ * every parse.
  */
 export const toDecoded = <S extends Schema.Top>(
   contract: S,
-  pass: Pass = stripping,
+  options?: SchemaAST.ParseOptions,
 ) => {
   const make = (input: unknown) =>
     Effect.mapError(
-      contract.makeEffect(input, { parseOptions: pass.options }),
+      contract.makeEffect(input, { parseOptions: options }),
       (issue) => new Schema.SchemaError(issue),
     );
   const decode = Schema.decodeUnknownEffect(contract);
   const byField = Effect.fnUntraced(function* (input: object) {
     const output: Record<PropertyKey, unknown> = { ...input };
-    for (const { name, type } of fieldsOf(contract.ast))
+    for (const { name, type } of Excess.fieldsOf(contract.ast))
       if (output[name] !== undefined)
-        output[name] = yield* Effect.mapError(
-          fromPart(type, output[name], pass),
-          (failure) => Excess.atField(name, failure),
-        );
+        output[name] = yield* fromPart(type, output[name], options);
     return yield* make(output);
   });
-  const byMember = (
-    types: ReadonlyArray<SchemaAST.AST>,
-    input: object,
-  ): Effect.Effect<unknown, Schema.SchemaError, unknown> =>
-    Effect.mapError(
-      types.reduce<
-        Effect.Effect<unknown, ReadonlyArray<Schema.SchemaError>, unknown>
-      >(
-        (tried, member) =>
-          Effect.catch(tried, (failures) =>
-            Effect.mapError(fromPart(member, input, pass), (failure) => [
-              ...failures,
-              failure,
-            ]),
-          ),
-        Effect.fail([]),
-      ),
-      Excess.anyMember,
-    );
-  const inPieces = (input: object) =>
-    contract.ast._tag === "Union"
-      ? byMember(contract.ast.types, input)
+  const byMember = (input: object) =>
+    contract.ast._tag === "Union" && contract.ast.types.length > 0
+      ? Effect.firstSuccessOf(
+          contract.ast.types.map((member) => fromPart(member, input, options)),
+        )
       : byField(input);
   return (
     input: Input<S>,
   ): Effect.Effect<S["Type"], Schema.SchemaError, S["DecodingServices"]> =>
     Effect.catch(make(input), (failure) =>
       Effect.mapError(
-        Effect.catch(decode(input, pass.options), (encodedFailure) =>
-          pass.pieces && typeof input === "object" && input !== null
-            ? Effect.mapError(inPieces(input), (next) =>
-                pass.either(encodedFailure, next),
-              )
+        Effect.catch(decode(input, options), (encodedFailure) =>
+          typeof input === "object" && input !== null
+            ? byMember(input)
             : Effect.fail(encodedFailure),
         ),
-        (next) => pass.either(failure, next),
+        () => failure,
       ),
     ) as Effect.Effect<S["Type"], Schema.SchemaError, S["DecodingServices"]>;
 };
@@ -176,25 +102,22 @@ export const toDecoded = <S extends Schema.Top>(
 const fromPart = (
   ast: SchemaAST.AST,
   value: unknown,
-  pass: Pass,
+  options?: SchemaAST.ParseOptions,
 ): Effect.Effect<unknown, Schema.SchemaError, unknown> =>
-  toDecoded(Schema.make<Schema.Top>(ast), pass)(value);
+  toDecoded(Schema.make<Schema.Top>(ast), options)(value);
 
-/** Take a value through one pass, to the decoded side and then out through `write`. */
-const passing = <S extends Schema.Top, A, R>(
-  contract: S,
-  write: (
-    value: S["Type"],
-    options?: SchemaAST.ParseOptions,
-  ) => Effect.Effect<A, Schema.SchemaError, R>,
-  pass: Pass,
-) => {
-  const decoded = toDecoded(contract, pass);
-  return (
-    input: Input<S>,
-  ): Effect.Effect<A, Schema.SchemaError, R | S["DecodingServices"]> =>
-    Effect.flatMap(decoded(input), (value) => write(value, pass.options));
-};
+/** Whether a part that could not be compared cannot be read strictly either. */
+const staysUnread = ({ types = [], value }: Excess.Missing) =>
+  types.length === 0
+    ? Effect.succeed(true)
+    : Effect.map(
+        Effect.exit(
+          Effect.firstSuccessOf(
+            types.map((type) => fromPart(type, value, Excess.strict)),
+          ),
+        ),
+        Exit.isFailure,
+      );
 
 /** What a schema wrote, and the fields of its input it would lose, which may be held elsewhere. */
 export interface Written<A> {
@@ -202,53 +125,93 @@ export interface Written<A> {
   readonly lost: ReadonlyArray<Excess.Path>;
 }
 
+/** Takes a decoded value out through a schema, as the options say. */
+type Write<S extends Schema.Top, A, R> = (
+  value: S["Type"],
+  options?: SchemaAST.ParseOptions,
+) => Effect.Effect<A, Schema.SchemaError, R>;
+
+/** Bring a value to the schema's decoded side, then write it, as Effect reads it. */
+const stripping = <S extends Schema.Top, A, R>(
+  contract: S,
+  write: Write<S, A, R>,
+) => {
+  const decoded = toDecoded(contract);
+  return (
+    input: Input<S>,
+  ): Effect.Effect<A, Schema.SchemaError, R | S["DecodingServices"]> =>
+    Effect.flatMap(decoded(input), (value) => write(value));
+};
+
 /**
  * Bring a value to the schema's decoded side, then write it, and say what that would lose.
  *
  * @remarks
  * Effect takes the first union member that fits and strips what that member does not state, on the
  * decoded side and again when it encodes, so a later member that holds everything would lose to an
- * earlier one that holds part of it. A schema with such a choice is therefore read strictly first,
- * through both steps, so the member that strips nothing wins.
+ * earlier one that holds part of it. So a schema with such a choice reads what the caller means
+ * strictly, through both steps, and a read that passes has stripped nothing.
  *
- * A strict read also fails on what no member states, which is what a stacked schema's fields look
- * like, so those keys go and it reads again. They are stripped as a struct strips them. What is left
- * is either a value no member fits, which keeps its usual failure, or a field a member states and
- * the member that fits would lose, which goes back as {@link Written.lost}.
+ * A value that cannot be read that way is read as Effect reads it, and the result is compared with
+ * what went in, so what is lost is what actually went, not what a failure suggests would. The write
+ * is strict first, because a loose write can choose another member and lose what the read kept. If
+ * this can no longer read a schema, a key it should have left out is reported as lost, so it refuses
+ * rather than strips.
  *
  * A schema with no such choice skips all of this, so a plain struct costs what it always did.
  */
 export const reader = <S extends Schema.Top, A, R>(
   contract: S,
-  write: (
-    value: S["Type"],
-    options?: SchemaAST.ParseOptions,
-  ) => Effect.Effect<A, Schema.SchemaError, R>,
+  write: Write<S, A, R>,
 ) => {
-  const stripped = passing(contract, write, stripping);
+  const stripped = stripping(contract, write);
   const keepsAll = (output: A): Written<A> => ({ output, lost: [] });
-  if (!Excess.holdsChoice(contract.ast))
+  if (!Excess.choosing(contract.ast))
     return (input: Input<S>) => Effect.map(stripped(input), keepsAll);
-  const kept = passing(contract, write, keeping);
-  const surveyed = passing(contract, write, surveying);
-  const reported = passing(contract, write, reporting);
-  const withoutExcess = (input: Input<S>) =>
-    Effect.catch(surveyed(input), ({ issue }) =>
-      reported(
-        Excess.excess(issue).reduce<unknown>(Excess.without, input) as Input<S>,
+  const decoded = toDecoded(contract);
+  const exact = toDecoded(contract, Excess.strict);
+  const kept = (input: Input<S>) =>
+    Effect.flatMap(exact(input), (value) => write(value, Excess.strict));
+  const compared = (input: Input<S>, given: unknown) =>
+    Effect.flatMap(decoded(input), (value) =>
+      Effect.flatMap(
+        Effect.catch(write(value, Excess.strict), () => write(value)),
+        (output) =>
+          Effect.map(
+            Effect.filter(
+              Excess.missing([contract.ast], given, value, output),
+              staysUnread,
+            ) as Effect.Effect<
+              ReadonlyArray<Excess.Missing>,
+              never,
+              S["DecodingServices"]
+            >,
+            (gone): Written<A> => ({
+              output,
+              lost: gone.map(({ path }) => path),
+            }),
+          ),
       ),
     );
   return (
     input: Input<S>,
-  ): Effect.Effect<Written<A>, Schema.SchemaError, R | S["DecodingServices"]> =>
-    Effect.catch(Effect.map(kept(input), keepsAll), () =>
-      Effect.catch(Effect.map(withoutExcess(input), keepsAll), (failure) =>
-        Effect.map(stripped(input), (output) => ({
-          output,
-          lost: Excess.lost(failure.issue, input),
-        })),
+  ): Effect.Effect<
+    Written<A>,
+    Schema.SchemaError,
+    R | S["DecodingServices"]
+  > => {
+    const given = Excess.normalised([contract.ast], input);
+    const meant = given as Input<S>;
+    return Effect.catch(
+      Effect.map(
+        given === input
+          ? kept(input)
+          : Effect.catch(kept(meant), () => kept(input)),
+        keepsAll,
       ),
+      () => compared(input, given),
     );
+  };
 };
 
 /**
@@ -271,13 +234,9 @@ export const refuseLost = (
 /** Bring a value to the schema's decoded side and write it, with nothing else to hold what it loses. */
 export const encoder = <S extends Schema.Top, A, R>(
   contract: S,
-  write: (
-    value: S["Type"],
-    options?: SchemaAST.ParseOptions,
-  ) => Effect.Effect<A, Schema.SchemaError, R>,
+  write: Write<S, A, R>,
 ) => {
-  if (!Excess.holdsChoice(contract.ast))
-    return passing(contract, write, stripping);
+  if (!Excess.choosing(contract.ast)) return stripping(contract, write);
   const read = reader(contract, write);
   return (
     input: Input<S>,

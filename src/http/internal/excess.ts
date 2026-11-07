@@ -3,22 +3,12 @@ import { Schema, SchemaAST, SchemaIssue } from "effect";
 /** Where a key sits in a value, one step for each level. */
 export type Path = ReadonlyArray<PropertyKey>;
 
+type Ast = SchemaAST.AST;
+
 /** Parse options that make a schema refuse what it would strip. */
 export const strict: SchemaAST.ParseOptions = { onExcessProperty: "error" };
 
-/**
- * The same, and report all of it, which the readers here need. A member that is refused goes on to
- * run its fields, so a value that passes is better read with {@link strict}.
- */
-export const complete: SchemaAST.ParseOptions = { ...strict, errors: "all" };
-
-const samePath =
-  (left: Path) =>
-  (right: Path): boolean =>
-    left.length === right.length &&
-    left.every((key, index) => key === right[index]);
-
-const partsOf = (ast: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> => {
+const partsOf = (ast: Ast): ReadonlyArray<Ast> => {
   switch (ast._tag) {
     case "Objects":
       return [...ast.propertySignatures, ...ast.indexSignatures].map(
@@ -36,7 +26,7 @@ const partsOf = (ast: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> => {
 };
 
 /** Whether a schema can read an object's keys, and so can strip one of them. */
-const readsKeys = (ast: SchemaAST.AST): boolean =>
+const readsKeys = (ast: Ast): boolean =>
   ast._tag === "Objects" ||
   ast._tag === "ObjectKeyword" ||
   ast._tag === "Suspend" ||
@@ -50,171 +40,190 @@ const readsKeys = (ast: SchemaAST.AST): boolean =>
  * can cost a field, so any other schema skips the strict pass. `Schema.NullOr` around a struct has
  * no such choice. A suspended schema may not exist yet, so it counts as one.
  */
-export const holdsChoice = (ast: SchemaAST.AST): boolean =>
+const holdsChoice = (ast: Ast): boolean =>
   ast._tag === "Suspend" ||
   (ast._tag === "Union" && ast.types.filter(readsKeys).length > 1) ||
   partsOf(ast).some(holdsChoice) ||
   (ast.encoding ?? []).some(({ to }) => holdsChoice(to));
 
-/** Marks a failure of two routes to one value. These failures are only read, never reported. */
-const routes = new SchemaAST.Union([]);
+/** The fields of a struct or class, as they are declared, with each field's own encoding. */
+export const fieldsOf = (
+  ast: Ast,
+): ReadonlyArray<{ readonly name: PropertyKey; readonly type: Ast }> =>
+  ast._tag === "Objects"
+    ? ast.propertySignatures
+    : ast._tag === "Declaration" && ast.encoding !== undefined
+      ? fieldsOf(ast.encoding[0].to)
+      : [];
 
-/** Stands in for the union in a failure of its members, read one at a time. */
-const members = new SchemaAST.Union([]);
+const isObject = (value: unknown): value is Record<PropertyKey, unknown> =>
+  typeof value === "object" && value !== null;
 
-/** The failure of two routes to one value, either of which it may have been meant for. */
-export const either = (
-  first: Schema.SchemaError,
-  next: Schema.SchemaError,
-): Schema.SchemaError =>
-  new Schema.SchemaError(
-    new SchemaIssue.AnyOf(routes, [first.issue, next.issue]),
-  );
-
-/** The failure of every member of a union, as Effect would report it. */
-export const anyMember = (
-  failures: ReadonlyArray<Schema.SchemaError>,
-): Schema.SchemaError =>
-  new Schema.SchemaError(
-    new SchemaIssue.AnyOf(
-      members,
-      failures.map(({ issue }) => issue),
-    ),
-  );
-
-/** A failure of one field, placed under its name. */
-export const atField = (
-  name: PropertyKey,
-  failure: Schema.SchemaError,
-): Schema.SchemaError =>
-  new Schema.SchemaError(new SchemaIssue.Pointer([name], failure.issue));
-
-/** The keys every one of these failures refused, leaving out those that read no keys. */
-const refusedByAll = (
-  issues: ReadonlyArray<SchemaIssue.Issue>,
-): ReadonlyArray<Path> | undefined => {
-  const [first, ...others] = issues
-    .map(refused)
-    .filter((paths) => paths !== undefined);
-  return first?.filter((path) =>
-    others.every((other) => other.some(samePath(path))),
-  );
+/** A plain object or a list, which can be taken apart. A class instance has to stay one. */
+const isPlain = (value: unknown): value is Record<PropertyKey, unknown> => {
+  if (!isObject(value)) return false;
+  if (Array.isArray(value)) return true;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 };
 
+const keysOf = (value: object): ReadonlyArray<PropertyKey> =>
+  Reflect.ownKeys(value).filter((key) =>
+    Object.prototype.propertyIsEnumerable.call(value, key),
+  );
+
+/** Whether a literal field holds another literal on every side, which a tag can rule out by. */
+const refusesLiteral = (type: Ast, value: unknown): boolean =>
+  [type, ...(type.encoding ?? []).map(({ to }) => to)].every(
+    (side) => side._tag === "Literal" && side.literal !== value,
+  );
+
+/** Whether a member's tag rules it out for a value, as Effect's union does before it reads one. */
+const ruledOut = (member: Ast, value: unknown): boolean =>
+  isObject(value) &&
+  fieldsOf(member).some(
+    ({ name, type }) =>
+      !SchemaAST.isOptional(type) &&
+      value[name] !== undefined &&
+      refusesLiteral(type, value[name]),
+  );
+
+/** The schemas a value can be read against here: each member its tag leaves, on each side. */
+const sidesOf = (ast: Ast, value: unknown): ReadonlyArray<Ast> => [
+  ...(ast._tag === "Union"
+    ? ast.types
+        .filter((member) => !ruledOut(member, value))
+        .flatMap((member) => sidesOf(member, value))
+    : ast._tag === "Suspend"
+      ? sidesOf(ast.thunk(), value)
+      : [ast]),
+  ...(ast.encoding ?? []).flatMap(({ to }) => sidesOf(to, value)),
+];
+
+/** The schemas of what these sides hold under one key. */
+const typesAt = (
+  sides: ReadonlyArray<Ast>,
+  key: PropertyKey,
+): ReadonlyArray<Ast> =>
+  sides.flatMap((side) => {
+    if (side._tag === "Arrays") {
+      const element = side.elements[Number(key)];
+      return element === undefined ? side.rest : [element];
+    }
+    return side._tag === "Objects"
+      ? [
+          ...side.propertySignatures
+            .filter(({ name }) => name === key)
+            .map(({ type }) => type),
+          ...side.indexSignatures.map(({ type }) => type),
+        ]
+      : [];
+  });
+
+/** The names on a schema's decoded side, which a value can use as well as the wire names. */
+export const decodedNames = (
+  ast: Ast,
+  value?: unknown,
+): ReadonlyArray<string> =>
+  ast._tag === "Union"
+    ? ast.types
+        .filter((member) => !ruledOut(member, value))
+        .flatMap((member) => decodedNames(member, value))
+    : ast._tag === "Suspend"
+      ? decodedNames(ast.thunk(), value)
+      : fieldsOf(ast).map(({ name }) => String(name));
+
+/** Whether these sides leave a value's keys open, so none can be called unstated. */
+const leaveKeysOpen = (sides: ReadonlyArray<Ast>): boolean =>
+  sides.some(
+    ({ _tag }) =>
+      _tag === "Any" || _tag === "Unknown" || _tag === "ObjectKeyword",
+  ) || !sides.some(({ _tag }) => _tag === "Objects" || _tag === "Arrays");
+
 /**
- * The keys a failure refused as unexpected, or `undefined` if it stopped before it read any keys, as
- * a class does with a value that is not an instance. Under a union these are the keys every member
- * that read them refused, so none of those members states them. A key on a node with an encoding
- * came out of a transformation, so the caller did not give it.
+ * What a caller means by a value, at any depth of plain objects and lists: no key set to `undefined`,
+ * which holds nothing, and no key the schema does not state, which a struct would strip anyway. A
+ * member a tag has ruled out states nothing. Returns `value` itself if there is nothing to take out.
  */
-const refused = (issue: SchemaIssue.Issue): ReadonlyArray<Path> | undefined => {
-  switch (issue._tag) {
-    case "UnexpectedKey":
-      return issue.ast.encoding === undefined ? [[]] : [];
-    case "Pointer":
-      return (
-        refused(issue.issue)?.map((path) => [...issue.path, ...path]) ?? []
-      );
-    case "Encoding":
-      return refused(issue.issue);
-    case "Composite":
-      return issue.issues.flatMap((part) => refused(part) ?? []);
-    case "AnyOf":
-      return refusedByAll(issue.issues);
-    default:
-      return undefined;
-  }
+export const normalised = (
+  types: ReadonlyArray<Ast>,
+  value: unknown,
+): unknown => {
+  if (types.length === 0 || !isPlain(value)) return value;
+  const sides = types.flatMap((type) => sidesOf(type, value));
+  const open = leaveKeysOpen(sides);
+  const isList = Array.isArray(value);
+  const keys = keysOf(value);
+  const entries = keys.flatMap((key) => {
+    const item = value[key];
+    const inner = typesAt(sides, key);
+    return !isList && (item === undefined || (inner.length === 0 && !open))
+      ? []
+      : [[key, normalised(inner, item)] as const];
+  });
+  const same =
+    entries.length === keys.length &&
+    entries.every(([key, item]) => item === value[key]);
+  return same
+    ? value
+    : isList
+      ? entries.map(([, item]) => item)
+      : Object.fromEntries(entries);
 };
 
-/**
- * What a schema would strip as a struct strips an excess key: the keys no member states. Taking them
- * out first leaves the keys a choice of member decides.
- */
-export const excess = (issue: SchemaIssue.Issue): ReadonlyArray<Path> =>
-  refused(issue) ?? [];
+const has = (value: unknown, key: PropertyKey): boolean =>
+  isObject(value) && key in value && value[key] !== undefined;
+
+const at = (value: unknown, key: PropertyKey): unknown =>
+  isObject(value) ? value[key] : undefined;
+
+/** A field that may be gone. With `types`, it is only gone if they cannot read `value` strictly. */
+export interface Missing {
+  readonly path: Path;
+  readonly types?: ReadonlyArray<Ast>;
+  readonly value?: unknown;
+}
 
 /**
- * The fields a parse that strips would lose although a union states them, or `undefined` if
- * stripping would not make this failure pass. Effect takes the first member that fits, so that is
- * the member to ask, and a field it refuses is lost when another member would have held it.
+ * What a read lost from `given`, a {@link normalised} value, by comparing it with what came out. A
+ * field has to be in the decoded value or in what was written. Under a name a member decodes, what
+ * was written has to be what was given too, because that name can be another field's on the wire.
  *
- * Only members compare. A key the other route to a value reads is that member's other name for a
- * field, as an encoded name is beside a decoded one, and a struct strips it the same way.
+ * A value that cannot be compared, such as text that holds JSON or a `Map`, may hide a choice of
+ * member. It comes back with its `types`, so that a strict read can settle it.
  */
-const wouldLose = (
-  issue: SchemaIssue.Issue,
-): ReadonlyArray<Path> | undefined => {
-  switch (issue._tag) {
-    case "UnexpectedKey":
-      return [];
-    case "Pointer":
-      return wouldLose(issue.issue)?.map((path) => [...issue.path, ...path]);
-    case "Encoding":
-      return wouldLose(issue.issue);
-    case "Composite": {
-      const parts = issue.issues.map(wouldLose);
-      return parts.every((part) => part !== undefined)
-        ? parts.flat()
-        : undefined;
-    }
-    case "AnyOf": {
-      if (issue.ast === routes) {
-        const read = issue.issues
-          .map(wouldLose)
-          .filter((paths) => paths !== undefined);
-        return read.find((paths) => paths.length > 0) ?? read[0];
-      }
-      const member = issue.issues.find((part) => wouldLose(part) !== undefined);
-      if (member === undefined) return undefined;
-      const unstated = refusedByAll(issue.issues) ?? [];
-      return [
-        ...(wouldLose(member) ?? []),
-        ...excess(member).filter((path) => !unstated.some(samePath(path))),
-      ];
-    }
-    default:
-      return undefined;
+export const missing = (
+  types: ReadonlyArray<Ast>,
+  given: unknown,
+  value: unknown,
+  output: unknown,
+  path: Path = [],
+): ReadonlyArray<Missing> => {
+  if (given === undefined) return [];
+  if (!isPlain(given)) {
+    const choosing = types.filter(holdsChoice);
+    return choosing.length > 0 ? [{ path, types: choosing, value: given }] : [];
   }
-};
-
-/** Whether `path` leads to a key that is there and holds nothing. */
-const isUnset = (value: unknown, path: Path): boolean => {
-  if (typeof value !== "object" || value === null) return false;
-  const [key, ...rest] = path;
-  if (key === undefined || !Object.hasOwn(value, key)) return false;
-  const next = (value as Record<PropertyKey, unknown>)[key];
-  return rest.length === 0 ? next === undefined : isUnset(next, rest);
-};
-
-/**
- * The fields of `input` a failure shows would be lost. A key set to `undefined` has no value to
- * lose, so it is not among them. A path that does not lead through the value, as one into a `Map`
- * does not, stays among them.
- */
-export const lost = (
-  issue: SchemaIssue.Issue,
-  input: unknown,
-): ReadonlyArray<Path> =>
-  (wouldLose(issue) ?? []).filter((path) => !isUnset(input, path));
-
-/** `value` without the key at `path`, leaving the original alone. A list keeps its length. */
-export const without = (value: unknown, [key, ...rest]: Path): unknown => {
-  if (
-    key === undefined ||
-    typeof value !== "object" ||
-    value === null ||
-    !Object.hasOwn(value, key)
-  )
-    return value;
-  const next = (value as Record<PropertyKey, unknown>)[key];
-  if (Array.isArray(value))
-    return rest.length === 0
-      ? value
-      : value.with(Number(key), without(next, rest));
-  if (rest.length > 0) return { ...value, [key]: without(next, rest) };
-  const others = { ...value };
-  Reflect.deleteProperty(others, key);
-  return others;
+  const sides = types.flatMap((type) => sidesOf(type, given));
+  const decoded = new Set(types.flatMap((type) => decodedNames(type, given)));
+  const holdsAsWritten = (key: PropertyKey) =>
+    has(output, key) &&
+    (!isObject(value) ||
+      !decoded.has(String(key)) ||
+      isObject(given[key]) ||
+      at(output, key) === given[key]);
+  return keysOf(given).flatMap((key) => {
+    const here = [...path, Array.isArray(given) ? Number(key) : key];
+    return given[key] === undefined || has(value, key) || holdsAsWritten(key)
+      ? missing(
+          typesAt(sides, key),
+          given[key],
+          at(value, key),
+          at(output, key),
+          here,
+        )
+      : [{ path: here }];
+  });
 };
 
 const notHeld = new SchemaIssue.InvalidValue({
@@ -223,7 +232,7 @@ const notHeld = new SchemaIssue.InvalidValue({
 
 /** A refusal that names the fields and, like any other schema failure here, leaves out values. */
 export const refusal = (
-  ast: SchemaAST.AST,
+  ast: Ast,
   [first, ...others]: readonly [Path, ...ReadonlyArray<Path>],
 ): Schema.SchemaError =>
   new Schema.SchemaError(
@@ -232,3 +241,49 @@ export const refusal = (
       ...others.map((path) => new SchemaIssue.Pointer(path, notHeld)),
     ]),
   );
+
+/**
+ * Stop at a reading of Effect that does not hold. These read its schema structure, which a newer
+ * Effect could change, and a reading that quietly came back empty would bring silent losses back.
+ */
+export const assume = (readings: Readonly<Record<string, boolean>>): void => {
+  const wrong = Object.keys(readings).filter((name) => !readings[name]);
+  if (wrong.length > 0)
+    throw new Error(
+      `viell-effect-schema-http cannot read this version of Effect, so it cannot keep its promise about lost fields. Use a version it was tested with, and report this: ${wrong.join("; ")}.`,
+    );
+};
+
+let readable = false;
+
+/** Read a small union once, so a change in Effect fails loudly here and not silently in a call. */
+const checkReadable = (): void => {
+  if (readable) return;
+  readable = true;
+  const text = Schema.String;
+  const narrow = Schema.Struct({ a: text });
+  const Probe = Schema.Union([narrow, Schema.Struct({ a: text, b: text })]);
+  assume({
+    "a union of structs holds a choice": holdsChoice(Probe.ast),
+    "a struct or null holds no choice": !holdsChoice(Schema.NullOr(narrow).ast),
+    "a strict read keeps a later member's field":
+      "b" in Schema.decodeUnknownSync(Probe)({ a: "", b: "" }, strict),
+    "a key no member states can be found": !(
+      "z" in (normalised([Probe.ast], { a: "", z: "" }) as object)
+    ),
+    "a member's field can be found":
+      "b" in (normalised([Probe.ast], { a: "", b: "" }) as object),
+    "a lost field can be found":
+      missing([Probe.ast], { a: "", b: "" }, { a: "" }, { a: "" }).length === 1,
+  });
+};
+
+/**
+ * Whether a schema has a choice that can cost a field. This is the way in for everything that acts
+ * on the answer, so nothing can ask before the reading has been checked: a change in Effect would
+ * otherwise answer "no", and every schema would skip the strict read with no error.
+ */
+export const choosing = (ast: Ast): boolean => {
+  checkReadable();
+  return holdsChoice(ast);
+};

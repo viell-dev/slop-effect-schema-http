@@ -833,6 +833,38 @@ describe("a caller's field under a union in a body", () => {
     }),
   );
 
+  it.effect("takes `undefined` as no field, at any depth", () =>
+    Effect.gen(function* () {
+      const Either = Schema.Union([
+        Schema.Struct({ a: Schema.String, b: Schema.optional(Schema.String) }),
+        Schema.Struct({ a: Schema.String, c: Schema.String }),
+      ]);
+      const value = { a: "x", b: undefined, c: "z" };
+      expect(textOf(yield* Body.jsonSchema(Either).encode(value))).toBe(
+        '{"a":"x","c":"z"}',
+      );
+      expect(
+        textOf(
+          yield* Body.jsonSchema(Schema.Struct({ filter: Either })).encode({
+            filter: value,
+          }),
+        ),
+      ).toBe('{"filter":{"a":"x","c":"z"}}');
+      expect(
+        textOf(yield* Body.jsonSchema(Schema.Array(Either)).encode([value])),
+      ).toBe('[{"a":"x","c":"z"}]');
+    }),
+  );
+
+  it.effect("fails as a SchemaError under an empty union", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        Body.jsonSchema(Schema.Union([])).encode({ a: "1" } as never),
+      );
+      expect(error).toBeInstanceOf(Schema.SchemaError);
+    }),
+  );
+
   it.effect("does not let a member that reads no keys state one", () =>
     Effect.gen(function* () {
       const WithDate = Schema.Union([Schema.Date, NarrowFirst]);
