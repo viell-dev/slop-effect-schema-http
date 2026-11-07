@@ -7,9 +7,9 @@ prerequisites.
 - Use a task branch from `main` and deliver changes through a pull request. Never bypass branch
   protection or rewrite shared history. Prefer rebasing and fast-forward integration; GitHub's
   rebase merge is the hosted equivalent when the branch is current.
-- Keep the version a SemVer prerelease until stable release prerequisites are satisfied. The package
-  is publishable; registry publication follows RELEASING.md. Do not infer readiness from the
-  version.
+- Change the version only in release preparation, which RELEASING.md owns. Compatible fixes raise
+  the patch number and breaking changes raise the minor number. The package is publishable, so do
+  not infer readiness from the version.
 - Keep public documentation self-contained. Put reproducible evidence, material decisions, and
   remaining work in issues and pull requests.
 - Follow CONTRIBUTING's documentation rules across API docblocks, examples, README, module guides

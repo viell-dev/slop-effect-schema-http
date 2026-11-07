@@ -147,16 +147,17 @@ use the release's exact bytes when verifying a published candidate.
 ### Verify a published candidate
 
 For release verification, download the tarball, `SHA256SUMS` and `release-check.mjs` from the
-[GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.1.0). The
+version's [GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases). The
 [Versions guide](./docs/versions.md#install-a-github-release-tarball) gives complete checksum
 comparisons. On Linux, its command checks both downloaded assets; in PowerShell, run its comparison
 once for the tarball and once with `$archive = "release-check.mjs"`.
 
-In an empty directory with those verified files, run:
+In an empty directory with those verified files, run this, with `VERSION` replaced by the exact
+version:
 
 ```sh
 npm init -y
-npm install --ignore-scripts ./viell-effect-schema-http-0.1.0.tgz effect@4.1.2
+npm install --ignore-scripts ./viell-effect-schema-http-VERSION.tgz effect@4.1.2
 node release-check.mjs
 ```
 
@@ -197,9 +198,16 @@ concepts to its v4 guides. Each public module has a guide under `docs/modules/`;
 links supplement those guides. Keep existing page addresses usable when reorganizing.
 
 Read the guides in sidebar order, including their next-page links. Each successive introduction
-should teach a new task instead of replaying the same example. Put user tasks first, modules next,
-then limits and detailed behavior, followed by versions, release articles and development links.
-Keep candidate verification and source-build procedures here rather than in onboarding.
+should teach a new task instead of replaying the same example. Put user tasks first, including
+recipes, then modules, then limits and detailed behavior, followed by versions, release articles and
+development links. Keep candidate verification and source-build procedures here rather than in
+onboarding.
+
+Lead with the main workflow: define once, adjust where it is used. Hold a transform in a named
+variable or map once per change, use `flow` only to define a composed function with a name, and use
+a plain arrow function where that is simplest. Show generators where an operation runs. Each recipe
+keeps its code in `examples/recipes/`, one file each, and checks its failure cases as well as its
+results.
 
 Apply the same progression to public API docblocks: a useful one-sentence summary, a small
 `@example` where it teaches usage, then detailed behavior under `@remarks`. Document every public
@@ -232,16 +240,17 @@ npm run docs:dev
 
 The first command type-checks `examples/**/*.ts` without `skipLibCheck`, checks public summaries
 against generated declarations, and type-checks every `@example` and standalone Markdown TypeScript
-block. It then executes all three introductory guides and all eight module examples through the
-built package's public entry points. The pages import their code regions directly. Examples use
-synthetic clients and make no external requests; runtime assertions verify the shown results. When
-changing onboarding, also copy its displayed snippets into a fresh consumer of the published version
-and run the documented commands without a checkout. `docs:build` builds the static site, fails on
-VitePress dead links or missing snippets, and checks rendered internal pages, assets, anchors and
-package facts. External links are reviewed separately. `docs:dev` starts the local development
-server; `docs:preview` serves the production build on `127.0.0.1`. It uses the Vite preview server
-shipped with VitePress because this pinned VitePress version's own preview command ignores the host
-option. Keep development and preview servers on loopback.
+block. It then executes all three introductory guides, the current migration examples, all eight
+module examples and every recipe through the built package's public entry points. The pages import
+their code regions directly. Examples use synthetic clients and make no external requests; runtime
+assertions verify the shown results. When changing onboarding, also copy its displayed snippets into
+a fresh consumer of the published version and run the documented commands without a checkout.
+`docs:build` builds the static site, fails on VitePress dead links or missing snippets, and checks
+rendered internal pages, assets, anchors and package facts. External links are reviewed separately.
+`docs:dev` starts the local development server; `docs:preview` serves the production build on
+`127.0.0.1`. It uses the Vite preview server shipped with VitePress because this pinned VitePress
+version's own preview command ignores the host option. Keep development and preview servers on
+loopback.
 
 Required pull-request CI runs the example and site build with read-only permissions. Main pushes
 verify changes without deploying unreleased documentation. The separate `pages.yml` workflow
@@ -269,6 +278,10 @@ private data.
 
 ## Issues and labels
 
+Report a defect with the [bug report
+form](https://github.com/viell-dev/slop-effect-schema-http/issues/new?template=bug_report.yml), and
+a vulnerability as [SECURITY.md](./SECURITY.md) describes.
+
 Every issue and PR has exactly one `Type:` label and at most one `Status:` label. `Needs: Owner`
 identifies an owner-only decision or action; `Needs: Human` identifies work any suitable person can
 perform. Use only one `Needs:` label, assign requests to the person being asked, and state what
@@ -277,11 +290,9 @@ depends on the answer. Blocked work links its dependency. The catalog in
 
 ## Before a release
 
-Follow [RELEASING.md](./RELEASING.md). The agreed `0.1.0` goal is the existing finite-body API, ESM,
-Node 24 on Windows/Linux and Chromium Fetch with Effect 4. The [release
-tracker](https://github.com/viell-dev/slop-effect-schema-http/issues/2) owns evidence and remaining
-work. `0.1.0` is the first stable release. Every subsequent publication needs its own qualification;
-a publishable package does not establish release readiness.
+Follow [RELEASING.md](./RELEASING.md). Compatible fixes raise the patch number and breaking changes
+raise the minor number, with migration guidance in the release article. Every publication needs its
+own qualification; a publishable package does not establish release readiness.
 
 Every release needs exact-commit checks, isolated installation, all hostile lanes, an independent
 deep review, verified artifacts and public documentation. A release may use prior review evidence
@@ -292,21 +303,23 @@ Agents own functional verification and investigation of reproducible defects. Th
 checkpoint assesses whether the documentation and workflow are understandable; it is not a request
 to find bugs missed by tests or agent review.
 
-For the first `0.1.0` release, the owner chose and completed a final documentation read-through as
-that checkpoint on 2026-11-04, recorded in
-[#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67). It replaced the earlier
-hands-on request. This does not establish human runtime testing or code review; the substitute
-functional evidence is automated consumer, package, socket and hostile-suite qualification plus
-independent agent review. Ergonomic feature suggestions remain work for later releases.
-
-That decision applies only to `0.1.0`. For later releases, the owner set the checkpoint on
-2026-11-06 in [#92](https://github.com/viell-dev/slop-effect-schema-http/issues/92): substantial
-changes to the API or main workflow get an agent usability review instead of a human use pass. A
-separate agent with fresh context works through the changed API and guides as a new user would and
-reports what is confusing or awkward. The release pull request records the result. This is not
-evidence of human use. The owner may still comment on what they notice while reading the
-documentation; treat those comments as consumer reports, not as a step a release waits for.
-Reconsider this scope when the owner has time to use the library themselves.
+The owner set that checkpoint on 2026-11-06 in
+[#92](https://github.com/viell-dev/slop-effect-schema-http/issues/92): substantial changes to the
+API or main workflow get an agent usability review instead of a human use pass. A separate agent
+with fresh context works through the changed API and guides as a new user would and reports what is
+confusing or awkward. The release pull request records the result. This is not evidence of human
+use. The owner may still comment on what they notice while reading the documentation; treat those
+comments as consumer reports, not as a step a release waits for. Reconsider this scope when the
+owner has time to use the library themselves.
 
 Routine fixes may reuse relevant evidence, with its limits recorded. No review changes the required
 automated gates.
+
+`0.1.0` was the first stable release. Its agreed goal was the finite-body API, ESM, Node 24 on
+Windows/Linux and Chromium Fetch with Effect 4, and the [release
+tracker](https://github.com/viell-dev/slop-effect-schema-http/issues/2) owns its evidence. For that
+release only, the owner chose and completed a final documentation read-through as the checkpoint on
+2026-11-04, recorded in [#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67). It
+replaced the earlier hands-on request. It did not establish human runtime testing or code review;
+the substitute functional evidence was automated consumer, package, socket and hostile-suite
+qualification plus independent agent review.
