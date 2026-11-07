@@ -61,7 +61,7 @@ export const queryEntries = (input: QueryInput): Query => {
  * service that needs another URL representation.
  */
 export interface Service {
-  /** Escape one dynamic path value; the renderer supplies separators between values. */
+  /** Escape one dynamic path value; a template or renderer supplies the text between values. */
   readonly path: (value: string) => string;
   /**
    * Render ordered query entries without a leading `?`.
