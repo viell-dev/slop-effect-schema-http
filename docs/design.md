@@ -7,19 +7,25 @@ these guarantees follow the [compatibility policy](./versions.md#compatibility-p
 
 ## The main workflow
 
+An application writes a definition once, near the integration, and adjusts it where it is used. A
+definition describes the most common request, not the only one.
+
 1. Describe application input with `Request` and body encoders.
 2. Describe accepted responses with `Response` and body decoders.
-3. Pair them with `Operation.make`, supply an Effect HTTP client, and evaluate `execute(input)`.
-4. Receive a validated value or a typed failure. Add a retry policy or interaction only when needed.
-
-A definition written once can be [adjusted where it is used](#variants), and the original never
-changes.
+3. Pair them with `Operation.make`. The result is the definition, an ordinary value to share.
+4. Where a use needs something else, [derive a variant](#variants). The original never changes.
+5. Supply an Effect HTTP client and evaluate `execute(input)`.
+6. Receive a validated value or a typed failure. Add a retry policy or interaction only when needed.
 
 Request encoding is **materialization**: turning a description and input into the native request. An
 **attempt** sends that request and decodes its answer. A **scope** owns the resources that must be
 released when an attempt ends. The sections below refine those steps.
 
 ## Principles
+
+**A plan stays a plan.** `Request`, `Response` and `Operation` values describe work, and nothing
+happens until an Effect runs. A plan can be copied and adjusted at any time, and adjusting it never
+disturbs the original. Defaults serve the common case and never prevent a less common one.
 
 **Wire Effect, do not replace it.** The library composes Effect's schema and HTTP modules around
 consumer-owned contracts. It adds no transport, runtime, service registry, logging facility, cache,
@@ -37,14 +43,36 @@ it or to rewrite its meaning. Defaults that embody a policy can be replaced thro
 composition. For example, `UrlEncoding` is a context reference with a replacement layer.
 
 **As permissive as possible on its own end.** Everything in the library is meant to be composable,
-configurable or replaceable. It lets through as much as it can: it adds no refusals of its own and
-does not rewrite what a request declares. What a client or platform then does with the request is
-outside its promise. A client can rewrite or refuse a request the library passed on, and the library
-does not promise that an unusual request works. Where this page says the client receives something
-as written, it describes what the library hands over, not what reaches a server.
+configurable or replaceable. It lets through as much as it can: it does not rewrite what a request
+declares, and it refuses a request only for something the consumer chose, such as a schema, or
+because a URL cannot be rendered at all.
+
+The library passes the request you declared to the HTTP client you chose, and its promise stops
+there. The client may rewrite or refuse it, and a server may read it differently. The library does
+not promise that an unusual request works. Where this page says the client receives something as
+written, it describes what the library hands over, not what reaches a server. [Limits and
+recovery](./limits.md#paths-and-other-requests-passed-on-as-written) records what the default client
+does.
+
+**Schemas are optional to choose and binding when chosen.** A field with no schema takes plain
+input. A chosen schema decides what is valid, and input cannot skip that check, though a caller need
+not build a typed value first.
 
 **Finite bodies first.** Streaming request and response bodies are deferred. The finite-body design
 must not foreclose them.
+
+These principles give a few rules that the sections below state in full:
+
+- Bindings add, and nothing replaces silently. The constructor path and `Request.path` join, and
+  later schemas add fields. Functions that say they replace, such as `Request.setQuery` and
+  `Request.baseUrl`, still do, and `Request.unbind` starts a group again.
+- A schema states the shape of its group. A raw value under a name it allows is a default, and a
+  name it does not allow is an error.
+- A request's own declaration wins. Automatic `Accept`, `Content-Type` and `Content-Length` apply
+  only when the request declares nothing.
+- What is written is what the client receives. Path text is joined exactly, a constructor query
+  keeps its spelling until something edits that entry or a schema covers it, header names keep their
+  spelling unless a schema covers them, and a fragment stays on the request.
 
 ## Requests
 
@@ -116,10 +144,9 @@ expected compiles, and fails when the request is prepared if the schema refuses 
 
 ### A schema states the shape of its group
 
-Schemas are optional to choose and binding when chosen. A field group is a dictionary of names, and
-each raw edit produces a new dictionary. A header or query schema states the shape of that
-dictionary, and one that cannot be built against the schema is an error: `Request.InvalidRequest`
-before anything is sent.
+A field group is a dictionary of names, and each raw edit produces a new dictionary. A header or
+query schema states the shape of that dictionary, and one that cannot be built against the schema is
+an error: `Request.InvalidRequest` before anything is sent.
 
 - **A raw value under a name a schema allows is a default.** What the schema writes replaces it. If
   the schema writes nothing under that name, the default stays, so an omitted optional field never
@@ -388,11 +415,11 @@ const service = <I, E, R>(request: Request.Request<I, E, R>) =>
   );
 
 // GET https://api.test/v1/users?key=abc
-const users = service(Request.get("users"));
+const users = service(Request.get("/users"));
 ```
 
 A query string in a URL passed to `Request.make` or a method helper such as `Request.get` is passed
-to the client as written until something edits that entry:
+to the client as written until something edits that entry or a schema covers it:
 
 | Written                                            | The client receives      |
 | -------------------------------------------------- | ------------------------ |
@@ -525,6 +552,10 @@ replace the original lines of that field only. On responses, provider-observed l
 `Option`, and `None` means the provider supplied none. The library never splits a combined value or
 invents lines.
 
+The library does not refuse a carriage return or line feed in a URL, a header name or a header
+value. `fetch` and `node:http` do not put them on the wire, and a provider that writes bytes itself
+[has to refuse them](./modules/transport.md#refuse-cr-and-lf-in-a-provider-that-writes-bytes).
+
 ## Responses
 
 A `Response` selects a decoder from transport metadata only: status, headers, cookies, and the
@@ -595,6 +626,10 @@ client:
   visible headers. A declared 301 case cannot match the original status.
 - A refused preflight and a request whose answer is withheld by CORS both surface as transport
   failures. The latter may already have changed server state, so retrying can repeat an action.
+- Effect's client adds `b3` and `traceparent` headers by default, which forces a preflight on a
+  cross-origin request. A server that does not allow them refuses it, so a working server looks down.
+  `HttpClient.TracerPropagationEnabled` [turns them
+  off](./recipes.md#browser-requests-to-another-origin).
 
 These are [Fetch platform limits](https://fetch.spec.whatwg.org/), outside the library. A schema or
 response rule cannot recover hidden metadata. Do not infer browser cookie, redirect, header or CORS
