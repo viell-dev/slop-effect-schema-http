@@ -208,6 +208,23 @@ alternatives to `operation.execute(input)`.
 each attempt after request materialization, so it is the place for per-attempt nonces or signatures
 over the final library-rendered URL. Order signing after any edits it must cover.
 
+Its second argument is the attempt number. It starts at `1` for each evaluation, goes on counting
+after a failed or timed-out attempt, and is the number in the `http.attempt` log annotation. Use it
+for a retry-count header, for signing that differs on a retry, or to try another server:
+
+<<< ../../examples/modules/operation.ts#per-attempt
+
+A one-parameter function such as `HttpClient.filterStatusOk` keeps working. A function with an
+optional second parameter of its own receives the number there, so wrap one in an arrow function.
+
+This is the route for a location that must change during one call. A [base URL from an
+Effect](./request.md#supply-the-base-when-the-request-runs) is resolved before the first attempt and
+stays for all of them. Keep the request's own path relative here: `prependUrl` puts its text before
+whatever the request holds, so a fixed base gives a wrong URL with no error, and it does not go
+through `UrlEncoding.join`. Moving a write to another server can repeat it, because a transport
+failure does not prove the first server did not apply it. A server chosen for the rest of a session
+is application state, which belongs in a client wrapper.
+
 By contrast, `Request.mapEffect` and schema encoding happen once before attempts begin. Native
 middleware may reject a response before your declared response case sees it. For example, a native
 status filter can reject a 404 that you intended to decode as `Missing`. Choose middleware to match
@@ -220,8 +237,9 @@ resources before the result is returned, classified, or delayed for retry. Inter
 active work; interruption and defects are never retried. The caller does not need to provide a scope
 just for ordinary operation execution.
 
-Preparation happens before the attempt timeout starts. Apply `Effect.timeout` to the returned Effect
-if the complete evaluation, including preparation and retry delays, needs a limit.
+Preparation happens before the attempt timeout starts, and that includes a [base URL from an
+Effect](./request.md#supply-the-base-when-the-request-runs). Apply `Effect.timeout` to the returned
+Effect if the complete evaluation, including preparation and retry delays, needs a limit.
 
 ### Adapt another Effect-returning function
 

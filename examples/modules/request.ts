@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 // #region imports
-import { Effect, flow, Schema } from "effect";
+import { Context, DateTime, Effect, flow, Schema } from "effect";
 import { Body, Request } from "viell-effect-schema-http";
 // #endregion imports
 
@@ -22,11 +22,19 @@ const listAdmins = Request.get("https://api.example.test/users").pipe(
   Request.setHeader({ "accept-language": "en", "x-trace": () => "t1" }),
 );
 // ?page=2&role=admin&role=owner&preview
+const seenSince = new Date("2026-11-01T00:00:00.000Z");
+const recentAdmins = listAdmins.pipe(Request.setQuery({ since: seenSince }));
+// The same, with &since=2026-11-01T00%3A00%3A00.000Z
 // #endregion plain-fields
 const admins = await Effect.runPromise(Request.compile(listAdmins, undefined));
 assert.equal(
   admins.request.url,
   "https://api.example.test/users?page=2&role=admin&role=owner&preview",
+);
+assert.equal(
+  (await Effect.runPromise(Request.compile(recentAdmins, undefined))).request
+    .url,
+  `${admins.request.url}&since=2026-11-01T00%3A00%3A00.000Z`,
 );
 assert.equal(admins.request.headers["x-trace"], "t1");
 
@@ -45,6 +53,37 @@ assert.equal(
   (await Effect.runPromise(Request.compile(teams, undefined))).request.url,
   "https://api.example.test/api/v1/teams",
 );
+
+// #region extend-base
+const toAdmin = (url: string) => `${url}/admin`;
+const inAdmin = Request.mapBaseUrl(toAdmin);
+const adminUsers = users.pipe(inAdmin);
+// https://api.example.test/api/v1/admin/users
+// #endregion extend-base
+assert.equal(
+  (await Effect.runPromise(Request.compile(adminUsers, undefined))).request.url,
+  "https://api.example.test/api/v1/admin/users",
+);
+
+// #region discovered-base
+class ApiHost extends Context.Service<ApiHost, string>()("app/ApiHost") {}
+
+const discoveredApi = Effect.gen(function* () {
+  const host = yield* ApiHost;
+  return `https://${host}/api/v1`;
+});
+const onDiscoveredApi = Request.baseUrl(discoveredApi);
+const listOrders = Request.get("/orders").pipe(onDiscoveredApi);
+const listAdminOrders = listOrders.pipe(inAdmin);
+
+const orders = await Effect.runPromise(
+  Request.compile(listAdminOrders, undefined).pipe(
+    Effect.provideService(ApiHost, "eu.example.test"),
+  ),
+);
+// orders.request.url === "https://eu.example.test/api/v1/admin/orders"
+// #endregion discovered-base
+assert.equal(orders.request.url, "https://eu.example.test/api/v1/admin/orders");
 
 // #region shared-defaults
 const withApiDefaults = flow(Request.setHeader("accept-language", "en"), api);
@@ -237,6 +276,30 @@ const page = await Effect.runPromise(
 // page.request.url === "https://api.example.test/users?page=2"
 // #endregion query
 assert.equal(page.request.url, "https://api.example.test/users?page=2");
+
+// #region dates
+const Opening = Schema.Struct({
+  from: Schema.Date,
+  until: Schema.DateTimeUtcFromDate,
+});
+const listOpenings = Request.get("https://api.example.test/openings").pipe(
+  Request.query(Opening),
+);
+
+const opening = await Effect.runPromise(
+  Request.compile(listOpenings, {
+    query: {
+      from: new Date("2026-11-07T09:00:00.000Z"),
+      until: DateTime.makeUnsafe("2026-11-07T17:00:00.000Z"),
+    },
+  }),
+);
+// ?from=2026-11-07T09%3A00%3A00.000Z&until=2026-11-07T17%3A00%3A00.000Z
+// #endregion dates
+assert.equal(
+  opening.request.url,
+  "https://api.example.test/openings?from=2026-11-07T09%3A00%3A00.000Z&until=2026-11-07T17%3A00%3A00.000Z",
+);
 
 // #region two-sides
 const Slots = Schema.Struct({

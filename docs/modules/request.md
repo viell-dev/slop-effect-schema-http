@@ -36,6 +36,56 @@ with a different header leaves the original intact:
 A header schema on such a request has to allow these headers. [A schema states the
 shape](#a-schema-states-the-shape-of-its-group) of its group, whichever comes first.
 
+### Extend a base
+
+`Request.baseUrl` replaces the base, so a second level of prefix needs `Request.mapBaseUrl`. It
+works on a request you have only as a value, such as an imported definition, and leaves that request
+as it was:
+
+<<< ../../examples/modules/request.ts#extend-base
+
+The function gets the base as it stands at that step, so order matters: a later `Request.baseUrl`
+replaces the result, and with no base set the function gets `""`. It gets the whole text, so what it
+adds after a fragment in the base stays in that fragment. The same function can change a prefix
+instead, as a `/v1` to `/v2` variant does. It runs when the request is prepared, and an exception
+from it is a `Request.InvalidRequest`.
+
+### Supply the base when the request runs
+
+A location that is not known when the request is defined can come from an Effect, so definitions
+stay plain importable values. The service arrives when the program runs, like the HTTP client:
+
+<<< ../../examples/modules/request.ts#discovered-base
+
+The request's type now holds whatever that Effect needs, so `listOrders` needs `ApiHost`, and
+leaving it out is a compile error. A failure joins its error type in the same way. A service or a
+`Config` value is itself an Effect, so `Request.baseUrl(ApiHost)` and
+`Request.baseUrl(Config.String("API_BASE"))` work as they are. `Request.mapBaseUrl` works on this
+form too, as the example shows.
+
+The Effect runs once per evaluation, after the input is encoded and before the first attempt. What
+it supplies is then treated exactly as text would be, including by a replaced
+[`UrlEncoding.join`](./url-encoding.md#replace-one-encoding-rule). Three things follow:
+
+- **Every retry goes to the same base.** To change the location between attempts, use
+  [`transformClient`](./operation.md#client-middleware).
+- **A failure stops the request.** It comes back as the Effect's own failure, with nothing sent, and
+  a retry policy does not repeat it. An `attemptTimeout` does not limit it either; see [resource
+  lifetime](./operation.md#resource-lifetime-and-cancellation). Apply retries and timeouts to the
+  Effect itself.
+- **It runs on every evaluation.** Look a location up once by doing it in the layer that provides
+  the service, so each request only reads the answer. It also runs when an absolute request URL
+  bypasses the base, because `UrlEncoding.join` decides that and has to receive one.
+
+A later `Request.baseUrl` replaces the Effect, so it never runs, though the request's type keeps
+what it added. Choose the form by when the location is known:
+
+| The location                                      | Use                                                                           |
+| ------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Is fixed when the request is defined              | `Request.baseUrl("https://api.example.test")`                                 |
+| Is known when the request runs, and stays for it  | `Request.baseUrl(effect)`                                                     |
+| Must change between the attempts of a single call | [`transformClient` with the attempt number](./operation.md#client-middleware) |
+
 ## Bind application input
 
 Bindings say which parts of the call vary. A schema validates the application value and converts it
@@ -86,6 +136,29 @@ schema writes text. Header schemas work the same way. Their encoded shapes must 
 | `Request.headers(schema)`        | `headers`      | Its header lines, and the shape of that group        |
 | `Request.body(encoder)`          | `body`         | An encoded body                                      |
 
+### Dates in a query
+
+A query value is text, and a `Date` has an obvious text: ISO. So a query schema can encode to a
+`Date`, and the request writes it with `toISOString()`:
+
+<<< ../../examples/modules/request.ts#dates
+
+A request carries a schema's encoded side, and the caller gives its decoded side, so such a schema
+is easy to read backwards. `Schema.DateFromString` encodes to text and `Schema.Date` to a `Date`,
+and both end up as the same text:
+
+| Schema                                                                           | The caller gives       | The request carries |
+| -------------------------------------------------------------------------------- | ---------------------- | ------------------- |
+| `Schema.Date`                                                                    | A `Date`               | ISO text            |
+| `Schema.DateFromString`                                                          | A `Date`, or its text  | ISO text            |
+| A schema from `Date` to your own date type, such as `Schema.DateTimeUtcFromDate` | Your type, or a `Date` | ISO text            |
+
+Each is a [schema-backed input](#a-schema-has-two-sides), so the last two take either side. An
+invalid `Date` fails each of them with a `SchemaError`.
+
+Headers stay text. Date headers such as `If-Modified-Since` use the HTTP date format, not ISO, so a
+header schema has to write its own text, as `Schema.DateTimeUtcFromHttpDate` does.
+
 ### Adapt your application's argument
 
 Keep the HTTP contract while presenting a more convenient call shape:
@@ -116,6 +189,7 @@ Each key replaces that name, as the two-argument form does, in key order, and ot
 | --------------------------- | ------------------------------------ | -------------------------- |
 | Text                        | `?name=text`                         | A line with that value     |
 | A number, bigint or boolean | Written as text, in the object form  | Not accepted               |
+| A `Date`                    | ISO text, in the object form         | Not accepted               |
 | `""`                        | `?name=`                             | A line with an empty value |
 | `null`                      | A bare key, `?name`                  | Not accepted               |
 | An array                    | Repeats the name, in the object form | Use `appendHeader`         |
@@ -124,7 +198,8 @@ Each key replaces that name, as the two-argument form does, in key order, and ot
 
 Header names compare without case; query names compare with case. Use `appendQuery` for exact order
 across repeated names. `undefined` declares nothing, so it stops no automatic value; that is what
-`removeHeader` is for.
+`removeHeader` is for. An invalid `Date` has no ISO text, so it goes out as `Invalid Date` unless a
+query schema refuses it.
 
 A header keeps the spelling you wrote, and a `setHeader` that replaces a line takes the new
 spelling. A provider that sends header lines receives that spelling; `fetch` sends lowercase names.
@@ -304,6 +379,12 @@ schema writes. `?page=02` under a number field goes out as `page=2`, and order a
 follow the schema. A check is only as strict as the schema, so `Schema.NumberFromString` accepts
 `"two"` as `NaN` and `Schema.FiniteFromString` refuses it.
 
+A default under a field that encodes to a `Date` is read from its text, so `?from=2026-11-07` goes
+out as `from=2026-11-07T00%3A00%3A00.000Z`, and `?from=soon` is an `InvalidRequest`. It is read as
+`Schema.DateFromString` reads it, which is `new Date(text)`. Write ISO text with a `Z` or an offset:
+JavaScript reads other forms by the engine's rules, and text with no offset in the time zone of
+whatever runs the request.
+
 "Required" means the schema always writes the name. A required field with
 `Schema.withConstructorDefault` needs no input and still cannot be removed. To give a required field
 a value without asking the caller, use `Request.mapInput`. A value the schema supplies itself, from
@@ -398,14 +479,16 @@ per operation evaluation, before attempts begin. At that point, the base URL and
 not final. Use it for preparation that should be shared by every retry.
 
 Use [Operation's client transformation](./operation.md#client-middleware) for credentials or
-signatures that must change per attempt. Input encoding and computed raw fields otherwise happen
+signatures that must change per attempt, which receives the attempt number. Input encoding, computed
+raw fields and a [base URL from an Effect](#supply-the-base-when-the-request-runs) otherwise happen
 only once per evaluation.
 
 ### URL and method limits
 
-`Request.baseUrl` sets one base URL; calling it again replaces that base rather than extending it.
-With the default URL encoding, an absolute request URL bypasses the base. A relative path is
-appended to the base; a leading `/` does not discard the base's path prefix.
+`Request.baseUrl` sets one base URL; calling it again replaces that base rather than extending it,
+and [`Request.mapBaseUrl`](#extend-a-base) extends it. With the default URL encoding, an absolute
+request URL bypasses the base. A relative path is appended to the base; a leading `/` does not
+discard the base's path prefix.
 
 The library renders URLs through [UrlEncoding](./url-encoding.md). Its defaults preserve entry
 order, repetition, bare keys, and empty values. The HTTP provider can still normalize URLs; see [URL
@@ -434,7 +517,8 @@ failure from the client. A service that needs one needs a provider that can send
 `Request.materialize(request, input)` returns only the native request. `Request.compile` also
 returns the header lines a supporting provider can send. The exported `Declaration`, `Draft`, and
 `Compiled` types describe these stages; ordinary application code can use the combinators without
-constructing them.
+constructing them. `declaration.baseUrl` is text or an Effect, so to change a base you hold only as
+a request, use `Request.mapBaseUrl` rather than reading it.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
 signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.1.0/src/http/Request.ts) for
