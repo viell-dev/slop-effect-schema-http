@@ -177,9 +177,10 @@ The packed lane covers the package's `exports` map, its emitted JavaScript and d
 the peer `effect` as npm resolves it. It does not cover the browser lane, which always imports the
 source, or a bundled application, which the app lane covers. Nor does it isolate the
 package from the suite's other dependencies: a package the library imports without declaring it
-would go unnoticed if the suite happens to install it. A check of the packed package in an
-isolated consumer, in the library's own CI, is tracked in
-[#15](https://github.com/viell-dev/slop-effect-schema-http/issues/15).
+would go unnoticed if the suite happens to install it. The library's own CI covers that with
+`npm run test:package`, which installs the tarball in an isolated consumer, as its [contributor
+guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md#packed-package-verification)
+describes.
 
 ### The app lane
 
