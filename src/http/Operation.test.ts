@@ -8,6 +8,7 @@ import {
   Exit,
   Fiber,
   flow,
+  identity,
   Layer,
   Logger,
   Option,
@@ -2311,11 +2312,23 @@ const compileOnly = (statements: (...values: ReadonlyArray<never>) => void) =>
 
 const wholeNewResponse = () => Response.status(200, Body.text);
 const otherInput = (value: { readonly other: number }) => value;
+const pageResponse = Response.status(200, Body.jsonSchema(ThingPage));
+const pageOperation = Operation.make(
+  Request.get("/things").pipe(api),
+  pageResponse,
+);
+type WithoutKeys<T> =
+  T extends Response.Response<infer A, infer E, infer R, infer _C>
+    ? Response.Response<A, E, R>
+    : never;
+const forSameValues = (response: WithoutKeys<typeof pageResponse>) => response;
+const forSameCases = (response: typeof pageResponse) => response;
 const forAnyResponse = (
   response: Response.Response<unknown, unknown, unknown>,
 ) => response.pipe(Response.orElse(Response.status(204, Body.empty)));
 const dropdownReply = () => json(200, page([option(1)]));
 const firstOf = <T>(list: ReadonlyArray<T>) => list[0];
+const dataOf = (value: typeof ThingPage.Type) => value.data;
 const listThings = (pageNumber: number) =>
   getThings.pipe(Operation.mapRequest(Request.setQuery({ page: pageNumber })));
 const inList = <I, A, E, R>(operation: Operation.Operation<I, A, E, R>) =>
@@ -3108,6 +3121,64 @@ describe("Operation.unmap", () => {
   );
 });
 
+describe("an operation whose execute was replaced", () => {
+  const replaced = {
+    ...getThings,
+    execute: () => Effect.succeed([thing(9)]),
+  };
+
+  it.effect("keeps it through map and mapEffect, as a wrapper does", () =>
+    Effect.gen(function* () {
+      const count = replaced.pipe(Operation.map((list) => list.length));
+      const doubled = count.pipe(
+        Operation.mapEffect((size) => Effect.succeed(size * 2)),
+      );
+      expect(yield* count.execute(undefined)).toBe(1);
+      expect(yield* doubled.execute(undefined)).toBe(2);
+    }),
+  );
+
+  it.effect("does not call it until the mapped effect runs", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const counting = {
+        ...getThings,
+        execute: () => {
+          calls++;
+          return Effect.succeed([thing(9)]);
+        },
+      };
+      const effect = counting
+        .pipe(Operation.map((list) => list.length))
+        .execute(undefined);
+      expect(calls).toBe(0);
+      expect(yield* effect).toBe(1);
+      expect(calls).toBe(1);
+    }),
+  );
+
+  it.effect(
+    "loses it when a part changes or the step goes, which build from the parts",
+    () =>
+      Effect.gen(function* () {
+        const server = synthetic(reply);
+        const count = replaced.pipe(Operation.map((list) => list.length));
+        expect(
+          yield* count
+            .pipe(Operation.mapRequest(firstFive))
+            .execute(undefined)
+            .pipe(Effect.provide(server.layer)),
+        ).toBe(2);
+        expect(
+          yield* count
+            .pipe(Operation.unmap)
+            .execute(undefined)
+            .pipe(Effect.provide(server.layer)),
+        ).toEqual(page(things));
+      }),
+  );
+});
+
 describe("what fits a mapped operation", () => {
   type WideResponse = Response.Response<
     unknown,
@@ -3228,7 +3299,16 @@ describe("what fits a mapped operation", () => {
       pagedThings.pipe(Operation.mapResponse(forAnyResponse));
       // @ts-expect-error the same on a mapped operation
       getThings.pipe(Operation.mapResponse(forAnyResponse));
+      // @ts-expect-error the exact result, failures and services do not say which cases there are
+      pageOperation.pipe(Operation.mapResponse(forSameValues));
     });
+  });
+
+  it("takes a function typed with the response's own cases", () => {
+    const variant = pageOperation.pipe(Operation.mapResponse(forSameCases));
+    expectTypeOf<Success<typeof variant>>().toEqualTypeOf<
+      typeof ThingPage.Type
+    >();
   });
 
   it("compares with the current response, so widening back needs unmap", () => {
@@ -3626,7 +3706,79 @@ describe("ways to write a variant", () => {
     >().toEqualTypeOf<HttpClient.HttpClient>();
   });
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/86
+  it.effect("flows once the first function names the operation", () =>
+    Effect.gen(function* () {
+      const forDropdown = flow(
+        identity<typeof getThings>,
+        Operation.unmap,
+        Operation.mapRequest(withoutPaging),
+        Operation.mapRequest(idAndNameOnly),
+        Operation.mapOptions((options) => ({ ...options, policy: retryTwice })),
+        Operation.mapResponse(asOptions),
+        Operation.map((value) => value.data),
+      );
+      const server = synthetic(dropdownReply);
+      expect(
+        yield* forDropdown(getThings)
+          .execute(undefined)
+          .pipe(Effect.provide(server.layer)),
+      ).toEqual([option(1)]);
+      expect(urlsOf(server)).toEqual([dropdownUrl]);
+      expectTypeOf<Success<ReturnType<typeof forDropdown>>>().toEqualTypeOf<
+        ReadonlyArray<typeof ThingOption.Type>
+      >();
+    }),
+  );
+
+  it("keeps the fit rule in a flow that names the operation", () => {
+    compileOnly(() => {
+      flow(
+        identity<typeof getThings>,
+        // @ts-expect-error the mapping was not written for this response
+        Operation.mapResponse(asOptions),
+      );
+    });
+  });
+
+  it("names the operation in a function, which addresses cases as pipe does", () => {
+    const withoutServer = (operation: typeof search) =>
+      operation.pipe(
+        Operation.mapRequest(firstFive),
+        Operation.mapResponse(Response.remove("server")),
+      );
+    expectTypeOf<Success<ReturnType<typeof withoutServer>>>().toEqualTypeOf<
+      Success<typeof search>
+    >();
+  });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/125
+  it("currently refuses flow over the adjustment functions with no operation", () => {
+    const unwrapped = Operation.map(dataOf);
+    const noServer = Response.remove("server");
+    compileOnly(() => {
+      // @ts-expect-error the mapping needs a result the flow does not know yet
+      flow(Operation.mapRequest(firstFive), unwrapped);
+      // @ts-expect-error the same after unmap, and the response has no known cases
+      flow(Operation.unmap, Operation.mapResponse(asOptions), unwrapped);
+      // @ts-expect-error there are no options yet to spread
+      flow(Operation.mapOptions((o) => ({ ...o, policy: retryTwice })));
+      // @ts-expect-error a key and the fit rule need a known operation
+      flow(Operation.mapRequest(firstFive), Operation.mapResponse(noServer));
+    });
+  });
+
+  it("currently cannot address a case from a function generic in the cases", () => {
+    compileOnly(
+      <A, E, R, C extends Response.AnyCase>(
+        response: Response.Response<A, E, R, C>,
+      ) => {
+        // @ts-expect-error a key needs a known contract
+        response.pipe(Response.remove(404));
+      },
+    );
+  });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/125
   it("currently needs the pipe around a generic transform to infer its types", () => {
     const held = Operation.mapRequest(firstFive);
     const variant = pagedThings.pipe(held);

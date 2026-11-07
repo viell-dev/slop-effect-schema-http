@@ -119,6 +119,10 @@ built, rather than quietly changing nothing.
 Annotating a value as `Response.Response<A, E, R>` drops its keys, so nothing can be replaced or
 removed. That is one way for an author to seal a contract.
 
+`flow` over `Response.replace` and `Response.remove` is a compile error on its own, because a key
+can only be checked against a known contract. Chain them in a `pipe`, or start the `flow` with
+`identity<typeof contract>`.
+
 ## Advanced response behavior
 
 ### Decoder failure never selects another case
