@@ -13,9 +13,10 @@
 - Show editor help on the members of public types, such as `execute`, `decoder` and `headerLines`.
 - State in the compatibility guide why `engines.node` has no upper limit.
 - Check more published facts in the ordinary documentation commands: the rendered `library-version`,
-  the release status paragraphs, every install command, navigation completeness, tested versions,
-  the commands and workflows the guides name, skipped Markdown fences, docblocks on public interface
-  members and `{@link}` targets.
+  the release status paragraphs, every install command, navigation completeness, the commands and
+  workflows the guides name, skipped Markdown fences, docblocks on public interface members and
+  `{@link}` targets. Release preparation also compares the tested versions the guides state with the
+  files that set them.
 - Add `npm run check-live`, a read-only comparison of the published surfaces, as the last step of a
   release.
 - Deploy the documentation by itself after a verified stable npm publication, instead of by a

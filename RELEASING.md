@@ -35,6 +35,10 @@ release runs in this order:
      article. Remove any wording that says this release is not published yet, which the checks
      cannot find. Update the tarball names, download links and checksum examples in
      `docs/versions.md`.
+   - **Tested versions:** the Node.js, Effect, TypeScript and Playwright versions in
+     `docs/limits.md`, CONTRIBUTING and this section. They say what a release was qualified on, so
+     dependency updates between releases leave them alone and they catch up here.
+     `npm run release:prepare` refuses any that disagree with the files that set them.
    - **Source links:** the version-pinned `blob/VERSION` link at the end of each module guide.
    - **Hostile suite:** the commit pinned in `.github/workflows/release.yml`, when this release
      needs suite changes. A breaking release usually does. Suite changes reach the
@@ -58,12 +62,13 @@ release runs in this order:
    npm run release:prepare
    ```
 
-   This clears only the local generated `dist/`, then runs type/format/lint checks, a fresh build,
-   behavior/socket tests, the release tooling tests, executable docs, the site/link checks, and a
-   moderate-or-higher dependency audit. It packs once, installs that tarball into an isolated
-   consumer with Effect 4.1.2, verifies strict declarations and every export, and executes the
-   synthetic example. It then installs and verifies the **same bytes** with the Effect 4.0.7 peer
-   floor and a TypeScript 7.0.2 consumer. No package or release is published.
+   This compares the tested versions, clears only the local generated `dist/`, then runs
+   type/format/lint checks, a fresh build, behavior/socket tests, the release tooling tests,
+   executable docs, the site/link checks, and a moderate-or-higher dependency audit. It packs once,
+   installs that tarball into an isolated consumer with Effect 4.1.2, verifies strict declarations
+   and every export, and executes the synthetic example. It then installs and verifies the **same
+   bytes** with the Effect 4.0.7 peer floor and a TypeScript 7.0.2 consumer. No package or release
+   is published.
 
    Outputs are under `artifacts/VERSION/`: the `.tgz`, `SHA256SUMS`, `manifest.json` (file list,
    integrity, source commit and tool versions), and `release-check.mjs`. Existing output is refused;

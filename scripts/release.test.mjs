@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -18,6 +21,11 @@ import {
   selectPublishedRelease,
   verifiedStep,
 } from "./select-published-release.mjs";
+import {
+  checkTestedVersions,
+  matrixSections,
+  testedStatements,
+} from "./tested-versions.mjs";
 
 const temporaryRoot = realpathSync(tmpdir());
 const temporary = mkdtempSync(join(temporaryRoot, "schema-http-release-gate-"));
@@ -254,5 +262,117 @@ test("the handover gives neither workflow a new write permission", () => {
   assert.ok(
     pages.indexOf("pages: write") > pages.indexOf("  deploy:"),
     "Only the deployment job receives Pages and OIDC permissions",
+  );
+});
+
+// A checkout with documents that state what its files say, whatever the versions are today, so
+// that a dependency update cannot fail these tests.
+function testedFixture(t) {
+  const root = mkdtempSync(join(temporaryRoot, "schema-http-tested-versions-"));
+  t.after(() => rmSync(root, { recursive: true }));
+  for (const path of [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    ".nvmrc",
+    "CHANGELOG.md",
+    "package-lock.json",
+    "package.json",
+    "scripts/prepare-release.mjs",
+    "scripts/tested-versions.mjs",
+  ]) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    copyFileSync(new URL(`../${path}`, import.meta.url), join(root, path));
+  }
+  mkdirSync(join(root, "docs"));
+  const { statements } = testedStatements(root);
+  const write = (file, addition = "") =>
+    writeFileSync(
+      join(root, file),
+      `${matrixSections[file]}\n\n${statements[file].join(". ")}.\n${addition}`,
+    );
+  for (const file of Object.keys(statements)) write(file);
+  return { root, write };
+}
+
+test("release preparation refuses a tested version the documents no longer state", (t) => {
+  const { root } = testedFixture(t);
+  const tools = mkdtempSync(join(temporaryRoot, "schema-http-fake-npm-"));
+  t.after(() => rmSync(tools, { recursive: true }));
+  const npm = join(tools, "npm.mjs");
+  const calls = join(tools, "calls.txt");
+  writeFileSync(
+    npm,
+    `import fs from "node:fs";
+fs.appendFileSync(process.env.NPM_CALLS, process.argv.slice(2).join(" ") + "\\n");
+`,
+  );
+  const commit = () => {
+    const identity = [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=t@example.test",
+    ];
+    const git = (...args) =>
+      execFileSync("git", [...identity, ...args], { cwd: root, stdio: "pipe" });
+    git("init", "--quiet");
+    git("add", "--all");
+    git("commit", "--quiet", "--no-gpg-sign", "--message", "candidate");
+  };
+  const prepare = () =>
+    spawnSync(process.execPath, [join(root, "scripts/prepare-release.mjs")], {
+      encoding: "utf8",
+      env: { ...process.env, npm_execpath: npm, NPM_CALLS: calls },
+    });
+
+  commit();
+  const agreed = prepare();
+  assert.equal(agreed.status, 0, agreed.stderr);
+  assert.match(readFileSync(calls, "utf8"), /^run check\n/);
+
+  rmSync(calls);
+  const file = join(root, "package-lock.json");
+  const lock = JSON.parse(readFileSync(file, "utf8"));
+  lock.packages["node_modules/effect"].version = "999.0.0";
+  writeFileSync(file, JSON.stringify(lock));
+  commit();
+  const stale = prepare();
+  assert.equal(stale.status, 1);
+  assert.match(
+    stale.stderr,
+    /Update the tested versions in docs\/limits\.md: expected "Effect [\d.]+ and 999\.0\.0"/,
+  );
+  assert.ok(!existsSync(calls), "The comparison comes before anything else");
+});
+
+test("only the current matrix has to match; a history keeps what it recorded", (t) => {
+  const { root, write } = testedFixture(t);
+  const recorded = "Qualified on Effect 1.2.3 and TypeScript 1.2.3.\n";
+  write("RELEASING.md", `\n## Release history\n\n${recorded}`);
+  checkTestedVersions(root);
+  write("RELEASING.md", recorded);
+  assert.throws(
+    () => checkTestedVersions(root),
+    /RELEASING\.md states Effect 1\.2\.3, which is not a tested version/,
+  );
+  writeFileSync(join(root, "RELEASING.md"), "# Another layout\n");
+  assert.throws(
+    () => checkTestedVersions(root),
+    /Missing the section "## Prepare a candidate"/,
+  );
+});
+
+test("a dependency update cannot fail the ordinary documentation check", () => {
+  assert.doesNotMatch(
+    readFileSync(new URL("./check-doc-links.mjs", import.meta.url), "utf8"),
+    /node_modules\/|tested-versions/,
+  );
+});
+
+test("qualification has the history the Playwright comparison reads", () => {
+  // Without it the comparison would skip, with a note, in the one place it has to run.
+  assert.match(
+    workflowFile("release.yml"),
+    /candidate:(?:(?!\n {2}\w)[^])*?fetch-depth: 0(?:(?!\n {2}\w)[^])*?npm run release:prepare/,
   );
 });
