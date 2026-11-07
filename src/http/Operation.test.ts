@@ -2881,7 +2881,9 @@ describe("a recorded result step", () => {
           ),
         ),
       );
+      const variant = opened.pipe(Operation.mapRequest(firstFive));
       expectTypeOf<Scope.Scope>().toExtend<Services<typeof opened>>();
+      expectTypeOf<Scope.Scope>().toExtend<Services<typeof variant>>();
       yield* Effect.scoped(
         Effect.gen(function* () {
           yield* opened.execute(undefined);

@@ -132,11 +132,12 @@ installed Effect peer, TypeScript, and Node type versions pinned exactly. Depend
 remain disabled.
 
 The consumer emits JavaScript and declarations with strict checking and `skipLibCheck: false`,
-including imports of every declared subpath. It imports the package root and each subpath at
-runtime, then executes a schema-backed operation through a synthetic client. The fixtures are in
-`fixtures/package/`. Successful runs remove the temporary consumer; failed runs retain it and print
-its path for diagnosis. This checks Node ESM consumption at the selected versions, not a published
-registry install, bundler, browser, or compatibility matrix.
+including imports of every declared subpath and transforms held in exported variables, whose types a
+declaration has to be able to name. It imports the package root and each subpath at runtime, then
+executes a schema-backed operation and a derived variant through a synthetic client. The fixtures
+are in `fixtures/package/`. Successful runs remove the temporary consumer; failed runs retain it and
+print its path for diagnosis. This checks Node ESM consumption at the selected versions, not a
+published registry install, bundler, browser, or compatibility matrix.
 
 For a manual installation in another project, run `npm pack` after the build and install the printed
 tarball filename with npm in that project, together with a compatible Effect peer. Rebuild, repack

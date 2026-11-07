@@ -107,7 +107,7 @@ they can repeat.
 Only one literal key the contract declares can be addressed. Anything else is a compile error, so a
 typo cannot leave the old case in place with no warning:
 
-- **A key that is absent.** There is nothing to change. The error names the contract's missing case.
+- **A key that is absent.** There is no case to change.
 - **A key that is not a literal.** `Response.status(code, body)` with `code: number` does not say
   which case it is, and neither does passing such a key to `Response.replace`.
 - **A union of keys.** A key typed `200 | 404` is refused, in the call or in the case itself. Only
