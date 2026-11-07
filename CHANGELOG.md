@@ -68,6 +68,16 @@
   `<S extends Schema.Constraint>(schema: S) => Body.jsonSchema(schema)` stops compiling.
   `Body.Codec` and `Body.make` gain a trailing `In` parameter that defaults to `A`, so existing
   annotations stay valid ([#91](https://github.com/viell-dev/slop-effect-schema-http/issues/91)).
+- Take either side of a schema as input. Headers, query, path and bodies accept a schema's decoded
+  side, its encoded side, or a mix by field, and the request carries what the schema writes.
+  Preparation tries the decoded side, then the decoder as a whole, then field by field, and reports
+  the decoded side's error if all fail. A value that fits the decoded side is read as decoded, so
+  under a schema whose two sides share a type an already encoded value is encoded again, with no
+  error. A string where a number was expected now compiles, and a plain value in a branded field now
+  compiles as the encoded side. **Breaking for schemas with services:** a request now needs its
+  schema's decoding services as well as its encoding services, so a schema-backed body's
+  `EncodeServices` include both. `Request.Input` names the input type
+  ([#113](https://github.com/viell-dev/slop-effect-schema-http/issues/113)).
 
 ## 0.1.0 — 2026-11-04
 

@@ -35,12 +35,23 @@ export class InvalidRequest extends Data.TaggedError("InvalidRequest")<{
 export type FieldValue<A = string> = Fields.Value<A>;
 
 /**
- * What a schema-backed input takes: what the schema's constructor takes.
+ * What a schema-backed input takes: the schema's decoded side, its encoded side, or a mix by field.
  *
  * @remarks
- * A plain object works for a `Schema.Class`, including one nested in a struct, and a field with a
- * constructor default can be left out. The library builds the schema's value first, so an existing
- * instance works as it is and invalid input fails with `SchemaError` before dispatch.
+ * The decoded side is what the schema's constructor takes, so a plain object works for a
+ * `Schema.Class`, and a field with a constructor default can be left out. The encoded side is what
+ * goes on the wire, and {@link path}, {@link query}, {@link headers} and the schema body encoders
+ * all take it. The request always carries what the schema writes.
+ *
+ * Preparation tries the decoded side first, then the decoder as a whole, then the decoder field by
+ * field. If all fail, it reports the decoded side's error, a `SchemaError` before dispatch. Both
+ * routes validate, so text cannot get past a schema, but a weak schema lets more through:
+ * `Schema.NumberFromString` turns `"many"` into `NaN`, and `Schema.FiniteFromString` refuses it.
+ *
+ * A value that fits the decoded side is read as decoded. Under a schema whose two sides share a
+ * type, such as one from text to text, an already encoded value fits the decoded side, so it is
+ * encoded again, with no error. A mix is one level deep in the type. Renamed fields take their
+ * encoded names only when the whole value is on the encoded side.
  */
 export type Input<S extends Schema.Top> = Inputs.Input<S>;
 
@@ -488,7 +499,7 @@ const applyDeclaredBodyFields = (
  * Bind a schema to the call's `{ headers }` input.
  *
  * @remarks
- * Encoding produces ordered header lines. The schema states the shape of the group, whatever the
+ * The input is an {@link Input} of the schema. Encoding produces ordered header lines. The schema states the shape of the group, whatever the
  * order of the calls. A raw header under a name it allows is a default: what the schema writes
  * replaces it, and otherwise it goes through the schema, which writes its value, spelling and order.
  * An omitted optional field therefore leaves the default in place. A raw header under a name no
@@ -583,7 +594,7 @@ export const headers = <
  * ```
  *
  * @remarks
- * The schema encodes to `UrlEncoding.QueryInput` and states the shape of the group, whatever the
+ * The input is an {@link Input} of the schema. The schema encodes to `UrlEncoding.QueryInput` and states the shape of the group, whatever the
  * order of the calls. A raw entry under a name it allows is a default, including one written in the
  * constructor: what the schema writes replaces it, and otherwise it goes through the schema, which
  * writes its value and order. An omitted optional field therefore leaves the default in place. A
@@ -662,8 +673,9 @@ export const query = <
  *
  * @remarks
  * The value under `path` is an {@link Input} of the schema. A scalar schema takes a scalar;
- * `Schema.Struct({ userId: Schema.NumberFromString })` takes `{ userId: number }`. Use a struct
- * to name one path value or group several. Renderer parameter names do not affect the input type.
+ * `Schema.Struct({ userId: Schema.NumberFromString })` takes `{ userId: 42 }` or
+ * `{ userId: "42" }`. Use a struct to name one path value or group several. Renderer parameter
+ * names do not affect the input type.
  *
  * The renderer receives the schema-encoded value and the active path-value encoder. Escape each
  * dynamic value with that encoder. The returned path replaces the constructor's path; it does
@@ -683,7 +695,7 @@ export const path = <S extends Schema.Top>(
   ): Request<
     I & { readonly path: Input<S> },
     E | Schema.SchemaError | InvalidRequest,
-    R | S["EncodingServices"]
+    R | S["EncodingServices"] | S["DecodingServices"]
   > =>
     construct(
       self.declaration,

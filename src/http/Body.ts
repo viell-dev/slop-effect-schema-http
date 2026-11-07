@@ -281,9 +281,9 @@ export const schema = <S extends Schema.Constraint>(contract: S) => {
  *
  * @remarks
  * The schema's encoded type must match the underlying encoder's input. Returns an encoder only;
- * use {@link schema} for the decoding direction. The input is what the schema's constructor takes,
- * so a plain object works for a `Schema.Class`: the library builds the schema's value, then encodes
- * it. An existing instance works as it is.
+ * use {@link schema} for the decoding direction. The input takes either side of the schema, or a
+ * mix by field, as `Request.Input` describes, so a plain object works for a `Schema.Class`, and
+ * the underlying encoder receives what the schema writes.
  */
 export const encodeSchema = <S extends Schema.Top>(contract: S) => {
   const encode = Inputs.encoder(contract, Schema.encodeEffect(contract));
@@ -292,7 +292,7 @@ export const encodeSchema = <S extends Schema.Top>(contract: S) => {
   ): Encoder<
     Inputs.Input<S>,
     E | Schema.SchemaError,
-    R | S["EncodingServices"]
+    R | S["EncodingServices"] | S["DecodingServices"]
   > =>
     encoder((value: Inputs.Input<S>) =>
       Effect.flatMap(encode(value), self.encode),
@@ -313,8 +313,10 @@ export const encodeSchema = <S extends Schema.Top>(contract: S) => {
  * Uses `Schema.toCodecJson` to obtain the schema's canonical JSON codec. Encoding failures occur
  * before dispatch; an operation wraps response decoding failures in `Response.DecodeError`.
  *
- * Encoding takes what the schema's constructor takes, as {@link encodeSchema} does. Decoding
- * returns the schema's application type, so a class comes back as an instance.
+ * Encoding takes either side of the schema, or a mix by field, as `Request.Input` describes, and
+ * writes the canonical JSON. The encoded side is the schema's own, so a `Schema.Date` field takes a
+ * `Date`, not the ISO text JSON carries. Decoding returns the schema's application type, so a class
+ * comes back as an instance.
  */
 export const jsonSchema = <S extends Schema.Top>(
   contract: S,
@@ -322,7 +324,7 @@ export const jsonSchema = <S extends Schema.Top>(
   S["Type"],
   Schema.SchemaError | HttpBody.HttpBodyError,
   Schema.SchemaError | HttpClientError.HttpClientError,
-  S["EncodingServices"],
+  S["EncodingServices"] | S["DecodingServices"],
   S["DecodingServices"],
   Inputs.Input<S>
 > => {

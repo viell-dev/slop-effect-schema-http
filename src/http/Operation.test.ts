@@ -950,7 +950,9 @@ describe("Operation failures", () => {
 });
 
 describe("Operation services", () => {
-  it.effect("keeps request encoding and response decoding services apart", () =>
+  // A request needs both, because an input on the encoded side goes through the decoder.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/113
+  it.effect("asks a request for both services and a response for one", () =>
     Effect.gen(function* () {
       const send = Operation.make(
         Request.post("https://api.test/labels").pipe(
@@ -964,7 +966,7 @@ describe("Operation services", () => {
       );
       expectTypeOf<
         Effect.Services<ReturnType<typeof send.execute>>
-      >().toEqualTypeOf<Suffix | HttpClient.HttpClient>();
+      >().toEqualTypeOf<Suffix | Prefix | HttpClient.HttpClient>();
       expectTypeOf<
         Effect.Services<ReturnType<typeof receive.execute>>
       >().toEqualTypeOf<Prefix | HttpClient.HttpClient>();
@@ -974,7 +976,11 @@ describe("Operation services", () => {
       );
       yield* send
         .execute({ body: "label" })
-        .pipe(Effect.provide(server.layer), Effect.provideService(Suffix, "!"));
+        .pipe(
+          Effect.provide(server.layer),
+          Effect.provideService(Suffix, "!"),
+          Effect.provideService(Prefix, ">"),
+        );
       expect(bodyText(server.exchanges[0]!.request)).toBe('"label!"');
       expect(
         yield* receive
