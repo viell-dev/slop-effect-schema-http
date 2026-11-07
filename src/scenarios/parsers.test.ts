@@ -210,9 +210,16 @@ describe("independent parsers", () => {
         Effect.gen(function* () {
           const backend = yield* lane.backend("soap-store", {});
           const findings: Array<string> = [];
-          for (const kase of xmlCorpus) {
+          // Each document is its own upload and its own bundle, so none waits for another. Two
+          // round trips each, one after the other, could reach the test's limit on a slow runner.
+          const observations = yield* Effect.forEach(
+            xmlCorpus,
+            (kase) => storeReads(backend.origin, kase.document),
+            { concurrency: 8 },
+          );
+          for (const [index, kase] of xmlCorpus.entries()) {
             const { reference } = referenceFor(kase);
-            const observed = yield* storeReads(backend.origin, kase.document);
+            const observed = observations[index]!;
             const title =
               reference.accepted && reference.root !== undefined
                 ? Xml.textOf(find(reference.root, "Title")!)
@@ -236,12 +243,14 @@ describe("independent parsers", () => {
             );
           }
           expect(findings).toEqual([]);
-          // The store judged exactly these bytes.
+          // The store judged exactly these bytes, in whatever order they arrived.
           const posted = (yield* backend.ledger).filter(
             (recorded) => recorded.method === "POST",
           );
-          expect(posted.map((recorded) => recorded.body)).toEqual(
-            xmlCorpus.map((kase) => encoder.encode(kase.document)),
+          expect(posted.map(({ body }) => latin1(body)).toSorted()).toEqual(
+            xmlCorpus
+              .map(({ document }) => latin1(encoder.encode(document)))
+              .toSorted(),
           );
         }),
     );
