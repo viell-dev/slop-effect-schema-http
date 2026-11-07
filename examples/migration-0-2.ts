@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { FetchHttpClient, HttpClientResponse } from "effect/http";
-import { Context, SchemaTransformation } from "effect";
 // #region imports
-import { Effect, Option, Schema } from "effect";
+import { Context, Effect, Option, Schema, SchemaTransformation } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 // #endregion imports
@@ -204,20 +203,24 @@ assert.equal(staleScalar._tag, "SchemaError");
 assert.match(staleScalar.message, /Expected object/);
 
 // #region path-stacked
-const listPosts = getUserByTemplate.pipe(Request.path`/posts`);
-// #endregion path-stacked
-assert.equal(
-  await urlOf(listPosts, { path: { userId: 42 } }),
-  "/users/42/posts",
+const listPosts = getUser.pipe(
+  Request.path(Schema.FiniteFromString, () => "/posts"),
 );
+// { path: 42 } gives /users/42/posts
+// #endregion path-stacked
+assert.equal(await urlOf(listPosts, { path: 42 }), "/users/42/posts");
 
 // #region path-replaced
-const getProfile = getUserByTemplate.pipe(
+const getProfile = getUser.pipe(
   Request.unbind("path"),
-  Request.path`/profiles/${userId}`,
+  Request.path(
+    Schema.FiniteFromString,
+    (id, encode) => `/profiles/${encode(id)}`,
+  ),
 );
+// { path: 42 } gives /profiles/42
 // #endregion path-replaced
-assert.equal(await urlOf(getProfile, { path: { userId: 42 } }), "/profiles/42");
+assert.equal(await urlOf(getProfile, { path: 42 }), "/profiles/42");
 
 // #region path-url
 const compiled = await Effect.runPromise(
@@ -408,6 +411,7 @@ const asJson = <S extends Schema.Top>(schema: S) => Body.jsonSchema(schema);
 // #endregion schema-top
 assert.equal(asJson(Schema.String).mediaType, "application/json");
 
+// #region services-schema
 class Tenant extends Context.Service<Tenant, string>()("app/Tenant") {}
 const Tenanted = Schema.String.pipe(
   Schema.decodeTo(
@@ -421,10 +425,12 @@ const Tenanted = Schema.String.pipe(
 const scoped = Request.get("/things").pipe(
   Request.query(Schema.Struct({ who: Tenanted })),
 );
+// #endregion services-schema
 // #region services
 const scopedThings = Request.compile(scoped, { query: { who: "me" } }).pipe(
   Effect.provideService(Tenant, "t1"),
 );
+// Needs the schema's decoding services too.
 // #endregion services
 assert.equal(
   (await Effect.runPromise(scopedThings)).request.url,
@@ -453,48 +459,35 @@ assert.equal(
   "https://api.example.test/admin/users",
 );
 
-const labels: Array<string> = [];
-const withLabel = (self: HttpClient.HttpClient, label = "default") => {
-  labels.push(label);
-  return self;
-};
+// #region transform-client-function
+const withLabel = (self: HttpClient.HttpClient, label = "default") =>
+  HttpClient.mapRequest(self, HttpClientRequest.setHeader("x-label", label));
+// #endregion transform-client-function
 // #region transform-client
 const health = Operation.make(
   Request.get("https://api.example.test/health"),
   Response.status(200, Body.text),
   { transformClient: (client) => withLabel(client) },
 );
-// #endregion transform-client
-await Effect.runPromise(
-  health.execute(undefined).pipe(
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make((native) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(native, new globalThis.Response("ok")),
-        ),
-      ),
-    ),
-  ),
+const labels: Array<unknown> = [];
+const recordLabel = Effect.provideService(
+  HttpClient.HttpClient,
+  HttpClient.make((native) => {
+    labels.push(native.headers["x-label"]);
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(native, new globalThis.Response("ok")),
+    );
+  }),
 );
+await Effect.runPromise(health.execute(undefined).pipe(recordLabel));
 assert.deepEqual(labels, ["default"]);
+// Passed as it is, the function takes the attempt number for its label.
 const numbered = Operation.make(
   Request.get("https://api.example.test/health"),
   Response.status(200, Body.text),
   { transformClient: withLabel as never },
 );
-await Effect.runPromise(
-  numbered.execute(undefined).pipe(
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make((native) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(native, new globalThis.Response("ok")),
-        ),
-      ),
-    ),
-  ),
-);
+await Effect.runPromise(numbered.execute(undefined).pipe(recordLabel));
 assert.deepEqual(labels, ["default", 1]);
 
 const spelled = await Effect.runPromise(
