@@ -181,7 +181,7 @@ To find the server, ask each candidate in turn and take the first one that answe
 <<< ../examples/recipes/find-the-api.ts#discover
 
 `Effect.firstSuccessOf` stops at the first success, and the layer builds the service from it. The
-probe's `attemptTimeout` stops a silent server from holding up the start, and its response schema
+probe's `Policy.timeout` stops a silent server from holding up the start, and its response schema
 refuses a parked domain's page or another service.
 
 Send credentials only to servers your application trusts. A candidate such as `api.<current domain>`

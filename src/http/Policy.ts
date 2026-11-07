@@ -111,6 +111,25 @@ export const make = <Out, E = never, R = never>(
 export const none: Policy = make(Schedule.recurs(0));
 
 /**
+ * One attempt with a timeout, and no retry.
+ *
+ * @example
+ * ```ts
+ * import { Policy } from "viell-effect-schema-http";
+ * const oneQuickAttempt = Policy.timeout("2 seconds");
+ * // One attempt, given up after two seconds.
+ * ```
+ *
+ * @remarks
+ * This is {@link none} with the `attemptTimeout` of {@link make}, so a timed-out attempt ends the
+ * operation. The timeout covers client execution and decoding. It excludes request preparation and
+ * result mapping, so a slow base URL Effect or `Operation.mapEffect` step is outside it. Apply
+ * `Effect.timeout` around the operation for a limit on all of that.
+ */
+export const timeout = (duration: Duration.Input): Policy =>
+  make(Schedule.recurs(0), { attemptTimeout: duration });
+
+/**
  * Read the minimum retry delay requested by a response's `Retry-After` header.
  *
  * @remarks

@@ -34,15 +34,17 @@ the last attempt's result or failure.
 
 ## Bound execution time
 
-Use `attemptTimeout` even if you want no retries. Apply `Effect.timeout` to the operation's Effect
-when you also need an overall deadline:
+`Policy.timeout` makes one attempt with a limit and no retries. A policy that retries takes the same
+limit as `attemptTimeout`. Apply `Effect.timeout` to the operation's Effect when you also need an
+overall deadline:
 
 <<< ../../examples/modules/policy.ts#timeout
 
 Pass `oneAttempt` as the operation's `policy` to use it. An attempt timeout covers dispatch and
-decoding. The outer timeout also covers preparation, retry delays, and all attempts together. A
-timeout interrupts the work and waits for its cleanup; it cannot undo an action the server already
-performed. Cleanup can delay when the caller receives the timeout failure.
+decoding. It excludes preparation and result mapping, such as a slow base URL Effect or an
+`Operation.mapEffect` step. The outer timeout covers those too, with retry delays and all attempts
+together. A timeout interrupts the work and waits for its cleanup; it cannot undo an action the
+server already performed. Cleanup can delay when the caller receives the timeout failure.
 
 ## Choose which outcomes retry
 

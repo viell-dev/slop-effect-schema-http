@@ -732,7 +732,9 @@ Retries follow a `Policy`:
   middleware turned the response into an error, such as `HttpClient.filterStatusOk`. Malformed or
   unrepresentable values request no delay.
 - `attemptTimeout` limits each attempt; a timed-out attempt is transient. A limit on the whole
-  operation is an ordinary `Effect.timeout` applied by the caller.
+  operation is an ordinary `Effect.timeout` applied by the caller. `Policy.timeout` is one attempt
+  with this limit and no retries. It excludes preparation and result mapping, as any attempt timeout
+  does.
 
 The transient classifier checks status or failure alone. It does not check the request method or
 idempotency, and even a declared response that decoded successfully is retried when its status is

@@ -28,9 +28,7 @@ const health = Operation.make(
 // #endregion retry
 
 // #region timeout
-const oneAttempt = Policy.make(Schedule.recurs(0), {
-  attemptTimeout: "5 seconds",
-});
+const oneAttempt = Policy.timeout("5 seconds");
 const bounded = health.execute(undefined).pipe(Effect.timeout("12 seconds"));
 // oneAttempt bounds a single attempt; bounded limits the whole evaluation.
 // #endregion timeout
