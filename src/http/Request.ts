@@ -88,8 +88,9 @@ export type QueryFields = Readonly<
  * names it, because the types allow that value and any member would lose a field the schema states.
  * A key no member states is stripped, as a struct strips it, and so is a key the tag has ruled out.
  * A key set to `undefined` is no field, and an accessor on a class is one, as it is to a struct. In a
- * header or query group, a field a schema stacked with the union takes is not lost. Inside text that
- * holds JSON, a `Map`, an `Option` or another declaration, the schema's own reading applies.
+ * header or query group, a field a schema stacked with the union takes is not lost. Inside text given
+ * as text, a `Schema.Map`, a `Schema.Option` or a declaration with no struct behind it, the schema's
+ * own reading applies.
  */
 export type Input<S extends Schema.Top> = Inputs.Input<S>;
 

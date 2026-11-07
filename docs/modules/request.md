@@ -363,10 +363,13 @@ request.
 #### What the library promises
 
 For a value it can see, a field the caller gave is kept, or the request is refused. It can see plain
-objects, lists, tuples, classes and unions of those, at any depth. Inside an opaque value, which is
-text that holds JSON, a `Map`, an `Option` or any other declaration, the schema's own reading
-applies, and nothing is refused for what happens there. To choose a union member for certain, bind
-that member directly.
+objects, lists, tuples, classes and unions of those, at any depth, on either side of a schema. So it
+sees an object given to a field that holds JSON, and the value in `Schema.OptionFromNullOr`. Inside
+an opaque value, which is text given as text, a `Schema.Map`, a `Schema.Option` or a declaration
+with no struct behind it, the schema's own reading applies, and nothing is refused for what happens
+there. A stray key inside an opaque value can still make a union beside it read loosely, so a field
+a wider member could hold can be refused. To choose a union member for certain, bind that member
+directly.
 
 A union chooses before it knows what a stacked schema took, so `Union([{ b }, { a, c }])` stacked
 with `{ b }` refuses `{ a, b, c }`. Bound directly, the member you mean goes out whole:
