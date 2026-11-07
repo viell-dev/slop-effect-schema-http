@@ -2294,10 +2294,9 @@ The suite's backends are plain HTTP, so none of this covers TLS: a bad certifica
 cut during a handshake. [#97](https://github.com/viell-dev/slop-effect-schema-http/issues/97) saw a
 bad certificate fail as a `TransportError` on Node.js, outside the suite.
 
-A limit below that waits for a request to come back, or to reach a backend at all, is sized for a
-slow runner rather than taken from the entry's point: a request aborted before it arrived leaves
-nothing in a ledger, and an answer that has to finish has to fit inside its attempt. The answers
-these tests time out never finish, so a longer limit changes nothing else.
+The timeouts below are sized for a slow runner: a request aborted before it arrived leaves nothing
+in a ledger, and an answer that has to finish has to fit inside its attempt. The answers these tests
+time out never finish, so a longer limit changes nothing else.
 
 #### Failures after response headers arrive
 
@@ -2333,8 +2332,13 @@ errors and the statuses 408, 429, 500, 502, 503 and 504.
   - `[EXT-23a] under the region's own CORS cut-body keeps the filter's lines, so it is a failed body and not a CORS refusal` (Chromium)
   - `[EXT-23a] through the same-origin proxy cut-body fails at the body as it does for a page reaching the region directly` (Chromium)
 - **EXT-23b** `cut-body-reset`: EXT-23a ended by a reset. Provider: as EXT-23a, with Node's cause
-  `read ECONNRESET`, under `terminated` through `fetch` and alone through `lines`. Status: tested.
-  - `[EXT-23b] ${provider}: a reset after half the body fails as cut-body does`
+  `read ECONNRESET`, under `terminated` through `fetch` and alone through `lines`. A reset can
+  overtake bytes a client has not read yet, and the page's 50 ms does not cover a heavily loaded
+  machine, where Chromium met it first with twice as many busy processes as cores. A client that
+  meets it first has seen no answer, so the result is EXT-23f's: Chromium sends the request again and
+  gets the manifest, and Node's `fetch` is a `TransportError`, retried. The test accepts those two
+  orders and no others, with a ledger that agrees. Status: tested.
+  - `[EXT-23b] ${provider}: a reset after half the body fails as cut-body does, unless it overtakes the bytes`
 - **EXT-23c** `cut-chunked`: one chunk and no last chunk. Provider: as EXT-23a. Status: tested.
   - `[EXT-23c] ${provider}: a chunk with no last chunk fails as cut-body does`
   - `[EXT-23c] through the same-origin proxy cut-chunked fails at the body as it does for a page reaching the region directly` (Chromium)
@@ -2481,6 +2485,7 @@ reused, and what Chromium makes of the same rule on a reused connection.
   - `[EXT-24a] ${provider}: Chromium sends a lost POST twice on two connections, so one attempt makes two bookings and one TransportError` (Chromium)
   - `[EXT-24a] ${provider}: behind the socket listener no connection is reused, so one arrival and one booking`
   - `[EXT-24a] under the region's own CORS a preflight warms the connection too, so a lost POST arrives twice` (Chromium)
+  - `[EXT-24a] ${provider}: a commit says where its booking is, and reading that gives the same booking`
   - `[EXT-24a] the page's own examples round-trip through their schemas`
   - `[EXT-24a] a draft needs three non-empty strings`
   - `[EXT-24a] a booking without a key says null, and anything else must be a key`
@@ -2623,7 +2628,7 @@ does to a booking shows in `GET /v1/bookings`.
   `withCookiesRef` does. The last test shows it with no library at all, as
   `HttpClient.withScope(HttpClient.followRedirects(client))`. An attempt timeout and an interruption
   still end the body, because they reach it directly, so what stays open is an answer nothing is
-  reading. Suspected defect, reported but with no issue yet. Status: defect.
+  reading. A suspected defect, with no issue filed yet. Status: defect.
   - `[EXT-25h] with no redirect a refused answer's request is aborted by the time its outcome is classified`
   - `[EXT-25h] currently, a redirected answer refused unread is still running when its outcome is classified, against the design's promise`
   - `[EXT-25h] currently, so is one that filterStatusOk rejects after a redirect, the same thing through ordinary middleware`

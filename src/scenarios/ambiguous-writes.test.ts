@@ -208,6 +208,28 @@ describe(`ambiguous completion of writes (${lane.name})`, () => {
     );
 
     it.live(
+      `[EXT-24a] ${provider}: a commit says where its booking is, and reading that gives the same booking`,
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* eu([]);
+          const answer = yield* Bookings.book({
+            baseUrl: backend.origin,
+          }).execute({ draft });
+          expect(answer.metadata.status).toBe(201);
+          expect(answer.metadata.headers.location).toBe(
+            "/v1/bookings/eu-000001",
+          );
+          const read = Bookings.booking({ baseUrl: backend.origin });
+          const found = yield* read.execute("eu-000001");
+          expect(found._tag).toBe("Found");
+          expect(found.value).toEqual(answer.value);
+          const missing = yield* read.execute("eu-000002");
+          expect(missing._tag).toBe("Missing");
+          expect(missing.value).toEqual({ error: "not_found" });
+        }).pipe(Effect.provide(client)),
+    );
+
+    it.live(
       `[EXT-24c] ${provider}: with the fault before the region the caller sees the same failure, and nothing is committed`,
       () =>
         Effect.gen(function* () {
