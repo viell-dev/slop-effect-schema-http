@@ -20,24 +20,44 @@ not part of the published service.
 | `POST /RPC2`                          | XML-RPC                                             | XML-RPC             |
 | `GET /admin/audit.cgi`                | the auditors' extract totals, behind HTTP Digest    | pipe line           |
 
-Any other path answers 404, and another method on a listed path answers 405 with `Allow`.
+Apache itself answers a request that no script takes, with one of [its pages](#apaches-pages): any
+other path with its 404 page, and another method on a listed path with its 405 page and an `Allow`
+line naming that path's methods from this table, such as `Allow: GET` or `Allow: GET, HEAD`.
+`rpt.exe` takes every method, so it is never 405.
 
 ## Shared conventions
 
 - **Query strings (CGI.pm, 1995).** Every script parses its query with CGI.pm, which splits on `&`
-  and also on `;`, turns `+` into a space and percent-decodes the rest. A raw `+` or `;` in a value
-  therefore changes it; only a client that percent-encodes them gets its value through intact. The
-  first value of a repeated name wins, and a name without `=` has an empty value.
+  and also on `;`, turns `+` into a space, and then turns each `%` followed by two hexadecimal
+  digits, in either case, into that byte. Any other `%` stays as it is, so `a%20%G1` is `a %G1`. A
+  raw `+` or `;` in a value therefore changes it; only a client that percent-encodes them gets its
+  value through intact. The first value of a repeated name wins, and a name without `=` has an empty
+  value.
+- **Query values are bytes (1995).** The 1995 module knows no character sets, so a name or value is
+  a string of bytes, not text: `%E4` is the one byte E4, whatever character set the client meant,
+  and a byte outside ASCII sent raw on the request line is that same byte. `%C3%A4` and a raw UTF-8
+  `ä` are therefore the same two bytes, C3 A4. The scripts' stored text, such as user names,
+  passwords and the SSO token, is UTF-8, and a value matches it when its bytes are that text's UTF-8
+  bytes, so `%C3%A4` matches a stored `ä` and `%E4` does not.
 - **Pipe replies (1998).** The Perl scripts answer every outcome with HTTP 200 and `text/plain`:
   `OK|…` on success and `ERROR|<code>|<message>` otherwise, each line ending in a bare `\n`.
   Monitoring only ever checked that the CGI did not crash, so a status other than 200 would page the
   night operator; no script has been allowed to change since. The month-end extract, which the
   mainframe team wrote, is the exception.
-- **Apache's pages.** Apache 1.3 fronts every script and signs every reply with
-  `Server: Apache/1.3.41 (Unix)`. Redirects and refusals that Apache itself writes are Apache 1.3's
-  HTML error pages, `text/html; charset=iso-8859-1` with their `Content-Length`, signed
-  `Apache/1.3.41 Server`. The scripts' own replies arrive chunked, as Apache sends output whose
-  length a CGI does not give.
+- **Messages quote the request unescaped (1998).** Where a pipe reply's message quotes something
+  from the request, such as a section, an account or a period, it holds that value's bytes exactly:
+  as the query decoded them, or for a topic or fragment as they arrived. Nothing is escaped or
+  re-encoded. A `%E4` comes back as the byte E4 and a raw C3 A4 as C3 A4. A `|` in the value adds
+  fields to the line, and a value decoded from `%0A` ends the line inside the message, so the rest
+  of the message arrives as a line of its own. The scripts print the value as Perl holds it, and
+  like the rest of their replies that has not been allowed to change. An `ERROR` line's message is
+  therefore everything after its second `|`, up to the `\n`: read `ERROR|E_SECTION|no section a|b`
+  as the code `E_SECTION` and the message `no section a|b`. An `OK` line's fields are values the
+  gateway itself holds, none of which contains a `|`.
+- **Apache 1.3 in front.** Apache 1.3 fronts every script and signs every reply with
+  `Server: Apache/1.3.41 (Unix)`. Redirects and refusals that Apache itself writes are
+  [its HTML pages](#apaches-pages). The scripts' own replies arrive chunked, as Apache sends output
+  whose length a CGI does not give.
 - **Sessions.** `login.cgi` issues sessions, which the other scripts and `/RPC2` take as the
   `session` query parameter. The 2009 SSO bridge mints opaque tokens that every endpoint taking
   `session` accepts as a session value too: the query-parameter form of the token other services
@@ -46,6 +66,40 @@ Any other path answers 404, and another method on a listed path answers 405 with
   unpadded in pipe replies, zero-padded with implied decimals in the extract, as units with two
   decimals in XML-RPC and the CSV export, with a decimal comma in the German variant. Dates are
   `YYYYMMDD`, with `00000000` for none.
+
+## Apache's pages
+
+Apache 1.3 writes its own redirects and refusals as HTML error pages, served as
+`text/html; charset=iso-8859-1` with their `Content-Length`. Each page is these lines, each ending
+in a bare `\n`, with `<status>`, `<reason>` and `<message>` from the table below:
+
+```html
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
+<HTML><HEAD>
+<TITLE><status> <reason></TITLE>
+</HEAD><BODY>
+<H1><reason></H1>
+<message><P>
+<HR>
+<ADDRESS>Apache/1.3.41 Server</ADDRESS>
+</BODY></HTML>
+```
+
+| Status | Reason               | Message                                                            |
+| ------ | -------------------- | ------------------------------------------------------------------ |
+| 301    | `Moved Permanently`  | `The document has moved <A HREF="<location>">here</A>.`            |
+| 302    | `Found`              | `The document has moved <A HREF="<location>">here</A>.`            |
+| 404    | `Not Found`          | `The requested URL <path> was not found on this server.`           |
+| 405    | `Method Not Allowed` | `The requested method <method> is not allowed for the URL <path>.` |
+
+`<path>` is the request target up to its first `?` or `#`, byte for byte as it arrived, without
+percent decoding, and `<location>` is the `Location` line's value. Both have `&`, `<`, `>` and `"`
+written as `&amp;`, `&lt;`, `&gt;` and `&quot;`, and nothing else escaped. `<method>` is the
+request's method as it arrived, unescaped, as Apache 1.3 writes it. So
+`POST /cgi-bin/login.cgi?user=ann` answers 405 with `Allow: GET`, and its page's message line is
+`The requested method POST is not allowed for the URL /cgi-bin/login.cgi.<P>`. The 400 and 401
+pages of [XML-RPC](#xml-rpc-1999) and [the audit endpoint](#the-audit-endpoint-1997-digest) are
+Apache's too. A 404 from Apache is this page; `extract.cgi`'s own 404 is a `text/plain` ERROR line.
 
 ## Logging in (1998)
 
@@ -110,8 +164,10 @@ OK|accounts|closing|Close an account at month end.
 | `reports`  | `export`  | `The export writes a CSV file.`         | `Der Export schreibt eine CSV-Datei.`       |
 
 A topic is one path segment, compared as it arrived. Any other topic is
-`ERROR|E_TOPIC|no topic <topic>`, with the topic as it arrived. A path without a topic, such as
-`/cgi-bin/help.cgi/`, or with more segments after it, is another path, and answers 404.
+`ERROR|E_TOPIC|no topic <topic>`, with the topic's bytes as they arrived, without percent decoding:
+`/cgi-bin/help.cgi/a|b` answers `ERROR|E_TOPIC|no topic a|b`, and `/cgi-bin/help.cgi/a%7Cb`
+answers `ERROR|E_TOPIC|no topic a%7Cb`. A path without a topic, such as `/cgi-bin/help.cgi/`, or
+with more segments after it, is another path, and answers Apache's 404 page.
 
 **The section in the fragment (1998).** The desktop client's Help pane is a plain text box, which
 cannot scroll to an anchor, and its link table holds addresses such as
@@ -134,8 +190,12 @@ this:
   called `closing?lang=de`.
 - A fragment is compared with the topic's sections as it arrived: case-sensitively, and without
   percent decoding. One that names no section of the topic, such as a section of the other topic, is
-  `ERROR|E_SECTION|no section <fragment>`, with the fragment as it arrived. The topic is checked
-  first.
+  `ERROR|E_SECTION|no section <fragment>`, with the fragment's bytes as they arrived, nothing
+  escaped. The topic is checked first.
+- A `|` in the fragment stays a `|`. `GET /cgi-bin/help.cgi/accounts#a|b` answers
+  `ERROR|E_SECTION|no section a|b` and `\n`, 31 bytes in all: split at every `|`, that is four
+  fields, and the message is the last two joined by their `|`, `no section a|b`. `#a%7Cb` is not
+  decoded, and answers `ERROR|E_SECTION|no section a%7Cb`.
 - An empty fragment, from a target that ends in `#`, is no fragment, and answers the whole topic.
 
 A client that cannot send a fragment, such as a browser, gets the whole topic, and its reader finds
@@ -155,8 +215,11 @@ port. The desktop client has followed these links since its 2004 update, writing
 target on its socket, fragment included, and gets the section. A browser leaves the fragment off and
 shows the whole topic. The runbooks are printed and filed, so the links stay. Sections are the ones
 above, and `go.cgi` finds a section in whichever topic holds it, with no language of its own. An
-unknown section is `ERROR|E_SECTION|no section <section>`, and a missing or empty one
-`ERROR|E_PARAM|section missing`, both as pipe replies.
+unknown section is `ERROR|E_SECTION|no section <section>`, with the section's bytes as the query
+decoded them, and a missing or empty one `ERROR|E_PARAM|section missing`, both as pipe replies. So
+`section=a%7Cb` and `section=a|b` both answer `ERROR|E_SECTION|no section a|b`, `section=%E4`
+answers `ERROR|E_SECTION|no section ` followed by the byte E4 and `\n`, and `section=a%0Ab`
+answers the two lines `ERROR|E_SECTION|no section a` and `b`.
 
 ## The month-end extract (2001)
 
@@ -370,8 +433,14 @@ The gateway's replies match those recordings, apart from the dates, nonces and s
 that change with every run, except where this page documents otherwise:
 
 - Apache 1.3's pages and `Server` line, which httpd 2.4 writes its own way: no Apache 1.3 can be
-  recorded, so the pages are not checked. httpd 2.4.68 is the last release that answers RFC 2069
-  Digest at all; 2.4.69 refuses `AuthDigestQop none` at startup.
+  recorded, so the pages are not checked against a recording. Their layout and messages follow
+  Apache 1.3's `ap_send_error_response`, except that the signature names no host or port. httpd
+  2.4.68 is the last release that answers RFC 2069 Digest at all; 2.4.69 refuses
+  `AuthDigestQop none` at startup.
+- The 405 for a method the endpoint table does not list. Apache 1.3's `mod_cgi` hands a script
+  whatever method arrives, so no stock Apache 1.3 refuses one in front of a CGI; the gateway writes
+  the page Apache 1.3's core writes for a 405. The 404 page names the path as it arrived, where
+  Apache would name it percent-decoded, because the gateway matches paths without decoding them.
 - The XML-RPC script's fault codes, its hand-written `account.title`, Apache's 400 for a call that
   is not `text/xml`, and its `&#13;` for a carriage return. Frontier::Daemon's head is
   HTTP::Daemon's (`Server: libwww-perl-daemon/6.16`); the script's is Apache's.
@@ -395,6 +464,12 @@ differences are HTTP::Daemon's `Server: libwww-perl-daemon/6.16` in place of Apa
 its `Content-Length` in place of the gateway's `Transfer-Encoding: chunked`, and the gateway's
 explicit `Connection: close` where HTTP::Daemon sends no connection line. This records the current
 CGI.pm package's parsing conventions, not a historical CGI.pm release or Apache 1.3 transport.
+
+No recorded case holds a byte outside ASCII, and the recording handler quotes nothing. The byte
+rule follows CGI.pm 4.55's `unescape`, which turns `%` and two hexadecimal digits into that byte
+with Perl's `chr`, and leaves the value as bytes. CGI.pm 4.55 also reads Internet Explorer's
+`%uXXXX` as that character's UTF-8 bytes; the gateway keeps such a `%` as it is, as the service's
+1995 CGI.pm did.
 
 XMLRPC::Lite's replies carry the same values as the gateway's in its own spelling: `<int>`, base64
 on one line, raw UTF-8, `"` unescaped, `<data />` for an empty array, no white space between
@@ -430,4 +505,5 @@ The help topics and `go.cgi` are fixed and take no options. A fragment needs a c
 one: `lane.rawClient(backend.origin)`, in the Node lane. Fetch and `lane.linesClient` leave it off.
 The default listener is enough for these, because `node:http` passes a fragment through. It answers
 a target holding raw bytes outside ASCII with its own 400 before any script runs, so a test of such
-a topic or fragment starts the gateway with `{ listener: "socket" }`.
+a query, topic or fragment starts the gateway with `{ listener: "socket" }`. Percent-encoded bytes,
+such as `%E4`, need no other listener.

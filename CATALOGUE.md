@@ -523,6 +523,8 @@ query parameter` (the password `p+ss w&rd;1` arrives percent-encoded, so CGI.pm'
   - Backend conformance holds every other gateway script to the same query rule: the query ends at
     the target's first `#`, a `?` after it starts none, and a fragment changes no reply
     (`src/conformance/fragment-query.node.test.ts`).
+  - Backend conformance (EXT-31b): query values are bytes, as CGI.pm decodes them, and match stored
+    text by its UTF-8 bytes.
   - Recorded referee (#47): CGI.pm 4.55 on the XML-RPC sets' pinned Debian/Perl base, with a small
     HTTP::Daemon balance handler. Eleven raw targets pin plus/semicolon decoding and separators,
     repeated first-value selection, empty/name-only session outcomes, equals and escape case.
@@ -577,6 +579,8 @@ request's lines plus one`
 - **ERR-1c** Pipe-delimited `ERROR` lines inside 200. Status: tested.
   - `[ERR-1c] an ERROR line inside 200 decodes as a gateway error beside the OK line`
   - `[ERR-1c] a reply that is neither an OK nor an ERROR line is a decode error`
+  - Backend conformance (EXT-31c): a message quotes the request unescaped, so it can hold `|` and
+    is everything after the line's second `|`. Apache's own 404 and 405 are HTML pages (EXT-31a).
 - **STAT-6** A HEAD probe whose facts live only in headers: an ordinary schema over the header map.
   Status: tested.
   - `[STAT-6] a HEAD probe reads the extract's facts from its headers with an ordinary schema`
@@ -2953,3 +2957,69 @@ owner, limit }])` stacked with `{ team }` refuses all three fields, and bound di
 - **EXT-30q** A field whose own encode step omits it goes out without it. The schema decided that,
   so it is no loss the library can answer for. Status: tested.
   - `[EXT-30q] a value whose encode step drops a field is the schema's own decision, and goes out without it`
+
+#### The gateway held to its page
+
+EXT-31 holds the gateway to its [service page](./services/gateway.md) where no recording reaches,
+byte for byte over a raw socket, under both listeners unless an entry says otherwise. No Apache 1.3
+can be recorded and the CGI.pm recording quotes nothing, so every expected answer is written out
+from the page, and nothing is shared with the backend. Backend-side, in
+`src/conformance/gateway-page.node.test.ts`, Node lane. The three differences from the page that
+[#122](https://github.com/viell-dev/slop-effect-schema-http/issues/122) found are fixed in the
+gateway or settled on the page, as each entry says.
+
+- **EXT-31a** Apache's own refusals: a path no script serves is Apache 1.3's 404 page and another
+  method on a listed path its 405 page, `text/html; charset=iso-8859-1` with `Content-Length`, with
+  `Allow` naming the path's methods from the endpoint table. A page names the path up to its first
+  `?` or `#`, as it arrived, with `&`, `<`, `>` and `"` escaped, and the 405 page the method,
+  unescaped. Status: tested.
+  - `[EXT-31a] ${listener}: ${target} reaches no script, and is Apache's 404 page naming ${path}`
+    (an unknown path, one with a query and fragment, a help path without a topic or with two
+    segments, a script with a path after it, and an escaped dot)
+  - `[EXT-31a] the 404 page writes &, <, > and " as references and every other byte of the path as it arrived`
+    (socket listener)
+  - `[EXT-31a] ${listener}: ${method} ${target} is Apache's 405 page with Allow: ${allow}` (every
+    listed path, with a query and fragment on one)
+  - `[EXT-31a] the 405 page names the method as it arrived, unescaped, and escapes the path`
+    (socket listener)
+  - Controls: `[EXT-31a] rpt.exe takes every method, so ${method} is its 301 and never 405`, and
+    `[EXT-31a] extract.cgi's own 404 stays its text/plain ERROR line, not Apache's page`.
+  - Fixed in the gateway: the shared router answered both as plain text `Not Found` and
+    `Method Not Allowed`, where the page promised Apache's pages. The page now gives the pages'
+    exact lines and messages, from Apache 1.3's `ap_send_error_response`. It records as kept that
+    stock Apache 1.3 hands a CGI any method, so the 405 is the gateway's own.
+  - Mutation control: answering with the router's plain-text refusals fails 30 of the file's tests.
+- **EXT-31b** Query values are bytes, as CGI.pm's `unescape` leaves them: `%` and two hexadecimal
+  digits, in either case, is that byte, any other `%` stays, and a raw byte outside ASCII is that
+  byte. A value matches stored text by its UTF-8 bytes, and a message quotes it as those bytes.
+  Status: tested.
+  - `[EXT-31b] ${listener}: go.cgi?${query} quotes the section as the bytes CGI.pm decodes` (`%E4`,
+    `%e4`, `%C3%A4`, `%FF%00%80`, a bad escape beside a good one, a cut escape, `+` and `%2B`,
+    `%u00E4` kept, and `%25E4`)
+  - `[EXT-31b] socket: a raw byte outside ASCII is that byte, as its escape would be (${query})`
+  - `[EXT-31b] http: node:http answers a raw byte outside ASCII with its own 400 before any script runs`
+  - `[EXT-31b] ${listener}: report.cgi quotes an account and a report name as the decoded bytes`
+  - `[EXT-31b] ${listener}: a value matches stored text by its UTF-8 bytes, and Latin-1 escapes do not`
+    (a user, a password and the SSO token outside ASCII), and
+    `[EXT-31b] socket: raw UTF-8 bytes match stored text the same as their escapes`
+  - Control: `[EXT-31b] a message's own text stays UTF-8: import.cgi's refusal spells Fällig in UTF-8`
+  - Measured before the fix, on both listeners: `go.cgi?section=%E4` answered
+    `ERROR|E_SECTION|no section %E4`, the escape as text, because a component that was not UTF-8
+    was kept undecoded, and `a%20%G1` came back whole. Under the socket listener the raw bytes C3 A4
+    came back as C3 83 C2 A4, and a raw E4 as C3 A4, because a reply was encoded as UTF-8 from a
+    string of one character per byte. `%C3%A4` came back right by accident.
+  - Fixed in the gateway: CGI.pm's byte decoding, replies written one byte per character, and
+    stored text compared and written as UTF-8. Kept, in the page's "Recordings": CGI.pm 4.55 also
+    reads `%uXXXX`, which the gateway keeps as it is.
+  - Mutation controls: writing replies as UTF-8 fails 15 tests; keeping `%E4` undecoded fails 6.
+- **EXT-31c** A message quotes the request unescaped: a `|` in a fragment, a topic or a query value
+  stays a `|`, so an `ERROR` line can have more than three fields and its message is everything
+  after the second `|`; a value decoded from `%0A` ends the line inside the message. Status: tested.
+  - `[EXT-31c] ${listener}: ${target} quotes its | in the message as it is` (a fragment, one with
+    a query and two `|`, a fragment's `%7C` left encoded, a topic with `|` and with `%7C`,
+    `go.cgi`'s section encoded and raw, and `report.cgi`'s report and account)
+  - `[EXT-31c] the page's example: #a|b answers 31 bytes, whose message after the second | is no section a|b`
+  - `[EXT-31c] ${listener}: go.cgi?${query} ends the line inside the message` (`%0A` and `%0D%0A`)
+  - Settled on the page: the gateway already wrote `|` as it is; the page said only that errors
+    quote a fragment as it arrived. It now says the message is the rest of the line, with the exact
+    bytes of `#a|b`, so a reader takes the code and message from the first two `|` alone.

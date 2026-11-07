@@ -5,7 +5,7 @@
  * Service documentation: services/gateway.md
  */
 import { header, type Received, type Reply } from "../../harness/server.js";
-import { movedPage, parseQuery, pipeError } from "./cgi.js";
+import { movedPage, parseQuery, pipeError, pipeLines } from "./cgi.js";
 
 interface Section {
   readonly name: string;
@@ -48,16 +48,9 @@ const TOPICS: ReadonlyMap<string, ReadonlyArray<Section>> = new Map([
 ]);
 
 /**
- * Pipe lines in HTTP 200. A topic or fragment echoed here comes from the target, one character per
- * byte, so Latin-1 sends back the bytes that arrived, where UTF-8 would encode them a second time.
+ * `help.cgi`: `topic` is the path segment as it arrived. A topic or fragment it echoes goes back as
+ * those bytes, `|` included, as the 1998 script printed it.
  */
-const pipeLines = (...lines: ReadonlyArray<string>): Reply => ({
-  status: 200,
-  lines: [["Content-Type", "text/plain"]],
-  body: Buffer.from(lines.map((line) => `${line}\n`).join(""), "latin1"),
-});
-
-/** `help.cgi`: `topic` is the path segment as it arrived. */
 export const help = (request: Received, topic: string): Reply => {
   const sections = TOPICS.get(topic);
   if (sections === undefined)
