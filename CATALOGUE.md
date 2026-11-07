@@ -250,11 +250,12 @@ receipts`
   - `[QRY-1] ?wsdl and ?wsdl= are different requests` (provider; through a query schema and
     through a URL string, both lanes keep the bare key)
   - `[QRY-1] ?wsdl=types names the schema part, which the WSDL contract refuses as a decode error`
-  - `[QRY-1] currently, client middleware that appends a URL parameter re-serialises the query and
-?wsdl becomes ?wsdl= (#24); editing the URL text keeps it` (provider). Effect builds the
-    dispatch URL with `URLSearchParams` once a request carries a parameter, so the library's
-    rendering survives only middleware that edits the URL text. Documentation is tracked in
-    [#24](https://github.com/viell-dev/slop-effect-schema-http/issues/24).
+  - `[QRY-1] client middleware that appends a URL parameter re-serialises the query and ?wsdl
+becomes ?wsdl=; editing the URL text keeps it` (provider). Effect builds the dispatch URL with
+    `URLSearchParams` once a request carries a parameter, so the library's rendering survives only
+    middleware that edits the URL text. That is settled: it is Effect's behaviour, the library's
+    [design page](https://github.com/viell-dev/slop-effect-schema-http/blob/main/docs/design.md#wire-representations-stay-distinct)
+    documents it, and this test pins it as a fact of the client rather than a mismatch.
 - **RET-3** ETag with `If-None-Match` yielding 304 and no body, `If-Match` yielding 412, and 428
   when the validator is missing. Status: tested.
   - `[RET-3] If-None-Match with the current ETag yields 304 and no body` (provider; Chromium
