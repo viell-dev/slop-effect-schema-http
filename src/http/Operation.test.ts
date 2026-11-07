@@ -2673,6 +2673,9 @@ const urlsOf = (provider: { readonly exchanges: ReadonlyArray<Exchange> }) =>
   provider.exchanges.map((exchange) => exchange.url);
 
 /** Statements only the compiler reads: they are refused, so they must never run. */
+/** `any`, named through the schema that holds it. */
+type Anything = (typeof Schema.Any)["Type"];
+
 const compileOnly = (statements: (...values: ReadonlyArray<never>) => void) =>
   expect(statements).toBeTypeOf("function");
 
@@ -3578,8 +3581,7 @@ describe("what fits a mapped operation", () => {
   });
 
   it("names an operation's input, mapped or not", () => {
-    type Input = Operation.InputOf<typeof getThings>;
-    expectTypeOf<Input>().toEqualTypeOf<
+    expectTypeOf<Operation.InputOf<typeof getThings>>().toEqualTypeOf<
       Parameters<typeof getThings.execute>[0]
     >();
     const limited = getThings.pipe(
@@ -3640,8 +3642,8 @@ describe("what fits a mapped operation", () => {
       Body.json,
     );
     const allUnknown: WideResponse = unknownResult;
-    const anyResult: Response.Response<any, unknown> = unknownResult;
-    const anything: any = unknownResult;
+    const anyResult: Response.Response<Anything, unknown> = unknownResult;
+    const anything: Anything = unknownResult;
     compileOnly(() => {
       // @ts-expect-error a response annotated with an unknown result
       getThings.pipe(Operation.mapResponse(() => unknownResult));
@@ -3652,7 +3654,7 @@ describe("what fits a mapped operation", () => {
       // @ts-expect-error a function that returns `any`, which gives nothing to infer from
       getThings.pipe(Operation.mapResponse(() => anything));
       // @ts-expect-error the same from the response it was given
-      getThings.pipe(Operation.mapResponse((response) => response as any));
+      getThings.pipe(Operation.mapResponse((response) => response as Anything));
       getThings.pipe(
         // @ts-expect-error a schema with an unknown result
         Operation.mapResponse(
@@ -3663,7 +3665,7 @@ describe("what fits a mapped operation", () => {
   });
 
   it("keeps a real `unknown` result where nothing is mapped", () => {
-    const anything: any = Response.status(200, Body.json);
+    const anything: Anything = Response.status(200, Body.json);
     const plain = Operation.make(
       Request.get("https://api.test/things"),
       Response.status(200, Body.jsonSchema(ThingPage)),
@@ -3724,9 +3726,9 @@ describe("what fits a mapped operation", () => {
   });
 
   it("states the missing case in the compile error", () => {
-    const missing = Response.replace(500, Body.text);
+    const noSuchCase = Response.replace(500, Body.text);
     type Parameter = Parameters<
-      typeof missing<
+      typeof noSuchCase<
         string,
         never,
         never,
