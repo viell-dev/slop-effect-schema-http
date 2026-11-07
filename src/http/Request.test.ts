@@ -143,6 +143,50 @@ const stacked = <
 const linesOf = <I, E, R>(request: Request.Request<I, E, R>, input: I) =>
   Effect.map(compile(request, input), (compiled) => compiled.headerLines);
 
+/** A request to `/x` with a JSON body schema bound. */
+const posted = <
+  S extends Schema.Top & {
+    readonly DecodingServices: never;
+    readonly EncodingServices: never;
+  },
+>(
+  schema: S,
+) => Request.post("/x").pipe(Request.body(Body.jsonSchema(schema)));
+
+/** A compiled request's body. */
+const bodyOf = <I, E>(request: Request.Request<I, E>, input: I) =>
+  Effect.map(compile(request, input), ({ request: compiled }) =>
+    bodyText(compiled),
+  );
+
+/** The body a JSON schema sends for a value. */
+const sentBy = <
+  S extends Schema.Top & {
+    readonly DecodingServices: never;
+    readonly EncodingServices: never;
+  },
+>(
+  schema: S,
+  body: Request.Input<S>,
+) =>
+  Effect.map(
+    compile(Request.post("/x").pipe(Request.body(Body.jsonSchema(schema))), {
+      body,
+    }),
+    ({ request }) => bodyText(request),
+  );
+
+/** A schema that reads one object into another. */
+const reshaped = <E, T>(
+  from: Schema.Codec<E, E>,
+  to: Schema.Codec<T, T>,
+  decode: (value: E) => T,
+  encode: (value: T) => E,
+) =>
+  from.pipe(
+    Schema.decodeTo(to, SchemaTransformation.transform({ decode, encode })),
+  );
+
 describe("Request.make", () => {
   it.effect("keeps the method and URL", () =>
     Effect.gen(function* () {
@@ -6706,22 +6750,10 @@ describe("a field outside a value's keys", () => {
       return "ada";
     }
   }
-  const posted = <
-    S extends Schema.Top & {
-      readonly DecodingServices: never;
-      readonly EncodingServices: never;
-    },
-  >(
-    schema: S,
-  ) => Request.post("/x").pipe(Request.body(Body.jsonSchema(schema)));
-  const sent = <I, E>(request: Request.Request<I, E>, input: I) =>
-    Effect.map(compile(request, input), ({ request: compiled }) =>
-      bodyText(compiled),
-    );
 
   it.effect("keeps an accessor on a class, under a union", () =>
     Effect.gen(function* () {
-      expect(yield* sent(posted(NarrowFirst), { body: new Person() })).toBe(
+      expect(yield* bodyOf(posted(NarrowFirst), { body: new Person() })).toBe(
         '{"id":"1","name":"ada"}',
       );
     }),
@@ -6730,12 +6762,12 @@ describe("a field outside a value's keys", () => {
   it.effect("keeps it at any depth", () =>
     Effect.gen(function* () {
       expect(
-        yield* sent(posted(Schema.Struct({ who: NarrowFirst })), {
+        yield* bodyOf(posted(Schema.Struct({ who: NarrowFirst })), {
           body: { who: new Person() },
         }),
       ).toBe('{"who":{"id":"1","name":"ada"}}');
       expect(
-        yield* sent(posted(Schema.Array(NarrowFirst)), {
+        yield* bodyOf(posted(Schema.Array(NarrowFirst)), {
           body: [new Person()],
         }),
       ).toBe('[{"id":"1","name":"ada"}]');
@@ -6752,7 +6784,7 @@ describe("a field outside a value's keys", () => {
       const Renamed = Schema.Struct({ a: Schema.optionalKey(text) }).pipe(
         Schema.encodeKeys({ a: "A" }),
       );
-      expect(yield* sent(posted(Renamed), { body: new Wire() })).toBe(
+      expect(yield* bodyOf(posted(Renamed), { body: new Wire() })).toBe(
         '{"A":"x"}',
       );
     }),
@@ -6767,12 +6799,12 @@ describe("a field outside a value's keys", () => {
             id: { value: "1", enumerable: true },
           },
         );
-      expect(yield* sent(posted(NarrowFirst), { body: inherited })).toBe(
+      expect(yield* bodyOf(posted(NarrowFirst), { body: inherited })).toBe(
         '{"id":"1","name":"ada"}',
       );
       const hidden: { readonly id: string; readonly name: string } =
         Object.defineProperty({ id: "1" }, "name", { value: "ada" }) as never;
-      expect(yield* sent(posted(NarrowFirst), { body: hidden })).toBe(
+      expect(yield* bodyOf(posted(NarrowFirst), { body: hidden })).toBe(
         '{"id":"1","name":"ada"}',
       );
     }),
@@ -6821,7 +6853,7 @@ describe("a field outside a value's keys", () => {
         b: Schema.optionalKey(Schema.FiniteFromString),
       });
       expect(Excess.choosing(Counts.ast)).toBe(false);
-      expect(yield* sent(posted(Counts), { body: new Mixed() })).toBe(
+      expect(yield* bodyOf(posted(Counts), { body: new Mixed() })).toBe(
         '{"a":"1","b":"2"}',
       );
     }),
@@ -6836,7 +6868,7 @@ describe("a field outside a value's keys", () => {
       class Wrapper {
         readonly who = new Person();
       }
-      expect(yield* sent(posted(Either), { body: new Wrapper() })).toBe(
+      expect(yield* bodyOf(posted(Either), { body: new Wrapper() })).toBe(
         '{"who":{"id":"1","name":"ada"}}',
       );
     }),
@@ -6887,7 +6919,7 @@ describe("a field outside a value's keys", () => {
         readonly id = "1";
         readonly extra = "z";
       }
-      expect(yield* sent(posted(NarrowFirst), { body: new Wider() })).toBe(
+      expect(yield* bodyOf(posted(NarrowFirst), { body: new Wider() })).toBe(
         '{"id":"1"}',
       );
       class Renaming {
@@ -6897,7 +6929,7 @@ describe("a field outside a value's keys", () => {
       const Renamed = Schema.Struct({ a: Schema.optionalKey(text) }).pipe(
         Schema.encodeKeys({ a: "A" }),
       );
-      expect(yield* sent(posted(Renamed), { body: new Renaming() })).toBe(
+      expect(yield* bodyOf(posted(Renamed), { body: new Renaming() })).toBe(
         '{"A":"x"}',
       );
     }),
@@ -6910,7 +6942,7 @@ describe("a field outside a value's keys", () => {
       }) {}
       const Either = Schema.Union([Thing, Schema.Struct({ name: text })]);
       expect(
-        yield* sent(posted(Either), { body: new Thing({ id: "1" }) }),
+        yield* bodyOf(posted(Either), { body: new Thing({ id: "1" }) }),
       ).toBe('{"id":"1"}');
     }),
   );
@@ -6921,30 +6953,6 @@ describe("a value on the encoded side stays there", () => {
   const Renamed = Schema.Struct({ a: Schema.optionalKey(text) }).pipe(
     Schema.encodeKeys({ a: "A" }),
   );
-  const reshaped = <E, T>(
-    from: Schema.Codec<E, E>,
-    to: Schema.Codec<T, T>,
-    decode: (value: E) => T,
-    encode: (value: T) => E,
-  ) =>
-    from.pipe(
-      Schema.decodeTo(to, SchemaTransformation.transform({ decode, encode })),
-    );
-  const sent = <
-    S extends Schema.Top & {
-      readonly DecodingServices: never;
-      readonly EncodingServices: never;
-    },
-  >(
-    schema: S,
-    body: Request.Input<S>,
-  ) =>
-    Effect.map(
-      compile(Request.post("/x").pipe(Request.body(Body.jsonSchema(schema))), {
-        body,
-      }),
-      ({ request }) => bodyText(request),
-    );
 
   it.effect("keeps an optional field given by its encoded name", () =>
     Effect.gen(function* () {
@@ -6983,13 +6991,13 @@ describe("a value on the encoded side stays there", () => {
   it.effect("keeps it at any depth, and in a class's field", () =>
     Effect.gen(function* () {
       expect(
-        yield* sent(Schema.Struct({ f: Renamed }), { f: { A: "x" } }),
+        yield* sentBy(Schema.Struct({ f: Renamed }), { f: { A: "x" } }),
       ).toBe('{"f":{"A":"x"}}');
-      expect(yield* sent(Schema.Array(Renamed), [{ A: "x" }])).toBe(
+      expect(yield* sentBy(Schema.Array(Renamed), [{ A: "x" }])).toBe(
         '[{"A":"x"}]',
       );
       class Held extends Schema.Class<Held>("HeldRenamed")({ f: Renamed }) {}
-      expect(yield* sent(Held, { f: { A: "x" } })).toBe('{"f":{"A":"x"}}');
+      expect(yield* sentBy(Held, { f: { A: "x" } })).toBe('{"f":{"A":"x"}}');
     }),
   );
 
@@ -7068,7 +7076,7 @@ describe("a value on the encoded side stays there", () => {
               : { y: value.x },
         ({ y }) => (y === undefined ? {} : { x: y }),
       );
-      expect(yield* sent(FromEither, { x: "1" })).toBe('{"x":"1"}');
+      expect(yield* sentBy(FromEither, { x: "1" })).toBe('{"x":"1"}');
     }),
   );
 
@@ -7112,7 +7120,7 @@ describe("a value on the encoded side stays there", () => {
           body: { F: { g: '{"a":"1","b":"2"}' } },
         }),
       ).toContain('["F"]["g"]');
-      expect(yield* sent(Deep, { F: { g: '{"a":"1"}' } })).toBe(
+      expect(yield* sentBy(Deep, { F: { g: '{"a":"1"}' } })).toBe(
         '{"F":{"g":"{\\"a\\":\\"1\\"}"}}',
       );
     }),
@@ -7174,7 +7182,7 @@ describe("a value on the encoded side stays there", () => {
       const Plain = Schema.Struct({ f: Apart }).pipe(
         Schema.encodeKeys({ f: "F" }),
       );
-      expect(yield* sent(Plain, { F: { b: "2" } })).toBe('{"F":{"b":"2"}}');
+      expect(yield* sentBy(Plain, { F: { b: "2" } })).toBe('{"F":{"b":"2"}}');
       expect(
         yield* schemaFailure(
           Request.post("/x").pipe(Request.body(Body.jsonSchema(Plain))),

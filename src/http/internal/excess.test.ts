@@ -160,12 +160,12 @@ describe("Excess.normalised", () => {
     class Foo {
       readonly x = "1";
     }
-    const Either = Schema.Union([
+    const OrStruct = Schema.Union([
       Schema.instanceOf(Foo),
       Schema.Struct({ a: Schema.optionalKey(text) }),
     ]);
     const value = new Foo();
-    expect(Excess.normalised([Either.ast], value)).toBe(value);
+    expect(Excess.normalised([OrStruct.ast], value)).toBe(value);
   });
 
   it("reads a class instance only a struct can read as a plain object", () => {
