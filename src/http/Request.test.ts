@@ -56,6 +56,16 @@ const joinedTarget = (base: string, path: string) =>
     ),
   );
 
+/** The names a refusal lists after its last colon. */
+const lostFrom = (message: string) =>
+  JSON.parse(`[${message.slice(message.lastIndexOf(": ") + 2, -1)}]`);
+
+/** A literal passed to the result meets the input directly, so a stray key is an error too. */
+const takes =
+  <S extends Schema.Top>(_schema: S) =>
+  (_input: Request.Input<S>) =>
+    undefined;
+
 /** A policy that records each query call and marks the text it renders. */
 const recording = () => {
   const calls: Array<UrlEncoding.Query> = [];
@@ -4899,12 +4909,6 @@ describe("a schema-backed input takes either side of its schema", () => {
     });
 
     describe("what each schema takes", () => {
-      /** A literal passed here meets the input directly, so a stray key is an error too. */
-      const takes =
-        <S extends Schema.Top>(_schema: S) =>
-        (_input: Request.Input<S>) =>
-          undefined;
-
       const Optional = Schema.Struct({
         limit: Schema.optional(Schema.FiniteFromString),
       });
@@ -5489,9 +5493,6 @@ describe("a schema states the shape of its group", () => {
     );
 
     describe("under a union that a default and the caller split", () => {
-      const lostFrom = (message: string) =>
-        JSON.parse(`[${message.slice(message.lastIndexOf(": ") + 2, -1)}]`);
-
       const Either = Schema.Union([
         Schema.Struct({ "x-a": Schema.String }),
         Schema.Struct({ "x-b": Schema.String }),
