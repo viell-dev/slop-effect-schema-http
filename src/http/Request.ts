@@ -47,10 +47,10 @@ export type HeaderFields = Readonly<Record<string, FieldValue | undefined>>;
  * Query fields declared together: what a query schema may encode to, or a function.
  *
  * @remarks
- * Use with {@link setQuery}. Numbers, bigints and booleans become text, `null` is a bare key, an
- * array repeats the name, and `undefined` removes the name's declarations. A function supplies its
- * value during preparation, as in {@link FieldValue}. Fields apply in the object's key order, in
- * which JavaScript puts integer-like keys first.
+ * Use with {@link setQuery}. Numbers, bigints and booleans become text, a `Date` becomes ISO text,
+ * `null` is a bare key, an array repeats the name, and `undefined` removes the name's declarations.
+ * A function supplies its value during preparation, as in {@link FieldValue}. Fields apply in the
+ * object's key order, in which JavaScript puts integer-like keys first.
  */
 export type QueryFields = Readonly<
   Record<
@@ -688,6 +688,9 @@ const applyDeclaredBodyFields = (
  * A field the schema produces wins over an automatic `Accept`, `Content-Type` or `Content-Length`,
  * whether the schema is bound before or after the body, and so does a default. An optional field
  * left out with no default declares nothing, so the automatic value still applies.
+ *
+ * Header values are text, so a schema writes its own. A query schema can encode to a `Date`, but
+ * HTTP date headers are not ISO text, and `Schema.DateTimeUtcFromHttpDate` writes them.
  */
 export const headers = <
   S extends Schema.Top &
@@ -782,9 +785,11 @@ export const headers = <
  * is an {@link InvalidRequest} before anything is sent. A record, `Schema.StructWithRest` or a list
  * of pairs allows any name.
  *
- * Text under a field that encodes to a number, boolean or bigint is read as one first, and a single
- * value under a list field fits it. The check is as strict as the schema. A `?` in a base URL or
- * path output is text in the URL, not a field, so it is outside this check.
+ * A field can encode to a `Date`, which is written as ISO text. Text under a field that encodes to
+ * a number, boolean, bigint or `Date` is read as one first, and a single value under a list field
+ * fits it. Date text is read as `Schema.DateFromString` reads it. The check is as strict as the
+ * schema. A `?` in a base URL or path output is text in the URL, not a field, so it is outside this
+ * check.
  *
  * Query schemas stack: a second one adds its fields, and together they state the shape. Use
  * {@link unbind} to start again, and {@link mapInput} to supply a required field's value.

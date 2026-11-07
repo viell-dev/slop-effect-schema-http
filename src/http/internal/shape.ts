@@ -96,8 +96,22 @@ const readBoolean: TextReader = (text) =>
 const readBigInt: TextReader = (text) =>
   /^-?\d+$/.test(text) ? BigInt(text) : text;
 
+/**
+ * Text reads as `Schema.DateFromString` reads it. A declaration need not refuse an invalid `Date`
+ * as `Schema.Date` does, so text with no date in it stays text for the schema to refuse.
+ */
+const readDate = (ast: SchemaAST.Declaration): TextReader => {
+  const takesDate = Schema.is(Schema.make<Schema.Top>(ast));
+  return (text) => {
+    const date = new Date(text);
+    return !Number.isNaN(date.getTime()) && takesDate(date) ? date : text;
+  };
+};
+
 const readerFor = (ast: SchemaAST.AST): ReadonlyArray<TextReader> => {
   switch (ast._tag) {
+    case "Declaration":
+      return [readDate(ast)];
     case "Number":
       return [readNumber];
     case "Boolean":
@@ -122,7 +136,7 @@ const readerFor = (ast: SchemaAST.AST): ReadonlyArray<TextReader> => {
 };
 
 /**
- * Read wire text as the scalar a field encodes to, the reverse of writing it with `String`. A field
+ * Read wire text as the value a field encodes to, the reverse of how the library writes it. A field
  * that can hold text takes it as it is, and text that reads as nothing else stays text for the
  * schema to refuse.
  */

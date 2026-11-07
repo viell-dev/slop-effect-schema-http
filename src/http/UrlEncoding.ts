@@ -12,9 +12,18 @@ export type Query = ReadonlyArray<readonly [string, string | null]>;
  * A scalar query value before conversion to URL text.
  *
  * @remarks
- * `null` keeps a bare key and `undefined` omits an entry. Other values are converted to strings.
+ * `null` keeps a bare key and `undefined` omits an entry. A `Date` becomes its ISO text, and other
+ * values are converted to strings. An invalid `Date` has no ISO text, so it goes out as
+ * `String(value)`, and a schema such as `Schema.Date` refuses it before that.
  */
-export type QueryValue = string | number | bigint | boolean | null | undefined;
+export type QueryValue =
+  string | number | bigint | boolean | Date | null | undefined;
+
+/** The URL text of a value that has one. */
+const queryText = (value: Exclude<QueryValue, null | undefined>): string =>
+  value instanceof Date && !Number.isNaN(value.getTime())
+    ? value.toISOString()
+    : String(value);
 
 /**
  * A record or iterable of query pairs accepted as a schema's encoded output.
@@ -37,8 +46,8 @@ export type QueryInput =
  * ```
  *
  * @remarks
- * Omits `undefined`, keeps `null`, and converts other scalar values to strings. URL escaping
- * happens later through the query renderer.
+ * Omits `undefined`, keeps `null`, writes a `Date` as ISO text, and converts other scalar values to
+ * strings. URL escaping happens later through the query renderer.
  */
 export const queryEntries = (input: QueryInput): Query => {
   const entries =
@@ -48,7 +57,7 @@ export const queryEntries = (input: QueryInput): Query => {
       (Array.isArray(value) ? value : [value]).flatMap((entry: QueryValue) =>
         entry === undefined
           ? []
-          : [[key, entry === null ? null : String(entry)] as const],
+          : [[key, entry === null ? null : queryText(entry)] as const],
       ),
   );
 };

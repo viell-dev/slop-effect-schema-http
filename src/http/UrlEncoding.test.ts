@@ -54,6 +54,42 @@ describe("UrlEncoding.queryEntries", () => {
     expect(UrlEncoding.queryEntries({ id: [] })).toEqual([]);
   });
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/110
+  describe("a Date", () => {
+    const noon = new Date("2026-11-07T12:00:00.000Z");
+
+    it("is written as ISO text, alone, in a list and in pairs", () => {
+      expect(
+        UrlEncoding.queryEntries({ from: noon, at: [noon, null] }),
+      ).toEqual([
+        ["from", "2026-11-07T12:00:00.000Z"],
+        ["at", "2026-11-07T12:00:00.000Z"],
+        ["at", null],
+      ]);
+      expect(UrlEncoding.queryEntries([["from", noon]])).toEqual([
+        ["from", "2026-11-07T12:00:00.000Z"],
+      ]);
+    });
+
+    it("keeps its text at the far end of the range", () => {
+      expect(
+        UrlEncoding.queryEntries({ from: new Date(8640000000000000) }),
+      ).toEqual([["from", "+275760-09-13T00:00:00.000Z"]]);
+    });
+
+    it("has no ISO text when invalid, so it goes out as `String(value)`", () => {
+      expect(UrlEncoding.queryEntries({ from: new Date(Number.NaN) })).toEqual([
+        ["from", "Invalid Date"],
+      ]);
+    });
+
+    it("is escaped later, by the query renderer", () => {
+      expect(
+        UrlEncoding.defaults.query(UrlEncoding.queryEntries({ from: noon })),
+      ).toBe("from=2026-11-07T12%3A00%3A00.000Z");
+    });
+  });
+
   it("preserves the order and repetition of ordered pairs across names", () => {
     expect(
       UrlEncoding.queryEntries([
