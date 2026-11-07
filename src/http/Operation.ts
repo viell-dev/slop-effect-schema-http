@@ -28,8 +28,7 @@ import * as Transport from "./Transport.js";
  * @remarks
  * `execute(input)` returns a cold Effect: work starts when it is evaluated, and each evaluation
  * runs again. `Operation.make` supplies HTTP execution; `fromEffect` adapts an existing function.
- * With `make`, the request bindings determine `I`. Extract an operation's input type with
- * `Parameters<typeof operation.execute>[0]`.
+ * With `make`, the request bindings determine `I`. {@link InputOf} extracts it.
  *
  * `make` also keeps what it was built from in `parts`, which `P` describes, so {@link mapRequest},
  * {@link mapResponse} and {@link mapOptions} can derive a variant. Annotating a value as
@@ -47,6 +46,29 @@ export interface Operation<
   /** What the operation was built from. A value from {@link fromEffect} has no parts. */
   readonly parts?: P;
 }
+
+/**
+ * The input an operation's `execute` takes.
+ *
+ * @example
+ * ```ts
+ * import { Schema } from "effect";
+ * import { Body, Operation, Request, Response } from "viell-effect-schema-http";
+ * const search = Operation.make(
+ *   Request.get("https://api.example.test/things").pipe(
+ *     Request.query(Schema.Struct({ sort: Schema.String })),
+ *   ),
+ *   Response.status(200, Body.json),
+ * );
+ * type SearchInput = Operation.InputOf<typeof search>;
+ * const searchAll = (input: SearchInput) => search.execute(input);
+ * ```
+ *
+ * @remarks
+ * `Request.InputOf` gives the same for a request.
+ */
+export type InputOf<O> =
+  O extends Operation<infer I, unknown, unknown, unknown, unknown> ? I : never;
 
 /**
  * Adapt an Effect-returning function to the operation interface.
@@ -340,8 +362,6 @@ export interface Parts<out Q, in out S, out O, out T = undefined> {
   readonly step: T;
 }
 
-type InputOf<Q> =
-  Q extends Request.Request<infer I, unknown, unknown> ? I : never;
 type RequestFailure<Q> =
   Q extends Request.Request<never, infer E, unknown> ? E : never;
 type RequestServices<Q> =
@@ -376,7 +396,7 @@ export type Http<Q, S, O> = Derived<ValueOf<S>, Q, S, O>;
  * inline: a named alias would print with all of `Q`, `S` and `O` repeated inside it.
  */
 export type Derived<B, Q, S, O, T = undefined> = Operation<
-  InputOf<Q>,
+  Request.InputOf<Q>,
   B,
   | RequestFailure<Q>
   | ClientFailure<O>

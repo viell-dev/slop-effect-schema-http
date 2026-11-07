@@ -462,6 +462,14 @@ shared token. To keep a value out of the caller's hands, fix it with `Request.ma
 field never reaches the input type, or supply it in `transformClient` or a client layer, so it is
 not on the request description at all.
 
+`Request.mapInput` returns the request's whole input, and `Request.InputOf` names it:
+
+<<< ../../examples/modules/request.ts#fixed-value
+
+`Request.InputOf<typeof request>` takes a request and gives the object its call takes.
+`Request.Input<S>` takes a schema and gives what one binding takes, such as the value under `query`.
+`Operation.InputOf<typeof operation>` gives the same for an operation.
+
 ### A request's own headers win
 
 The library sets three headers by itself: `Accept` from the response contract, and `Content-Type`

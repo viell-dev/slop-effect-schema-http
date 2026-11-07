@@ -83,6 +83,37 @@ export type QueryFields = Readonly<
 export type Input<S extends Schema.Top> = Inputs.Input<S>;
 
 /**
+ * The whole input of a request: the object its call takes, with every binding's property.
+ *
+ * @example
+ * ```ts
+ * import { Schema } from "effect";
+ * import { Request } from "viell-effect-schema-http";
+ * const listThings = Request.get("https://api.example.test/things").pipe(
+ *   Request.query(Schema.Struct({ sort: Schema.String })),
+ *   Request.headers(Schema.Struct({ authorization: Schema.String })),
+ * );
+ * type ListInput = Request.InputOf<typeof listThings>;
+ * const withToken = listThings.pipe(
+ *   Request.mapInput(
+ *     (input: Omit<ListInput, "headers">): ListInput => ({
+ *       ...input,
+ *       headers: { authorization: "Bearer token" },
+ *     }),
+ *   ),
+ * );
+ * // Input: { query: { sort: "name" } }
+ * ```
+ *
+ * @remarks
+ * This takes a request, and {@link Input} takes a schema. `Input` is what one binding takes, such
+ * as the value under `query`, and this is the object that holds them all, which is what
+ * {@link mapInput} has to return. `Operation.InputOf` gives the same for an operation.
+ */
+export type InputOf<R> =
+  R extends Request<infer I, unknown, unknown> ? I : never;
+
+/**
  * The method, URL and raw fields from which request preparation starts.
  *
  * @remarks
@@ -1250,7 +1281,8 @@ export const unbind =
  *
  * @remarks
  * Use it to rename fields or supply defaults while preserving schema validation. The mapping
- * runs during preparation; a thrown exception is a defect.
+ * runs during preparation; a thrown exception is a defect. It returns the request's whole input,
+ * which {@link InputOf} names.
  */
 export const mapInput =
   <I, I2>(f: (input: I2) => I) =>

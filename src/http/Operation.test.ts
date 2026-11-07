@@ -3577,6 +3577,29 @@ describe("what fits a mapped operation", () => {
     >();
   });
 
+  it("names an operation's input, mapped or not", () => {
+    type Input = Operation.InputOf<typeof getThings>;
+    expectTypeOf<Input>().toEqualTypeOf<
+      Parameters<typeof getThings.execute>[0]
+    >();
+    const limited = getThings.pipe(
+      Operation.mapRequest(
+        Request.query(Schema.Struct({ limit: Schema.FiniteFromString })),
+      ),
+    );
+    expectTypeOf<Operation.InputOf<typeof limited>>().toEqualTypeOf<
+      Parameters<typeof limited.execute>[0]
+    >();
+    expectTypeOf<Operation.InputOf<typeof limited>>().toExtend<{
+      readonly query: { readonly limit: string | number };
+    }>();
+    const sealed = Operation.fromEffect(limited.execute);
+    expectTypeOf<Operation.InputOf<typeof sealed>>().toEqualTypeOf<
+      Parameters<typeof limited.execute>[0]
+    >();
+    expectTypeOf<Operation.InputOf<string>>().toEqualTypeOf<never>();
+  });
+
   it("refuses anything else, on one case or several", () => {
     compileOnly(() => {
       // @ts-expect-error a new shape on a mapped operation with one case

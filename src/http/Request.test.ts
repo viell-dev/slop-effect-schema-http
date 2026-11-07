@@ -7644,6 +7644,75 @@ describe("automatic body fields", () => {
   );
 });
 
+describe("Request.InputOf", () => {
+  const Sorted = Schema.Struct({ sort: Schema.String });
+  const Authorized = Schema.Struct({ authorization: Schema.String });
+  const listThings = Request.get("/things").pipe(
+    Request.query(Sorted),
+    Request.headers(Authorized),
+  );
+  type ListInput = Request.InputOf<typeof listThings>;
+
+  it("is the object a request's call takes", () => {
+    expectTypeOf<ListInput>().toEqualTypeOf<
+      { readonly query: { readonly sort: string } } & {
+        readonly headers: { readonly authorization: string };
+      }
+    >();
+    expectTypeOf<ListInput>().toEqualTypeOf<
+      Parameters<typeof listThings.prepare>[0]
+    >();
+  });
+
+  it("differs from `Request.Input`, which takes a schema", () => {
+    expectTypeOf<ListInput["query"]>().toEqualTypeOf<
+      Request.Input<typeof Sorted>
+    >();
+    // @ts-expect-error: a request is not a schema
+    expectTypeOf<Request.Input<typeof listThings>>();
+  });
+
+  it("is `unknown` until a binding adds a field", () => {
+    const fixed = Request.get("/things");
+    expectTypeOf<Request.InputOf<typeof fixed>>().toEqualTypeOf<unknown>();
+  });
+
+  it("is `never` for anything but a request", () => {
+    expectTypeOf<Request.InputOf<string>>().toEqualTypeOf<never>();
+  });
+
+  it("follows a transform that changes the input", () => {
+    const mapped = listThings.pipe(
+      Request.mapInput((id: number): ListInput => ({
+        query: { sort: `${id}` },
+        headers: { authorization: "fixed" },
+      })),
+    );
+    expectTypeOf<Request.InputOf<typeof mapped>>().toEqualTypeOf<number>();
+    const unbound = listThings.pipe(Request.unbind("headers"));
+    expectTypeOf<Request.InputOf<typeof unbound>>().toEqualTypeOf<
+      Omit<ListInput, "headers">
+    >();
+  });
+
+  it.effect("names what `Request.mapInput` returns to fix a value", () =>
+    Effect.gen(function* () {
+      const withToken = listThings.pipe(
+        Request.mapInput((input: Omit<ListInput, "headers">): ListInput => ({
+          ...input,
+          headers: { authorization: "Bearer token" },
+        })),
+      );
+      const compiled = yield* compile(withToken, { query: { sort: "name" } });
+      expect(compiled.request.url).toBe("/things?sort=name");
+      expect(compiled.headerLines).toEqual([["authorization", "Bearer token"]]);
+      expectTypeOf<
+        keyof Request.InputOf<typeof withToken>
+      >().toEqualTypeOf<"query">();
+    }),
+  );
+});
+
 describe("Request.mapInput", () => {
   it.effect("adapts the invocation argument, including defaults", () =>
     Effect.gen(function* () {

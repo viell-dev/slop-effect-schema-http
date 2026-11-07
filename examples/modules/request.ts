@@ -405,6 +405,28 @@ assert.equal(
   "https://api.example.test/things?owner=ada",
 );
 
+// #region fixed-value
+type ListInput = Request.InputOf<typeof listThings>;
+type CallerInput = Omit<ListInput, "headers"> & { readonly trace: string };
+
+const listAsService = listThings.pipe(
+  Request.mapInput(({ query, trace }: CallerInput): ListInput => ({
+    headers: { authorization: "Bearer service", "x-trace": trace },
+    query,
+  })),
+);
+// Input: { trace: "t1", query: { sort: "name" } }, so authorization is not on offer
+// #endregion fixed-value
+const listedAsService = await Effect.runPromise(
+  Request.compile(listAsService, { trace: "t1", query: { sort: "name" } }),
+);
+assert.equal(
+  listedAsService.request.url,
+  "https://api.example.test/things?limit=25&sort=name",
+);
+assert.equal(listedAsService.request.headers.authorization, "Bearer service");
+assert.equal(listedAsService.request.headers["x-trace"], "t1");
+
 // #region map-effect
 class Tenant extends Context.Service<Tenant, string>()("app/Tenant") {}
 
