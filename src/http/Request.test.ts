@@ -8982,10 +8982,11 @@ describe("a schema states the shape of its group", () => {
       }),
     );
 
-    // Defaults are added as pairs, which only a list of pairs reads. The design page states the limit.
+    // Defaults are added as pairs, which only a list of pairs reads. #120 kept this, because it fails
+    // before anything is sent. The design page states the limit.
     // https://github.com/viell-dev/slop-effect-schema-http/issues/120
     it.effect(
-      "currently cannot take a default under a schema encoded as a Map",
+      "cannot take a default under a schema encoded as a Map, and says so before dispatch",
       () =>
         Effect.gen(function* () {
           const request = Request.get("/x?a=1").pipe(

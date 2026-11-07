@@ -62,11 +62,16 @@ export function commitOfTag(github, repository, tag) {
   return target?.sha;
 }
 
-/** Above zero when `a` is newer. `-z` sorts a stable version after its alpha, beta and rc. */
-export const compareVersions = (a, b) => {
-  const key = (version) => (version.includes("-") ? version : `${version}-z`);
-  return new Intl.Collator("en", { numeric: true }).compare(key(a), key(b));
-};
+/** `-z` sorts a stable version after its alpha, beta and rc. */
+const versionKey = (version) =>
+  version.includes("-") ? version : `${version}-z`;
+
+/** Above zero when `a` is newer. */
+export const compareVersions = (a, b) =>
+  new Intl.Collator("en", { numeric: true }).compare(
+    versionKey(a),
+    versionKey(b),
+  );
 
 /** The "currently …" tests in a test file, with the issues in the comment directly above each. */
 export function currentlyTests(text, repository) {
@@ -181,8 +186,8 @@ export async function reconcile({ read, testFiles, github, fetch }) {
       "manifest.json",
       "release-check.mjs",
       tarball,
-    ].sort();
-    const names = release.assets.map((asset) => asset.name).sort();
+    ].toSorted();
+    const names = release.assets.map((asset) => asset.name).toSorted();
     if (names.join() !== expected.join()) {
       add(
         "DIFFERS",
@@ -424,16 +429,18 @@ export const exitCodeOf = (report) => {
   return states.has("PENDING") ? 2 : 0;
 };
 
+/** A file's text, relative to the repository root once the script has moved there. */
+const readText = (path) => readFileSync(path, "utf8");
+
 if (startedDirectly(import.meta.url)) {
   process.chdir(fileURLToPath(new URL("../", import.meta.url)));
-  const read = (path) => readFileSync(path, "utf8");
   const report = await reconcile({
-    read,
+    read: readText,
     testFiles: () =>
       execFileSync("git", ["ls-files", "*.test.ts"], { encoding: "utf8" })
         .trim()
         .split("\n")
-        .map((file) => ({ file, text: read(file) })),
+        .map((file) => ({ file, text: readText(file) })),
     github: gh,
     fetch: (url) =>
       globalThis.fetch(url, { signal: globalThis.AbortSignal.timeout(30_000) }),

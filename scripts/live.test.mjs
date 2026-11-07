@@ -25,6 +25,23 @@ const integrity = `sha512-${digest("sha512", "base64")}`;
 const label = { name: "Type: Bug", color: "d73a4a", description: "Wrong." };
 const pinned = `// https://github.com/${repository}/issues/7\nit("currently keeps it", () => {});\n`;
 
+/** Where a test's release asset is served. */
+const assetUrl = (name) => `https://github.test/${name}`;
+
+/** Report entries in these states, for the exit code. */
+const inStates = (...states) => states.map((state) => ({ state }));
+
+/** Run a script directly, with no gh or git on the path. */
+const startScript = (script, env = {}) =>
+  spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL(script, import.meta.url))],
+    {
+      encoding: "utf8",
+      env: { ...process.env, PATH: "", Path: "", ...env },
+    },
+  );
+
 // A published world in which every surface agrees. Each test changes one thing.
 function world() {
   const manifest = {
@@ -34,12 +51,11 @@ function world() {
     homepage: "https://example.test/library/",
     repository: { url: `git+https://github.com/${repository}.git` },
   };
-  const url = (name) => `https://github.test/${name}`;
   const release = {
     tag_name: "1.2.3",
     target_commitish: commit,
     assets: [tarball, "SHA256SUMS", "manifest.json", "release-check.mjs"].map(
-      (name) => ({ name, browser_download_url: url(name) }),
+      (name) => ({ name, browser_download_url: assetUrl(name) }),
     ),
   };
   return {
@@ -60,11 +76,11 @@ function world() {
       [`repos/${repository}/issues/7`]: { state: "open" },
     },
     web: {
-      [url(tarball)]: new Response(bytes),
-      [url("SHA256SUMS")]: new Response(
+      [assetUrl(tarball)]: new Response(bytes),
+      [assetUrl("SHA256SUMS")]: new Response(
         `${digest("sha256", "hex")}  ${tarball}\n`,
       ),
-      [url("manifest.json")]: Response.json({
+      [assetUrl("manifest.json")]: Response.json({
         version: "1.2.3",
         sourceCommit: commit,
         integrity,
@@ -170,7 +186,6 @@ test("no stable release at all is pending, and stops the comparisons that need i
 });
 
 test("published surfaces that contradict each other disagree", async () => {
-  const asset = (w, name) => `https://github.test/${name}`;
   for (const [change, pattern] of [
     [(w) => (w.manifest.version = "1.2.2"), /older, at 1\.2\.2/],
     [
@@ -178,7 +193,7 @@ test("published surfaces that contradict each other disagree", async () => {
         w.api[`repos/${repository}/git/ref/tags/1.2.3`].object.sha = "b".repeat(
           40,
         );
-        w.web[asset(w, "manifest.json")] = Response.json({
+        w.web[assetUrl("manifest.json")] = Response.json({
           version: "1.2.3",
           sourceCommit: "b".repeat(40),
           integrity,
@@ -201,13 +216,13 @@ test("published surfaces that contradict each other disagree", async () => {
     ],
     [
       (w) => {
-        w.web[asset(w, "SHA256SUMS")] = new Response("0  other\n");
+        w.web[assetUrl("SHA256SUMS")] = new Response("0  other\n");
       },
       /SHA256SUMS of 1\.2\.3/,
     ],
     [
       (w) => {
-        w.web[asset(w, "manifest.json")] = Response.json({
+        w.web[assetUrl("manifest.json")] = Response.json({
           version: "1.2.3",
           sourceCommit: "b".repeat(40),
           integrity,
@@ -217,7 +232,7 @@ test("published surfaces that contradict each other disagree", async () => {
     ],
     [
       (w) => {
-        w.web[asset(w, "manifest.json")] = Response.json({
+        w.web[assetUrl("manifest.json")] = Response.json({
           version: "1.2.2",
           sourceCommit: commit,
           integrity,
@@ -227,7 +242,7 @@ test("published surfaces that contradict each other disagree", async () => {
     ],
     [
       (w) => {
-        w.web[asset(w, "manifest.json")] = Response.json({
+        w.web[assetUrl("manifest.json")] = Response.json({
           version: "1.2.3",
           sourceCommit: commit,
           integrity: "sha512-other",
@@ -394,11 +409,10 @@ test("a surface that cannot be read is neither agreement nor pending", async () 
 });
 
 test("the exit code separates a disagreement from a release in progress", () => {
-  const entries = (...states) => states.map((state) => ({ state }));
-  assert.equal(exitCodeOf(entries("ok")), 0);
-  assert.equal(exitCodeOf(entries("ok", "PENDING")), 2);
-  assert.equal(exitCodeOf(entries("PENDING", "DIFFERS")), 1);
-  assert.equal(exitCodeOf(entries("PENDING", "UNREAD")), 1);
+  assert.equal(exitCodeOf(inStates("ok")), 0);
+  assert.equal(exitCodeOf(inStates("ok", "PENDING")), 2);
+  assert.equal(exitCodeOf(inStates("PENDING", "DIFFERS")), 1);
+  assert.equal(exitCodeOf(inStates("PENDING", "UNREAD")), 1);
 });
 
 test("versions order numerically, with a stable version after its prereleases", () => {
@@ -460,19 +474,10 @@ test("a currently test is found in each form the suite writes it", () => {
 test("each script runs when started directly, on every Node.js that engines allows", () => {
   // With no gh or git on the path nothing can be read, so this needs no network. A script that did
   // not recognize that it was started would print nothing and exit 0.
-  const start = (script, env = {}) =>
-    spawnSync(
-      process.execPath,
-      [fileURLToPath(new URL(script, import.meta.url))],
-      {
-        encoding: "utf8",
-        env: { ...process.env, PATH: "", Path: "", ...env },
-      },
-    );
-  const live = start("./check-live.mjs");
+  const live = startScript("./check-live.mjs");
   assert.equal(live.status, 1, live.stderr);
   assert.match(live.stdout, /UNREAD +GitHub release/);
-  const selection = start("./select-published-release.mjs", {
+  const selection = startScript("./select-published-release.mjs", {
     PUBLISH_RUN: "1",
     GITHUB_REPOSITORY: repository,
   });
