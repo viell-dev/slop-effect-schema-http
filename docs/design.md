@@ -119,6 +119,12 @@ decoded value ----------------------> encode --> wire
 encoded value --> decode --> decoded -> encode --> wire
 ```
 
+**What the library promises.** For a value it can see, a field the caller gave is kept, or the
+request is refused. It can see plain objects, lists, tuples, classes and unions of those, at any
+depth. Inside an opaque value, which is text that holds JSON, a `Map`, an `Option` or any other
+declaration, the schema's own reading applies, and nothing is refused for what happens there. To
+choose a union member for certain, bind that member directly.
+
 - **The decoded side is what the schema's constructor takes.** The library builds the schema's value
   before encoding it, so a plain object works for a `Schema.Class`, and a field with a constructor
   default can be left out. These functions need `Schema.Top`, the bound that has a constructor.
@@ -159,12 +165,18 @@ encoded value --> decode --> decoded -> encode --> wire
   that value, and whichever member took it would lose a field the schema states, so the choice
   cannot be made for the caller. A field a wider member states and refuses the value of is the same
   case. Only a real loss counts: a field another schema in the group takes is not lost, as the rule
-  on stacked schemas below says. Text that holds JSON, a `Map` and an `Option` cannot be compared,
-  so a value inside one has to read strictly, and even a key no member states is refused there. A
-  `Map` or an `Option` of a renamed struct is the same case. So is text under a field's wire name
-  where that field holds a union, because the name does not say which field it is. A strict read
-  does not see an accessor as excess, so an accessor on a value inside a `Map` or an `Option` can
-  still be lost, and nothing here can reach it. Use a plain value there.
+  on stacked schemas below says.
+- **An opaque value is the schema's own reading.** Nothing here can reach inside text, a `Map`, an
+  `Option` or another declaration, so nothing is refused for what happens there, and a union in one
+  reads as Effect reads it. A strict read of a whole value does pass through, because Effect has no
+  way to stop it at one part. So beside a choice the library can see, a wider member inside can
+  still win. A stray key inside fails that read, and what the library can see is then read as Effect
+  reads it and compared.
+- **The reading of Effect is tested, not checked at run time.** Knowing what a schema states means
+  reading Effect's schema structure, which a newer Effect could change. Tests hold that reading to
+  the versions named in [Limits and recovery](./limits.md), in CI, on the oldest Effect the peer
+  range allows, and on each dependency update. On an untested Effect it can fall back to Effect's
+  own reading, so a field can go with no error, and valid use does not stop.
 - **A key no member states is stripped, as a struct strips it.** That is not a union choosing badly.
   The types did not allow the key, and a stacked schema's fields reach every schema in the group
   this way. So is a key only a member with another tag states, because the tag has already chosen. A

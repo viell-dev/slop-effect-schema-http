@@ -162,6 +162,40 @@ const searchOwner = Request.get(things).pipe(
 const heldMore = { owner: "ada", team: "core" };
 assert.equal(await urlOf(searchOwner, heldMore), `${things}?owner=ada`);
 
+// A union chooses before it knows what a stacked schema took.
+const NarrowOwner = Schema.Struct({ owner: Schema.String });
+const OwnerAndTeam = Schema.Union([
+  NarrowOwner,
+  Schema.Struct({ team: Schema.String, page: Schema.String }),
+]);
+const wholeGroup = { owner: "ada", team: "core", page: "2" };
+assert.match(
+  await refusedFor(
+    Request.get(things).pipe(
+      Request.query(OwnerAndTeam),
+      Request.query(NarrowOwner),
+    ),
+    { query: wholeGroup },
+  ),
+  /\["team"\]/,
+);
+
+// #region direct-member
+const TeamAndPage = Schema.Struct({
+  team: Schema.String,
+  page: Schema.String,
+});
+const byTeam = Request.get(things).pipe(
+  Request.query(TeamAndPage),
+  Request.query(Schema.Struct({ owner: Schema.String })),
+);
+// Input: { query: { owner: "ada", team: "core", page: "2" } }; URL query: ?team=core&page=2&owner=ada
+// #endregion direct-member
+assert.equal(
+  await urlOf(byTeam, { query: wholeGroup }),
+  `${things}?team=core&page=2&owner=ada`,
+);
+
 // #region renamed
 const Renamed = Schema.Struct({
   owner: Schema.optionalKey(Schema.String),
@@ -296,13 +330,13 @@ assert.equal(
   `${things}?a=x&c=z`,
 );
 
-// A union inside text that holds JSON has to read strictly, since it cannot be compared.
+// The library cannot see inside text that holds JSON, so the schema's own reading applies.
 const InText = Schema.Struct({ filter: Schema.fromJsonString(EitherFilter) });
-assert.match(
-  await refusedFor(Request.get(things).pipe(Request.query(InText)), {
-    query: { filter: '{"owner":"ada","page":"2"}' },
+assert.equal(
+  await urlOf(Request.get(things).pipe(Request.query(InText)), {
+    query: { filter: '{"owner":"ada","team":"core"}' },
   }),
-  /\["filter"\]/,
+  `${things}?filter=${encodeURIComponent('{"owner":"ada"}')}`,
 );
 
 // #region policy-timeout

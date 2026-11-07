@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-- Stop with an error if a version of Effect cannot be read. The library reads Effect's schema
-  structure to keep a field from being lost, and a change there would otherwise bring silent losses
-  back, so binding a schema now checks that structure once. Release qualification also runs the
-  behavior tests on Effect 4.0.7, the oldest version the peer range allows, and not only the
-  consumer fixture.
+- Test the library's reading of Effect's schema structure, which keeps a field from being lost, in
+  CI and on each dependency update. Release qualification also runs the behavior tests on Effect
+  4.0.7, the oldest version the peer range allows, and not only the consumer fixture. Nothing checks
+  that reading at run time, so on an untested Effect the library can fall back to Effect's own
+  reading.
 
 - State what clients do with a request, as the hostile suite measured it, in Limits and recovery and
   on the design page: `Policy.none` is one attempt by the library and not one send, because Chromium
@@ -41,22 +41,18 @@
   it, so an accessor on a class, an inherited field and one that is not enumerable are now fields
   under such a schema, and a value read field by field keeps them on a plain struct too. An ordinary
   class instance that only a struct can read reads as a plain object there, so a key nothing states
-  is stripped.
-- **Breaking:** refuse what such a read would still lose. A value that mixes the names of two
-  renamed fields, such as `{ a, B }`, used to lose `B`, and it is now a `SchemaError` that names it.
-  A `Map` or an `Option` of a renamed struct has to read strictly, so a key the schema does not
-  state is refused there. So does text under a field's wire name where the field holds a union,
-  because the name does not say which field it is. An accessor on a value inside a `Map` or an
-  `Option` can still be lost.
+  is stripped. Every renamed struct now takes the strict pass, about 14 to 34 µs per request.
+- **Breaking:** refuse a value that mixes the names of two renamed fields. `{ a, B }` used to lose
+  `B`, and it is now a `SchemaError` that names it.
 - **Breaking:** refuse a field no union member can keep. `{ a, b }` under a union of `{ a }` and
   `{ b }` used to send `a` and drop `b`, and a value a wider member refused was dropped the same
   way. It is now a `SchemaError` before anything is sent, which names the field and never its value.
   This call compiled and ran, and it now fails at run time, for the values that reach it. Add a
-  member that holds both fields, or send one of them. Inside text that holds JSON, a `Map` or an
-  `Option`, what went cannot be compared, so a value has to read strictly there, and even a key no
-  member states is refused. A field a schema stacked with the union takes is not lost, in headers
-  and query, so that call goes on working. `Draft` requires new `takenQuery` and `takenHeaders`
-  members, of a new `Request.Taken` type, and `Request.Shape` a new `chooses` member
+  member that holds both fields, or send one of them. The library cannot see inside text that holds
+  JSON, a `Map`, an `Option` or another declaration, so nothing is refused for what happens there,
+  and the schema's own reading applies. A field a schema stacked with the union takes is not lost,
+  in headers and query, so that call goes on working. `Draft` requires new `takenQuery` and
+  `takenHeaders` members, of a new `Request.Taken` type, and `Request.Shape` a new `chooses` member
   ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
 - Leave a field with the schema that took it. A union stacked after a schema that holds one of its
   fields used to take that value for a default it could not hold, and a raw value under that name

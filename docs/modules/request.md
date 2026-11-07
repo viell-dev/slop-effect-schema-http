@@ -360,6 +360,28 @@ number was expected compiles, so the failure appears when the request is prepare
 the schema's decoding services as well as its encoding services, so a binding adds both to the
 request.
 
+#### What the library promises
+
+For a value it can see, a field the caller gave is kept, or the request is refused. It can see plain
+objects, lists, tuples, classes and unions of those, at any depth. Inside an opaque value, which is
+text that holds JSON, a `Map`, an `Option` or any other declaration, the schema's own reading
+applies, and nothing is refused for what happens there. To choose a union member for certain, bind
+that member directly.
+
+A union chooses before it knows what a stacked schema took, so `Union([{ b }, { a, c }])` stacked
+with `{ b }` refuses `{ a, b, c }`. Bound directly, the member you mean goes out whole:
+
+```ts
+import { Schema } from "effect";
+import { Request } from "viell-effect-schema-http";
+
+const search = Request.get("https://api.example.test/things").pipe(
+  Request.query(Schema.Struct({ a: Schema.String, c: Schema.String })),
+  Request.query(Schema.Struct({ b: Schema.String })),
+);
+// Input: { query: { a: "x", b: "y", c: "z" } }; URL query: ?a=x&c=z&b=y
+```
+
 #### When both sides share a type
 
 A value that fits the decoded side is read as decoded, which is the one rule for a case that cannot
@@ -390,9 +412,10 @@ const search = Request.get("https://api.example.test/things").pipe(
 // Input: { query: { A: "x" } }; URL query: ?A=x
 ```
 
-This applies at any depth and to a transformation between objects. A value takes its names from one
-side, so `{ a: "x", B: "y" }`, which mixes the names of two renamed fields, is a `SchemaError` that
-names `B`.
+This applies at any depth and to a transformation between objects. Every renamed struct takes this
+strict pass, about 14 to 34 µs per request. A value takes its names from one side, so
+`{ a: "x", B: "y" }`, which mixes the names of two renamed fields, is a `SchemaError` that names
+`B`.
 
 #### Under a union
 
@@ -420,16 +443,10 @@ schema states. Add a member that holds both, or send one of them.
 
 A key no member states is stripped, as a struct strips it. So is a key only a member with another
 tag states: where only the `"a"` member has `x`, `{ kind: "b", x }` goes out as `{ kind: "b" }`. The
-types refuse both of these in a literal. A key set to `undefined` is no field, so
-`{ a, b: undefined, c }` reads as `{ a, c }`. A field need not be a key: an accessor on a class and
-an inherited field count, as they do for a struct, and a class instance only a struct can read reads
-as a plain object.
-
-Text that holds JSON, a `Map` and an `Option` cannot be compared with what came out, so a value
-inside one has to read strictly. There even a key no member states is a `SchemaError`. The same goes
-for text under a field's wire name, where the field holds a union, and for a `Map` or an `Option` of
-a renamed struct. An accessor on a value inside a `Map` or an `Option` can still be lost, because a
-strict read does not see it. Use a plain value there.
+types refuse both of these in a literal. Under such a schema a key set to `undefined` is no field,
+so `{ a, b: undefined, c }` reads as `{ a, c }`. A field need not be a key: an accessor on a class
+and an inherited field count, as they do for a struct, and a class instance only a struct can read
+reads as a plain object.
 
 Stacked schemas read one input, and a field stays with the schema that took it. A union takes a
 sibling's field for a key it does not state, and a field it would lose is not lost if a stacked
