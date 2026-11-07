@@ -23,7 +23,26 @@ type Fieldwise<A, B> =
         : never
       : never;
 
-type EitherSide<A, B> = [A, B] extends [B, A] ? A : A | B | Fieldwise<A, B>;
+/** Every key of every member. `keyof` on a union keeps only the keys all its members share. */
+type KeysOf<T> = T extends unknown ? keyof T : never;
+
+/**
+ * Leave out the sides when the mix takes everything they do, which an editor would show three times.
+ *
+ * @remarks
+ * Assignability is not enough on its own, because a stray key in a literal is an error against the
+ * mix even when the value is assignable to it. A renamed field needs its side for that reason, and
+ * a field the mix requires and one side leaves out needs its side too.
+ */
+type Merged<Sides, Mix> = [Sides] extends [Mix]
+  ? [KeysOf<Sides>] extends [KeysOf<Mix>]
+    ? Mix
+    : Sides | Mix
+  : Sides | Mix;
+
+type EitherSide<A, B> = [A, B] extends [B, A]
+  ? A
+  : Merged<A | B, Fieldwise<A, B>>;
 
 /** What a schema-backed input takes: its decoded side, its encoded side, or a mix by field. */
 export type Input<S extends Schema.Top> = EitherSide<
