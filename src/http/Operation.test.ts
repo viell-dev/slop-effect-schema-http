@@ -2957,7 +2957,7 @@ describe("a recorded result step", () => {
     }),
   );
 
-  it.effect("takes the replaced decoder's value, narrower or not", () =>
+  it.effect("applies a stricter decoder that replaced a case", () =>
     Effect.gen(function* () {
       const Stricter = pageOf(
         Schema.Array(
@@ -2979,6 +2979,17 @@ describe("a recorded result step", () => {
       expect(failure._tag).toBe("DecodeError");
     }),
   );
+
+  it("keeps every step's failures and services when a later step is added", () => {
+    const audited = search.pipe(
+      Operation.mapEffect((list) => Effect.map(Audit, () => list)),
+      Operation.map((list) => list.length),
+      Operation.mapRequest(firstFive),
+    );
+    expectTypeOf<NotFound>().toExtend<Failures<typeof audited>>();
+    expectTypeOf<ServerProblem>().toExtend<Failures<typeof audited>>();
+    expectTypeOf<Audit>().toExtend<Services<typeof audited>>();
+  });
 
   it("keeps the result, failures and services exact through a variant", () => {
     const variant = search.pipe(
