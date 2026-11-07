@@ -57,7 +57,7 @@ export type QueryFields = Readonly<
     string,
     | UrlEncoding.QueryValue
     | ReadonlyArray<UrlEncoding.QueryValue>
-    | (() => string | null | undefined)
+    | (() => string | Date | null | undefined)
   >
 >;
 
@@ -551,7 +551,14 @@ export const setQuery: {
             result,
             name,
             typeof entry === "function"
-              ? [entry]
+              ? [
+                  () => {
+                    const computed = entry();
+                    return computed instanceof Date
+                      ? UrlEncoding.queryEntries([[name, computed]])[0]?.[1]
+                      : computed;
+                  },
+                ]
               : UrlEncoding.queryEntries([[name, entry]]).map(
                   ([, text]) => text,
                 ),
