@@ -99,8 +99,8 @@ compiles and still changes your URLs.
 - Let `Request.setQuery` and `Request.setHeader` take a plain object, so several fixed fields no
   longer need a call each. Each key replaces its name, in key order. `setQuery` takes what a query
   schema may encode to, so `page: 2` writes `page=2`, `null` is a bare key and an array repeats the
-  name, as well as a function. `setHeader` takes text or a function. `undefined` removes a name's
-  earlier declarations in both
+  name, as well as a function that returns one such value, written the same way. `setHeader` takes
+  text or a function. `undefined` removes a name's earlier declarations in both
   ([#85](https://github.com/viell-dev/slop-effect-schema-http/issues/85)).
 - **Breaking, and silent:** join the constructor's path and `Request.path` exactly. The path is now
   the constructor's path followed by what each `Request.path` adds, in order, with no `/` added or

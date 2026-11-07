@@ -2001,16 +2001,97 @@ describe("declaring fields from a plain object", () => {
         h: () => "x",
         i: () => null,
         j: () => undefined,
+        k: () => 1,
+        l: () => 1n,
+        m: () => true,
+        n: () => new Date(0),
       });
       // @ts-expect-error: a nested object has no query representation
       Request.setQuery({ a: { b: "1" } });
-      // @ts-expect-error: a function supplies text, as `setQuery(name, value)` does
-      Request.setQuery({ a: () => 1 });
+      // @ts-expect-error: nor does a function's result
+      Request.setQuery({ a: () => ({ b: "1" }) });
+      // @ts-expect-error: a function supplies one value, so it cannot repeat a name
+      Request.setQuery({ a: () => ["x", "y"] });
       // @ts-expect-error: a list holds query values, not functions
       Request.setQuery({ a: [() => "x"] });
       // @ts-expect-error: the two-argument form still takes text
       Request.setQuery("a", 1);
+      // @ts-expect-error: and so does its function
+      Request.setQuery("a", () => 1);
+      // @ts-expect-error: and a `Date`, or a function returning one, stays in the object form
+      Request.setQuery("a", () => new Date(0));
     });
+
+    it.effect("writes a function's result as it writes the same value", () =>
+      Effect.gen(function* () {
+        const date = new Date("2026-11-07T00:00:00.000Z");
+        const fixed = {
+          a: 2,
+          b: 3n,
+          c: true,
+          d: false,
+          e: date,
+          f: null,
+          g: "",
+          h: "x y",
+          i: 0,
+        };
+        const computed = {
+          a: () => 2,
+          b: () => 3n,
+          c: () => true,
+          d: () => false,
+          e: () => date,
+          f: () => null,
+          g: () => "",
+          h: () => "x y",
+          i: () => 0,
+        };
+        const url = yield* urlOf(
+          Request.get("/x").pipe(Request.setQuery(computed)),
+          undefined,
+        );
+        expect(url).toBe(
+          yield* urlOf(
+            Request.get("/x").pipe(Request.setQuery(fixed)),
+            undefined,
+          ),
+        );
+        expect(url).toBe(
+          "/x?a=2&b=3&c=true&d=false&e=2026-11-07T00%3A00%3A00.000Z&f&g=&h=x%20y&i=0",
+        );
+      }),
+    );
+
+    it.effect(
+      "writes an invalid `Date` from a function as the value form does",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* urlOf(
+              Request.get("/x").pipe(
+                Request.setQuery({ at: () => new Date(Number.NaN) }),
+              ),
+              undefined,
+            ),
+          ).toBe("/x?at=Invalid%20Date");
+        }),
+    );
+
+    it.effect("takes a function's number as a default under a schema", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/x").pipe(
+          Request.setQuery({ limit: () => 25 }),
+          Request.query(
+            Schema.Struct({ limit: Schema.optional(Schema.FiniteFromString) }),
+          ),
+        );
+        expect(yield* urlOf(request, { query: {} })).toBe("/x?limit=25");
+        expect(yield* urlOf(request, { query: { limit: 5 } })).toBe(
+          "/x?limit=5",
+        );
+      }),
+    );
   });
 
   describe("Request.setHeader", () => {

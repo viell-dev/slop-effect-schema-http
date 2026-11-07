@@ -49,15 +49,16 @@ export type HeaderFields = Readonly<Record<string, FieldValue | undefined>>;
  * @remarks
  * Use with {@link setQuery}. Numbers, bigints and booleans become text, a `Date` becomes ISO text,
  * `null` is a bare key, an array repeats the name, and `undefined` removes the name's declarations.
- * A function supplies its value during preparation, as in {@link FieldValue}. Fields apply in the
- * object's key order, in which JavaScript puts integer-like keys first.
+ * A function supplies one such value during preparation, written the same way, and `undefined`
+ * from it declares nothing, as in {@link FieldValue}. Fields apply in the object's key order, in
+ * which JavaScript puts integer-like keys first.
  */
 export type QueryFields = Readonly<
   Record<
     string,
     | UrlEncoding.QueryValue
     | ReadonlyArray<UrlEncoding.QueryValue>
-    | (() => string | Date | null | undefined)
+    | (() => UrlEncoding.QueryValue)
   >
 >;
 
@@ -582,14 +583,7 @@ export const setQuery: {
             result,
             name,
             typeof entry === "function"
-              ? [
-                  () => {
-                    const computed = entry();
-                    return computed instanceof Date
-                      ? UrlEncoding.queryEntries([[name, computed]])[0]?.[1]
-                      : computed;
-                  },
-                ]
+              ? [() => UrlEncoding.queryEntries([[name, entry()]])[0]?.[1]]
               : UrlEncoding.queryEntries([[name, entry]]).map(
                   ([, text]) => text,
                 ),
