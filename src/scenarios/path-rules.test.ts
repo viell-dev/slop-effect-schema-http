@@ -238,7 +238,7 @@ describe(`paths at a real service (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-18c] a ? in a template is URL text: the value in it goes through the path encoder, and a declared query goes after it",
+    "[EXT-18c] a ? in a template is URL text: a value after it is encoded, and a declared query goes after it",
     () =>
       Effect.gen(function* () {
         const backend = yield* lane.backend("echo", undefined, {
