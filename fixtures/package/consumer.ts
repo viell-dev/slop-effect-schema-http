@@ -30,6 +30,11 @@ export const getFolder = Request.get("https://api.test/files").pipe(
 // @ts-expect-error The path value requires a string.
 getItem.execute({ path: { id: 123 } });
 
+// A request's and an operation's input have to be nameable after declaration emit.
+export type FolderInput = Request.InputOf<typeof getFolder>;
+export type ItemInput = Operation.InputOf<typeof getItem>;
+export const itemInput: ItemInput = { path: { id: "a" } };
+
 // A transform held in an exported variable has to be nameable in a declaration.
 export const firstFive = Request.setQuery("limit", "5");
 export const asText = Response.replace(200, Body.text);

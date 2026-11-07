@@ -31,7 +31,7 @@ const rename = updateUser.execute({
 // #endregion update
 
 // #region input-type
-export type UpdateUserInput = Parameters<typeof updateUser.execute>[0];
+export type UpdateUserInput = Operation.InputOf<typeof updateUser>;
 // { readonly path: { readonly userId: string | number } }
 // & { readonly body: { readonly name: string } }
 // #endregion input-type
