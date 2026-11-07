@@ -204,7 +204,9 @@ export const linesLayer: Layer.Layer<HttpClient.HttpClient> = Layer.succeed(
 /**
  * The request target, from the request's own text and without parsing it. Removing the provider's
  * origin leaves what followed it; a URL that does not start with the origin stays whole. Parameters
- * that client middleware put in `urlParams` are appended, then `#` and the hash when there is one.
+ * that client middleware put in `urlParams` go before any `#` in that text, where every client built
+ * with `HttpClient.make` puts them, and `#` and the hash follow when there is one. A URL that is only
+ * the origin leaves an empty target, so write `${origin}/` for the root.
  */
 const rawTarget = (
   origin: string,
@@ -216,15 +218,18 @@ const rawTarget = (
   // A longer port or host also starts with the origin, and is not this origin.
   const written =
     rest !== undefined && /^(?:[/?#]|$)/.test(rest) ? rest : request.url;
+  const mark = written.indexOf("#");
+  const before = mark < 0 ? written : written.slice(0, mark);
+  const after = mark < 0 ? "" : written.slice(mark);
   const query =
     request.urlParams.params.length === 0
       ? ""
-      : `${written.includes("?") ? "&" : "?"}${UrlParams.toString(request.urlParams)}`;
+      : `${before.includes("?") ? "&" : "?"}${UrlParams.toString(request.urlParams)}`;
   const hash = Option.match(request.hash, {
     onNone: () => "",
     onSome: (text) => `#${text}`,
   });
-  return `${written}${query}${hash}`;
+  return `${before}${query}${after}${hash}`;
 };
 
 /** A header line as bytes: Latin-1, as Fetch and `node:http` write them, or UTF-8 if it does not fit. */

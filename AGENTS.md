@@ -117,7 +117,9 @@ the scenarios. The library's own design, which these tests are judged against, i
   - `lane.rawClient` (Node lane only) is not in `lane.clients`, because it takes the origin to
     connect to: `lane.rawClient(backend.origin)`. It sends a request exactly as written, for shapes
     no standard client sends: `request.url` without that origin, or whole when the URL does not
-    start with it, then `#` and `request.hash`, and `Transport.headerLines`, with no URL parsing.
+    start with it, with any `urlParams` before a `#` in that text, then `#` and `request.hash`, and
+    `Transport.headerLines`, with no URL parsing. A URL that is only the origin sends an empty
+    target, so write `${origin}/` for the root.
     It adds `Host` and the body's framing only when the request has none, and refuses nothing. A
     target goes out as UTF-8 and a header line as Latin-1, or as UTF-8 when it does not fit.
     Add `HttpClient.followRedirects` to follow redirects, within that one origin.
