@@ -4089,6 +4089,23 @@ describe("what fits a mapped operation", () => {
   );
 });
 
+describe("a contract's type", () => {
+  it("refuses a conditional between two contracts, and takes one status", () => {
+    const legacy = false as boolean;
+    const either = legacy
+      ? Response.status(200, Body.text)
+      : Response.status(201, Body.text);
+    compileOnly(() => {
+      // @ts-expect-error each contract names its own case, so a union of them is not one contract
+      Operation.make(Request.get("/"), either);
+    });
+    const chosen = Response.status(legacy ? 200 : 201, Body.text);
+    expect(Operation.make(Request.get("/"), chosen).parts?.response).toBe(
+      chosen,
+    );
+  });
+});
+
 describe("operations with no parts", () => {
   const local = Operation.fromEffect((id: number) =>
     Effect.succeed({ data: [id] }),
