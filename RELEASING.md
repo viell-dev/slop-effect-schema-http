@@ -12,9 +12,9 @@ release runs in this order:
 
 1. [Prepare and qualify a candidate](#prepare-a-candidate).
 2. [Publish it on GitHub](#publish-on-github).
-3. [Publish the same bytes to npm](#publish-to-npm).
-4. [Deploy its documentation](#release-documentation-and-corrections).
-5. [Check the published state](#check-the-published-state).
+3. [Publish the same bytes to npm](#publish-to-npm), which [deploys its
+   documentation](#release-documentation-and-corrections) by itself.
+4. [Check the published state](#check-the-published-state).
 
 ## Prepare a candidate
 
@@ -145,12 +145,12 @@ Before actual publication, verify that the release PR records the review and qua
 publication is authorized. The repository variable `NPM_PUBLISH_ENABLED` must be `true`; dispatch
 with `publish=true`. The workflow publishes through OIDC with provenance and verifies registry
 integrity and provenance against the artifact, commit and workflow. It does not create a GitHub
-release or deploy docs.
+release. When its verification step passes for a stable version, the [documentation
+deploys](#release-documentation-and-corrections) by itself.
 
 Install the published exact version in a fresh empty-cache consumer. Run the release's
 `release-check.mjs` and `npm audit signatures`, inspect dist-tags, and compare registry integrity
-with the manifest. Signature verification complements the workflow's provenance-content check. Then
-deploy the documentation for the same commit.
+with the manifest. Signature verification complements the workflow's provenance-content check.
 
 ### Maintain the trust configuration
 
@@ -190,7 +190,9 @@ Use a prerelease when a build has to be installed before its release is final, f
 someone can try it. Give it a SemVer prerelease version, such as `-rc.1`, and follow the same
 preparation, qualification and publication steps. The GitHub release sets
 `--prerelease --latest=false`, npm publishes it under its own tag, and installation commands name
-its exact version. The public site keeps describing the newest stable release.
+its exact version. The public site keeps describing the newest stable release, so publishing a
+prerelease deploys nothing. `npm run check-live` then reports the prerelease as not yet published,
+because the stable surfaces stay where they are.
 
 To promote a candidate, set the stable version and update the same surfaces as any release, moving
 the Unreleased entry into the stable one and retaining the candidate's publication history.
@@ -206,10 +208,18 @@ ergonomic additions for a later release rather than expanding this candidate's f
 
 ## Release documentation and corrections
 
-Dispatch **Release documentation** (`pages.yml`) on `main` after the GitHub release exists, with
-`tag=VERSION`. It accepts only the newest stable GitHub release, or newest candidate before stable.
-It builds the tag's source and deploys through `github-pages`; normal main pushes only check docs.
-Verify public navigation, assets, `library-version` and `documentation-commit` against the build.
+A verified publication deploys its documentation. Every completed **Publish qualified npm package**
+(`publish.yml`) run on `main` starts **Release documentation** (`pages.yml`), which reads what the
+run did. It continues only if the run's `Verify the published package` step passed, which happens
+only after a real upload, and only for a stable version. A dry run, a failed run and a prerelease
+leave the site as it is. A publication that has no matching tag fails, and says what to do, so
+create the GitHub release first. The workflow then builds the tag's source and deploys through
+`github-pages`; normal main pushes only check docs. The handover runs on `main`, so that environment
+keeps its restriction to the `main` branch.
+
+Dispatch `pages.yml` by hand on `main` with `tag=VERSION` to recover from a failure, or to deploy
+the newest candidate before the first stable release. It accepts only the newest stable GitHub
+release, or newest candidate before stable.
 
 For a current-release documentation error, create a task branch from its tag and change only
 `docs/`. Deliver it through a PR into a protected `site-VERSION` branch rooted at the tag. Keep the
@@ -269,9 +279,12 @@ run it at any time.
   qualified artifact with `node scripts/verify-registry.mjs artifacts/VERSION/manifest.json`; set
   `GITHUB_ACTIONS=true` and `GITHUB_REPOSITORY` to require provenance too. Complete fresh-consumer
   and `npm audit signatures` checks separately. Never rerun the publish job for an existing version.
+  Only a publish run whose verification passed deploys the site, so then dispatch `pages.yml` by
+  hand.
 - If npm succeeded but GitHub failed, recover the original qualified artifact from Actions, verify
-  registry integrity, and finish only GitHub and Pages. If published bytes are wrong, release a new
-  version; never edit a published tarball, move its tag, or make update versions go backwards.
+  registry integrity, finish GitHub, and dispatch `pages.yml` by hand. If published bytes are wrong,
+  release a new version; never edit a published tarball, move its tag, or make update versions go
+  backwards.
 - A Pages failure does not invalidate the package. Fix/retry the verified release or a scoped docs
   correction, then run `npm run check-live`. Keep the prior deployment until success.
 

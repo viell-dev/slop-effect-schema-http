@@ -18,6 +18,9 @@
   members and `{@link}` targets.
 - Add `npm run check-live`, a read-only comparison of the published surfaces, as the last step of a
   release.
+- Deploy the documentation by itself after a verified stable npm publication, instead of by a
+  separate dispatch that could be forgotten. A dry run, a failed run and a prerelease leave the site
+  as it is, and manual dispatch stays for corrections and recovery.
 
 ## 0.2.0 — 2026-11-07
 
