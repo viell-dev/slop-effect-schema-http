@@ -123,10 +123,11 @@ for (const target of Object.values(manifest.exports)) {
 const markdown = execFileSync("git", ["ls-files", "*.md"], { encoding: "utf8" })
   .trim()
   .split("\n");
-// Fences of these languages are not examples.
-const otherLanguages = new Set(["powershell", "sh", "text"]);
-// The fences that hold TypeScript or may, and that the compiler does not see, by file and info
-// string. Say why each is here: an entry in this list is an example nothing checks.
+// Fences that may hold a code example. Shell and data fences, such as sh, json or yaml, cannot.
+const exampleFence =
+  /^(?:tsx?|mts|cts|typescript\w*|jsx?|mjs|cjs|javascript\w*)\b/i;
+// The example fences the compiler does not see, by file and info string, along with any fence that
+// has no language. Say why each is here: an entry in this list is an example nothing checks.
 const skippedFences = {
   // The 0.1 side of each before-and-after. That API is gone, so this code cannot compile.
   "docs/release-notes/0.2.md: ts [0.1]": 16,
@@ -158,7 +159,7 @@ for (const file of markdown) {
   for (const { line, info, code } of fencesIn(read(file))) {
     if (info === "ts" || info === "typescript") {
       addExample(code, `${file}:${line}`);
-    } else if (!otherLanguages.has(info.split(/\s/, 1)[0])) {
+    } else if (!info || exampleFence.test(info)) {
       const key = `${file}: ${info || "(no language)"}`;
       skipped[key] = (skipped[key] ?? 0) + 1;
     }
@@ -167,7 +168,7 @@ for (const file of markdown) {
 assert.deepEqual(
   skipped,
   skippedFences,
-  "A Markdown fence escapes the example checks: write it as a plain ts fence, or list it in skippedFences with the reason",
+  "A Markdown fence escapes the example checks: write TypeScript as a plain ts fence, name the language of anything else, or list it in skippedFences with the reason",
 );
 
 const config = ts.readConfigFile("tsconfig.examples.json", ts.sys.readFile);
