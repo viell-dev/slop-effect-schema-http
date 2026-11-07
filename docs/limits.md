@@ -99,6 +99,63 @@ providers. The relevant [browser](./design.md#in-a-browser),
 [URL](./design.md#wire-representations-stay-distinct), and [body](./design.md#bodies) sections
 explain the controls and limits.
 
+### What a client does with a request
+
+The library hands a request to the client and reads what the client gives back, and [its promise
+stops there](#paths-and-other-requests-passed-on-as-written). These are things the clients do. This
+project's integration tests measured them against servers that fail on purpose, on the [tested
+configurations](#tested-configurations), and another client or version can differ.
+
+#### One attempt can reach a server twice
+
+`Policy.none` is one attempt by the library, not one send. When a reused connection ends with no
+response, Chromium sends the request again by itself, a POST included, so one attempt can make two
+commits. A CORS preflight is enough to leave such a connection open.
+
+The library sees one attempt. If the second sending fails too, that is a transport failure. If it
+gets an answer, that is a success, and the earlier commit also exists, with nothing to tell the
+caller. Node's clients do not send a request again, so a POST lost on a connection already used
+arrives once.
+
+A key the server reads to recognize a repeat, such as an idempotency key, goes out with both
+sendings, so the browser's second sending replays and there is one commit. A key written for each
+attempt does this too, because the browser repeats the attempt it was given.
+
+#### A body cut off after its headers
+
+The same failure on the wire reaches the library differently, depending on when the client hands a
+response over:
+
+| Client                                                                            | What the library receives                          | `Policy.transient` |
+| --------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------ |
+| `fetch`, in Node.js and in Chromium                                               | `Response.DecodeError`, with the response's status | Not retried        |
+| A client that reads the whole response first, such as a provider on Node's `http` | A `TransportError`, with no response metadata      | Retried            |
+
+`fetch` hands a response over at its headers, so the body fails later, as a body that does not
+decode. It has the same error, reason and status as malformed JSON, so a `while` classifier has
+nothing portable to tell them apart by.
+
+So one cut POST can duplicate through one provider and not another. With retries on and no key, a
+write the server committed before its answer was cut is repeated through the second kind of client
+and not through `fetch`. `Policy.transient` stays as it is, because it matches Effect's
+classification. Where a repeat would matter, send a key or keep that write off retries.
+
+#### A compressed body that stops early
+
+A gzip body cut short is a success in Node.js `fetch` and in Chromium, holding the part that
+arrived, because neither checks that the stream ended. Chromium also ignores a wrong CRC, which
+Node.js `fetch` fails with `Response.DecodeError`. The library receives what the client gives it, so
+`Body.text` and `Body.bytes` return the partial body. A format or schema that needs the whole body
+refuses what no longer fits it.
+
+#### A redirected response can stay open
+
+After `HttpClient.followRedirects`, an attempt's scope does not release the last hop's response,
+because of how Effect ties its abort signal to the first request
+([#142](https://github.com/viell-dev/slop-effect-schema-http/issues/142)). A response nobody reads,
+such as one a decoder refuses unread or `HttpClient.filterStatusOk` rejects, stays open until
+garbage collection. A timeout or an interruption still ends it.
+
 ## Identify the failure stage
 
 | Outcome                       | What to inspect                                                                                                                                                                                                                 |

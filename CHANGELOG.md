@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- State what clients do with a request, as the hostile suite measured it, in Limits and recovery and
+  on the design page: `Policy.none` is one attempt by the library and not one send, because Chromium
+  can send a POST again by itself; a body cut off after its headers has different verdicts by
+  provider; truncated gzip can be a partial body and a success; and a redirected response can stay
+  open until garbage collection
+  ([#142](https://github.com/viell-dev/slop-effect-schema-http/issues/142)).
 - Add `Policy.timeout(duration)`, one attempt with a timeout and no retries, for what used to be
   spelled `Policy.make(Schedule.recurs(0), { attemptTimeout })`. It excludes preparation and result
   mapping, as any attempt timeout does

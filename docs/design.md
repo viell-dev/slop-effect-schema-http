@@ -297,6 +297,11 @@ Standard](https://encoding.spec.whatwg.org/#names-and-labels): `iso-8859-1` sele
 bytes 0x80–0x9F differ from exact Latin-1. A format that requires exact Latin-1 needs its own byte
 mapping.
 
+A body is what the client gives the library. Truncated gzip is a partial body and a success in
+Node.js `fetch` and in Chromium, and Chromium ignores a wrong CRC, so [a compressed body that stops
+early](./limits.md#a-compressed-body-that-stops-early) is only refused by a format or schema that
+needs the whole of it.
+
 The body codec supplies the request's `Content-Type` and `Content-Length`. Multipart form data
 leaves both to the transport, so it can add the boundary. These are automatic values: a request that
 declares nothing keeps them, and a request's own declaration wins.
@@ -715,13 +720,16 @@ log annotation. A function with an optional second parameter of its own receives
 
 Each attempt owns a `Scope` that covers dispatch and decoding. The scope closes, aborting the
 attempt's request if it is still in flight, before the outcome is classified or a retry delay
-begins.
+begins. After `HttpClient.followRedirects` the scope does not release the last hop's response,
+because of how Effect ties its abort signal to the first request
+([#142](https://github.com/viell-dev/slop-effect-schema-http/issues/142)). A response nobody reads
+then stays open until garbage collection. A timeout or an interruption still ends it.
 
 ### Retry rules
 
 Retries follow a `Policy`:
 
-- The default, `Policy.none`, makes one attempt.
+- The default, `Policy.none`, makes one attempt. That is one attempt by the library, not one send.
 - `Policy.make` takes a schedule and options. One schedule owns the retry budget across every
   reason, and a failing schedule fails the operation with the schedule's error.
 - The `while` option replaces the default classification, `Policy.transient`: timeouts, transport
@@ -740,10 +748,23 @@ The transient classifier checks status or failure alone. It does not check the r
 idempotency, and even a declared response that decoded successfully is retried when its status is
 transient. A POST that returns a declared HTTP 500 can therefore run several times when retries are
 enabled. A transport error can also follow a request the server already acted on; it does not prove
-that nothing was sent. Use `Policy.none` for a single attempt, or supply a `while` classifier suited
-to the operation's repeat semantics. Its `Reason` contains metadata and failures, not the request
-method or decoded result; the method can be captured from the operation's known configuration.
-Decisions that need the decoded value belong in the consumer's composition outside this classifier.
+that nothing was sent. Use `Policy.none` for a single attempt by the library, or supply a `while`
+classifier suited to the operation's repeat semantics. Its `Reason` contains metadata and failures,
+not the request method or decoded result; the method can be captured from the operation's known
+configuration. Decisions that need the decoded value belong in the consumer's composition outside
+this classifier.
+
+The client can repeat a request too, and its answer decides what a classifier sees. Both are the
+client's, within [what the library promises](#principles), and [Limits and
+recovery](./limits.md#what-a-client-does-with-a-request) records what was measured:
+
+- When a reused connection ends with no response, Chromium sends the request again by itself, a POST
+  included, so one attempt can make two commits. Node's clients do not. An idempotency key goes out
+  with both sendings, so the browser's second sending replays.
+- A body cut off after the headers is a `Response.DecodeError` through `fetch`, not retried, and a
+  classifier has nothing portable to tell it from malformed JSON by. Through a provider such as
+  Node's `http` it is a transport error, retried. So one cut POST can duplicate through one provider
+  and not another. `Policy.transient` stays as it is, because it matches Effect's classification.
 
 ### Variants
 

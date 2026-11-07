@@ -21,6 +21,9 @@ the method or whether the server has already applied the request. This matters f
 transport failures received after the server acted. [Create, then
 upload](../recipes.md#create-then-upload) shows a retry on the one step that is safe to repeat.
 
+`Policy.none` is one attempt by the library, not one send: [a client can send a request again by
+itself](../limits.md#one-attempt-can-reach-a-server-twice).
+
 ## Choose the retry budget and delay
 
 An Effect `Schedule` determines how many retries are allowed and their delays. `Schedule.recurs(n)`
@@ -57,6 +60,10 @@ The default `Policy.transient` classifier retries:
 Supply `while` to replace that classifier:
 
 <<< ../../examples/modules/policy.ts#classification
+
+An outcome is what the client reports, and clients differ. [A body cut off after its
+headers](../limits.md#a-body-cut-off-after-its-headers) is a decoding failure through `fetch`, which
+does not retry, and a transport failure through some other providers, which does.
 
 The replacement sees a `Policy.Reason`. A `Response` reason contains metadata; a `Failure` reason
 contains a cause and, when a response was available, metadata. The example therefore handles both a
