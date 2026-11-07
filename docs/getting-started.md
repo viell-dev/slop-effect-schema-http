@@ -56,7 +56,9 @@ user, without sending network traffic:
 <<< ../examples/quickstart.ts#synthetic
 
 `execute` returns an **Effect**, a description of work. `Effect.provideService` supplies its HTTP
-client dependency; `Effect.runPromise` runs it and returns the decoded value.
+client dependency; `Effect.runPromise` runs it and returns the decoded value. The library's
+`Response` import hides the Web `Response` of the same name, so the client reaches that one as
+`globalThis.Response`.
 
 Run the file:
 
