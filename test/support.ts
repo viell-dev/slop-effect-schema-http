@@ -1,11 +1,21 @@
 import { Effect, Layer } from "effect";
 import {
+  Cookies,
   HttpClient,
   type HttpClientError,
   HttpClientRequest,
   HttpClientResponse,
 } from "effect/http";
 import * as Transport from "../src/http/Transport.js";
+
+/**
+ * An empty store for `HttpClient.withCookiesRef`. Effect 4.0.7, the oldest version this library
+ * supports, keeps a `Cookies` value there, and later versions keep a list, so the behavior tests can
+ * run on both.
+ */
+export const noCookies = (
+  "mergeIntoArray" in Cookies ? [] : (Cookies as { empty: unknown }).empty
+) as ReadonlyArray<Cookies.Cookie>;
 
 /** What the synthetic transport received for one dispatch. */
 export interface Exchange {

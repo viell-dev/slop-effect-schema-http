@@ -11,13 +11,9 @@ import {
   Schedule,
   Stream,
 } from "effect";
-import {
-  Cookies,
-  FetchHttpClient,
-  HttpClient,
-  HttpClientError,
-} from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import { linesClient, listen } from "../../test/socket.js";
+import { noCookies } from "../../test/support.js";
 import * as Body from "./Body.js";
 import * as Operation from "./Operation.js";
 import * as Policy from "./Policy.js";
@@ -84,7 +80,7 @@ describe("Operation over real loopback sockets", () => {
               response.end(request.headers.cookie ?? "none");
             }
           });
-          const jar = yield* Ref.make<ReadonlyArray<Cookies.Cookie>>([]);
+          const jar = yield* Ref.make(noCookies);
           const options = {
             transformClient: (client: HttpClient.HttpClient) =>
               useJar ? HttpClient.withCookiesRef(client, jar) : client,
