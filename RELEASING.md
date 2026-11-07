@@ -14,6 +14,7 @@ release runs in this order:
 2. [Publish it on GitHub](#publish-on-github).
 3. [Publish the same bytes to npm](#publish-to-npm).
 4. [Deploy its documentation](#release-documentation-and-corrections).
+5. [Check the published state](#check-the-published-state).
 
 ## Prepare a candidate
 
@@ -217,6 +218,34 @@ that release tag and the full correction commit in `correction`. The workflow re
 and refuses changed paths outside `docs/`. Record the deployed commit without moving the software
 tag. Use the same procedure for another correction; the next release deploys its own docs.
 
+## Check the published state
+
+The last step of a release, once its site has deployed, compares every published surface with this
+repository and with each other. From a checkout of `main` at the release, with `gh` signed in:
+
+```sh
+npm run check-live
+```
+
+It changes nothing. It compares the newest stable GitHub release and its assets, npm `latest` and
+its bytes, the deployed site's `library-version` and `documentation-commit`, the release's tag
+target, GitHub's labels against `.github/labels.json`, the repository description and homepage
+against `package.json` and the README, and whether each `currently …` test links an open issue.
+
+Each line starts with what it found:
+
+- `ok`: the surfaces agree.
+- `PENDING`: not yet published. A surface is behind the newest version, which is normal part-way
+  through a release. Finish the step it names. The exit status is 2 if nothing is worse.
+- `DIFFERS`: two surfaces disagree, or a surface is ahead of the newest version. Follow the line's
+  advice, and [recovery](#partial-failure-and-recovery) for a published surface. The exit status
+  is 1.
+- `UNREAD`: a surface could not be read, so nothing is known about it. The exit status is 1.
+
+A release is complete when the command exits with status 0. Pages can take a few minutes to serve a
+new deployment, so rerun it before investigating a site that is one version behind. Maintenance can
+run it at any time.
+
 ## Partial failure and recovery
 
 - A preparation failure publishes nothing. Preserve failed logs, fix the cause, and qualify anew.
@@ -244,7 +273,7 @@ tag. Use the same procedure for another correction; the next release deploys its
   registry integrity, and finish only GitHub and Pages. If published bytes are wrong, release a new
   version; never edit a published tarball, move its tag, or make update versions go backwards.
 - A Pages failure does not invalidate the package. Fix/retry the verified release or a scoped docs
-  correction, then verify the live version and commit. Keep the prior deployment until success.
+  correction, then run `npm run check-live`. Keep the prior deployment until success.
 
 ## Release history
 
