@@ -1368,7 +1368,8 @@ neither standard client can send, tracked in
 sends a request exactly as written, `lane.rawClient(backend.origin)`, called the raw client below,
 and on a plain socket listener; [AGENTS.md](./AGENTS.md) describes both, and
 `src/harness/raw.node.test.ts` tests them without any hostile backend. `fetch` below means
-`lane.fetchClient`. EXT-17 covers raw values under a schema at a real service.
+`lane.fetchClient`. EXT-17 covers raw values under a schema at a real service, and EXT-18 to EXT-22
+cover paths, variants and values known late.
 
 Entries marked limit or defect have tests too, as each entry lists: those statuses record what was
 observed, and a test pins it.
@@ -1987,3 +1988,222 @@ each rule; these show what a consumer meets at the other end.
   Status: tested.
   - `[EXT-17c] a caller's value reaches the service in the form the schema writes, from either side of the schema`
   - `[EXT-17c] a default written in the constructor goes through the schema, which writes its own spelling`
+
+#### Paths, variants and values known late
+
+EXT-18 to EXT-22 take what the library gained after `0.1.0` to real services over real sockets:
+paths joined exactly and written as templates
+([#82](https://github.com/viell-dev/slop-effect-schema-http/issues/82),
+[#80](https://github.com/viell-dev/slop-effect-schema-http/issues/80) and
+[#104](https://github.com/viell-dev/slop-effect-schema-http/issues/104)), variants of a definition
+([#86](https://github.com/viell-dev/slop-effect-schema-http/issues/86),
+[#88](https://github.com/viell-dev/slop-effect-schema-http/issues/88) and
+[#105](https://github.com/viell-dev/slop-effect-schema-http/issues/105)), a base URL known late
+([#89](https://github.com/viell-dev/slop-effect-schema-http/issues/89) and
+[#81](https://github.com/viell-dev/slop-effect-schema-http/issues/81)), the attempt number
+([#99](https://github.com/viell-dev/slop-effect-schema-http/issues/99)), and a `Date` in a query
+([#110](https://github.com/viell-dev/slop-effect-schema-http/issues/110)). The library's own tests
+state each rule; these show what a consumer meets at the other end. They are in
+`src/scenarios/path-rules.test.ts`, `variants.test.ts`, `late-base-urls.test.ts`,
+`attempt-numbers.test.ts` and `query-dates.test.ts`, in both lanes, and the tests that need the raw
+client or the line-preserving provider are in `src/scenarios/path-rules.node.test.ts`. `<id>` below
+is a path value declared with `Request.pathValue("id")`.
+
+Node's and Chromium's `fetch` agree on every path below except EXT-18k's. Written dot segments are
+EXT-10a, EXT-10b, EXT-11a and EXT-11b, and an empty id at nginx is QRY-3; these entries add what a
+value does, and what each service then answers.
+
+- **EXT-18a** A template and a renderer on the wire. `` Request.path`/tasks/${id}` `` with the input
+  `{ path: { id: "T-1001" } }`, and a renderer writing the same text with the input `"T-1001"`,
+  reach `/v2/tasks/T-1001` and the service answers 200. `a/b c`, `ä`, `100%` and `?q#f` stay one
+  segment in both forms, as `a%2Fb%20c`, `%C3%A4`, `100%25` and `%3Fq%23f`. A value under
+  `Schema.FiniteFromString` takes `2026` or `"2026.0"`, and the path carries `2026` for both.
+  Status: tested.
+  - `[EXT-18a] a template and a renderer ask for the same task, and the service answers both`
+  - `[EXT-18a] ${value} stays one segment in both forms, and arrives as ${segment}`
+  - `[EXT-18a] a value takes either side of its schema, and the path carries what the schema writes`
+- **EXT-18b** A child adds to its parent. `` Request.path`/preferences` `` on a parent at
+  `/v1/customers/<id>` reads `/v1/customers/1001/preferences`, and the parent still reads the
+  customer. Two levels with a value each take one input, `{ path: { year, id } }`.
+  `Request.unbind("path")` with `Request.setPath("/tasks/history")` makes a variant of a task's
+  history that needs no input and reads the global one. Status: tested.
+  - `[EXT-18b] a child adds to its parent, and each reads its own resource`
+  - `[EXT-18b] each level adds a value of its own, and one input carries both to the wire`
+  - `[EXT-18b] a variant replaces a whole path with Request.unbind and Request.setPath`
+- **EXT-18c** Pieces are joined exactly: `/things/42` and `:archive`, `/report` and `.json`,
+  `/users` and `42`, `/odata` and `/Customers('O'Brien')`, and `/fetch` and `/https://other.test/x`,
+  which stays a path. An apostrophe in a value needs no encoding, so `Customers('${id}')` with
+  `O'Brien` closes its quote. A `?` in a template is URL text: `` Request.path`?y=${id}` `` with
+  `a b` and `Request.setQuery("z", "1 2")` arrives as `/x?y=a%20b&z=1%202`. A whole URL after an
+  empty constructor bypasses a base, and a whole URL in the constructor takes a template. With a
+  base URL at `${origin}/soap`, `Request.get("?wsdl")` reaches `/soap?wsdl`, and a template of
+  `?wsdl` reaches `/soap/?wsdl`, because the join puts a `/` before it, and the store answers that 404. Status: tested.
+  - `[EXT-18c] ${constructor} and ${added} are joined exactly, as ${target}`
+  - `[EXT-18c] an apostrophe in a value needs no encoding, so it closes the quote around it`
+  - `[EXT-18c] a ? in a template is URL text: the value in it goes through the path encoder, and a declared query goes after it`
+  - `[EXT-18c] a whole URL after an empty constructor bypasses the base, and one in the constructor takes a template`
+  - `[EXT-18c] with a base URL, a query alone belongs in the constructor, because a template gets a / from the join`
+- **EXT-18d** A `//` from a constructor's trailing slash and a piece's leading one. The client
+  receives it, `fetch` keeps it, and the servers disagree: the `/v2` gateway merges
+  `/v2/tasks//T-1001` and answers the task, `/v1/customers//1001` is 404, and the WebDAV view
+  answers `/dav//documents/` with 404. Status: tested.
+  - `[EXT-18d] a constructor's trailing slash and a piece's leading one give //, which fetch keeps and the /v2 gateway merges`
+  - `[EXT-18d] /v1 has no gateway, and answers // with 404`
+  - `[EXT-18d] the WebDAV view answers // with 404 too`
+- **EXT-18e** Real nginx with a template: `/v2//tasks///` and `${id}//history` arrive as the
+  recorded `/v2//tasks///T-1001//history`, and the replayed answer is that task's history. Status:
+  tested.
+  - `[EXT-18e] real nginx merges the slashes of a template, and answers the task's history`
+- **EXT-18f** A trailing slash is kept, and it is part of the address. `/v2/tasks` is the list and
+  `/v2/tasks/` is 404. `/dav/documents/` is the WebDAV collection, 207, and `/dav/documents` is 404,
+  so a definition that must end in a slash writes it on its last piece. Status: tested.
+  - `[EXT-18f] a trailing slash is kept, and the same service answers each spelling differently`
+  - `[EXT-18f] the WebDAV collection exists only with its trailing slash, so a template ends in one`
+- **EXT-18g** A value of `..` or `.` has nothing to encode, and `fetch` resolves it after the client
+  received it as written. `/customers/${id}/regions` with `..` arrives as `/v1/regions`, which is a
+  real resource, so the service answers 200 for something the caller did not name. Status: limit.
+  - `[EXT-18g] a value of .. leaves the customer: fetch resolves it after the client received it, and /v1/regions answers 200`
+  - `[EXT-18g] a value of . disappears: fetch resolves it after the client received it`
+- **EXT-18h** Values that look like dot segments and are not: `%2e%2e` is encoded again as
+  `%252e%252e`, `../..` as `..%2F..` and `.. ` as `..%20`. Each stays one literal segment, which
+  `fetch` leaves alone, and the service answers 404. Status: tested.
+  - `[EXT-18h] ${value} is encoded into a literal segment, which fetch leaves alone`
+- **EXT-18i** An empty value has nothing to encode either. At the end it leaves `/v2/tasks/`, which
+  is 404 and not the list. In the middle it leaves `/v2/tasks//history`, which the `/v2` gateway
+  merges into the global history, so the service answers 200 for another resource. Status: tested.
+  - `[EXT-18i] an empty value at the end leaves a trailing slash, which is not the list`
+  - `[EXT-18i] an empty value in the middle leaves //, which the /v2 gateway merges into another resource`
+- **EXT-18j** What stops such a value. A pattern on the value refuses `..` and `""` as a
+  `SchemaError`, and a replaced `UrlEncoding.path` refuses `..` as `Request.InvalidRequest`, each
+  with an empty ledger. Status: tested.
+  - `[EXT-18j] a schema on the value refuses .. and an empty value before anything is sent`
+  - `[EXT-18j] a replaced path encoder refuses .. for every value at once, as Request.InvalidRequest with nothing sent`
+- **EXT-18k** A label left in the constructor of a whole-URL renderer, as
+  `Request.get("{location}")`, which the library used to discard: the URL becomes
+  `{location}http://…` and the backend's ledger is empty. Node refuses it with an `InvalidUrl`
+  reason. Chromium reads it as a relative URL and asks the page's own server, so the operation
+  answers with no error and nothing says the service was never asked. Asserted per lane. Status:
+  limit.
+  - `[EXT-18k] a label left in the constructor of a whole-URL renderer reaches nothing: Node refuses it, and Chromium asks the page's own origin`
+- **EXT-18l** A definition still written the old way, `Request.get("tasks")` with a renderer
+  returning `tasks/<id>`, compiles and asks for `/v2/taskstasks/T-1001`. Its declared 404 then reads
+  as an ordinary `NotFound` answer, with no failure anywhere. Status: tested.
+  - `[EXT-18l] a definition still written the old way asks for the wrong URL, and a declared 404 reads as an ordinary answer`
+- **EXT-18m** A value of `..` past `fetch`, in the Node lane: the raw client sends
+  `/v1/customers/../regions` as written and the service answers 404, and the line-preserving
+  provider resolves it as `fetch` does, because it reads the URL `HttpClient.make` parsed. Status:
+  tested.
+  - `[EXT-18m] the raw client sends a value of .. as written, and the service answers 404, not its regions`
+  - `[EXT-18m] the line-preserving provider resolves a value of .. as fetch does, because it reads the parsed URL`
+- **EXT-18n** What a piece adds after a `#` stays in the fragment, through the raw client:
+  `/cgi-bin/help.cgi`, then `/accounts#clo`, then `sing`. The client received the `hash` `closing`,
+  the target is `<help>#closing`, and the answer is that section. Status: tested.
+  - `[EXT-18n] what a piece adds after a # stays in the fragment, and help.cgi answers that section`
+- **EXT-19a** A variant's request and options, with the original unchanged. `Operation.mapRequest`
+  adds `status=done` to the task list: the targets are `/v2/tasks`, `/v2/tasks?status=done`,
+  `/v2/tasks`, and the counts 2, 1, 2. `Operation.mapOptions` gives a variant a retry policy that
+  gets past a real 420, which the original still fails on. Status: tested.
+  - `[EXT-19a] a request variant sends its own query, and the definition it came from still sends none`
+  - `[EXT-19a] an options variant retries a real 420, and the definition it came from does not`
+- **EXT-19b** The automatic `Accept` follows the cases. `Response.replace(200, Body.text)` sends
+  `text/plain` and the original still sends `application/json`, through each provider of the lane.
+  `Response.remove(404)` takes `text/plain` out of `application/json, text/plain`. Status: tested.
+  - `[EXT-19b] ${provider}: the automatic Accept follows a replaced case, and the definition keeps its own`
+  - `[EXT-19b] the automatic Accept loses what a removed case declared`
+- **EXT-19c** A removed case: `Response.remove(404)` turns the service's 404 into
+  `Response.UnexpectedResponse`, the original still decodes it as `NotFound`, and the variant still
+  reads a task that exists. Status: tested.
+  - `[EXT-19c] a removed 404 falls through to UnexpectedResponse, and the definition still decodes it`
+- **EXT-19d** A recorded step stays outside the attempts. It runs once after three real attempts. A
+  failure from it comes back as itself, and a policy that retries failures sends one request. A
+  classifier of `() => true` also repeats a real 200, because a completed response is an outcome
+  too, so four requests go out and the step runs once, on the last. A slow step is not under the
+  attempt timeout. Attempts that time out never reach it. A request variant of a mapped operation
+  keeps it. Status: tested.
+  - `[EXT-19d] a recorded step runs once after three real attempts`
+  - `[EXT-19d] a failing step comes back as itself, and a policy that retries failures sends one request`
+  - `[EXT-19d] a classifier that retries every outcome repeats a real 200, and the step runs once, on the last`
+  - `[EXT-19d] a slow step is not under the attempt timeout, which the attempt itself met in time`
+  - `[EXT-19d] attempts that time out never reach the step, and fail as a timeout`
+  - `[EXT-19d] a request variant of a mapped operation keeps the step, and sends its own request`
+- **EXT-19e** `Operation.unmap` gives the response's own value back, and the mapped operation keeps
+  its step. A response that does not fit a mapping goes through it, and that response's `Accept`
+  reaches the wire. A 404 turned into a failure stays one when that case is replaced by one of the
+  same shape. Status: tested.
+  - `[EXT-19e] Operation.unmap gives the response's own value back, and the mapped operation keeps its step`
+  - `[EXT-19e] a response that does not fit a mapping goes through Operation.unmap, and its Accept reaches the wire`
+  - `[EXT-19e] a 404 turned into a failure stays one when that case is replaced by one of the same shape`
+- **EXT-20a** A location from a service or a `Config` value, supplied when the program runs. A
+  missing `Config` value fails as a `ConfigError` with nothing sent, and leaving the service out is
+  a compile error. Status: tested.
+  - `[EXT-20a] a service supplies the location when the program runs, and the definition stays a plain value`
+  - `[EXT-20a] a Config value supplies it the same way`
+  - `[EXT-20a] forgetting the location is a compile error` (type-level)
+- **EXT-20b** A lookup that fails comes back as its own typed failure with an empty ledger, and a
+  policy that retries everything does not repeat it. It stops a request with an absolute URL too,
+  though the join would bypass it. Status: tested.
+  - `[EXT-20b] a lookup that fails comes back as itself: nothing is sent, and a policy does not repeat it`
+  - `[EXT-20b] a lookup that fails stops a request with an absolute URL too, though the join would bypass it`
+- **EXT-20c** A lookup that hangs is not under `attemptTimeout`: with a 50 ms limit it is still
+  running after 400 ms. Only the caller's limit ends it, which interrupts the lookup, and nothing is
+  sent. Status: tested.
+  - `[EXT-20c] a lookup that hangs is not under the attempt timeout, and only the caller's limit ends it`
+  - `[EXT-20c] a caller's Effect.timeout turns a hanging lookup into a timeout, with nothing sent`
+- **EXT-20d** A lookup runs once for three real attempts, all to the same base, and again for the
+  next evaluation. Input the schema refuses costs no lookup. Status: tested.
+  - `[EXT-20d] a lookup runs once for three real attempts, and again for the next evaluation`
+  - `[EXT-20d] input the schema refuses costs no lookup`
+- **EXT-20e** `Request.mapBaseUrl` extends a base given as text, leaving the request it came from as
+  it was, and a base that is not known yet. With no base set it receives `""` and can supply one. A
+  function that throws is `Request.InvalidRequest` with an empty ledger. A later `Request.baseUrl`
+  replaces what it made, and a lookup behind that never runs. Status: tested.
+  - `[EXT-20e] Request.mapBaseUrl extends a base given as text, and the request it came from keeps its own`
+  - `[EXT-20e] Request.mapBaseUrl extends a base that is not known yet, at the moment it is`
+  - `[EXT-20e] with no base set, Request.mapBaseUrl receives the empty text and can supply one`
+  - `[EXT-20e] a Request.mapBaseUrl function that throws is Request.InvalidRequest, with nothing sent`
+  - `[EXT-20e] a later Request.baseUrl replaces what Request.mapBaseUrl made, and a lookup behind it never runs`
+- **EXT-21a** `transformClient` writes its attempt number into a header, so the number asserted is
+  the one that arrived: `1`, `2` and `3` across a real 420, 503 and 200, through each provider of
+  the lane, and `1` again for the next evaluation. Status: tested.
+  - `[EXT-21a] ${provider}: three real attempts arrive numbered 1, 2 and 3, and the next evaluation starts at 1`
+- **EXT-21b** An attempt that timed out counts. A server holds the first attempt past its timeout,
+  and the second arrives at a standby numbered `2`. The witness is the attempt that was answered,
+  because a request aborted by a timeout need not have reached the socket. Status: tested.
+  - `[EXT-21b] an attempt that timed out counts, so the one after it arrives numbered 2`
+- **EXT-21c** A retry moves to another server by its number, as a base URL cannot: the first attempt
+  meets a closed port, and the second arrives at the standby. Status: tested.
+  - `[EXT-21c] a retry moves off a dead server by its number, which a base URL cannot do`
+- **EXT-21d** A function with an optional second parameter of its own receives the number there:
+  passed as it is it writes `1`, and wrapped in an arrow function it keeps its default. Status:
+  tested.
+  - `[EXT-21d] a function with an optional second parameter of its own receives the number there`
+- **EXT-22a** A `Date` in a query arrives as `?since=2026-11-07T12%3A30%3A45.678Z`, with `:` as
+  `%3A`, by every route: `Schema.Date` through each provider of the lane, `Schema.DateFromString`
+  from a `Date` or its text, `Schema.DateTimeUtcFromDate` from its type or a `Date`, and a raw
+  `Date` in the object form. A list repeats the name in order, from a schema and from a raw array.
+  Status: tested.
+  - `[EXT-22a] ${provider}: Schema.Date takes a Date and sends ISO text`
+  - `[EXT-22a] a list of Dates repeats the name, in order`
+  - `[EXT-22a] Schema.DateFromString takes a Date or its text, and sends the same`
+  - `[EXT-22a] a schema from Date to an application's type takes that type or a Date, and sends the same`
+  - `[EXT-22a] a raw Date in the object form sends the same`
+- **EXT-22b** An invalid `Date` is a `SchemaError` with an empty ledger under each of the three
+  schemas, and a raw one has no ISO text and arrives as `?since=Invalid%20Date`. Status: tested.
+  - `[EXT-22b] an invalid Date under ${name} is a SchemaError, with nothing sent`
+  - `[EXT-22b] a raw invalid Date has no ISO text, and goes out as Invalid Date`
+- **EXT-22c** When a raw date is read. A `Date` in the object form is read when the request is
+  defined, so changing it later changes nothing. A computation is read on each evaluation, and it
+  returns text: one that returns a `Date` is a compile error. Past the types, as from JavaScript or
+  a cast, it currently goes out as `String(date)`, which holds the time zone of whatever runs it and
+  not ISO text. Status: tested.
+  - `[EXT-22c] a raw Date is read when the request is defined, so changing it later changes nothing`
+  - `[EXT-22c] a computation is read on each evaluation, so its text reaches the next request`
+  - `[EXT-22c] a computation that returns a Date is a compile error` (type-level)
+  - `[EXT-22c] currently a computed Date past the types goes out as String(date), in the time zone of whatever runs it`
+- **EXT-22d** A raw `Date` under each of the three schemas is a default, which the schema writes and
+  a caller's value replaces. Status: tested.
+  - `[EXT-22d] a raw Date under ${name} is a default, which the schema writes and a caller's value replaces`
+- **EXT-22e** Written text is not a `Date`: `?since=2026-11-07T13:30:45+01:00` in the constructor
+  goes out as written, and the same text as a caller's value under `Schema.DateFromString` goes out
+  in UTC. Status: tested.
+  - `[EXT-22e] an offset in written text stays as written, and only a Date is rewritten to UTC`
