@@ -398,7 +398,11 @@ schema states. Add a member that holds both, or send one of them.
 
 A key no member states is stripped, as a struct strips it. So is a key only a member with another
 tag states: where only the `"a"` member has `x`, `{ kind: "b", x }` goes out as `{ kind: "b" }`. The
-types refuse both of these in a literal.
+types refuse both of these in a literal. A key set to `undefined` is no field, so
+`{ a, b: undefined, c }` reads as `{ a, c }`.
+
+Text that holds JSON, a `Map` and an `Option` cannot be compared with what came out, so a value
+inside one has to read strictly. There even a key no member states is a `SchemaError`.
 
 Stacked schemas read one input, and a field stays with the schema that took it. A union takes a
 sibling's field for a key it does not state, and a field it would lose is not lost if a stacked
@@ -450,9 +454,10 @@ whatever runs the request.
 "Required" means the schema always writes the name. A required field with
 `Schema.withConstructorDefault` needs no input and still cannot be removed. A field with a decoding
 default such as `Schema.withDecodingDefaultKey` is required too: the caller can leave it out, and
-the schema writes it all the same, unless its `encodingStrategy` is `"omit"`. To give a required
-field a value without asking the caller, use `Request.mapInput`. A value the schema supplies itself,
-from a constructor or decoding default, counts as written, so it replaces a raw default.
+the schema writes it all the same. With `encodingStrategy: "omit"` it never writes it, so a raw
+value there is refused too, as a field that would be lost. To give a required field a value without
+asking the caller, use `Request.mapInput`. A value the schema supplies itself, from a constructor or
+decoding default, counts as written, so it replaces a raw default.
 
 A decoding default shows in the field's own encoding, which `Schema.encodeKeys` replaces. A raw edit
 of a field with a default under a struct renamed that way is not refused, and it never reaches the

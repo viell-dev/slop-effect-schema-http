@@ -27,6 +27,10 @@ Effect's HTTP modules are marked unstable upstream and can change across minor v
 release notes and retain a known-good lockfile when upgrading, including any application-owned
 client middleware. Report regressions with the exact dependency version.
 
+The library reads Effect's schema structure to keep a field from being lost. It checks that reading
+once, the first time a schema is bound, so a version of Effect that changed it stops with an error
+that says so, rather than dropping fields with no error.
+
 Other Node majors, macOS, Firefox, Safari, Deno, Bun and CommonJS are outside the qualification
 scope. Browser support does not imply support for every bundler or browser configuration; provider
 behavior and browser policy still apply.

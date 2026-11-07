@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stop with an error if a version of Effect cannot be read. The library reads Effect's schema
+  structure to keep a field from being lost, and a change there would otherwise bring silent losses
+  back, so binding a schema now checks that structure once. Release qualification also runs the
+  behavior tests on Effect 4.0.7, the oldest version the peer range allows, and not only the
+  consumer fixture.
+
 - State what clients do with a request, as the hostile suite measured it, in Limits and recovery and
   on the design page: `Policy.none` is one attempt by the library and not one send, because Chromium
   can send a POST again by itself; a body cut off after its headers has different verdicts by
@@ -20,22 +26,27 @@
   a raw `?b=1` then took the caller's place. A schema with a choice between objects is now read
   strictly first, on the decoded side and again when it encodes, so a member that keeps every field
   wins, in headers, query, path and bodies, at any depth. The order of the members no longer costs a
-  field, and a wider member need not go first. A key no member states is still stripped, as a struct
-  strips it, and a schema with no such choice reads as before. An empty union now fails as a
-  `SchemaError`, where it used to die with a defect
+  field, and a wider member need not go first. A key set to `undefined` is no field under such a
+  schema, so `{ a, b: undefined, c }` under a union of `{ a, b? }` and `{ a, c }` now sends `c`,
+  where it used to lose it. A key no member states is still stripped, as a struct strips it, and a
+  schema with no such choice reads as before. An empty union now fails as a `SchemaError`, where it
+  used to die with a defect
   ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
 - **Breaking:** refuse a field no union member can keep. `{ a, b }` under a union of `{ a }` and
   `{ b }` used to send `a` and drop `b`, and a value a wider member refused was dropped the same
   way. It is now a `SchemaError` before anything is sent, which names the field and never its value.
   This call compiled and ran, and it now fails at run time, for the values that reach it. Add a
-  member that holds both fields, or send one of them. A field a schema stacked with the union takes
-  is not lost, in headers and query, so that call goes on working. `Draft` requires new `takenQuery`
-  and `takenHeaders` members, and `Request.Shape` a new `chooses` member
+  member that holds both fields, or send one of them. Inside text that holds JSON, a `Map` or an
+  `Option`, what went cannot be compared, so a value has to read strictly there, and even a key no
+  member states is refused. A field a schema stacked with the union takes is not lost, in headers
+  and query, so that call goes on working. `Draft` requires new `takenQuery` and `takenHeaders`
+  members, of a new `Request.Taken` type, and `Request.Shape` a new `chooses` member
   ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
 - Leave a field with the schema that took it. A union stacked after a schema that holds one of its
   fields used to take that value for a default it could not hold, and a raw value under that name
   did the same in either order, so `Request.InvalidRequest` refused a group that lost nothing. Such
-  a group now goes out whole
+  a group now goes out whole, and a raw value the caller leaves out stays with a schema that has no
+  union and allows its name
   ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
 - **Breaking:** refuse a raw edit, after the schema, of a field with a decoding default. A field
   with `Schema.withDecodingDefaultKey` or one of its relatives is optional on the encoded side, so
@@ -43,9 +54,9 @@
   that name and the edit never reached the client. It is now `Request.InvalidRequest` on every run,
   as for any field the schema always writes. Remove the edit, make the field optional so the raw
   value is a default, or supply the value with `Request.mapInput`. Moving the edit before the schema
-  does not send it. A default with the `omit` encoding strategy is not affected, and a field a
-  struct renames with `Schema.encodeKeys` is still not refused
-  ([#120](https://github.com/viell-dev/slop-effect-schema-http/issues/120)).
+  does not send it. A raw value under a default with the `omit` encoding strategy is still refused,
+  as a field that would be lost, and a field a struct renames with `Schema.encodeKeys` is still not
+  refused ([#120](https://github.com/viell-dev/slop-effect-schema-http/issues/120)).
 - State that a success `retain` rejects drops an earlier retained success for equal input, and what
   a `Request.mapEffect` finds after `Request.unbind` removes the input it reads.
 - Show editor help on the members of public types, such as `execute`, `decoder` and `headerLines`.

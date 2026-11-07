@@ -242,16 +242,25 @@ assert.equal(
   `${things}?limit=50`,
 );
 
-// A `Schema.Struct({})` member takes any value and keeps it, so it wins over a member that strips.
-const Anything = Schema.Union([
-  Schema.Struct({ owner: Schema.String }),
-  Schema.Struct({}),
+// `undefined` is no field, so it cannot take a value away from the member that holds the rest.
+const Either = Schema.Union([
+  Schema.Struct({ a: Schema.String, b: Schema.optionalKey(Schema.String) }),
+  Schema.Struct({ a: Schema.String, c: Schema.String }),
 ]);
 assert.equal(
-  await urlOf(Request.get(things).pipe(Request.query(Anything)), {
-    query: wider,
+  await urlOf(Request.get(things).pipe(Request.query(Either)), {
+    query: { a: "x", b: undefined, c: "z" },
   }),
-  `${things}?owner=ada&page=2`,
+  `${things}?a=x&c=z`,
+);
+
+// A union inside text that holds JSON has to read strictly, since it cannot be compared.
+const InText = Schema.Struct({ filter: Schema.fromJsonString(EitherFilter) });
+assert.match(
+  await refusedFor(Request.get(things).pipe(Request.query(InText)), {
+    query: { filter: '{"owner":"ada","page":"2"}' },
+  }),
+  /\["filter"\]/,
 );
 
 // #region policy-timeout

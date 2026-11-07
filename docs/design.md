@@ -136,22 +136,28 @@ encoded value --> decode --> decoded -> encode --> wire
   schema. A value on neither side is a compile error.
 - **A union keeps what the caller gave.** Effect takes the first member that fits and strips what
   that member does not state, when it reads a value and again when it encodes one. A schema with a
-  choice between objects is therefore read strictly first, through both steps, so a member that
-  keeps every field wins over an earlier one that would strip one, at any depth. A schema with no
-  such choice skips this and reads as it always did. Under such a union a schema's own steps can run
-  more than once for a value the strict read refuses.
+  choice between objects is therefore read strictly, through both steps, so a member that keeps
+  every field wins over an earlier one that would strip one, at any depth. What it reads is what the
+  caller means: a key set to `undefined` holds nothing, so it is no field, and a key no member
+  states is left out, so neither can push a value out of the member that holds the rest. A strict
+  read that passes has stripped nothing. Anything else is read as Effect reads it, and the result is
+  compared with what went in, so what is lost is what actually went. A schema with no such choice
+  skips this and reads as it always did. Under such a union a schema's own steps can run more than
+  once for a value the strict read refuses.
 - **A field no member can keep is an error.** Under `Union([Struct({ a }), Struct({ b })])`,
   `{ a, b }` is a `SchemaError` before dispatch, naming the field that would go. The types allow
   that value, and whichever member took it would lose a field the schema states, so the choice
   cannot be made for the caller. A field a wider member states and refuses the value of is the same
   case. Only a real loss counts: a field another schema in the group takes is not lost, as the rule
-  on stacked schemas below says.
+  on stacked schemas below says. Text that holds JSON, a `Map` and an `Option` cannot be compared,
+  so a value inside one has to read strictly, and even a key no member states is refused there.
 - **A key no member states is stripped, as a struct strips it.** That is not a union choosing badly.
   The types did not allow the key, and a stacked schema's fields reach every schema in the group
-  this way. So is a key only a member with another tag states, because the tag has already chosen,
-  and a key set to `undefined`, which holds no value to lose. An encoded name beside its decoded
-  twin is stripped too, under a union as under a struct: the whole value is not on the encoded side,
-  so the decoded name is the field.
+  this way. So is a key only a member with another tag states, because the tag has already chosen. A
+  key set to `undefined` is no field at all, so `{ a, b: undefined, c }` reads as `{ a, c }`, and a
+  member that states `b` cannot take the value from one that states `c`. An encoded name beside its
+  decoded twin is stripped too, under a union as under a struct: the whole value is not on the
+  encoded side, so the decoded name is the field.
 - **A weak schema lets more through.** `Schema.NumberFromString` turns `"many"` into `NaN`, so
   `{ limit: "many" }` goes out as `limit=NaN`, and `Schema.FiniteFromString` refuses it. That is a
   property of the definition, and the library does not try to correct it.
@@ -209,7 +215,9 @@ an error: `Request.InvalidRequest` before anything is sent.
   `{ b }` stacked with `{ b }`, in either order, `{ a, b }` goes out whole. The record holds what a
   schema took, not what it states, because two unions that each state `b` would otherwise leave it
   to each other and lose it with no error. They are refused instead. What another schema took is not
-  a default for the union, and it replaces a raw value under that name. A body or path has nothing
+  a default for the union, and it replaces a raw value under that name. A raw value the caller
+  leaves out stays with a schema that has no union and allows its name, which checks it, so the
+  union need not hold it. Two unions have no such claim on each other. A body or path has nothing
   stacked beside it by name, so this applies to headers and query.
 - **A schema can allow other names.** A record or `Schema.StructWithRest` allows any name, and
   values are still checked. Callers can then pass any name as well.
@@ -228,7 +236,8 @@ A name is required if the encoded side requires it. It is also required if the e
 it optional, the decoded side always holds a value, and the step that makes it optional hands that
 value on as it is, which is how a decoding default writes. A step that decides for itself may write
 nothing, so `Schema.OptionFromOptionalKey` and a default with the `omit` encoding strategy do not
-count.
+count. A raw value under `omit` is refused differently: the schema reads it and never writes it, so
+it would be lost.
 
 Raw values are text. Where a field encodes to a number, boolean, bigint or `Date`, the text is read
 as one first, the reverse of how the library writes it, so a schema encoded as a number accepts a

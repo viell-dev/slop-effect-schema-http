@@ -86,7 +86,8 @@ export type QueryFields = Readonly<
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that
  * names it, because the types allow that value and any member would lose a field the schema states.
  * A key no member states is stripped, as a struct strips it, and so is a key the tag has ruled out.
- * In a header or query group, a field a schema stacked with the union takes is not lost.
+ * A key set to `undefined` is no field. In a header or query group, a field a schema stacked with the
+ * union takes is not lost.
  */
 export type Input<S extends Schema.Top> = Inputs.Input<S>;
 
@@ -167,6 +168,16 @@ export interface Declaration {
  */
 export type Shape = Shapes.Shape;
 
+/**
+ * What the schemas stacked on a group have told each other during preparation.
+ *
+ * @remarks
+ * This is a low-level extension type. A field a union would lose is not lost if another schema in
+ * the group took it, and `settled` is never an answer to that: a schema can allow a name it did not
+ * take.
+ */
+export type Taken = Shapes.Taken;
+
 /** A part of a request that a binding can supply, and that {@link unbind} can clear. */
 export type Group = "path" | "query" | "headers" | "body";
 
@@ -205,13 +216,13 @@ export interface Draft {
   /** The groups a later {@link unbind} cleared, so their earlier bindings skip themselves. */
   readonly unbound: ReadonlySet<Group>;
   /**
-   * The fields of the caller's `query` input the bound schemas took. A field one schema would lose
-   * is not lost if a schema stacked with it took that field. `undefined` where the group needs no
-   * record, because no stacked schema can lose a field.
+   * What the schemas stacked on the query group took from the caller, and which raw values are
+   * theirs to settle. `undefined` where the group needs no record, because no stacked schema can lose
+   * a field.
    */
-  readonly takenQuery: ReadonlySet<PropertyKey> | undefined;
-  /** The fields of the caller's `headers` input the bound schemas took, as in {@link takenQuery}. */
-  readonly takenHeaders: ReadonlySet<PropertyKey> | undefined;
+  readonly takenQuery: Taken | undefined;
+  /** The same for the header group, as in {@link takenQuery}. */
+  readonly takenHeaders: Taken | undefined;
 }
 
 /**
@@ -795,17 +806,21 @@ export const headers = <
             ? draft
             : {
                 ...draft,
-                takenHeaders: new Set([...(draft.takenHeaders ?? []), ...own]),
+                takenHeaders: Shapes.taking(draft.takenHeaders, own),
               },
         );
         if (lostFromInput.length > 0)
           yield* Inputs.refuseLost(
             contract,
             lostFromInput,
-            prepared.takenHeaders,
+            prepared.takenHeaders?.fields,
           );
         const names = Shapes.written(output, foldHeader);
-        const elsewhere = Shapes.others(prepared.takenHeaders, own, foldHeader);
+        const elsewhere = Shapes.others(
+          shape,
+          prepared.takenHeaders,
+          foldHeader,
+        );
         const defaults = prepared.headerLines.filter(
           ([name]) =>
             !names.has(foldHeader(name)) &&
@@ -920,17 +935,17 @@ export const query = <
             ? draft
             : {
                 ...draft,
-                takenQuery: new Set([...(draft.takenQuery ?? []), ...own]),
+                takenQuery: Shapes.taking(draft.takenQuery, own),
               },
         );
         if (lostFromInput.length > 0)
           yield* Inputs.refuseLost(
             contract,
             lostFromInput,
-            prepared.takenQuery,
+            prepared.takenQuery?.fields,
           );
         const names = Shapes.written(output, foldQuery);
-        const elsewhere = Shapes.others(prepared.takenQuery, own, foldQuery);
+        const elsewhere = Shapes.others(shape, prepared.takenQuery, foldQuery);
         const defaults = prepared.request.urlParams.params
           .filter(
             (param) =>
@@ -1399,11 +1414,16 @@ export interface Compiled {
 }
 
 /** A record to start from where a schema in the group can lose a field to another one. */
-const takenRecord = (
-  shapes: ReadonlyArray<Shape>,
-): ReadonlySet<PropertyKey> | undefined =>
+const takenRecord = (shapes: ReadonlyArray<Shape>): Taken | undefined =>
   shapes.length > 1 && shapes.some(({ chooses }) => chooses)
-    ? new Set()
+    ? {
+        fields: new Set(),
+        settled: new Set(
+          shapes.flatMap(({ chooses, names }) =>
+            chooses ? [] : Array.from(names),
+          ),
+        ),
+      }
     : undefined;
 
 const initialDraft = (declaration: Declaration): Draft => {
