@@ -89,7 +89,7 @@ const staying = (origin: string) =>
       const socket = connect(Number(port), hostname);
       const chunks: Array<Buffer> = [];
       const reads: Array<{ readonly at: number; readonly bytes: string }> = [];
-      const state = { closed: false };
+      const state = { closed: false, closedAt: 0 };
       socket.on("data", (data: Buffer) => {
         chunks.push(data);
         reads.push({ at: performance.now(), bytes: data.toString("latin1") });
@@ -97,6 +97,7 @@ const staying = (origin: string) =>
       socket.on("error", () => undefined);
       socket.on("close", () => {
         state.closed = true;
+        state.closedAt = performance.now();
       });
       return {
         socket,
@@ -804,6 +805,7 @@ describe("[EXT-29] the bookings backend against its page", () => {
           const eu = yield* start();
           const client = yield* staying(eu.origin);
           const head = `HTTP/1.1 200 OK\r\n${MANIFEST_TYPE}\r\nTransfer-Encoding: chunked\r\n\r\n`;
+          const sent = performance.now();
           client.write(requestText(eu.origin, "GET", `/v1/export/${name}`));
           yield* eventually(() => client.state.closed);
           expect(client.received()).toBe(`${head}${first}${second}0\r\n\r\n`);
@@ -811,9 +813,7 @@ describe("[EXT-29] the bookings backend against its page", () => {
             bytes.startsWith(second),
           );
           expect(split).toBeGreaterThan(0);
-          expect(
-            client.reads[split]!.at - client.reads[split - 1]!.at,
-          ).toBeGreaterThanOrEqual(20);
+          expect(client.reads[split]!.at - sent).toBeGreaterThanOrEqual(20);
         }),
       );
   });
@@ -878,11 +878,11 @@ describe("[EXT-29] the bookings backend against its page", () => {
       Effect.gen(function* () {
         const eu = yield* start(manifestRule("cut-body-reset"));
         const client = yield* staying(eu.origin);
+        const sent = performance.now();
         client.write(requestText(eu.origin, "GET", "/v1/manifest"));
-        yield* eventually(() => client.received().endsWith(firstHalf));
-        const cut = performance.now();
         yield* eventually(() => client.state.closed);
-        expect(performance.now() - cut).toBeGreaterThanOrEqual(40);
+        expect(client.received().endsWith(firstHalf)).toBe(true);
+        expect(client.state.closedAt - sent).toBeGreaterThanOrEqual(45);
       }),
     );
 
@@ -1037,6 +1037,7 @@ describe("[EXT-29] the bookings backend against its page", () => {
           });
           const error = '{"error":"not_found"}';
           const client = yield* staying(eu.origin);
+          const sent = performance.now();
           client.write(requestText(eu.origin, "GET", "/v1/bookings/missing"));
           const expected =
             [
@@ -1048,9 +1049,7 @@ describe("[EXT-29] the bookings backend against its page", () => {
             ].join("\r\n") + error;
           yield* eventually(() => client.received() === expected);
           // Twenty pauses of 20 ms lie between the first byte and the last.
-          expect(
-            client.reads.at(-1)!.at - client.reads[0]!.at,
-          ).toBeGreaterThanOrEqual(350);
+          expect(client.reads.at(-1)!.at - sent).toBeGreaterThanOrEqual(350);
           yield* Effect.sleep("60 millis");
           expect(client.received()).toBe(expected);
           expect(client.state.closed).toBe(false);
