@@ -1,4 +1,4 @@
-import { Schema, SchemaAST, SchemaIssue } from "effect";
+import { Equal, Schema, SchemaAST, SchemaIssue } from "effect";
 
 /** Where a key sits in a value, one step for each level. */
 export type Path = ReadonlyArray<PropertyKey>;
@@ -17,6 +17,10 @@ export const encodedEnd = (ast: Ast): Ast => {
   return last === undefined ? ast : encodedEnd(last.to);
 };
 
+/**
+ * The parts of a schema this can see. What a declaration holds, as an `Option` or a `Map` does, is
+ * not among them: nothing here can reach it, so the schema's own reading applies there.
+ */
 const partsOf = (ast: Ast): ReadonlyArray<Ast> => {
   switch (ast._tag) {
     case "Objects":
@@ -27,8 +31,6 @@ const partsOf = (ast: Ast): ReadonlyArray<Ast> => {
       return [...ast.elements, ...ast.rest];
     case "Union":
       return ast.types;
-    case "Declaration":
-      return ast.typeParameters;
     default:
       return [];
   }
@@ -74,14 +76,6 @@ const holding = (isChoice: (ast: Ast) => boolean) => {
   return holds;
 };
 
-const holdsMemberChoice = holding(isMemberChoice);
-
-/**
- * Whether a schema holds a choice that can cost a field, of member or of side, anywhere in it. Any
- * other schema skips the strict pass. `Schema.NullOr` around a struct has no such choice.
- */
-const holdsChoice = holding((ast) => isMemberChoice(ast) || isSideChoice(ast));
-
 /** The fields of a struct or class, as they are declared, with each field's own encoding. */
 export const fieldsOf = (
   ast: Ast,
@@ -108,10 +102,17 @@ const keysOf = (value: object): ReadonlyArray<PropertyKey> =>
     Object.prototype.propertyIsEnumerable.call(value, key),
   );
 
-/** Whether a literal field holds another literal on every side, which a tag can rule out by. */
+/** Whether a side only holds literals, and this value is none of them. */
+const refuses = (side: Ast, value: unknown): boolean =>
+  side._tag === "Literal"
+    ? side.literal !== value
+    : side._tag === "Union" &&
+      side.types.every((member) => refuses(member, value));
+
+/** Whether a literal field refuses a value on every side, which a tag can rule out by. */
 const refusesLiteral = (type: Ast, value: unknown): boolean =>
-  [type, ...(type.encoding ?? []).map(({ to }) => to)].every(
-    (side) => side._tag === "Literal" && side.literal !== value,
+  [type, ...(type.encoding ?? []).map(({ to }) => to)].every((side) =>
+    refuses(side, value),
   );
 
 /** Whether a member's tag rules it out for a value, as Effect's union does before it reads one. */
@@ -264,40 +265,6 @@ const has = (value: unknown, key: PropertyKey): boolean =>
 const at = (value: unknown, key: PropertyKey): unknown =>
   isObject(value) ? value[key] : undefined;
 
-/**
- * Whether a name may be a wire name for a field that holds a choice of member. A renamed field's
- * encoded type is flattened, so text that holds JSON reads as text there, whatever is in it, and
- * nothing says which field the name belongs to. A field given under its own name was read there.
- */
-const hidesChoice = (
-  sides: ReadonlyArray<Ast>,
-  key: PropertyKey,
-  given: Record<PropertyKey, unknown>,
-): boolean =>
-  sides.some((side) => {
-    const encoded = fieldsOf(encodedEnd(side)).map(({ name }) => name);
-    return (
-      encoded.includes(key) &&
-      fieldsOf(side).some(
-        ({ name, type }) =>
-          !encoded.includes(name) &&
-          given[name] === undefined &&
-          holdsMemberChoice(type),
-      )
-    );
-  });
-
-/**
- * A field that may be gone. With `types`, it is only gone if they cannot read `value` strictly, to
- * what came out as `output`.
- */
-export interface Missing {
-  readonly path: Path;
-  readonly types?: ReadonlyArray<Ast>;
-  readonly value?: unknown;
-  readonly output?: unknown;
-}
-
 /** Whether a value's keys mean something here: it is plain, or a struct here reads it. */
 const comparable = (sides: ReadonlyArray<Ast>, value: object): boolean =>
   isPlain(value) || sides.some(({ _tag }) => _tag === "Objects");
@@ -306,11 +273,7 @@ const comparable = (sides: ReadonlyArray<Ast>, value: object): boolean =>
  * What a read lost from `given`, a {@link normalised} value, by comparing it with what came out. A
  * field has to be in the decoded value or in what was written. Under a name a member decodes, what
  * was written has to be what was given too, because that name can be another field's on the wire.
- *
- * A value that cannot be compared, such as text that holds JSON or a `Map`, may hide a choice. It
- * comes back with its `types`, so that a strict read can settle it. Text is on the encoded side
- * already, so only a choice of member can hide in it, and text that came out as it went in has lost
- * nothing. Under a name that {@link hidesChoice}, `hidden`, no type can read text that changed.
+ * What this cannot see into, such as text or a `Map`, is left to the schema's own reading.
  */
 export const missing = (
   types: ReadonlyArray<Ast>,
@@ -318,26 +281,16 @@ export const missing = (
   value: unknown,
   output: unknown,
   path: Path = [],
-  hidden = false,
-): ReadonlyArray<Missing> => {
-  if (given === undefined || given === output) return [];
+): ReadonlyArray<Path> => {
+  if (!isObject(given)) return [];
   const sides = types.flatMap((type) => sidesOf(type, given));
-  if (!isObject(given) && hidden) return [{ path }];
-  if (!isObject(given) || !comparable(sides, given)) {
-    const choosing = types.filter(
-      isObject(given) ? holdsChoice : holdsMemberChoice,
-    );
-    return choosing.length > 0
-      ? [{ path, types: choosing, value: given, output }]
-      : [];
-  }
+  if (!comparable(sides, given)) return [];
   const decoded = new Set(types.flatMap((type) => decodedNames(type, given)));
   const holdsAsWritten = (key: PropertyKey) =>
     has(output, key) &&
     (!isObject(value) ||
       !decoded.has(String(key)) ||
-      isObject(given[key]) ||
-      at(output, key) === given[key]);
+      Equal.equals(at(output, key), given[key]));
   return keysOf(given).flatMap((key) => {
     const here = [...path, Array.isArray(given) ? Number(key) : key];
     return given[key] === undefined || has(value, key) || holdsAsWritten(key)
@@ -347,9 +300,8 @@ export const missing = (
           at(value, key),
           at(output, key),
           here,
-          hidden || hidesChoice(sides, key, given),
         )
-      : [{ path: here }];
+      : [here];
   });
 };
 
@@ -369,59 +321,13 @@ export const refusal = (
     ]),
   );
 
-/**
- * Stop at a reading of Effect that does not hold. These read its schema structure, which a newer
- * Effect could change, and a reading that quietly came back empty would bring silent losses back.
- */
-export const assume = (readings: Readonly<Record<string, boolean>>): void => {
-  const wrong = Object.keys(readings).filter((name) => !readings[name]);
-  if (wrong.length > 0)
-    throw new Error(
-      `viell-effect-schema-http cannot read this version of Effect, so it cannot keep its promise about lost fields. Use a version it was tested with, and report this: ${wrong.join("; ")}.`,
-    );
-};
-
-let readable = false;
-
-/** Read a small union once, so a change in Effect fails loudly here and not silently in a call. */
-const checkReadable = (): void => {
-  if (readable) return;
-  readable = true;
-  const text = Schema.String;
-  const narrow = Schema.Struct({ a: text });
-  const Probe = Schema.Union([narrow, Schema.Struct({ a: text, b: text })]);
-  const renamed = narrow.pipe(Schema.encodeKeys({ a: "A" }));
-  assume({
-    "a union of structs holds a choice": holdsChoice(Probe.ast),
-    "a struct or null holds no choice": !holdsChoice(Schema.NullOr(narrow).ast),
-    "a renamed field holds a choice": holdsChoice(renamed.ast),
-    "a renamed field holds no choice of member": !holdsMemberChoice(
-      renamed.ast,
-    ),
-    "a strict read keeps a later member's field":
-      "b" in Schema.decodeUnknownSync(Probe)({ a: "", b: "" }, strict),
-    "a key no member states can be found": !(
-      "z" in (normalised([Probe.ast], { a: "", z: "" }) as object)
-    ),
-    "a member's field can be found":
-      "b" in (normalised([Probe.ast], { a: "", b: "" }) as object),
-    "a lost field can be found":
-      missing([Probe.ast], { a: "", b: "" }, { a: "" }, { a: "" }).length === 1,
-  });
-};
+/** Whether a schema holds a choice of member, which only a stacked schema can settle for it. */
+export const choosesMember = holding(isMemberChoice);
 
 /**
- * Whether a schema has a choice that can cost a field. This is the way in for everything that acts
- * on the answer, so nothing can ask before the reading has been checked: a change in Effect would
- * otherwise answer "no", and every schema would skip the strict read with no error.
+ * Whether a schema holds a choice that can cost a field, of member or of side, anywhere it can be
+ * seen. Any other schema skips the strict pass. `Schema.NullOr` around a struct has no such choice.
  */
-export const choosing = (ast: Ast): boolean => {
-  checkReadable();
-  return holdsChoice(ast);
-};
-
-/** Whether a schema has a choice of member, which only a stacked schema can settle for it. */
-export const choosesMember = (ast: Ast): boolean => {
-  checkReadable();
-  return holdsMemberChoice(ast);
-};
+export const choosing = holding(
+  (ast) => isMemberChoice(ast) || isSideChoice(ast),
+);

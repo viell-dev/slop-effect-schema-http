@@ -1,4 +1,4 @@
-import { Effect, Exit, Schema, type SchemaAST } from "effect";
+import { Effect, Schema, type SchemaAST } from "effect";
 import * as Excess from "./excess.js";
 
 /** What a schema's constructor takes. This is the one place that names the `~`-prefixed key. */
@@ -109,43 +109,6 @@ const fromPart = (
 ): Effect.Effect<unknown, Schema.SchemaError, unknown> =>
   toDecoded(Schema.make<Schema.Top>(ast), options)(value);
 
-/**
- * Read a part strictly. A union can offer a type the read did not use, so text also has to come out
- * as it did, or a strict read of another member's field would answer for this one.
- */
-const readsStrictly = (
-  type: SchemaAST.AST,
-  value: unknown,
-  output: unknown,
-): Effect.Effect<unknown, unknown, unknown> => {
-  const read = fromPart(type, value, Excess.strict);
-  return typeof value !== "string"
-    ? read
-    : Effect.flatMap(read, (decoded) =>
-        Effect.flatMap(
-          Schema.encodeEffect(Schema.make<Schema.Top>(type))(
-            decoded,
-            Excess.strict,
-          ),
-          (text) =>
-            text === output ? Effect.void : Effect.fail("Another read"),
-        ),
-      );
-};
-
-/** Whether a part that could not be compared cannot be read strictly either. */
-const staysUnread = ({ types = [], value, output }: Excess.Missing) =>
-  types.length === 0
-    ? Effect.succeed(true)
-    : Effect.map(
-        Effect.exit(
-          Effect.firstSuccessOf(
-            types.map((type) => readsStrictly(type, value, output)),
-          ),
-        ),
-        Exit.isFailure,
-      );
-
 /** What a schema wrote, and the fields of its input it would lose, which may be held elsewhere. */
 export interface Written<A> {
   readonly output: A;
@@ -182,9 +145,7 @@ const stripping = <S extends Schema.Top, A, R>(
  *
  * A value that cannot be read that way is read as Effect reads it, and the result is compared with
  * what went in, so what is lost is what actually went, not what a failure suggests would. The write
- * is strict first, because a loose write can choose another member and lose what the read kept. If
- * this can no longer read a schema, a key it should have left out is reported as lost, so it refuses
- * rather than strips.
+ * is strict first, because a loose write can choose another member and lose what the read kept.
  *
  * A schema with neither choice skips all of this, so a plain struct costs what it always did.
  */
@@ -202,23 +163,12 @@ export const reader = <S extends Schema.Top, A, R>(
     Effect.flatMap(exact(input), (value) => write(value, Excess.strict));
   const compared = (input: Input<S>, given: unknown) =>
     Effect.flatMap(decoded(input), (value) =>
-      Effect.flatMap(
+      Effect.map(
         Effect.catch(write(value, Excess.strict), () => write(value)),
-        (output) =>
-          Effect.map(
-            Effect.filter(
-              Excess.missing([contract.ast], given, value, output),
-              staysUnread,
-            ) as Effect.Effect<
-              ReadonlyArray<Excess.Missing>,
-              never,
-              S["DecodingServices"]
-            >,
-            (gone): Written<A> => ({
-              output,
-              lost: gone.map(({ path }) => path),
-            }),
-          ),
+        (output): Written<A> => ({
+          output,
+          lost: Excess.missing([contract.ast], given, value, output),
+        }),
       ),
     );
   return (

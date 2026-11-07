@@ -808,28 +808,50 @@ describe("a caller's field under a union in a body", () => {
     }),
   );
 
-  it.effect("keeps it or refuses it inside a Map and an Option", () =>
+  it.effect("leaves what a Map and an Option hold to their own reading", () =>
     Effect.gen(function* () {
-      const InMap = Schema.ReadonlyMap(Schema.String, NarrowFirst);
+      const value = { a: "x", b: "y" };
       expect(
         textOf(
-          yield* Body.jsonSchema(InMap).encode(
-            new Map([["k", { a: "x", b: "y" }]]),
+          yield* Body.jsonSchema(
+            Schema.ReadonlyMap(Schema.String, NarrowFirst),
+          ).encode(new Map([["k", value]])),
+        ),
+      ).toBe('[["k",{"a":"x"}]]');
+      expect(
+        textOf(
+          yield* Body.jsonSchema(
+            Schema.ReadonlyMap(Schema.String, Apart),
+          ).encode(new Map([["k", value]])),
+        ),
+      ).toBe('[["k",{"a":"x"}]]');
+      expect(
+        textOf(
+          yield* Body.jsonSchema(Schema.Option(Apart)).encode(
+            Option.some(value),
           ),
         ),
-      ).toBe('[["k",{"a":"x","b":"y"}]]');
-      const refusedInMap = yield* Effect.flip(
-        Body.jsonSchema(Schema.ReadonlyMap(Schema.String, Apart)).encode(
-          new Map([["k", { a: "x", b: "y" }]]),
+      ).toBe('{"_tag":"Some","value":{"a":"x"}}');
+    }),
+  );
+
+  it.effect("still reads what it can see beside a Map", () =>
+    Effect.gen(function* () {
+      const Beside = Schema.Struct({
+        held: Schema.ReadonlyMap(
+          Schema.String,
+          Schema.Struct({ a: Schema.String }),
         ),
-      );
-      expect(String(refusedInMap)).toContain("The schema cannot keep");
-      const refusedInOption = yield* Effect.flip(
-        Body.jsonSchema(Schema.Option(Apart)).encode(
-          Option.some({ a: "x", b: "y" }),
+        filter: NarrowFirst,
+      });
+      expect(
+        textOf(
+          yield* Body.jsonSchema(Beside).encode({
+            held: new Map([["k", { a: "x" }]]),
+            filter: { a: "x", b: "y" },
+          }),
         ),
-      );
-      expect(String(refusedInOption)).toContain("The schema cannot keep");
+      ).toBe('{"held":[["k",{"a":"x"}]],"filter":{"a":"x","b":"y"}}');
     }),
   );
 
