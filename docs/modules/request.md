@@ -376,18 +376,24 @@ schema or the raw value. Path and body bindings add their own input properties.
 Each rule below applies to query entries, including those written in the constructor, and to
 headers:
 
-| The request declares                                    | What happens                                              |
-| ------------------------------------------------------- | --------------------------------------------------------- |
-| A raw value under a name a schema allows                | A default: what the schema writes replaces it             |
-| The same, and the caller leaves that optional field out | The default stays, and goes through the schema            |
-| A raw value that does not fit the schema                | `InvalidRequest`                                          |
-| A raw value under a name no schema allows               | `InvalidRequest`, an incompatible shape                   |
-| A raw edit of a required field, after the schema        | `InvalidRequest`, because it could never reach the client |
+| The request declares                                          | What happens                                              |
+| ------------------------------------------------------------- | --------------------------------------------------------- |
+| A raw value under a name a schema allows                      | A default: what the schema writes replaces it             |
+| The same, and the caller leaves that optional field out       | The default stays, and goes through the schema            |
+| A raw value that does not fit the schema                      | `InvalidRequest`                                          |
+| A default and a caller's field no union member holds together | `InvalidRequest`, naming the field that would be lost     |
+| A raw value under a name no schema allows                     | `InvalidRequest`, an incompatible shape                   |
+| A raw edit of a required field, after the schema              | `InvalidRequest`, because it could never reach the client |
 
 A default goes through the schema with the rest of the group, and the request carries what the
 schema writes. `?page=02` under a number field goes out as `page=2`, and order and header spelling
 follow the schema. A check is only as strict as the schema, so `Schema.NumberFromString` accepts
 `"two"` as `NaN` and `Schema.FiniteFromString` refuses it.
+
+Under a union, the defaults and the caller's fields have to fit one member together. A union of
+`{ page, size? }` and `{ cursor }` on a request with `?page=1` takes `{ page: 2 }` and refuses
+`{ cursor }`, because no member holds both. Leave `page` out of the request, or give the caller a
+variant with `Request.removeQuery("page")`.
 
 A default under a field that encodes to a `Date` is read from its text, so `?from=2026-11-07` goes
 out as `from=2026-11-07T00%3A00%3A00.000Z`, and `?from=soon` is an `InvalidRequest`. It is read as

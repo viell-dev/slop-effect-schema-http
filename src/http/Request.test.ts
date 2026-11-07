@@ -5112,6 +5112,309 @@ describe("a schema states the shape of its group", () => {
         }),
     );
 
+    describe("under a union that a default and the caller split", () => {
+      const lostFrom = (message: string) =>
+        JSON.parse(`[${message.slice(message.lastIndexOf(": ") + 2, -1)}]`);
+
+      const Either = Schema.Union([
+        Schema.Struct({ "x-a": Schema.String }),
+        Schema.Struct({ "x-b": Schema.String }),
+      ]);
+      const AOrB = Schema.Union([
+        Schema.Struct({ a: Schema.String }),
+        Schema.Struct({ b: Schema.String }),
+      ]);
+      const Paged = Schema.Union([
+        Schema.Struct({
+          page: Schema.String,
+          size: Schema.optional(Schema.String),
+        }),
+        Schema.Struct({ cursor: Schema.String }),
+      ]);
+      const PagedHeaders = Schema.Union([
+        Schema.Struct({
+          "x-page": Schema.String,
+          "x-size": Schema.optional(Schema.String),
+        }),
+        Schema.Struct({ "x-cursor": Schema.String }),
+      ]);
+
+      it.effect("is refused for the header the caller would lose", () =>
+        Effect.gen(function* () {
+          const request = Request.get("/x").pipe(
+            Request.setHeader("x-a", "default-a"),
+            Request.headers(Either),
+          );
+          const error = yield* refusal(request, {
+            headers: { "x-b": "from-caller" },
+          });
+          expect(lostFrom(error.message)).toEqual(["x-b"]);
+          expect(error.message).toContain("header group");
+          expect(`${error.message} ${String(error)}`).not.toContain(
+            "default-a",
+          );
+          expect(`${error.message} ${String(error)}`).not.toContain(
+            "from-caller",
+          );
+          expect(JSON.stringify(error)).not.toContain("from-caller");
+          // The same call that fits the default's member still goes through.
+          const compiled = yield* compile(request, {
+            headers: { "x-a": "from-caller" },
+          });
+          expect(compiled.headerLines).toEqual([["x-a", "from-caller"]]);
+        }),
+      );
+
+      it.effect("is refused for the query field the caller would lose", () =>
+        Effect.gen(function* () {
+          const request = Request.get("/x?a=1").pipe(Request.query(AOrB));
+          const error = yield* refusal(request, { query: { b: "secret" } });
+          expect(lostFrom(error.message)).toEqual(["b"]);
+          expect(error.message).toContain("query group");
+          expect(`${error.message} ${String(error)}`).not.toContain("secret");
+          expect(JSON.stringify(error)).not.toContain("secret");
+          expect(yield* urlOf(request, { query: { a: "2" } })).toBe("/x?a=2");
+        }),
+      );
+
+      it.effect("names a header in the spelling the schema wrote it", () =>
+        Effect.gen(function* () {
+          const Spelled = Schema.Union([
+            Schema.Struct({ "X-A": Schema.String }),
+            Schema.Struct({ "X-B": Schema.String }),
+          ]);
+          const error = yield* refusal(
+            Request.get("/x").pipe(
+              Request.setHeader("x-a", "1"),
+              Request.headers(Spelled),
+            ),
+            { headers: { "X-B": "2" } },
+          );
+          expect(lostFrom(error.message)).toEqual(["X-B"]);
+        }),
+      );
+
+      it.effect(
+        "names the default when the union keeps the caller's field",
+        () =>
+          Effect.gen(function* () {
+            const Reversed = Schema.Union([
+              Schema.Struct({ cursor: Schema.String }),
+              Schema.Struct({ page: Schema.String }),
+            ]);
+            const error = yield* refusal(
+              Request.get("/x?page=1").pipe(Request.query(Reversed)),
+              { query: { cursor: "c" } },
+            );
+            expect(lostFrom(error.message)).toEqual(["page"]);
+            const ReversedHeaders = Schema.Union([
+              Schema.Struct({ "x-cursor": Schema.String }),
+              Schema.Struct({ "x-page": Schema.String }),
+            ]);
+            const header = yield* refusal(
+              Request.get("/x").pipe(
+                Request.setHeader("x-page", "1"),
+                Request.headers(ReversedHeaders),
+              ),
+              { headers: { "x-cursor": "c" } },
+            );
+            expect(lostFrom(header.message)).toEqual(["x-page"]);
+          }),
+      );
+
+      it.effect(
+        "does not blame shared query defaults for a caller's cursor",
+        () =>
+          Effect.gen(function* () {
+            const one = Request.get("/x?page=1").pipe(Request.query(Paged));
+            const two = Request.get("/x?page=1&size=9").pipe(
+              Request.query(Paged),
+            );
+            for (const request of [one, two]) {
+              const error = yield* refusal(request, {
+                query: { cursor: "c" },
+              });
+              expect(lostFrom(error.message)).toEqual(["cursor"]);
+              expect(error.message).not.toContain('"page"');
+              expect(error.message).not.toContain('"size"');
+            }
+            // A caller on the default's own member is unaffected.
+            expect(yield* urlOf(one, { query: { page: "2" } })).toBe(
+              "/x?page=2",
+            );
+            expect(yield* urlOf(one, { query: { page: "2", size: "5" } })).toBe(
+              "/x?page=2&size=5",
+            );
+            expect(yield* urlOf(two, { query: { page: "2" } })).toBe(
+              "/x?page=2&size=9",
+            );
+            // A variant without the default takes the other member.
+            const scrolling = one.pipe(Request.removeQuery("page"));
+            expect(yield* urlOf(scrolling, { query: { cursor: "c" } })).toBe(
+              "/x?cursor=c",
+            );
+          }),
+      );
+
+      it.effect(
+        "does not blame shared header defaults for a caller's cursor",
+        () =>
+          Effect.gen(function* () {
+            const request = Request.get("/x").pipe(
+              Request.setHeader("x-page", "1"),
+              Request.setHeader("x-size", "9"),
+              Request.headers(PagedHeaders),
+            );
+            const error = yield* refusal(request, {
+              headers: { "x-cursor": "c" },
+            });
+            expect(lostFrom(error.message)).toEqual(["x-cursor"]);
+            const compiled = yield* compile(request, {
+              headers: { "x-page": "2" },
+            });
+            expect(compiled.headerLines).toEqual([
+              ["x-page", "2"],
+              ["x-size", "9"],
+            ]);
+          }),
+      );
+
+      it.effect("names a default the caller's member cannot hold", () =>
+        Effect.gen(function* () {
+          const error = yield* refusal(
+            Request.get("/x?size=9").pipe(Request.query(Paged)),
+            { query: { cursor: "c" } },
+          );
+          expect(lostFrom(error.message)).toEqual(["size"]);
+          const header = yield* refusal(
+            Request.get("/x").pipe(
+              Request.setHeader("x-size", "9"),
+              Request.headers(PagedHeaders),
+            ),
+            { headers: { "x-cursor": "c" } },
+          );
+          expect(lostFrom(header.message)).toEqual(["x-size"]);
+        }),
+      );
+
+      it.effect("names every field that would go, and only those", () =>
+        Effect.gen(function* () {
+          const Wide = Schema.Union([
+            Schema.Struct({ a: Schema.String, b: Schema.String }),
+            Schema.Struct({ c: Schema.String, d: Schema.String }),
+          ]);
+          const error = yield* refusal(
+            Request.get("/x?a=1&b=2").pipe(Request.query(Wide)),
+            { query: { c: "3", d: "4" } },
+          );
+          expect(lostFrom(error.message)).toEqual(["c", "d"]);
+        }),
+      );
+
+      it.effect("takes a later member that holds the whole group", () =>
+        Effect.gen(function* () {
+          const Later = Schema.Union([
+            Schema.Struct({ a: Schema.String }),
+            Schema.Struct({
+              a: Schema.optional(Schema.String),
+              b: Schema.String,
+            }),
+          ]);
+          expect(
+            yield* urlOf(Request.get("/x?a=1").pipe(Request.query(Later)), {
+              query: { b: "2" },
+            }),
+          ).toBe("/x?a=1&b=2");
+          const Overlap = Schema.Union([
+            Schema.Struct({ a: Schema.String }),
+            Schema.Struct({ a: Schema.String, b: Schema.String }),
+          ]);
+          expect(
+            yield* urlOf(Request.get("/x?b=1").pipe(Request.query(Overlap)), {
+              query: { a: "x" },
+            }),
+          ).toBe("/x?a=x&b=1");
+          const LaterHeaders = Schema.Union([
+            Schema.Struct({ "x-a": Schema.String }),
+            Schema.Struct({
+              "x-a": Schema.optional(Schema.String),
+              "x-b": Schema.String,
+            }),
+          ]);
+          const compiled = yield* compile(
+            Request.get("/x").pipe(
+              Request.setHeader("x-a", "1"),
+              Request.headers(LaterHeaders),
+            ),
+            { headers: { "x-b": "2" } },
+          );
+          expect(compiled.headerLines).toEqual([
+            ["x-a", "1"],
+            ["x-b", "2"],
+          ]);
+        }),
+      );
+
+      it.effect("is decided per call, not when the request is defined", () =>
+        Effect.gen(function* () {
+          const request = Request.get("/x?a=1").pipe(Request.query(AOrB));
+          expect(yield* urlOf(request, { query: { a: "2" } })).toBe("/x?a=2");
+          yield* refusal(request, { query: { b: "2" } });
+          expect(yield* urlOf(request, { query: { a: "3" } })).toBe("/x?a=3");
+        }),
+      );
+
+      it.effect("leaves a union alone when there is no default", () =>
+        Effect.gen(function* () {
+          const request = Request.get("/x").pipe(Request.query(AOrB));
+          expect(yield* urlOf(request, { query: { b: "2" } })).toBe("/x?b=2");
+        }),
+      );
+
+      it.effect("still takes a default that fits a discriminated union", () =>
+        Effect.gen(function* () {
+          const Tagged = Schema.Union([
+            Schema.Struct({
+              kind: Schema.Literal("a"),
+              a: Schema.optional(Schema.String),
+            }),
+            Schema.Struct({
+              kind: Schema.Literal("b"),
+              b: Schema.optional(Schema.String),
+            }),
+          ]);
+          const request = Request.get("/x?b=1").pipe(Request.query(Tagged));
+          expect(yield* urlOf(request, { query: { kind: "b" } })).toBe(
+            "/x?kind=b&b=1",
+          );
+          const error = yield* refusal(request, { query: { kind: "a" } });
+          expect(lostFrom(error.message)).toEqual(["b"]);
+        }),
+      );
+
+      it.effect("applies to a list of pairs and an open member too", () =>
+        Effect.gen(function* () {
+          const Pairs = Schema.Array(
+            Schema.Tuple([Schema.String, Schema.String]),
+          );
+          expect(
+            yield* urlOf(Request.get("/x?b=1").pipe(Request.query(Pairs)), {
+              query: [["a", "2"]],
+            }),
+          ).toBe("/x?a=2&b=1");
+          const Open = Schema.Union([
+            Schema.Struct({ a: Schema.String }),
+            Schema.Record(Schema.String, Schema.String),
+          ]);
+          expect(
+            yield* urlOf(Request.get("/x?a=1").pipe(Request.query(Open)), {
+              query: { b: "2" },
+            }),
+          ).toBe("/x?b=2&a=1");
+        }),
+      );
+    });
+
     it.effect("is decoded with the rest of the group", () =>
       Effect.gen(function* () {
         const Range = Schema.Struct({
