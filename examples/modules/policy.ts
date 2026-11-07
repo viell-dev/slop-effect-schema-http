@@ -69,3 +69,32 @@ assert.equal(
   "ready",
 );
 assert.equal(attempts, 3);
+
+// A completed 200 is an outcome the classifier sees, so this repeats it until the schedule ends,
+// and the operation returns the last attempt's result.
+let answers = 0;
+const everyOutcome = Operation.make(
+  Request.get("https://api.example.test/health"),
+  Response.status(200, Body.text),
+  { policy: Policy.make(Schedule.recurs(2), { while: () => true }) },
+);
+assert.equal(
+  await Effect.runPromise(
+    everyOutcome.execute(undefined).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          answers++;
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new globalThis.Response(`answer ${answers}`),
+            ),
+          );
+        }),
+      ),
+    ),
+  ),
+  "answer 3",
+);
+assert.equal(answers, 3);
