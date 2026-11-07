@@ -538,7 +538,7 @@ describe(`gateway (${lane.name})`, () => {
     );
 
     it.live(
-      "[PAY-3b] a header declaration cannot relabel a text body, so the gateway refuses the call",
+      "[PAY-3b] a header declaration relabels a text body as XML, so the gateway answers the call",
       () =>
         Effect.gen(function* () {
           const gateway = yield* start();
@@ -549,20 +549,17 @@ describe(`gateway (${lane.name})`, () => {
             ),
             Response.status(200, Body.text),
           );
-          const error = yield* viaFetch(
-            relabelled
-              .execute({
-                body: XmlRpc.serializeCall({
-                  methodName: "system.listMethods",
-                  params: [],
-                }),
-              })
-              .pipe(Effect.flip),
+          const reply = yield* viaFetch(
+            relabelled.execute({
+              body: XmlRpc.serializeCall({
+                methodName: "system.listMethods",
+                params: [],
+              }),
+            }),
           );
-          const unexpected = narrow(error, "UnexpectedResponse");
-          expect(unexpected.metadata.status).toBe(400);
+          expect(reply).toContain("<string>system.listMethods</string>");
           const [call] = yield* gateway.ledger;
-          expect(header(call!.lines, "content-type")).toBe("text/plain");
+          expect(header(call!.lines, "content-type")).toBe("text/xml");
         }),
     );
 

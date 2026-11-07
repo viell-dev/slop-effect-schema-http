@@ -24,6 +24,7 @@ import {
   Wsdl,
   XmlSchema,
 } from "../clients/soap-store/index.js";
+import { watching } from "../clients/received.js";
 import * as Xml from "../formats/xml.js";
 import {
   bodyText,
@@ -591,32 +592,40 @@ describe(`soap-store (${lane.name})`, () => {
   });
 
   describe("a GET with a SOAP body", () => {
-    for (const [client, layer] of lane.clients)
-      it.live(
-        `[STAT-12] the documented GET download with a SOAP body is refused before dispatch (${client})`,
-        () =>
-          Effect.gen(function* () {
-            const backend = yield* start();
-            const download = Operation.make(
-              Request.get("soap/download").pipe(
-                Request.baseUrl(backend.origin),
-                Request.setHeader(
-                  "SOAPAction",
-                  `"${Actions.DownloadDocument.uri}"`,
-                ),
-                Request.body(Soap.Soap11.body(Actions.DownloadDocument)),
+    it.live(
+      "[STAT-12] fetch refuses the documented GET download as a transport error after the client received it",
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          const watched = watching();
+          const download = Operation.make(
+            Request.get("soap/download").pipe(
+              Request.baseUrl(backend.origin),
+              Request.setHeader(
+                "SOAPAction",
+                `"${Actions.DownloadDocument.uri}"`,
               ),
-              Response.status(200, Body.bytes),
-            );
-            const error = yield* download
-              .execute({ body: { id: "DOC-000001" } })
-              .pipe(Effect.provide(layer), Effect.flip);
-            expect(as(error, "InvalidRequest").message).toBe(
-              "GET cannot carry a request body",
-            );
-            expect(yield* backend.ledger).toEqual([]);
-          }),
-      );
+              Request.body(Soap.Soap11.body(Actions.DownloadDocument)),
+            ),
+            Response.status(200, Body.bytes),
+            { transformClient: watched.last },
+          );
+          const error = yield* download
+            .execute({ body: { id: "DOC-000001" } })
+            .pipe(Effect.provide(lane.fetchClient), Effect.flip);
+          expect(watched.received).toEqual([
+            {
+              method: "GET",
+              url: `${backend.origin}/soap/download`,
+              hash: undefined,
+            },
+          ]);
+          expect(as(error, "HttpClientError").reason._tag).toBe(
+            "TransportError",
+          );
+          expect(yield* backend.ledger).toEqual([]);
+        }),
+    );
 
     it.live(
       "[STAT-12] POST does not reach the download servlet either: 405 with Allow: GET",
@@ -935,17 +944,15 @@ describe(`soap-store (${lane.name})`, () => {
 
     for (const [client, layer] of lane.clients)
       it.live(
-        `[HDR-5f] a Content-Type declaration does not relabel a SOAP 1.1 body as SOAP 1.2 (${client})`,
+        `[HDR-5f] a Content-Type declaration relabels a SOAP 1.1 body as SOAP 1.2, and the store refuses the envelope (${client})`,
         () =>
           Effect.gen(function* () {
             const backend = yield* start();
+            const label = `application/soap+xml; charset=utf-8; action="${NS}#FetchDocument"`;
             const relabelled = Operation.make(
               Request.post("soap").pipe(
                 Request.baseUrl(backend.origin),
-                Request.setHeader(
-                  "Content-Type",
-                  `application/soap+xml; charset=utf-8; action="${NS}#FetchDocument"`,
-                ),
+                Request.setHeader("Content-Type", label),
                 Request.body(Soap.Soap11.body(Actions.FetchDocument)),
               ),
               Response.status(200, Soap.Soap12.decoder(Actions.FetchDocument)),
@@ -953,11 +960,11 @@ describe(`soap-store (${lane.name})`, () => {
             const error = yield* relabelled
               .execute({ body: { id: "DOC-000001" } })
               .pipe(Effect.provide(layer), Effect.flip);
-            // The codec's text/xml went out, so the store read SOAP 1.1 without a SOAPAction.
+            // The label went out and the bytes stayed SOAP 1.1, which is what the store refuses.
             expect(as(error, "UnexpectedResponse").metadata.status).toBe(400);
             const [recorded] = yield* backend.ledger;
             expect(headerValues(recorded!.lines, "content-type")).toEqual([
-              "text/xml; charset=utf-8",
+              label,
             ]);
             expect(bodyText(recorded!)).toContain(`xmlns:soap="${SOAP11}"`);
           }),

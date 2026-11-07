@@ -154,26 +154,30 @@ non-tokens`. Separators and empty list elements are not kept; encoding joins wit
     Apache's recorded MKCOL advertises only TRACE, unlike its OPTIONS list; both are pinned as
     observed rather than treated as DocVault's policy. Consumer checks decode the real lists and
     error outcomes in both lanes/providers.
-- **STAT-12** A GET carrying a SOAP body for downloads: rejected client-side before dispatch as a
-  typed error. Status: tested.
-  - `[STAT-12] the documented GET download with a SOAP body is refused before dispatch` (provider;
-    `InvalidRequest`, empty ledger)
+- **STAT-12** A GET carrying a SOAP body for downloads: the library passes it on like any other
+  request, so a client that can send the body reaches the servlet, and what `fetch` does with it is
+  the platform's limit. Issue #4 asked for a typed error before dispatch;
+  [#96](https://github.com/viell-dev/slop-effect-schema-http/issues/96) replaced that. Status:
+  tested.
+  - Node-only: `[STAT-12] the documented GET download with a SOAP body reaches the servlet`
+    (`lines` and the raw client; the ledger holds the GET with the envelope, and the bytes decode)
+  - `[STAT-12] fetch refuses the documented GET download as a transport error after the client received it`
+    (both lanes, with an empty ledger; EXT-11w records the limit for any GET)
   - `[STAT-12] POST does not reach the download servlet either: 405 with Allow: GET`
-  - Node-only: `[STAT-12] the fixture really serves a GET with a SOAP body, reachable only by
-rewriting the method in client middleware`. Client middleware runs after the library's check,
-    so the line-preserving provider sends the GET with its body and the servlet answers; Node's
-    `fetch` refuses the same request as a transport error.
 - **HDR-5e** Latin-1 bytes under a charset-less `text/xml`. Status: tested.
   - `[HDR-5e] SOAP 1.1 replies are Latin-1 bytes under a charset-less text/xml; UTF-8 text
 decoding corrupts them silently`. Verified in both lanes: `Body.text` decodes the reply as
     UTF-8 without failing and turns every Latin-1 letter into U+FFFD, while the character
     references above U+00FF survive; a strict UTF-8 decoder fails as `DecodeError`.
 - **HDR-5f** SOAP 1.2 carrying the action inside the content type: a protocol version change is a
-  codec change, not a header change. Status: tested.
+  codec change, not a header change. A declared `Content-Type` changes the label and never the
+  bytes. Status: tested.
   - `[HDR-5f] SOAP 1.2 carries the action in the codec's content type and sends no SOAPAction`
     (provider)
-  - `[HDR-5f] a Content-Type declaration does not relabel a SOAP 1.1 body as SOAP 1.2` (provider;
-    the codec's `text/xml` goes out as the only content-type line)
+  - `[HDR-5f] a Content-Type declaration relabels a SOAP 1.1 body as SOAP 1.2, and the store refuses the envelope`
+    (provider; the declaration wins over the codec's `text/xml`, as
+    [#100](https://github.com/viell-dev/slop-effect-schema-http/issues/100) decided, and goes out as
+    the only content-type line, over a body that is still SOAP 1.1, so the store answers 400)
 - **HDR-6** `SOAPAction` required, quoted, and matching the body action: one declared header per
   action. Status: tested.
   - `[HDR-6] every action declares one quoted SOAPAction naming its body element` (provider)
@@ -602,8 +606,9 @@ type`
   - `[PAY-3b] an invoice struct carries i4, double, boolean, dateTime.iso8601 and an array of
 structs`
   - `[PAY-3b] bare scalar responses: an i4 count, an untyped string and an array of strings`
-  - `[PAY-3b] a header declaration cannot relabel a text body, so the gateway refuses the call`
-    (both lanes send `text/plain`: the body codec owns the content type)
+  - `[PAY-3b] a header declaration relabels a text body as XML, so the gateway answers the call`
+    (both lanes send `text/xml`: a request's declaration wins over the body codec's `text/plain`,
+    as [#100](https://github.com/viell-dev/slop-effect-schema-http/issues/100) decided)
   - XML's character rules hold in the gateway's own reader and writer, checked over raw calls and
     reply bytes:
     `[PAY-3b] a call holding a NUL or another character XML forbids, raw or as a reference, gets the parse-error fault in well-formed XML`
@@ -1396,7 +1401,7 @@ of these replies has round-trip and negative tests of its own in
   and answers one section. Declared as `Request.get("")` with
   `Request.baseUrl("${origin}<help>#closing")`, and as `Request.get("")` with
   `Request.path(Schema.String, (path) => path)`, `Request.baseUrl(origin)` and the input
-  `{ path: "<help>#closing" }`. The client received `${origin}<help>#closing`, with no `hash`. The
+  `{ path: "<help>#closing" }`. The client received `${origin}<help>` with the `hash` `closing`. The
   target is `<help>#closing`. Status: tested.
   - `[EXT-9a] a fragment in the base URL reaches help.cgi, which answers that section`
   - `[EXT-9a] a fragment in path output reaches help.cgi, which answers that section`
@@ -1406,28 +1411,24 @@ of these replies has round-trip and negative tests of its own in
   received `${origin}<help>?lang=de` with the `hash` `closing`. The target is
   `<help>?lang=de#closing`, and the answer is the `closing` line in German. Status: tested.
   - `[EXT-9b] setHash in transformClient puts the fragment after the query, and help.cgi answers that section in German`
-- **EXT-9c** A fragment in the constructor, through the raw client: the library removes it, so no
-  client can send it. Declared as `Request.get("${origin}<help>#closing")`. The client received
-  `${origin}<help>` with no `hash`, the target is `<help>`, and the answer is the whole topic.
-  Status: defect, [#93](https://github.com/viell-dev/slop-effect-schema-http/issues/93).
-  - `[EXT-9c] currently, the constructor removes a fragment before the client sees it, so help.cgi answers the whole topic`
-  - When #93 is fixed, this test and EXT-9e's constructor case change to the fixed behaviour in the
-    same step as `library-ref` moves, and this entry to tested.
-- **EXT-9d** A fragment in path output with a query, through the raw client: the library writes the
-  query after the fragment, so the query lands inside it. Declared as EXT-9a's path output with
-  `Request.setQuery("lang", "de")`. The client received `${origin}<help>#closing?lang=de`, and that
-  target arrives, with no query as the URL standard reads it. `help.cgi` looks up a section called
-  `closing?lang=de` and answers `ERROR|E_SECTION|no section closing?lang=de`. Status: defect,
-  [#83](https://github.com/viell-dev/slop-effect-schema-http/issues/83).
-  - `[EXT-9d] currently, a query goes after a fragment in path output, so help.cgi reads it as part of the section name`
-  - When #83 is fixed, this test and EXT-9e's case of path output with a query change to the fixed
-    behaviour in the same step as `library-ref` moves, and this entry to tested.
+- **EXT-9c** A fragment in the constructor, through the raw client: it stays on the request, as
+  [#93](https://github.com/viell-dev/slop-effect-schema-http/issues/93) decided, so a client can
+  send it. Declared as `Request.get("${origin}<help>#closing")`. The client received
+  `${origin}<help>` with the `hash` `closing`, the target is `<help>#closing`, and the answer is
+  that section. Status: tested.
+  - `[EXT-9c] a fragment in the constructor stays on the request and reaches help.cgi, which answers that section`
+- **EXT-9d** A fragment in path output with a query, through the raw client: the query goes before
+  the fragment, as [#83](https://github.com/viell-dev/slop-effect-schema-http/issues/83) decided.
+  Declared as EXT-9a's path output with `Request.setQuery("lang", "de")`. The client received
+  `${origin}<help>?lang=de` with the `hash` `closing`, the target is `<help>?lang=de#closing`, and
+  the answer is the `closing` line in German. Status: tested.
+  - `[EXT-9d] a query goes before a fragment in path output, and help.cgi answers that section in German`
 - **EXT-9e** The declarations of EXT-9a to EXT-9d through every provider of the lane: the platform
-  drops the fragment. Each client received what the raw client received in that entry. The targets
-  are `<help>` for the base URL, the path output and the constructor; `<help>?lang=de` for
-  `setHash`, whose answer is the whole topic in German; and `<help>` for path output with a query,
-  because the query is inside the fragment, so it goes too. Every other answer is the whole topic
-  in English. The same in both lanes, and for `fetch` and `lines` in Node. Status: limit.
+  drops the fragment. Each client received what the raw client received in that entry, the `hash`
+  included. The targets are `<help>` for the base URL, the path output and the constructor, and
+  `<help>?lang=de` for `setHash` and for path output with a query, whose answer is the whole topic
+  in German. Every other answer is the whole topic in English. The same in both lanes, and for
+  `fetch` and `lines` in Node. Status: limit.
   - `[EXT-9e] ${provider} drops a fragment from ${declaration}, and help.cgi answers without it`
     (provider)
   - `[EXT-9e] HelpReply round-trips a whole topic, keeping the order of its lines`

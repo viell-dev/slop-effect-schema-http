@@ -32,12 +32,10 @@ export interface Connection {
 // Shared request transforms
 // ---------------------------------------------------------------------------------------------
 
-/** The base URL and bearer credential of a connection, applied to any request with raw headers. */
+/** The base URL and bearer credential of a connection, applied to any request. */
 export const at =
   (connection: Connection) =>
-  <I, E, R, Q extends boolean>(
-    request: Request.Request<I, E, R, false, Q>,
-  ): Request.Request<I, E, R, false, Q> =>
+  <I, E, R>(request: Request.Request<I, E, R>): Request.Request<I, E, R> =>
     request.pipe(
       Request.setHeader("Authorization", () => {
         const token = connection.credential();
@@ -379,7 +377,7 @@ const taskRejections = unauthorized.pipe(
   Response.orElse(methodNotAllowed),
 );
 
-const taskPath = <S extends Schema.Constraint & { readonly Encoded: string }>(
+const taskPath = <S extends Schema.Top & { readonly Encoded: string }>(
   schema: S,
   suffix = "",
 ) =>

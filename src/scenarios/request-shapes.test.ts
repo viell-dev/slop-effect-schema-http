@@ -17,8 +17,8 @@ import { bodyText, header, headerValues } from "../harness/lane.js";
 const notFound = Response.status(404, Body.text);
 
 /** Send one request through `fetch` to a fresh `echo`, and return all that came of it. */
-const attemptWith = <I, E, R, H extends boolean, Q extends boolean>(
-  build: (origin: string) => Request.Request<I, E, R, H, Q>,
+const attemptWith = <I, E, R>(
+  build: (origin: string) => Request.Request<I, E, R>,
   input: I,
 ) =>
   Effect.gen(function* () {
@@ -39,13 +39,13 @@ const attemptWith = <I, E, R, H extends boolean, Q extends boolean>(
     };
   });
 
-const attempt = <E, R, H extends boolean, Q extends boolean>(
-  build: (origin: string) => Request.Request<unknown, E, R, H, Q>,
+const attempt = <E, R>(
+  build: (origin: string) => Request.Request<unknown, E, R>,
 ) => attemptWith(build, undefined);
 
 /** A request `fetch` delivers: `echo` saw exactly one, and answered it. */
-const delivered = <I, E, R, H extends boolean, Q extends boolean>(
-  build: (origin: string) => Request.Request<I, E, R, H, Q>,
+const delivered = <I, E, R>(
+  build: (origin: string) => Request.Request<I, E, R>,
   input: I,
 ) =>
   Effect.gen(function* () {

@@ -232,9 +232,7 @@ export const forwardedFor =
  */
 export const controls = {
   /** Any status, decoded as untyped JSON: the provider's own spellings, before normalization. */
-  raw: <I, E, R, H extends boolean, Q extends boolean>(
-    request: Request.Request<I, E, R, H, Q>,
-  ) =>
+  raw: <I, E, R>(request: Request.Request<I, E, R>) =>
     Operation.make(
       request,
       Response.when(() => true, Body.json),

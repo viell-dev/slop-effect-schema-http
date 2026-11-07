@@ -13,15 +13,15 @@ import { header, type Recorded } from "../harness/lane.js";
 
 const HELP = "/cgi-bin/help.cgi/accounts";
 
-const opening = {
-  topic: "accounts",
-  section: "opening",
-  text: "Open an account from the File menu.",
-};
 const closing = {
   topic: "accounts",
   section: "closing",
   text: "Close an account at month end.",
+};
+const schliessen = {
+  topic: "accounts",
+  section: "closing",
+  text: "Konten werden zum Monatsende geschlossen.",
 };
 
 const requestLines = (ledger: ReadonlyArray<Recorded>) =>
@@ -54,11 +54,7 @@ describe("fragments through the raw client (node)", () => {
           Help.inBaseUrl,
         );
         expect(received).toEqual([
-          {
-            method: "GET",
-            url: `${gateway.origin}${HELP}#closing`,
-            hash: undefined,
-          },
+          { method: "GET", url: `${gateway.origin}${HELP}`, hash: "closing" },
         ]);
         const ledger = yield* gateway.ledger;
         expect(requestLines(ledger)).toEqual([`GET ${HELP}#closing`]);
@@ -77,11 +73,7 @@ describe("fragments through the raw client (node)", () => {
           Help.inPathOutput,
         );
         expect(received).toEqual([
-          {
-            method: "GET",
-            url: `${gateway.origin}${HELP}#closing`,
-            hash: undefined,
-          },
+          { method: "GET", url: `${gateway.origin}${HELP}`, hash: "closing" },
         ]);
         expect(requestLines(yield* gateway.ledger)).toEqual([
           `GET ${HELP}#closing`,
@@ -109,21 +101,12 @@ describe("fragments through the raw client (node)", () => {
         expect(requestLines(yield* gateway.ledger)).toEqual([
           `GET ${HELP}?lang=de#closing`,
         ]);
-        expect(outcome).toEqual({
-          _tag: "Help",
-          sections: [
-            {
-              topic: "accounts",
-              section: "closing",
-              text: "Konten werden zum Monatsende geschlossen.",
-            },
-          ],
-        });
+        expect(outcome).toEqual({ _tag: "Help", sections: [schliessen] });
       }),
   );
 
   it.live(
-    "[EXT-9c] currently, the constructor removes a fragment before the client sees it, so help.cgi answers the whole topic",
+    "[EXT-9c] a fragment in the constructor stays on the request and reaches help.cgi, which answers that section",
     () =>
       Effect.gen(function* () {
         const gateway = yield* lane.backend("gateway");
@@ -132,15 +115,17 @@ describe("fragments through the raw client (node)", () => {
           Help.inConstructor,
         );
         expect(received).toEqual([
-          { method: "GET", url: `${gateway.origin}${HELP}`, hash: undefined },
+          { method: "GET", url: `${gateway.origin}${HELP}`, hash: "closing" },
         ]);
-        expect(requestLines(yield* gateway.ledger)).toEqual([`GET ${HELP}`]);
-        expect(outcome).toEqual({ _tag: "Help", sections: [opening, closing] });
+        expect(requestLines(yield* gateway.ledger)).toEqual([
+          `GET ${HELP}#closing`,
+        ]);
+        expect(outcome).toEqual({ _tag: "Help", sections: [closing] });
       }),
   );
 
   it.live(
-    "[EXT-9d] currently, a query goes after a fragment in path output, so help.cgi reads it as part of the section name",
+    "[EXT-9d] a query goes before a fragment in path output, and help.cgi answers that section in German",
     () =>
       Effect.gen(function* () {
         const gateway = yield* lane.backend("gateway");
@@ -151,18 +136,14 @@ describe("fragments through the raw client (node)", () => {
         expect(received).toEqual([
           {
             method: "GET",
-            url: `${gateway.origin}${HELP}#closing?lang=de`,
-            hash: undefined,
+            url: `${gateway.origin}${HELP}?lang=de`,
+            hash: "closing",
           },
         ]);
         expect(requestLines(yield* gateway.ledger)).toEqual([
-          `GET ${HELP}#closing?lang=de`,
+          `GET ${HELP}?lang=de#closing`,
         ]);
-        expect(outcome).toEqual({
-          _tag: "GatewayError",
-          code: "E_SECTION",
-          message: "no section closing?lang=de",
-        });
+        expect(outcome).toEqual({ _tag: "Help", sections: [schliessen] });
       }),
   );
 
