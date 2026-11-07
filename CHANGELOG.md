@@ -17,12 +17,14 @@
 - Put a query before a fragment. A `#` in a base URL or in `Request.path` output used to take the
   query into the fragment, where it never arrived as a query. The compiled request now keeps the
   fragment in its `hash` field rather than its URL text, and a custom `UrlEncoding.join` receives
-  the base and path without fragments. A provider built with `HttpClient.makeWith` has to read
-  `request.hash` ([#83](https://github.com/viell-dev/slop-effect-schema-http/issues/83)).
+  the base and path without fragments. **Breaking for providers:** one built with
+  `HttpClient.makeWith` has to read `request.hash`
+  ([#83](https://github.com/viell-dev/slop-effect-schema-http/issues/83)).
 - Keep a fragment written in the constructor. `Request.make` and its shortcuts used to discard it.
   It now reaches the client in the `hash` field, exactly as written, and wins over a fragment in
-  path output or a base URL. `fetch` still does not send a fragment. `Request.Declaration` gains
-  `hash` ([#93](https://github.com/viell-dev/slop-effect-schema-http/issues/93)).
+  path output or a base URL. `fetch` still does not send a fragment. **Breaking for extensions:**
+  `Request.Declaration` requires a new `hash` member
+  ([#93](https://github.com/viell-dev/slop-effect-schema-http/issues/93)).
 - Keep the spelling of header names. `Request.setHeader` and `Request.appendHeader` used to
   lowercase a name, so a provider that sends header lines could not deliver `X-API-Key`. Lines now
   keep the spelling they were written with, and comparing names still folds case, so `setHeader`
@@ -33,15 +35,15 @@
   `Content-Type` or `Content-Length` now takes effect, from a raw setter or a header schema, before
   or after the body, including on multipart and empty bodies. A declaration that used to be ignored
   now goes out. `Request.removeHeader(name)` now stops the automatic value, and `Request.Compiled`,
-  `Draft` and `Declaration` gain `removedHeaders`
+  `Draft` and `Declaration` require a new `removedHeaders` member
   ([#100](https://github.com/viell-dev/slop-effect-schema-http/issues/100)).
 - **Breaking:** pass a constructor query to the client as written until something edits that entry.
   The library used to decode it and render it again, so `?a=1;b=2` became `?a=1%3Bb%3D2`, `?q=a+b`
   became `?q=a%20b`, `?a=1&&b=2` lost a segment and a lone `?` disappeared. Each entry keeps its
   text, stays editable by its decoded name, and goes through `UrlEncoding.query` once edited. A
   custom `UrlEncoding.query` no longer receives entries kept as written, and text the library used
-  to escape, such as a space, is no longer escaped. `Request.Declaration` gains `emptyQuery` and
-  `Draft` gains `queryText`
+  to escape, such as a space, is no longer escaped. `Request.Declaration` requires a new
+  `emptyQuery` member and `Draft` a new `queryText` member
   ([#102](https://github.com/viell-dev/slop-effect-schema-http/issues/102)).
 
 ## 0.1.0 — 2026-11-04

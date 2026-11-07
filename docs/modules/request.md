@@ -193,9 +193,9 @@ URLs](./url-encoding.md#constructor-urls).
 
 A fragment stays on the request. The compiled request holds it in `request.hash`, exactly as
 written, and the query goes before it. A constructor fragment survives `Request.path` and query
-edits, and `Request.mapEffect` with `HttpClientRequest.removeHash` removes it. Whether it goes out
-is up to the client: `fetch` does not send one. See
-[fragments](../design.md#fragments-stay-on-the-request).
+edits, and `Request.mapEffect` with `HttpClientRequest.removeHash` removes it, after which a
+fragment in the base URL or path output applies. Whether it goes out is up to the client: `fetch`
+does not send one. See [fragments](../design.md#fragments-stay-on-the-request).
 
 Unrenderable URLs fail with `Request.InvalidRequest`. Schema encoding errors remain distinct from
 `InvalidRequest` and occur before dispatch.
