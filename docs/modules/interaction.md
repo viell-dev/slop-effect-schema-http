@@ -44,8 +44,9 @@ which successful results are worth reusing:
 
 <<< ../../examples/modules/interaction.ts#options
 
-A result rejected by `retain` is still returned to its callers. Failures are never retained.
-Disabling retention does not disable sharing of an equal in-progress execution.
+A result rejected by `retain` is still returned to its callers, and it drops an earlier retained
+success for equal input, which it replaces. Failures are never retained. Disabling retention does
+not disable sharing of an equal in-progress execution.
 
 ## Advanced coordination
 

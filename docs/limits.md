@@ -64,8 +64,10 @@ So Fetch keeps repeated and trailing slashes, and resolves dot segments, includi
 server may then merge `//`, and another client can differ.
 
 Fetch makes other choices of its own. It sends lowercase header names, does not send a fragment,
-refuses a body on GET or HEAD, and refuses a method such as `TRACE`. A service that needs one of
-those needs a provider that can send it.
+refuses a body on GET or HEAD, and refuses a method such as `TRACE`. Effect's Fetch client takes a
+non-empty declared `Content-Length` off, so `fetch` sends the body's real length, and on Node.js an
+empty one fails as a transport failure. A service that needs one of those needs a provider that can
+send it.
 
 A relative URL with no base depends on the platform. Node refuses it as an invalid URL, and a
 browser resolves it against the page, so the request goes to the page's own server, with no error.

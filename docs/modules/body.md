@@ -99,8 +99,9 @@ headers](./request.md#a-request-s-own-headers-win).
 Neither changes the bytes a codec produced. A declared `Content-Type` on multipart form data
 replaces the transport's, and without the boundary the body cannot be read. A declared
 `Content-Length` that disagrees with the body is [passed to the client as
-written](../limits.md#paths-and-other-requests-passed-on-as-written). A client can fail or stall on
-it, as Node Fetch does, so a request that declares one needs a provider that can send it and a
+written](../limits.md#paths-and-other-requests-passed-on-as-written). Effect's Fetch client takes a
+non-empty one off, so `fetch` sends the body's real length. A client that does send it can fail or
+stall on it, so a request that depends on one needs a provider that can send it and a
 [timeout](./policy.md#bound-execution-time).
 
 A decoder's `mediaType` contributes to `Accept`; it does not itself check the response's
