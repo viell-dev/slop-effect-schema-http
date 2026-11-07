@@ -78,6 +78,12 @@
   schema's decoding services as well as its encoding services, so a schema-backed body's
   `EncodeServices` include both. `Request.Input` names the input type
   ([#113](https://github.com/viell-dev/slop-effect-schema-http/issues/113)).
+- Let `Request.setQuery` and `Request.setHeader` take a plain object, so several fixed fields no
+  longer need a call each. Each key replaces its name, in key order. `setQuery` takes what a query
+  schema may encode to, so `page: 2` writes `page=2`, `null` is a bare key and an array repeats the
+  name, as well as a function. `setHeader` takes text or a function. `undefined` removes a name's
+  earlier declarations in both
+  ([#85](https://github.com/viell-dev/slop-effect-schema-http/issues/85)).
 
 ## 0.1.0 — 2026-11-04
 

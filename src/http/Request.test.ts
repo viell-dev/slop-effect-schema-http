@@ -89,6 +89,18 @@ const meeting = (parties: number) =>
     ).pipe(Effect.andThen(Deferred.await(everyone)));
   });
 
+/** The `InvalidRequest` a request fails with. */
+const refusal = <I, E, R>(request: Request.Request<I, E, R>, input: I) =>
+  Effect.flatMap(Effect.flip(compile(request, input)), (error) =>
+    error instanceof Request.InvalidRequest
+      ? Effect.succeed(error)
+      : Effect.die(error),
+  );
+
+/** A compiled request's header lines. */
+const linesOf = <I, E, R>(request: Request.Request<I, E, R>, input: I) =>
+  Effect.map(compile(request, input), (compiled) => compiled.headerLines);
+
 describe("Request.make", () => {
   it.effect("keeps the method and URL", () =>
     Effect.gen(function* () {
@@ -1256,6 +1268,340 @@ describe("raw query", () => {
   );
 });
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/85
+describe("declaring fields from a plain object", () => {
+  describe("Request.setQuery", () => {
+    it.effect("applies each value rule, in key order", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/x").pipe(
+              Request.setQuery({
+                page: 2,
+                sort: "name",
+                tag: ["a", "b"],
+                flag: null,
+                empty: "",
+                gone: undefined,
+                late: () => "x",
+              }),
+            ),
+            undefined,
+          ),
+        ).toBe("/x?page=2&sort=name&tag=a&tag=b&flag&empty=&late=x");
+      }),
+    );
+
+    it.effect.each([
+      ["a number", 2, "2"],
+      ["a negative number", -1.5, "-1.5"],
+      ["a bigint", 90071992547409931n, "90071992547409931"],
+      ["true", true, "true"],
+      ["false", false, "false"],
+    ] as const)("writes %s as text", ([, value, expected]) =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/x").pipe(Request.setQuery({ a: value })),
+            undefined,
+          ),
+        ).toBe(`/x?a=${expected}`);
+      }),
+    );
+
+    it.effect("replaces each key and leaves other names alone", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/x?a=%41&b=2&a=3&c=%43").pipe(
+              Request.setQuery({ a: "new", d: "added" }),
+            ),
+            undefined,
+          ),
+        ).toBe("/x?a=new&b=2&c=%43&d=added");
+      }),
+    );
+
+    it.effect("keeps a repeated name together at its first position", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/x?a=1&tag=old&b=2").pipe(
+              Request.setQuery({ tag: ["p", "q"] }),
+            ),
+            undefined,
+          ),
+        ).toBe("/x?a=1&tag=p&tag=q&b=2");
+      }),
+    );
+
+    it.effect(
+      "removes earlier declarations for undefined or an empty list",
+      () =>
+        Effect.gen(function* () {
+          const request = Request.get("/x?a=1&b=2&c=3");
+          expect(
+            yield* urlOf(
+              request.pipe(Request.setQuery({ a: undefined })),
+              undefined,
+            ),
+          ).toBe("/x?b=2&c=3");
+          expect(
+            yield* urlOf(request.pipe(Request.setQuery({ a: [] })), undefined),
+          ).toBe("/x?b=2&c=3");
+        }),
+    );
+
+    it.effect("keeps nulls and drops undefined inside a list", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/x").pipe(
+              Request.setQuery({ a: [null, undefined, "b", 3] }),
+            ),
+            undefined,
+          ),
+        ).toBe("/x?a&a=b&a=3");
+      }),
+    );
+
+    it.effect("runs a function during preparation, once per compilation", () =>
+      Effect.gen(function* () {
+        let calls = 0;
+        const request = Request.get("/x").pipe(
+          Request.setQuery({
+            n: () => String(++calls),
+            nothing: () => undefined,
+            bare: () => null,
+          }),
+        );
+        expect(calls).toBe(0);
+        expect(yield* urlOf(request, undefined)).toBe("/x?n=1&bare");
+        expect(yield* urlOf(request, undefined)).toBe("/x?n=2&bare");
+      }),
+    );
+
+    it.effect("reads the object when called, not when applied", () =>
+      Effect.gen(function* () {
+        const fields: Record<string, string> = { a: "1" };
+        const edit = Request.setQuery(fields);
+        fields["a"] = "2";
+        fields["b"] = "3";
+        expect(yield* urlOf(Request.get("/x").pipe(edit), undefined)).toBe(
+          "/x?a=1",
+        );
+      }),
+    );
+
+    it.effect("takes a name a plain object would inherit", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/x").pipe(
+              Request.setQuery({
+                constructor: "a",
+                ["__proto__"]: "b",
+                toString: "c",
+              }),
+            ),
+            undefined,
+          ),
+        ).toBe("/x?constructor=a&__proto__=b&toString=c");
+      }),
+    );
+
+    it.effect("does nothing for an empty object", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* urlOf(
+            Request.get("/x?a=%41").pipe(Request.setQuery({})),
+            undefined,
+          ),
+        ).toBe("/x?a=%41");
+      }),
+    );
+
+    it.effect("is checked against a schema like any other edit", () =>
+      Effect.gen(function* () {
+        const typed = Request.get("/x").pipe(
+          Request.query(
+            Schema.Struct({
+              page: Schema.FiniteFromString,
+              limit: Schema.optional(Schema.FiniteFromString),
+            }),
+          ),
+        );
+        const input = { query: { page: 1 } };
+        expect(
+          yield* urlOf(typed.pipe(Request.setQuery({ limit: 5 })), input),
+        ).toBe("/x?page=1&limit=5");
+        const stray = yield* Effect.flip(
+          compile(typed.pipe(Request.setQuery({ other: "1" })), input),
+        );
+        expect(stray.message).toContain('"other"');
+        for (const value of ["2", undefined]) {
+          const required = yield* Effect.flip(
+            compile(typed.pipe(Request.setQuery({ page: value })), input),
+          );
+          expect(required.message).toContain("could never reach the client");
+        }
+      }),
+    );
+
+    it("accepts the values a query schema may encode to, or a function", () => {
+      Request.setQuery({
+        a: 1,
+        b: 1n,
+        c: true,
+        d: null,
+        e: undefined,
+        f: "x",
+        g: [1, "x", null, undefined],
+        h: () => "x",
+        i: () => null,
+        j: () => undefined,
+      });
+      // @ts-expect-error: a nested object has no query representation
+      Request.setQuery({ a: { b: "1" } });
+      // @ts-expect-error: a function supplies text, as `setQuery(name, value)` does
+      Request.setQuery({ a: () => 1 });
+      // @ts-expect-error: a list holds query values, not functions
+      Request.setQuery({ a: [() => "x"] });
+      // @ts-expect-error: the two-argument form still takes text
+      Request.setQuery("a", 1);
+    });
+  });
+
+  describe("Request.setHeader", () => {
+    it.effect("sets each field, in key order, keeping spelling", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* linesOf(
+            Request.get("/x").pipe(
+              Request.setHeader({ "X-One": "1", "X-Two": () => "2" }),
+            ),
+            undefined,
+          ),
+        ).toEqual([
+          ["X-One", "1"],
+          ["X-Two", "2"],
+        ]);
+      }),
+    );
+
+    it.effect(
+      "replaces each key without case, and leaves other names alone",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* linesOf(
+              Request.get("/x").pipe(
+                Request.appendHeader("x-tag", "a"),
+                Request.setHeader("X-Kept", "k"),
+                Request.appendHeader("X-TAG", "b"),
+                Request.setHeader({ "X-Tag": "c" }),
+              ),
+              undefined,
+            ),
+          ).toEqual([
+            ["X-Tag", "c"],
+            ["X-Kept", "k"],
+          ]);
+        }),
+    );
+
+    it.effect("removes earlier declarations of an undefined key", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* linesOf(
+            Request.get("/x").pipe(
+              Request.setHeader("X-Gone", "1"),
+              Request.setHeader("X-Kept", "k"),
+              Request.setHeader({ "x-gone": undefined }),
+            ),
+            undefined,
+          ),
+        ).toEqual([["X-Kept", "k"]]);
+      }),
+    );
+
+    it.effect("leaves an automatic value in place for an undefined key", () =>
+      Effect.gen(function* () {
+        const compiled = yield* compile(
+          Request.post("/x").pipe(
+            Request.body(Body.text),
+            Request.setHeader({ "Content-Type": undefined }),
+          ),
+          { body: "b" },
+        );
+        expect(compiled.request.headers["content-type"]).toBe("text/plain");
+        expect(compiled.removedHeaders).toEqual(new Set());
+      }),
+    );
+
+    it.effect("wins over an automatic value, like the two-argument form", () =>
+      Effect.gen(function* () {
+        const compiled = yield* compile(
+          Request.post("/x").pipe(
+            Request.body(Body.text),
+            Request.setHeader({ "Content-Type": "application/weird" }),
+          ),
+          { body: "b" },
+        );
+        expect(compiled.request.headers["content-type"]).toBe(
+          "application/weird",
+        );
+      }),
+    );
+
+    it.effect("is checked against a schema like any other edit", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/x").pipe(
+          Request.headers(Schema.Struct({ "x-limit": Schema.String })),
+          Request.setHeader({ "X-LIMIT": "1" }),
+        );
+        const error = yield* Effect.flip(
+          compile(request, { headers: { "x-limit": "2" } }),
+        );
+        expect(error.message).toContain("could never reach the client");
+      }),
+    );
+
+    it("accepts text or a function", () => {
+      Request.setHeader({
+        a: "1",
+        b: () => "2",
+        c: () => undefined,
+        d: undefined,
+      });
+      // @ts-expect-error: header values are text
+      Request.setHeader({ a: 1 });
+      // @ts-expect-error: a header has no bare form
+      Request.setHeader({ a: null });
+      // @ts-expect-error: use `appendHeader` for repeated lines
+      Request.setHeader({ a: ["1", "2"] });
+    });
+  });
+
+  it("keeps every raw edit one type, so they compose as a list", () => {
+    const edits = [
+      Request.setQuery({ a: "1" }),
+      Request.setQuery("b", "2"),
+      Request.appendQuery("c", "3"),
+      Request.removeQuery("d"),
+      Request.setHeader({ a: "1" }),
+      Request.setHeader("b", "2"),
+      Request.appendHeader("c", "3"),
+      Request.removeHeader("d"),
+    ];
+    const reduced = edits.reduce(
+      (request, edit) => edit(request),
+      Request.get("/x"),
+    );
+    expectTypeOf(reduced).toEqualTypeOf<Request.Request<unknown>>();
+  });
+});
+
 describe("Request.headers", () => {
   const ApiHeaders = Schema.Struct({
     "X-Api-Key": Schema.NonEmptyString,
@@ -1681,18 +2027,6 @@ describe("Request.path", () => {
     >().toEqualTypeOf<Schema.SchemaError | Request.InvalidRequest>();
   });
 });
-
-/** The `InvalidRequest` a request fails with. */
-const refusal = <I, E, R>(request: Request.Request<I, E, R>, input: I) =>
-  Effect.flatMap(Effect.flip(compile(request, input)), (error) =>
-    error instanceof Request.InvalidRequest
-      ? Effect.succeed(error)
-      : Effect.die(error),
-  );
-
-/** A compiled request's header lines. */
-const linesOf = <I, E, R>(request: Request.Request<I, E, R>, input: I) =>
-  Effect.map(compile(request, input), (compiled) => compiled.headerLines);
 
 /** A time of day, which an application keeps as a value of its own. */
 class Moment {

@@ -57,8 +57,12 @@ the [Request examples](./modules/request.md#bind-application-input).
 
 Raw declarations (`setHeader`, `appendHeader`, `removeHeader`, and the query equivalents) take a
 value or a computation. A computation runs once per materialization, and `undefined` omits the
-field. Header names compare without case and keep the spelling they were written with, so a
-`setHeader` that replaces an earlier line also replaces its spelling. Query keys compare exactly.
+field. `setHeader` and `setQuery` also take a plain object, whose keys each replace their name in
+key order. Its query values are what a query schema may encode to, or a computation, so `page: 2`
+writes `page=2`, `null` is a bare key and an array repeats the name, at the name's first position.
+In either group a key set to `undefined` removes that name's earlier declarations. Header names
+compare without case and keep the spelling they were written with, so a `setHeader` that replaces an
+earlier line also replaces its spelling. Query keys compare exactly.
 
 `Request.headers` and `Request.query` take a schema whose encoded side fits the representation
 (`Transport.HeaderInput` or `UrlEncoding.QueryInput`); its application side can be any shape.
