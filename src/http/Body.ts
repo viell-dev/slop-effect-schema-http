@@ -300,7 +300,7 @@ export const encodeSchema = <S extends Schema.Top>(contract: S) => {
 };
 
 /**
- * Read and write schema-validated JSON using the schema's application type.
+ * Read and write schema-validated JSON, returning the schema's application type.
  *
  * @example
  * ```ts

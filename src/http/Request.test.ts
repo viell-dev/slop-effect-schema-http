@@ -2487,6 +2487,23 @@ describe("a schema-backed input takes either side of its schema", () => {
       }),
     );
 
+    it.effect("fills in a tagged class's tag on a mix", () =>
+      Effect.gen(function* () {
+        class Tagged extends Schema.TaggedClass<Tagged>()("Tagged", {
+          page: Schema.FiniteFromString,
+        }) {}
+        const request = Request.get("/things").pipe(Request.query(Tagged));
+        for (const query of [
+          { page: 1 },
+          { _tag: "Tagged", page: "1" },
+        ] as const) {
+          expect(yield* urlOf(request, { query })).toBe(
+            "/things?_tag=Tagged&page=1",
+          );
+        }
+      }),
+    );
+
     it.effect("fills in a constructor default on a mix", () =>
       Effect.gen(function* () {
         const Paging = Schema.Struct({
@@ -2770,6 +2787,46 @@ describe("a schema states the shape of its group", () => {
           ),
         );
         expect(yield* urlOf(request, { query: { tag: [] } })).toBe("/things");
+      }),
+    );
+
+    it.effect("gives way to a value the schema supplies itself", () =>
+      Effect.gen(function* () {
+        const Constructed = Schema.Struct({
+          limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+            Schema.withConstructorDefault(Effect.succeed(25)),
+          ),
+        });
+        expect(
+          yield* urlOf(
+            Request.get("/things?limit=5").pipe(Request.query(Constructed)),
+            { query: {} },
+          ),
+        ).toBe("/things?limit=25");
+        const Decoded = Schema.Struct({
+          limit: Schema.FiniteFromString.pipe(
+            Schema.withDecodingDefaultKey(Effect.succeed("25")),
+          ),
+        });
+        expect(
+          yield* urlOf(
+            Request.get("/things?limit=5").pipe(Request.query(Decoded)),
+            { query: {} },
+          ),
+        ).toBe("/things?limit=25");
+      }),
+    );
+
+    it.effect("stays under a field that encodes to nothing when left out", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/things?limit=5").pipe(
+          Request.query(
+            Schema.Struct({
+              limit: Schema.OptionFromOptionalKey(Schema.FiniteFromString),
+            }),
+          ),
+        );
+        expect(yield* urlOf(request, { query: {} })).toBe("/things?limit=5");
       }),
     );
 
@@ -3366,6 +3423,27 @@ describe("a schema states the shape of its group", () => {
       }),
     );
 
+    // A field with a decoding default is optional on the encoded side, which is where "required" is
+    // read, so this edit is lost without an error. The design page states the limit.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/87
+    it.effect("currently misses a field with a decoding default", () =>
+      Effect.gen(function* () {
+        const request = Request.get("/things").pipe(
+          Request.query(
+            Schema.Struct({
+              limit: Schema.FiniteFromString.pipe(
+                Schema.withDecodingDefaultKey(Effect.succeed("25")),
+              ),
+            }),
+          ),
+          Request.setQuery("limit", "5"),
+        );
+        expect(yield* urlOf(request, { query: { limit: 1 } })).toBe(
+          "/things?limit=1",
+        );
+      }),
+    );
+
     it.effect("is told apart from a field no schema allows", () =>
       Effect.gen(function* () {
         const error = yield* refusal(
@@ -3675,6 +3753,24 @@ describe("a schema states the shape of its group", () => {
           ["Authorization", "Bearer shared"],
         ]);
       }),
+    );
+
+    // Defaults are added as pairs, which only a list of pairs reads. The design page states the limit.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/87
+    it.effect(
+      "currently cannot take a default under a schema encoded as a Map",
+      () =>
+        Effect.gen(function* () {
+          const request = Request.get("/x?a=1").pipe(
+            Request.query(Schema.ReadonlyMap(Schema.String, Schema.String)),
+          );
+          const input = { query: new Map([["b", "2"]]) };
+          const error = yield* refusal(request, input);
+          expect(error.message).toContain('"a"');
+          expect(
+            yield* urlOf(request.pipe(Request.removeQuery("a")), input),
+          ).toBe("/x?b=2");
+        }),
     );
 
     it.effect("allows any name from a list of pairs", () =>

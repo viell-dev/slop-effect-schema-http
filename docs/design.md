@@ -120,7 +120,9 @@ before anything is sent.
 
 - **A raw value under a name a schema allows is a default.** What the schema writes replaces it. If
   the schema writes nothing under that name, the default stays, so an omitted optional field never
-  removes an inherited value. An empty list counts as written, and leaves no entries.
+  removes an inherited value. An empty list counts as written, and leaves no entries, and so does a
+  value the schema supplies itself: a constructor or decoding default writes the name, so it
+  replaces a raw default.
 - **A default goes through the schema.** The group is decoded and encoded again, together with what
   the schema wrote, and the request carries the result. A value that does not fit is an error. Raw
   text cannot get past a schema, and a decoder that accepts more spellings than its encoder writes
@@ -169,6 +171,11 @@ Some things are outside the check:
 - `Request.mapEffect` is the deliberate way around a schema, so a native edit is not a declaration.
   `transformClient` and a client layer work on the prepared request, so the check does not see them.
 - A check is only as strict as its schema. `Schema.NumberFromString` accepts `"two"` as `NaN`.
+- "Required" is read from the encoded side. A field with `Schema.withDecodingDefaultKey` is optional
+  there, so a raw edit of it after the schema is not refused, although the schema always writes it
+  and the edit never reaches the client.
+- A schema that encodes to an iterable other than a list of pairs, such as a `Map`, cannot take
+  defaults, because they are added as pairs. A default under it fails the check.
 
 A failed check names the fields and never includes their values, because a default may be a
 credential. It carries no `cause`, since a schema's error would repeat the value.

@@ -223,7 +223,8 @@ follow the schema. A check is only as strict as the schema, so `Schema.NumberFro
 
 "Required" means the schema always writes the name. A required field with
 `Schema.withConstructorDefault` needs no input and still cannot be removed. To give a required field
-a value without asking the caller, use `Request.mapInput`.
+a value without asking the caller, use `Request.mapInput`. A value the schema supplies itself, from
+a constructor or decoding default, counts as written, so it replaces a raw default.
 
 The error names the fields and leaves out their values, because a default may be a credential. The
 check runs when the request is prepared, so a mismatch compiles and then fails on every run. It does
