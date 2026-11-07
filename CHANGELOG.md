@@ -17,7 +17,14 @@
   `{ b }` used to send `a` and drop `b`, and a value a wider member refused was dropped the same
   way. It is now a `SchemaError` before anything is sent, which names the field and never its value.
   This call compiled and ran, and it now fails at run time, for the values that reach it. Add a
-  member that holds both fields, or send one of them
+  member that holds both fields, or send one of them. A field a schema stacked with the union takes
+  is not lost, in headers and query, so that call goes on working. `Draft` requires new `takenQuery`
+  and `takenHeaders` members
+  ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
+- Leave a field with the schema that took it. A union stacked after a schema that holds one of its
+  fields used to take that value for a default it could not hold, and a raw value under that name
+  did the same in either order, so `Request.InvalidRequest` refused a group that lost nothing. Such
+  a group now goes out whole
   ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
 - **Breaking:** refuse a raw edit, after the schema, of a field with a decoding default. A field
   with `Schema.withDecodingDefaultKey` or one of its relatives is optional on the encoded side, so

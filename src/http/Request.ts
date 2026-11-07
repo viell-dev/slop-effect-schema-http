@@ -86,6 +86,7 @@ export type QueryFields = Readonly<
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that
  * names it, because the types allow that value and any member would lose a field the schema states.
  * A key no member states is stripped, as a struct strips it, and so is a key the tag has ruled out.
+ * In a header or query group, a field a schema stacked with the union takes is not lost.
  */
 export type Input<S extends Schema.Top> = Inputs.Input<S>;
 
@@ -203,6 +204,14 @@ export interface Draft {
   readonly removedHeaders: ReadonlySet<string>;
   /** The groups a later {@link unbind} cleared, so their earlier bindings skip themselves. */
   readonly unbound: ReadonlySet<Group>;
+  /**
+   * The fields of the caller's `query` input the bound schemas took. A field one schema would lose
+   * is not lost if a schema stacked with it took that field. `undefined` where the group needs no
+   * record, because no stacked schema can lose a field.
+   */
+  readonly takenQuery: ReadonlySet<PropertyKey> | undefined;
+  /** The fields of the caller's `headers` input the bound schemas took, as in {@link takenQuery}. */
+  readonly takenHeaders: ReadonlySet<PropertyKey> | undefined;
 }
 
 /**
@@ -740,8 +749,9 @@ const applyDeclaredBodyFields = (
  * that would be lost otherwise is an {@link InvalidRequest}, which names that field. The caller's
  * own value is read before that, as {@link Input} describes.
  *
- * Header schemas stack: a second one adds its fields, and together they state the shape. Use
- * {@link unbind} to start again.
+ * Header schemas stack: a second one adds its fields, and together they state the shape. A field
+ * one of them takes stays with it, whatever a union beside it leaves out. Use {@link unbind} to
+ * start again.
  *
  * A field the schema produces wins over an automatic `Accept`, `Content-Type` or `Content-Length`,
  * whether the schema is bound before or after the body, and so does a default. An optional field
@@ -756,8 +766,8 @@ export const headers = <
 >(
   contract: S,
 ) => {
-  const encode = Inputs.encoder(contract, Schema.encodeEffect(contract));
-  const { shape, settle } = Shapes.bind(contract, foldHeader);
+  const read = Inputs.reader(contract, Schema.encodeEffect(contract));
+  const { shape, settle, taken } = Shapes.bind(contract, foldHeader);
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
@@ -776,12 +786,30 @@ export const headers = <
       ) {
         if (draft.unbound.has("headers"))
           return yield* self.prepare(input, draft);
-        const output = yield* encode(input.headers);
-        const prepared = yield* self.prepare(input, draft);
+        const { output, lost: lostFromInput } = yield* read(input.headers);
+        const own =
+          draft.takenHeaders && taken(input.headers, output, lostFromInput);
+        const prepared = yield* self.prepare(
+          input,
+          own === undefined
+            ? draft
+            : {
+                ...draft,
+                takenHeaders: new Set([...(draft.takenHeaders ?? []), ...own]),
+              },
+        );
+        if (lostFromInput.length > 0)
+          yield* Inputs.refuseLost(
+            contract,
+            lostFromInput,
+            prepared.takenHeaders,
+          );
         const names = Shapes.written(output, foldHeader);
+        const elsewhere = Shapes.others(prepared.takenHeaders, own, foldHeader);
         const defaults = prepared.headerLines.filter(
           ([name]) =>
             !names.has(foldHeader(name)) &&
+            !elsewhere.has(foldHeader(name)) &&
             Shapes.allows(shape, foldHeader(name)),
         );
         const settled = yield* Effect.mapError(settle(output, defaults), () =>
@@ -853,8 +881,9 @@ export const headers = <
  * schema. A `?` in a base URL or path output is text in the URL, not a field, so it is outside this
  * check.
  *
- * Query schemas stack: a second one adds its fields, and together they state the shape. Use
- * {@link unbind} to start again, and {@link mapInput} to supply a required field's value.
+ * Query schemas stack: a second one adds its fields, and together they state the shape. A field one
+ * of them takes stays with it, whatever a union beside it leaves out. Use {@link unbind} to start
+ * again, and {@link mapInput} to supply a required field's value.
  */
 export const query = <
   S extends Schema.Top &
@@ -862,8 +891,8 @@ export const query = <
 >(
   contract: S,
 ) => {
-  const encode = Inputs.encoder(contract, Schema.encodeEffect(contract));
-  const { shape, settle } = Shapes.bind(contract, foldQuery);
+  const read = Inputs.reader(contract, Schema.encodeEffect(contract));
+  const { shape, settle, taken } = Shapes.bind(contract, foldQuery);
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
@@ -882,15 +911,33 @@ export const query = <
       ) {
         if (draft.unbound.has("query"))
           return yield* self.prepare(input, draft);
-        const output = yield* encode(input.query);
-        const prepared = yield* self.prepare(input, draft);
+        const { output, lost: lostFromInput } = yield* read(input.query);
+        const own =
+          draft.takenQuery && taken(input.query, output, lostFromInput);
+        const prepared = yield* self.prepare(
+          input,
+          own === undefined
+            ? draft
+            : {
+                ...draft,
+                takenQuery: new Set([...(draft.takenQuery ?? []), ...own]),
+              },
+        );
+        if (lostFromInput.length > 0)
+          yield* Inputs.refuseLost(
+            contract,
+            lostFromInput,
+            prepared.takenQuery,
+          );
         const names = Shapes.written(output, foldQuery);
+        const elsewhere = Shapes.others(prepared.takenQuery, own, foldQuery);
         const defaults = prepared.request.urlParams.params
           .filter(
             (param) =>
               prepared.declaredQuery.has(param) &&
               !isEmptySegment(prepared, param) &&
               !names.has(param[0]) &&
+              !elsewhere.has(param[0]) &&
               Shapes.allows(shape, param[0]),
           )
           .map((param) => [param[0], queryValue(prepared, param)] as const);
@@ -1351,6 +1398,14 @@ export interface Compiled {
   readonly removedHeaders: ReadonlySet<string>;
 }
 
+/** A record to start from where a schema in the group can lose a field to another one. */
+const takenRecord = (
+  shapes: ReadonlyArray<Shape>,
+): ReadonlySet<PropertyKey> | undefined =>
+  shapes.length > 1 && shapes.some(({ chooses }) => chooses)
+    ? new Set()
+    : undefined;
+
 const initialDraft = (declaration: Declaration): Draft => {
   // Custom method strings pass through at runtime; the method union is narrower than the transport.
   const native = HttpClientRequest.make(
@@ -1372,6 +1427,8 @@ const initialDraft = (declaration: Declaration): Draft => {
       declaredQuery: new Set(),
       removedHeaders: declaration.removedHeaders,
       unbound: new Set(),
+      takenQuery: takenRecord(declaration.queryShapes),
+      takenHeaders: takenRecord(declaration.headerShapes),
     },
     declaration.query.flatMap((field) =>
       Fields.resolve([field]).map(

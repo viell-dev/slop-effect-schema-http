@@ -400,9 +400,12 @@ A key no member states is stripped, as a struct strips it. So is a key only a me
 tag states: where only the `"a"` member has `x`, `{ kind: "b", x }` goes out as `{ kind: "b" }`. The
 types refuse both of these in a literal.
 
-Stacked schemas read one input, so a union takes a sibling's field for a key it does not state, and
-leaves it to that schema. A name both state is the union's to hold, so a union of `{ a }` and
-`{ b }` stacked with `{ b }` refuses `{ a, b }`. Keep a name in one schema.
+Stacked schemas read one input, and a field stays with the schema that took it. A union takes a
+sibling's field for a key it does not state, and a field it would lose is not lost if a stacked
+schema took it: a union of `{ a }` and `{ b }` stacked with `{ b }`, in either order, sends
+`{ a, b }` whole. A field no schema in the group took is still refused, so two unions that each
+leave `b` to the other refuse it. A union keeps the member it chose, so a union of `{ b }` and
+`{ a, c }` stacked with `{ b }` refuses `{ a, b, c }`. Put `{ a, c }` first.
 
 ### A schema states the shape of its group
 

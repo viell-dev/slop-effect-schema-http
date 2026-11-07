@@ -144,7 +144,8 @@ encoded value --> decode --> decoded -> encode --> wire
   `{ a, b }` is a `SchemaError` before dispatch, naming the field that would go. The types allow
   that value, and whichever member took it would lose a field the schema states, so the choice
   cannot be made for the caller. A field a wider member states and refuses the value of is the same
-  case.
+  case. Only a real loss counts: a field another schema in the group takes is not lost, as the rule
+  on stacked schemas below says.
 - **A key no member states is stripped, as a struct strips it.** That is not a union choosing badly.
   The types did not allow the key, and a stacked schema's fields reach every schema in the group
   this way. So is a key only a member with another tag states, because the tag has already chosen,
@@ -202,6 +203,14 @@ an error: `Request.InvalidRequest` before anything is sent.
   schemas state the shape. Each takes its own fields from one input, and a default goes through
   every schema that allows its name. An open schema sees every field, so its value type has to
   accept the others.
+- **A field stays with the schema that took it.** Where a group has a union and a schema beside it,
+  each binding records what it took from the caller, and the union checks what it would lose against
+  that record once every schema in the group has read the input. So under a union of `{ a }` and
+  `{ b }` stacked with `{ b }`, in either order, `{ a, b }` goes out whole. The record holds what a
+  schema took, not what it states, because two unions that each state `b` would otherwise leave it
+  to each other and lose it with no error. They are refused instead. What another schema took is not
+  a default for the union, and it replaces a raw value under that name. A body or path has nothing
+  stacked beside it by name, so this applies to headers and query.
 - **A schema can allow other names.** A record or `Schema.StructWithRest` allows any name, and
   values are still checked. Callers can then pass any name as well.
 - **`Request.unbind` removes bindings.** `Request.unbind(group)` makes earlier bindings of that group
@@ -248,9 +257,9 @@ Some things are outside the check:
   fields with their encoded forms. Under `Schema.encodeKeys`, a field with a decoding default
   therefore reads as optional, so a raw edit of it after the schema is not refused, although the
   edit never reaches the client.
-- A union reads the whole input and cannot see which names a stacked schema holds. A name both state
-  is the union's to hold, so a union of `{ a }` and `{ b }` stacked with `{ b }` refuses `{ a, b }`.
-  Keep a name in one schema.
+- A union chooses its member before it can know what a stacked schema took. A union of `{ b }` and
+  `{ a, c }` stacked with `{ b }` takes the first member for `{ a, b, c }`, so `a` and `c` are
+  refused, although the second member and the stacked schema could hold it all between them.
 - A schema that encodes to an iterable other than a list of pairs, such as a `Map`, cannot take
   defaults, because they are added as pairs. A default under it fails the check.
 

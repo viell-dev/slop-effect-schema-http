@@ -1,7 +1,7 @@
 import { Schema, SchemaAST, SchemaIssue } from "effect";
 
 /** Where a key sits in a value, one step for each level. */
-type Path = ReadonlyArray<PropertyKey>;
+export type Path = ReadonlyArray<PropertyKey>;
 
 /** Parse options that make a schema refuse what it would strip. */
 export const strict: SchemaAST.ParseOptions = { onExcessProperty: "error" };
