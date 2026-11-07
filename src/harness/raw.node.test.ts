@@ -218,6 +218,11 @@ describe("raw provider", () => {
         parameter,
       );
       expect(query.entry.target).toBe("/q?x=1&key=a+b");
+      const fragment = yield* sent(
+        (base) => Request.get("").pipe(Request.baseUrl(`${base}/q#top`)),
+        parameter,
+      );
+      expect(fragment.entry.target).toBe("/q?key=a+b#top");
     }),
   );
 

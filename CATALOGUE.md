@@ -1451,7 +1451,9 @@ of these replies has round-trip and negative tests of its own in
 EXT-10a to EXT-10v send odd request shapes through the raw client, in
 `src/scenarios/request-shapes.node.test.ts`, which needs Node because only Node has that client.
 EXT-11a to EXT-11v send the same shapes through `fetch`, in `src/scenarios/request-shapes.test.ts`,
-in both lanes. The letters match: EXT-11c is EXT-10c's shape.
+in both lanes. The letters match: EXT-11c is EXT-10c's shape. Where an entry says a URL is resolved
+or normalized, that happens in the URL parse inside Effect's `HttpClient.make`, before `fetch` sees
+the request, so any provider built with `make` does the same.
 
 The server's answer is not the point of these, so each test starts the neutral helper, with
 `lane.backend("echo", undefined, { listener: "socket" })`. The socket listener is needed because

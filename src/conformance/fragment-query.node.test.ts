@@ -43,7 +43,7 @@ const options = {
 
 /** The extract's three 64-byte records, by the page's layout. */
 const EXTRACT = [
-  "H" + "MONTHEND" + PERIOD + "19990104",
+  ["H", "MONTHEND", PERIOD, "19990104"].join(""),
   "D" +
     "00012345" +
     "Synthetic account".padEnd(30) +
