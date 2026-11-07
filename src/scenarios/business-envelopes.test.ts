@@ -203,8 +203,8 @@ describe("business API: envelopes", () => {
       () =>
         Effect.gen(function* () {
           const { backend, api } = yield* start;
-          const found = yield* api.getCustomer.execute({ path: 1001 });
-          const missing = yield* api.getCustomer.execute({ path: 999 });
+          const found = yield* api.getCustomer.execute({ path: { id: 1001 } });
+          const missing = yield* api.getCustomer.execute({ path: { id: 999 } });
           expect(found).toEqual({
             result: "OK",
             customer: {
@@ -220,7 +220,7 @@ describe("business API: envelopes", () => {
           });
           // Both were 200s: only the body discriminates them.
           const required = yield* api.requireCustomer
-            .execute({ path: 999 })
+            .execute({ path: { id: 999 } })
             .pipe(Effect.flip);
           expect(required).toBeInstanceOf(Envelopes.CustomerNotFound);
           expect(required).toMatchObject({
@@ -471,7 +471,7 @@ describe("business API: envelopes", () => {
             ),
             { transformClient: watching(unmatched) },
           )
-            .execute({ path: 1001 })
+            .execute({ path: { id: 1001 } })
             .pipe(Effect.flip);
           expect(error._tag).toBe("UnexpectedResponse");
           expect(unmatched.slice(0, 2)).toEqual(["response 200", "select 200"]);
@@ -546,9 +546,13 @@ describe("business API: envelopes", () => {
         () =>
           Effect.gen(function* () {
             const { backend, api } = yield* start;
-            const archived = yield* api.archiveCustomer.execute({ path: 1004 });
+            const archived = yield* api.archiveCustomer.execute({
+              path: { id: 1004 },
+            });
             expect(archived).toEqual({ _tag: "Archived" });
-            const reread = yield* api.requireCustomer.execute({ path: 1004 });
+            const reread = yield* api.requireCustomer.execute({
+              path: { id: 1004 },
+            });
             expect(reread.archived).toBe(true);
             // The runbook's "archive receipt" would need a JSON body; there is none to decode.
             const asDocumented = Operation.make(
@@ -556,7 +560,7 @@ describe("business API: envelopes", () => {
               Response.status(204, Body.json),
             );
             const error = yield* asDocumented
-              .execute({ path: 1005 })
+              .execute({ path: { id: 1005 } })
               .pipe(Effect.flip);
             expect(error._tag).toBe("DecodeError");
             if (error._tag !== "DecodeError") return;
@@ -583,7 +587,7 @@ describe("business API: envelopes", () => {
             api.responses.savePreferences,
             { transformClient: record.transformClient },
           ).execute({
-            path: 1001,
+            path: { id: 1001 },
             body: { newsletter: true, invoiceFormat: "PDF" },
           });
           expect(saved).toEqual({ _tag: "Saved" });
@@ -592,7 +596,9 @@ describe("business API: envelopes", () => {
             "application/json;charset=UTF-8",
           );
           expect(record.seen[0]?.headers["content-length"]).toBe("0");
-          const preferences = yield* api.getPreferences.execute({ path: 1001 });
+          const preferences = yield* api.getPreferences.execute({
+            path: { id: 1001 },
+          });
           expect(preferences).toEqual({
             newsletter: true,
             invoiceFormat: "PDF",
@@ -604,7 +610,7 @@ describe("business API: envelopes", () => {
           );
           const error = yield* asJson
             .execute({
-              path: 1001,
+              path: { id: 1001 },
               body: { newsletter: false, invoiceFormat: "EMAIL" },
             })
             .pipe(Effect.flip);
@@ -717,7 +723,7 @@ describe("business API: envelopes", () => {
         Effect.gen(function* () {
           const { backend, api } = yield* start;
           const updated = yield* api.updateCustomer.execute({
-            path: 1003,
+            path: { id: 1003 },
             body: { name: "Fabrikam Fibers Ltd", tier: "GOLD" },
           });
           expect(updated).toEqual({
@@ -738,10 +744,12 @@ describe("business API: envelopes", () => {
             api.responses.lookup,
           );
           const claimed = yield* trusting.execute({
-            path: 1003,
+            path: { id: 1003 },
             body: { tier: "PLATINUM" },
           });
-          const actual = yield* api.requireCustomer.execute({ path: 1003 });
+          const actual = yield* api.requireCustomer.execute({
+            path: { id: 1003 },
+          });
           expect(claimed).toMatchObject({
             result: "OK",
             customer: { tier: "GOLD" },
@@ -812,7 +820,7 @@ describe("business API: envelopes", () => {
           const next = links.find((link) => link.rel === "next");
           expect(next?.target).toBe("/v1/customers?offset=2&limit=2");
           const literal = yield* Operation.make(
-            Request.get("{link}").pipe(
+            Request.get("").pipe(
               Request.path(Schema.URLFromString, (href) => href),
             ),
             Response.status(
@@ -1156,7 +1164,7 @@ describe("business API: envelopes", () => {
         Effect.gen(function* () {
           const { backend, api } = yield* start;
           const updated = yield* api.updateCustomer.execute({
-            path: 1004,
+            path: { id: 1004 },
             body: { tier: "PLATINUM" },
           });
           expect(updated).toMatchObject({
@@ -1166,7 +1174,7 @@ describe("business API: envelopes", () => {
           const untyped = yield* Operation.make(
             api.requests.getCustomer,
             Response.status(200, Body.json),
-          ).execute({ path: 1004 });
+          ).execute({ path: { id: 1004 } });
           expect(untyped).toMatchObject({ customer: { tier: 3 } });
           const ledger = yield* backend.ledger;
           expect(bodyText(ledger[0]!)).toBe(`{"tier":"PLATINUM"}`);
@@ -1185,7 +1193,7 @@ describe("business API: envelopes", () => {
             fixture.ledger.entries.map((entry) => BigInt(entry.id)),
           );
           const refund = yield* api.ledgerEntry.execute({
-            path: ledger.entries[1]!.id,
+            path: { id: ledger.entries[1]!.id },
           });
           expect(refund.entry).toEqual({
             id: 9007199254740993n,
@@ -1224,16 +1232,15 @@ describe("business API: envelopes", () => {
           expect(entries[1]?.id).toBe(entries[0]?.id);
           // Following the rounded id fetches a different entry without any error.
           const byNumber = Operation.make(
-            Request.get("ledger/{id}").pipe(
-              Request.path(
-                Schema.Number,
-                (id, encode) => `ledger/${encode(String(id))}`,
-              ),
+            Request.get("/ledger").pipe(
+              Request.path`/${Request.pathValue("id", Schema.Number)}`,
               Request.baseUrl(`${backend.origin}/v1`),
             ),
             Response.status(200, Body.json),
           );
-          const wrong = yield* byNumber.execute({ path: entries[1]!.id });
+          const wrong = yield* byNumber.execute({
+            path: { id: entries[1]!.id },
+          });
           expect(wrong).toMatchObject({ entry: { memo: "Opening balance" } });
           // The domain schema refuses a rounded id instead of passing it on.
           const guarded = Operation.make(
@@ -1375,7 +1382,7 @@ describe("business API: envelopes", () => {
           .pipe(Effect.flip);
         expect(Schema.isSchemaError(error)).toBe(true);
         const patched = yield* api.updateCustomer
-          .execute({ path: 1001, body: { name: "" } })
+          .execute({ path: { id: 1001 }, body: { name: "" } })
           .pipe(Effect.flip);
         expect(Schema.isSchemaError(patched)).toBe(true);
         expect(yield* backend.ledger).toHaveLength(0);
@@ -1397,7 +1404,7 @@ describe("business API: envelopes", () => {
             ],
           });
           const updated = yield* api.updateCustomer.execute({
-            path: 1001,
+            path: { id: 1001 },
             body: { name: "\t" },
           });
           expect(updated).toMatchObject({
@@ -1405,7 +1412,9 @@ describe("business API: envelopes", () => {
             errors: [{ code: "blank" }],
           });
           // Both reached the server; nothing changed.
-          const unchanged = yield* api.requireCustomer.execute({ path: 1001 });
+          const unchanged = yield* api.requireCustomer.execute({
+            path: { id: 1001 },
+          });
           expect(unchanged.name).toBe("Northwind Traders");
           const ledger = yield* backend.ledger;
           expect(ledger.map(requestLine)).toEqual([

@@ -378,12 +378,11 @@ export const orderAccepted = Response.status(
 // Operations
 // ---------------------------------------------------------------------------------------------
 
-/** A customer id path, optionally followed by a sub-resource. */
-const customerPath = (suffix = "") =>
-  Request.path(
-    CustomerId,
-    (id, encode) => `customers/${encode(String(id))}${suffix}`,
-  );
+/** A customer's id in a path, which arrives as `{ path: { id } }`. */
+const customerId = Request.pathValue("id", CustomerId);
+
+/** A ledger entry's id: 64 bits wide, so it stays a `bigint` all the way to the URL. */
+const ledgerId = Request.pathValue("id", Schema.BigInt);
 
 /** A URL learned from a response, such as a resolved `Location`, used as the request target. */
 const at = Request.path(Schema.URLFromString, (href) => href);
@@ -400,28 +399,31 @@ export const make = (origin: string) => {
       Request.body(Body.jsonSchema(NewCustomer)),
       service,
     ),
-    getCustomer: Request.get("customers/{id}").pipe(customerPath(), service),
-    getCustomerAt: Request.get("{location}").pipe(at),
+    getCustomer: Request.get("").pipe(
+      Request.path`/customers/${customerId}`,
+      service,
+    ),
+    getCustomerAt: Request.get("").pipe(at),
     listCustomers: Request.get("customers").pipe(
       Request.query(ListQuery),
       service,
     ),
-    patchCustomer: Request.patch("customers/{id}").pipe(
-      customerPath(),
+    patchCustomer: Request.patch("").pipe(
+      Request.path`/customers/${customerId}`,
       Request.body(Body.jsonSchema(CustomerChanges)),
       service,
     ),
-    archiveCustomer: Request.post("customers/{id}/archive").pipe(
-      customerPath("/archive"),
+    archiveCustomer: Request.post("").pipe(
+      Request.path`/customers/${customerId}/archive`,
       service,
     ),
-    savePreferences: Request.put("customers/{id}/preferences").pipe(
-      customerPath("/preferences"),
+    savePreferences: Request.put("").pipe(
+      Request.path`/customers/${customerId}/preferences`,
       Request.body(Body.jsonSchema(Preferences)),
       service,
     ),
-    getPreferences: Request.get("customers/{id}/preferences").pipe(
-      customerPath("/preferences"),
+    getPreferences: Request.get("").pipe(
+      Request.path`/customers/${customerId}/preferences`,
       service,
     ),
     placeOrder: Request.post("orders").pipe(
@@ -440,16 +442,13 @@ export const make = (origin: string) => {
       ),
       service,
     ),
-    exportStatus: Request.get("{monitor}").pipe(at),
+    exportStatus: Request.get("").pipe(at),
     ledger: Request.get("ledger").pipe(
       Request.query(Schema.Struct({ account: Schema.NonEmptyString })),
       service,
     ),
-    ledgerEntry: Request.get("ledger/{id}").pipe(
-      Request.path(
-        Schema.BigInt,
-        (id, encode) => `ledger/${encode(id.toString())}`,
-      ),
+    ledgerEntry: Request.get("/ledger").pipe(
+      Request.path`/${ledgerId}`,
       service,
     ),
     regions: Request.get("regions").pipe(service),
@@ -616,7 +615,7 @@ export const make = (origin: string) => {
    */
   const updateCustomer = Operation.fromEffect(
     (input: {
-      readonly path: number;
+      readonly path: { readonly id: number };
       readonly body: typeof CustomerChanges.Type;
     }) =>
       Effect.gen(function* () {

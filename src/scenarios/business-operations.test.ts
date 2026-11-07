@@ -239,13 +239,15 @@ describe(`business operations: method override (STAT-11, ${lane.name})`, () => {
           const connection = connect(backend);
           const id = taskId("T-1001");
           const put = yield* Ops.replaceTaskUntunnelled(connection).execute({
-            path: id,
+            path: { id },
             body: replacement,
           });
           const del = yield* Ops.deleteTaskUntunnelled(connection).execute({
-            path: id,
+            path: { id },
           });
-          const still = yield* Ops.readTask(connection).execute({ path: id });
+          const still = yield* Ops.readTask(connection).execute({
+            path: { id },
+          });
           for (const refused of [put, del]) {
             expect(refused._tag).toBe("MethodNotAllowed");
             if (refused._tag === "MethodNotAllowed") {
@@ -278,7 +280,7 @@ describe(`business operations: method override (STAT-11, ${lane.name})`, () => {
           const connection = connect(backend);
           const id = taskId("T-1001");
           const replaced = yield* Ops.replaceTask(connection).execute({
-            path: id,
+            path: { id },
             body: replacement,
           });
           expect(replaced._tag).toBe("Task");
@@ -290,10 +292,12 @@ describe(`business operations: method override (STAT-11, ${lane.name})`, () => {
             expect(replaced.value.due).toBeNull();
           }
           const deleted = yield* Ops.deleteTask(connection).execute({
-            path: id,
+            path: { id },
           });
           expect(deleted._tag).toBe("Deleted");
-          const gone = yield* Ops.readTask(connection).execute({ path: id });
+          const gone = yield* Ops.readTask(connection).execute({
+            path: { id },
+          });
           expect(gone._tag).toBe("NotFound");
           const ledger = yield* backend.ledger;
           expect(
@@ -355,7 +359,7 @@ describe(`business operations: method override (STAT-11, ${lane.name})`, () => {
           Effect.onError(() =>
             Effect.forEach(
               created.toReversed(),
-              (path) => remove.execute({ path }),
+              (id) => remove.execute({ path: { id } }),
               {
                 discard: true,
               },
@@ -412,11 +416,11 @@ describe(`business operations: one tag for two statuses (EXT-1, ${lane.name})`, 
         const connection = connect(backend);
         const id = taskId("T-1001");
         const replaced = yield* Ops.replaceTaskChanged(connection).execute({
-          path: id,
+          path: { id },
           body: replacement,
         });
         const deleted = yield* Ops.deleteTaskChanged(connection).execute({
-          path: id,
+          path: { id },
         });
         // One case type for both statuses: the tag does not say which rule matched.
         expectTypeOf<
@@ -467,22 +471,19 @@ describe(`business operations: one tag for two statuses (EXT-1, ${lane.name})`, 
           ),
         ).pipe(Response.orElse(Ops.changed));
         const remove = Operation.make(
-          Request.del("tasks").pipe(
+          Request.del("/tasks").pipe(
             Ops.at(connection),
-            Request.path(
-              Ops.TaskId,
-              (task: string, encode) => `tasks/${encode(task)}`,
-            ),
+            Request.path`/${Request.pathValue("id", Ops.TaskId)}`,
             Ops.tunnel,
           ),
           greedy,
         );
-        const failure = yield* Effect.flip(remove.execute({ path: id }));
+        const failure = yield* Effect.flip(remove.execute({ path: { id } }));
         expect(failure._tag).toBe("DecodeError");
         if (failure._tag === "DecodeError")
           expect(failure.metadata.status).toBe(204);
         // The service applied the delete; only the decoding failed.
-        const gone = yield* Ops.readTask(connection).execute({ path: id });
+        const gone = yield* Ops.readTask(connection).execute({ path: { id } });
         expect(gone._tag).toBe("NotFound");
         expect(
           (yield* backend.ledger).map((request) => [
@@ -537,13 +538,13 @@ describe(`business operations: a provider for one operation (EXT-2, ${lane.name}
             { transformClient: () => own },
           );
           const before = yield* Ops.readTask(connection).execute({
-            path: taskId("T-1001"),
+            path: { id: taskId("T-1001") },
           });
           const openTasks = yield* listOpen.execute({
             query: { status: ["open"] },
           });
           const after = yield* Ops.readTask(connection).execute({
-            path: taskId("T-1002"),
+            path: { id: taskId("T-1002") },
           });
           expect([before._tag, after._tag]).toEqual(["Task", "Task"]);
           expect(openTasks.items.map((task) => task.id)).toEqual(["T-1001"]);
@@ -623,7 +624,7 @@ describe(`business operations: query and path (QRY-2, QRY-3, ${lane.name})`, () 
       Effect.gen(function* () {
         const backend = yield* start();
         const result = yield* Ops.taskHistoryAnyId(connect(backend)).execute({
-          path: "",
+          path: { id: "" },
         });
         const ledger = yield* backend.ledger;
         expect(ledger.map((request) => request.target)).toEqual([
@@ -645,11 +646,11 @@ describe(`business operations: query and path (QRY-2, QRY-3, ${lane.name})`, () 
         const backend = yield* start();
         const history = Ops.taskHistory(connect(backend));
         const refused = yield* Effect.flip(
-          history.execute({ path: "" as Ops.TaskId }),
+          history.execute({ path: { id: "" as Ops.TaskId } }),
         );
         expect(Schema.isSchemaError(refused)).toBe(true);
         expect(yield* backend.ledger).toHaveLength(0);
-        const one = yield* history.execute({ path: taskId("T-1001") });
+        const one = yield* history.execute({ path: { id: taskId("T-1001") } });
         expect(
           one._tag === "History" && one.value.events.map((event) => event.task),
         ).toEqual(["T-1001"]);
@@ -701,7 +702,7 @@ describe(`business operations: retry classification (STAT-8, STAT-9, ${lane.name
       const backend = yield* start();
       const error = yield* Effect.flip(
         Ops.quote(connect(backend), Policy.make(Schedule.recurs(3))).execute({
-          path: "EURUSD",
+          path: { pair: "EURUSD" },
         }),
       );
       expect(error).toBeInstanceOf(Response.UnexpectedResponse);
@@ -723,7 +724,7 @@ describe(`business operations: retry classification (STAT-8, STAT-9, ${lane.name
         const quote = yield* Ops.quote(
           connect(backend),
           Policy.make(Schedule.recurs(2), { while: Ops.transientOrCalm }),
-        ).execute({ path: "EURUSD" });
+        ).execute({ path: { pair: "EURUSD" } });
         expect(quote.rate).toBe("1.0842");
         expect(DateTime.toEpochMillis(quote.asOf)).toBe(1_700_000_000_000);
         expect(elapsedSince(startedAt)).toBeGreaterThanOrEqual(950);
@@ -747,7 +748,7 @@ describe(`business operations: retry classification (STAT-8, STAT-9, ${lane.name
             Policy.make(Schedule.recurs(3), {
               while: (reason) => reason.metadata?.status === 420,
             }),
-          ).execute({ path: "EURUSD" }),
+          ).execute({ path: { pair: "EURUSD" } }),
         );
         expect(unexpectedStatus(error)).toBe(503);
         expect(yield* backend.ledger).toHaveLength(2);
@@ -765,7 +766,7 @@ describe(`business operations: retry classification (STAT-8, STAT-9, ${lane.name
           connect(backend),
           Policy.make(Schedule.recurs(2)),
         ).execute({
-          path: "month-end",
+          path: { name: "month-end" },
         });
         expect(report.rows).toEqual([["2023-11", 123_456]]);
         expect(elapsedSince(startedAt)).toBeGreaterThanOrEqual(1_450);
@@ -778,7 +779,7 @@ describe(`business operations: retry classification (STAT-8, STAT-9, ${lane.name
       const backend = yield* start();
       const exportStatus = (policy: Policy.Policy) =>
         Ops.exportStatus(connect(backend), policy).execute({
-          path: "ledger-2023-11",
+          path: { name: "ledger-2023-11" },
         });
       const first = yield* Effect.flip(exportStatus(Policy.none));
       expect(unexpectedStatus(first)).toBe(429);
@@ -810,7 +811,7 @@ describe(`business operations: retry classification (STAT-8, STAT-9, ${lane.name
           Ops.report(
             connect(backend),
             Policy.make(Schedule.recurs(2), { retryAfter: false }),
-          ).execute({ path: "month-end" }),
+          ).execute({ path: { name: "month-end" } }),
         );
         expect(unexpectedStatus(error)).toBe(429);
         expect(yield* backend.ledger).toHaveLength(3);
@@ -1029,7 +1030,7 @@ describe(`business operations: value conventions (VAL-1b to VAL-5b, ${lane.name}
         const result = yield* Ops.replaceInvoiceUnchecked(
           connect(backend),
         ).execute({
-          path: 1,
+          path: { id: 1 },
           body: {
             customer: 7,
             amount: "1234.56",
@@ -1119,7 +1120,7 @@ describe(`business operations: value conventions (VAL-1b to VAL-5b, ${lane.name}
           yield* Ops.listInvoices(connection).execute(undefined);
         const original = value.invoices[2]!;
         const replaced = yield* Ops.replaceInvoice(connection).execute({
-          path: 3,
+          path: { id: 3 },
           body: original,
         });
         expect(replaced._tag).toBe("Invoice");
@@ -1160,7 +1161,7 @@ describe(`business operations: value conventions (VAL-1b to VAL-5b, ${lane.name}
         const before = (yield* backend.ledger).length;
         const refused = yield* Effect.flip(
           Ops.replaceInvoice(connection).execute({
-            path: 3,
+            path: { id: 3 },
             body: { ...original, poNumber: "null" },
           }),
         );

@@ -1453,10 +1453,10 @@ of these replies has round-trip and negative tests of its own in
   the answer is the `closing` line in German. Status: tested.
   - `[EXT-9h] a constructor's fragment goes after a query set on it, and help.cgi answers that section in German`
 - **EXT-9i** A constructor's query and fragment under `Request.path` and `Request.baseUrl`, through
-  the raw client: both survive the path being replaced. Declared as
-  `Request.get("/elsewhere?lang=de#closing")` with EXT-9a's path binding, `Request.baseUrl(origin)`
-  and the input `{ path: "<help>" }`. The client, the target and the answer are EXT-9h's.
-  Status: tested.
+  the raw client: both survive the path being added to. Declared as
+  `Request.get("/cgi-bin/help.cgi?lang=de#closing")` with EXT-9a's path binding,
+  `Request.baseUrl(origin)` and the input `{ path: "/accounts" }`. The client, the target and the
+  answer are EXT-9h's. Status: tested.
   - `[EXT-9i] a constructor's query and fragment survive Request.path and the base URL`
 - **EXT-9j** A fragment in a base URL with a path to join and a query, through the raw client: the
   last row of #83's table. Declared as `Request.get("accounts")` with

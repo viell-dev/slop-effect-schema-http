@@ -129,16 +129,19 @@ const allpropBody = Body.encoder<"allprop">(() =>
   Effect.sync(() => HttpBody.text(allprop, "application/xml; charset=utf-8")),
 );
 
+/** What goes after `dav/documents`: a renderer, because the root has no segment to encode. */
 const collectionPath = (
   collection: string,
   encode: (value: string) => string,
-) =>
-  collection === "" ? "dav/documents/" : `dav/documents/${encode(collection)}/`;
+) => (collection === "" ? "/" : `/${encode(collection)}/`);
+
+/** A document's name in a path, which arrives as `{ path: { name } }`. */
+const documentName = Request.pathValue("name", Schema.NonEmptyString);
 
 /** `PROPFIND` with `Depth: 1` on a collection (`""` for the root), listing its documents. */
 export const propfind = (origin: string) =>
   Operation.make(
-    Request.make("PROPFIND", "dav/documents/").pipe(
+    Request.make("PROPFIND", "/dav/documents").pipe(
       Request.baseUrl(origin),
       Request.setHeader("Depth", "1"),
       Request.path(Schema.String, collectionPath),
@@ -193,19 +196,16 @@ const fromHeaders = <S extends Schema.Top>(
 /** A conditional GET: 200 with the bytes, or 304 when `ifNoneMatch` still matches. */
 export const read = (origin: string) =>
   Operation.make(
-    Request.get("dav/documents/").pipe(
+    Request.get("/dav/documents").pipe(
       Request.baseUrl(origin),
       Request.headers(IfNoneMatch),
-      Request.path(
-        Schema.NonEmptyString,
-        (name, encode) => `dav/documents/${encode(name)}`,
-      ),
+      Request.path`/${documentName}`,
       Request.mapInput(
         (input: {
           readonly name: string;
           readonly ifNoneMatch?: EntityTag;
         }) => ({
-          path: input.name,
+          path: { name: input.name },
           headers:
             input.ifNoneMatch === undefined
               ? {}
@@ -312,13 +312,10 @@ const validator = <const Tag extends string>(tag: Tag) =>
 /** A conditional PUT with every answer the store gives it declared. */
 export const write = (origin: string) =>
   Operation.make(
-    Request.put("dav/documents/").pipe(
+    Request.put("/dav/documents").pipe(
       Request.baseUrl(origin),
       Request.headers(ConditionHeaders),
-      Request.path(
-        Schema.NonEmptyString,
-        (name, encode) => `dav/documents/${encode(name)}`,
-      ),
+      Request.path`/${documentName}`,
       Request.body(typedBytes),
       Request.mapInput(
         (input: {
@@ -327,7 +324,7 @@ export const write = (origin: string) =>
           readonly bytes: Uint8Array;
           readonly condition: Condition;
         }) => ({
-          path: input.name,
+          path: { name: input.name },
           headers: input.condition,
           body: { contentType: input.contentType, bytes: input.bytes },
         }),
@@ -346,7 +343,7 @@ const AllowHeader = Schema.Struct({ allow: AllowList });
 /** `MKCOL`, which the store's fixed layout refuses: 405 with `Allow` where something exists. */
 export const mkcol = (origin: string) =>
   Operation.make(
-    Request.make("MKCOL", "dav/documents/").pipe(
+    Request.make("MKCOL", "/dav/documents").pipe(
       Request.baseUrl(origin),
       Request.path(Schema.String, collectionPath),
       Request.mapInput((collection: string) => ({ path: collection })),

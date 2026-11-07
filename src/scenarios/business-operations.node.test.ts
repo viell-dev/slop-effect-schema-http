@@ -30,7 +30,7 @@ describe("business operations: line-preserving provider (node)", () => {
       Effect.gen(function* () {
         const backend = yield* start();
         const deleted = yield* Ops.deleteTask(connect(backend)).execute({
-          path: Schema.decodeSync(Ops.TaskId)("T-1002"),
+          path: { id: Schema.decodeSync(Ops.TaskId)("T-1002") },
         });
         expect(deleted._tag).toBe("Deleted");
         const [request] = yield* backend.ledger;

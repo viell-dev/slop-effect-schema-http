@@ -147,7 +147,7 @@ export const make = (config: Config) => {
       Effect.suspend(() =>
         Effect.forEach(created.splice(0).toReversed(), (id) =>
           Effect.map(
-            Effect.exit(deleteTask.execute({ path: id })),
+            Effect.exit(deleteTask.execute({ path: { id } })),
             (exit): Compensated => ({
               id,
               outcome: Exit.isSuccess(exit)
