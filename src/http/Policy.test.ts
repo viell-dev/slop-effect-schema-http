@@ -201,6 +201,22 @@ describe("Policy.make", () => {
   });
 });
 
+describe("Policy.timeout", () => {
+  it("is the one attempt of Policy.none, with a timeout", () => {
+    const policy = Policy.timeout("2 seconds");
+    expect(policy.attemptTimeout).toBe("2 seconds");
+    expect(policy.while).toBe(Policy.none.while);
+    expect(policy.retryAfter).toBe(Policy.none.retryAfter);
+  });
+
+  it("takes any duration Effect does", () => {
+    expect(Policy.timeout(Duration.seconds(2)).attemptTimeout).toEqual(
+      Duration.seconds(2),
+    );
+    expect(Policy.timeout(500).attemptTimeout).toBe(500);
+  });
+});
+
 describe("Policy.retryAfterDelay", () => {
   const now = Date.UTC(2026, 9, 29, 12, 0, 0);
   const delay = (value?: string) =>

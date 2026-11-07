@@ -32,9 +32,7 @@ const candidates = [
 ] as const;
 
 const Health = Schema.Struct({ service: Schema.Literal("orders-api") });
-const oneQuickAttempt = Policy.make(Schedule.recurs(0), {
-  attemptTimeout: "2 seconds",
-});
+const oneQuickAttempt = Policy.timeout("2 seconds");
 
 const probe = (base: string) =>
   Operation.make(

@@ -2251,6 +2251,82 @@ describe("Operation combinators", () => {
   );
 });
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/136
+describe("an operation with Policy.timeout", () => {
+  const accepted = Response.status(204, Body.empty);
+  const quick = { policy: Policy.timeout("1 second") };
+
+  it.effect("gives up on a slow attempt, aborts it and makes no other", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => Effect.never);
+      const fiber = yield* Operation.make(
+        Request.get("https://api.test/"),
+        accepted,
+        quick,
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer), Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      const exit = yield* Fiber.await(fiber);
+      expect(Cause.isTimeoutError(failureOf(exit))).toBe(true);
+      expect(server.exchanges).toHaveLength(1);
+      expect(server.exchanges[0]?.signal.aborted).toBe(true);
+    }),
+  );
+
+  it.effect("does not retry a transient answer", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(503));
+      yield* Effect.exit(
+        Operation.make(Request.get("https://api.test/"), accepted, quick)
+          .execute(undefined)
+          .pipe(Effect.provide(server.layer)),
+      );
+      expect(server.exchanges).toHaveLength(1);
+    }),
+  );
+
+  it.effect("excludes preparation", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(204));
+      const fiber = yield* Operation.make(
+        Request.get("/things").pipe(
+          Request.baseUrl(
+            Effect.as(Effect.sleep("1 minute"), "https://slow.test"),
+          ),
+        ),
+        accepted,
+        quick,
+      )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer), Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      expect(Exit.isSuccess(yield* Fiber.await(fiber))).toBe(true);
+      expect(server.exchanges).toHaveLength(1);
+    }),
+  );
+
+  it.effect("excludes result mapping", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(204));
+      const fiber = yield* Operation.make(
+        Request.get("https://api.test/"),
+        accepted,
+        quick,
+      )
+        .pipe(
+          Operation.mapEffect(() =>
+            Effect.as(Effect.sleep("1 minute"), "done"),
+          ),
+        )
+        .execute(undefined)
+        .pipe(Effect.provide(server.layer), Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Fiber.join(fiber)).toBe("done");
+    }),
+  );
+});
+
 /** Dispatch through a fresh provider; report the exit, the composed URLs and the resolved URLs. */
 const dispatch = <I, E, R>(
   operation: Operation.Operation<I, void, E, R>,

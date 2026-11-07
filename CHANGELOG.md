@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add `Policy.timeout(duration)`, one attempt with a timeout and no retries, for what used to be
+  spelled `Policy.make(Schedule.recurs(0), { attemptTimeout })`. It excludes preparation and result
+  mapping, as any attempt timeout does
+  ([#136](https://github.com/viell-dev/slop-effect-schema-http/issues/136)).
 - Correct what the guides say about a declared `Content-Length`. Effect's Fetch client takes a
   non-empty one off before `fetch` sees it, so `fetch` sends the body's real length, and it neither
   fails nor stalls there. On Node.js an empty one is a transport failure.
