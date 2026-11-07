@@ -18,7 +18,8 @@ does not retry every error.
 
 Enable retries only when repeating the action is acceptable. The default classifier does not check
 the method or whether the server has already applied the request. This matters for writes and for
-transport failures received after the server acted.
+transport failures received after the server acted. [Create, then
+upload](../recipes.md#create-then-upload) shows a retry on the one step that is safe to repeat.
 
 ## Choose the retry budget and delay
 

@@ -1,8 +1,8 @@
 # Describe and execute a request
 
 The [first example](./getting-started.md) created a user with POST. An application also needs to
-change and remove users. This guide adds those actions, shares their URL configuration, and connects
-an operation to a real HTTP client.
+change and remove users. This guide adds those actions, shares their URL configuration, adjusts a
+definition for one use, and connects an operation to a real HTTP client.
 
 ## Define the consumer's contract
 
@@ -85,6 +85,28 @@ Together with the previous pages, these operations cover the resource's actions:
 
 Each operation owns its request and response contract; only the common descriptions are shared.
 
+## Adjust a definition where it is used
+
+Write each common request once, near the integration. A definition describes the most common case,
+not the only one, so a part of your application that needs something else derives a **variant**.
+This definition lists 25 users:
+
+<<< ../examples/usage.ts#list
+
+A component that shows five holds that change in a variable and passes it to `Operation.mapRequest`:
+
+<<< ../examples/usage.ts#adjust
+
+`fewerUsers` is a new operation, and `listUsers` does not change. A request that asks for a
+different shape gets a different shape, so a change of shape adjusts the response as well. Map once
+per change:
+
+<<< ../examples/usage.ts#adjust-shape
+
+The [Operation guide](./modules/operation.md#define-once-adjust-where-it-is-used) covers everything
+a variant can change, and [Recipes](./recipes.md#adjust-a-definition-for-one-component) shows a
+complete component.
+
 ## Use an HTTP client for your service
 
 `rename` and `remove` are **cold Effects**: constructing them sends nothing. Evaluate the one your
@@ -100,6 +122,21 @@ operation. The deletion is a separate Effect and is not run by this code.
 The [Operation guide](./modules/operation.md#supply-an-http-client) covers client setup in more
 detail. In a browser, Fetch's credentials, CORS and redirect policies still apply.
 
+### Run several steps with a generator
+
+An operation that runs is an Effect, so a generator can run several in order. Inside `Effect.gen`,
+`yield*` runs one and gives you its result. This keeps one user and removes its duplicate:
+
+<<< ../examples/usage.ts#generator
+
+`Effect.fn` gives a generator a name and parameters, for a function your application calls:
+
+<<< ../examples/usage.ts#named-function
+
+Generators are for running a plan. Building one stays with `.pipe`, because a `Request` is a plain
+value and not an Effect. A generator also works in any callback that returns an Effect, as the
+[Operation guide](./modules/operation.md#run-it-with-a-generator) shows.
+
 ## Extend the contract when needed
 
 The default sends one attempt and decodes the first matching response case. Add features as the
@@ -112,5 +149,7 @@ service and application require them:
 - [Policy](./modules/policy.md) adds retries and timeouts when repeating the action is safe.
 - [Interaction](./modules/interaction.md) coordinates shared or superseded work.
 
-Continue to the [module overview](./api.md) for the API. [Limits and recovery](./limits.md) and
-[Design](./design.md) cover failure diagnosis and detailed behavior after the module guides.
+[Recipes](./recipes.md) combine these for everyday tasks, such as a list with a count header or an
+upload after a create. Continue to the [module overview](./api.md) for the API. [Limits and
+recovery](./limits.md) and [Design](./design.md) cover failure diagnosis and detailed behavior after
+the module guides.

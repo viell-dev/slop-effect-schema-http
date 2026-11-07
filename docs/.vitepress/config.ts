@@ -38,6 +38,7 @@ export default defineConfig({
         items: [
           { text: "Getting started", link: "/getting-started" },
           { text: "Describe and execute a request", link: "/usage" },
+          { text: "Recipes", link: "/recipes" },
         ],
       },
       {
@@ -70,6 +71,7 @@ export default defineConfig({
           { text: "Overview", link: "/" },
           { text: "Getting started", link: "/getting-started" },
           { text: "Describe and execute a request", link: "/usage" },
+          { text: "Recipes", link: "/recipes" },
         ],
       },
       {

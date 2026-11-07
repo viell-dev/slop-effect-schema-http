@@ -44,15 +44,43 @@ const result = await Effect.runPromise(
 // #endregion synthetic
 assert.equal(result, "ready");
 
-// #region map
-const isReady = health.pipe(Operation.map((text) => text === "ready"));
-const requireReady = health.pipe(
-  Operation.mapEffect((text) =>
-    text === "ready"
-      ? Effect.succeed(text)
-      : Effect.fail("ServiceNotReady" as const),
+// #region generator-run
+const reportHealth = Effect.gen(function* () {
+  const text = yield* health.execute(undefined);
+  return `The service says ${text}`;
+});
+// #endregion generator-run
+assert.equal(
+  await Effect.runPromise(
+    reportHealth.pipe(Effect.provideService(HttpClient.HttpClient, client)),
   ),
+  "The service says ready",
 );
+
+// #region named-function
+const healthIs = Effect.fn("healthIs")(function* (expected: string) {
+  const text = yield* health.execute(undefined);
+  return text === expected;
+});
+
+const stillReady = healthIs("ready");
+// #endregion named-function
+assert.equal(
+  await Effect.runPromise(
+    stillReady.pipe(Effect.provideService(HttpClient.HttpClient, client)),
+  ),
+  true,
+);
+
+// #region map
+const textIsReady = (text: string) => text === "ready";
+const readyOrFail = (text: string) =>
+  text === "ready"
+    ? Effect.succeed(text)
+    : Effect.fail("ServiceNotReady" as const);
+
+const isReady = health.pipe(Operation.map(textIsReady));
+const requireReady = health.pipe(Operation.mapEffect(readyOrFail));
 // #endregion map
 assert.equal(
   await Effect.runPromise(
@@ -175,6 +203,25 @@ const firstFive = Request.setQuery("limit", "5");
 const fewerThings = getThings.pipe(Operation.mapRequest(firstFive));
 // fewerThings asks for 5. getThings still asks for 25.
 // #endregion adjust
+
+// #region adjust-styles
+const byName = Request.setQuery("sort", "name");
+
+// One map per change.
+const shortList = getThings.pipe(
+  Operation.mapRequest(firstFive),
+  Operation.mapRequest(byName),
+);
+
+// A plain arrow function.
+const shortListInline = getThings.pipe(
+  Operation.mapRequest((request) => request.pipe(firstFive, byName)),
+);
+
+// A composed transform, defined with its own name and then passed in.
+const fiveByName = flow(firstFive, byName);
+const shortListComposed = getThings.pipe(Operation.mapRequest(fiveByName));
+// #endregion adjust-styles
 
 // #region shape
 const withoutPaging = Request.removeQuery("page");
@@ -333,6 +380,19 @@ await dispatched(
 assert.deepEqual(sent, [
   "https://api.example.test/v1/things?page=1&limit=5",
   "https://api.example.test/v1/things?page=1&limit=25",
+]);
+
+sent.length = 0;
+for (const variant of [shortList, shortListInline, shortListComposed]) {
+  await dispatched(
+    variant.execute(undefined),
+    answering(200, [fullThing], sent),
+  );
+}
+assert.deepEqual(sent, [
+  "https://api.example.test/v1/things?page=1&limit=5&sort=name",
+  "https://api.example.test/v1/things?page=1&limit=5&sort=name",
+  "https://api.example.test/v1/things?page=1&limit=5&sort=name",
 ]);
 
 sent.length = 0;

@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { Effect } from "effect";
 import { HttpClientRequest, HttpClientResponse } from "effect/http";
 // #region imports
-import { Schema } from "effect";
+import { Data, Effect, Schema } from "effect";
 import { Body, Request, Response } from "viell-effect-schema-http";
 // #endregion imports
 
@@ -34,8 +33,8 @@ assert.deepEqual(
 );
 
 // #region text-schema
-const countDecoder = Body.text.pipe(Body.schema(Schema.NumberFromString));
-const countEncoder = Body.text.pipe(Body.encodeSchema(Schema.NumberFromString));
+const countDecoder = Body.text.pipe(Body.schema(Schema.FiniteFromString));
+const countEncoder = Body.text.pipe(Body.encodeSchema(Schema.FiniteFromString));
 // The decoder reads "42" as the number 42; the encoder writes 42 as text "42".
 // #endregion text-schema
 const countResponse = HttpClientResponse.fromWeb(
@@ -49,8 +48,39 @@ if (countBody._tag === "Uint8Array")
   assert.equal(new TextDecoder().decode(countBody.body), "42");
 
 // #region map
-const trimmedText = Body.text.pipe(Body.map((text) => text.trim()));
+const trimmed = (text: string) => text.trim();
+
+const trimmedText = Body.text.pipe(Body.map(trimmed));
 // #endregion map
+
+// #region map-effect
+class ServiceBusy extends Data.TaggedError("ServiceBusy")<{
+  readonly text: string;
+}> {}
+
+const readyOrBusy = Effect.fn("readyOrBusy")(function* (text: string) {
+  if (text !== "ready") return yield* new ServiceBusy({ text });
+  return text;
+});
+
+const readyText = Body.text.pipe(Body.mapEffect(readyOrBusy));
+// "ready" decodes to "ready". Other text fails with ServiceBusy.
+// #endregion map-effect
+assert.equal(
+  (
+    await Effect.runPromise(
+      Effect.flip(
+        readyText.decode(
+          HttpClientResponse.fromWeb(
+            HttpClientRequest.get("https://api.example.test/status"),
+            new globalThis.Response("busy"),
+          ),
+        ),
+      ),
+    )
+  )._tag,
+  "ServiceBusy",
+);
 assert.equal(
   await Effect.runPromise(
     trimmedText.decode(

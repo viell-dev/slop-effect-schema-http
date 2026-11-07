@@ -31,7 +31,7 @@ versions.
 ## Describe a POST request
 
 Create `quickstart.mts` and copy this code into it. The `.mts` extension makes the file an ES
-module. Node 24 can run this example directly, without a separate TypeScript build.
+module. Node 24 and 26 can run this example directly, without a separate TypeScript build.
 
 <<< ../examples/quickstart.ts#contract
 
@@ -88,8 +88,21 @@ recover.
 Node's direct TypeScript execution strips types without checking them. For application type
 checking, enable TypeScript `strict` and an ESM-compatible module setup; keep your normal toolchain.
 
+## Run it with a generator
+
+The example above runs an operation with `.pipe`. A **generator** does the same work in steps that
+read like ordinary code: inside `Effect.gen`, `yield*` runs an Effect and gives you its result.
+Append this code to the same file:
+
+<<< ../examples/quickstart.ts#generator
+
+Run the file again, and it also prints `Welcome, Ada`. Both styles build the same kind of Effect, so
+use whichever reads better. Effect's [generator
+guide](https://effect.website/docs/v4/getting-started/using-generators) explains them in full.
+
 ## Add more actions
 
 Continue with [Describe and execute a request](./usage.md) to add PATCH and DELETE operations, share
-their base URL and path, and supply Fetch for your own service. The [module guides](./api.md) then
-explain each building block in depth.
+their base URL and path, adjust a definition, and supply Fetch for your own service. The [module
+guides](./api.md) then explain each building block in depth, and [Recipes](./recipes.md) combine
+them for everyday tasks.

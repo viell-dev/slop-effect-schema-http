@@ -87,7 +87,7 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs && node scripts/check-doc-links.mjs",
     "docs:preview": "vite preview --host 127.0.0.1 --outDir docs/.vitepress/dist --base /slop-effect-schema-http/",
-    "docs:examples": "tsc -p tsconfig.examples.json && node scripts/check-doc-examples.mjs && node examples/guides.mjs && node examples/modules.mjs"
+    "docs:examples": "tsc -p tsconfig.examples.json && node scripts/check-doc-examples.mjs && node examples/guides.mjs && node examples/modules.mjs && node examples/recipes.mjs"
   },
   "files": [
     "dist",

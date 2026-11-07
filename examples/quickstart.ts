@@ -37,6 +37,20 @@ console.log(user); // { id: 42, name: 'Ada' }
 // #endregion synthetic
 
 assert.deepEqual(user, { id: 42, name: "Ada" });
+
+// #region generator
+const welcome = Effect.gen(function* () {
+  const created = yield* createUser.execute({ body: { name: "Ada" } });
+  return `Welcome, ${created.name}`;
+});
+
+const message = await Effect.runPromise(
+  welcome.pipe(Effect.provideService(HttpClient.HttpClient, synthetic)),
+);
+console.log(message); // Welcome, Ada
+// #endregion generator
+
+assert.equal(message, "Welcome, Ada");
 const inspected = synthetic.pipe(
   HttpClient.mapRequest((request) => {
     assert.equal(request.method, "POST");
