@@ -64,9 +64,10 @@ export const toDecoded = <S extends Schema.Top>(
   contract: S,
   options?: SchemaAST.ParseOptions,
 ) => {
+  const making = options && { parseOptions: options };
   const make = (input: unknown) =>
     Effect.mapError(
-      contract.makeEffect(input, { parseOptions: options }),
+      contract.makeEffect(input, making),
       (issue) => new Schema.SchemaError(issue),
     );
   const decode = Schema.decodeUnknownEffect(contract);
@@ -140,7 +141,7 @@ const stripping = <S extends Schema.Top, A, R>(
   return (
     input: Input<S>,
   ): Effect.Effect<A, Schema.SchemaError, R | S["DecodingServices"]> =>
-    Effect.flatMap(decoded(input), (value) => write(value));
+    Effect.flatMap(decoded(input), write);
 };
 
 /**
