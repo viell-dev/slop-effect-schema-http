@@ -6251,6 +6251,28 @@ describe("a caller's field under a union", () => {
         }),
     );
 
+    it.effect(
+      "is refused in an Option whose encoded side states it, but not in Schema.Option",
+      () =>
+        Effect.gen(function* () {
+          const value = Option.some({ a: "1", b: "2" });
+          const seen = Schema.Struct({ f: Schema.OptionFromNullOr(Apart) });
+          expect(
+            yield* schemaFailure(
+              Request.post("/x").pipe(Request.body(Body.jsonSchema(seen))),
+              { body: { f: value } },
+            ),
+          ).toContain('["f"]["value"]["b"]');
+          const opaque = Schema.Struct({ f: Schema.Option(Apart) });
+          expect(
+            yield* bodyOf(
+              Request.post("/x").pipe(Request.body(Body.jsonSchema(opaque))),
+              { body: { f: value } },
+            ),
+          ).not.toContain('"b"');
+        }),
+    );
+
     it.effect("is ruled out by a tag that is a union of literals", () =>
       Effect.gen(function* () {
         const Tagged = Schema.Union([

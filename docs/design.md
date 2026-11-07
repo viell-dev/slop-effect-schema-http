@@ -166,12 +166,16 @@ choose a union member for certain, bind that member directly.
   cannot be made for the caller. A field a wider member states and refuses the value of is the same
   case. Only a real loss counts: a field another schema in the group takes is not lost, as the rule
   on stacked schemas below says.
-- **An opaque value is the schema's own reading.** Nothing here can reach inside text, a `Map`, an
-  `Option` or another declaration, so nothing is refused for what happens there, and a union in one
-  reads as Effect reads it. A strict read of a whole value does pass through, because Effect has no
+- **An opaque value is the schema's own reading.** A value is opaque when neither side of its schema
+  states an object for it: text given as text, and what a `Schema.Map`, a `Schema.Option` or a
+  declaration with no struct behind it holds. Nothing here can reach inside, so nothing is refused
+  for what happens there, and a union in one reads as Effect reads it. Either side counts, so an
+  object given to a field that holds JSON is not opaque, and nor is the value in
+  `Schema.OptionFromNullOr`, whose encoded side states it: a union there keeps or refuses as any
+  other does. A strict read of a whole value does pass through an opaque one, because Effect has no
   way to stop it at one part. So beside a choice the library can see, a wider member inside can
   still win. A stray key inside fails that read, and what the library can see is then read as Effect
-  reads it and compared.
+  reads it and compared, so a field a wider member could hold can be refused.
 - **The reading of Effect is tested, not checked at run time.** Knowing what a schema states means
   reading Effect's schema structure, which a newer Effect could change. Tests hold that reading to
   the versions named in [Limits and recovery](./limits.md), in CI, on the oldest Effect the peer

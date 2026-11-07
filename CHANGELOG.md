@@ -36,23 +36,26 @@
   value on the encoded side could fit the decoded side by losing them, with no union involved:
   `{ A: "x" }` under a struct that renames an optional `a` to `A` sent nothing, a constructor
   default went out in the caller's place, and so did a raw value under `A`. Such a schema is now
-  read strictly too, at any depth, so the value goes through the decoder and keeps its field. The
-  same goes for a transformation between objects. A struct reads a stated name however a value holds
-  it, so an accessor on a class, an inherited field and one that is not enumerable are now fields
-  under such a schema, and a value read field by field keeps them on a plain struct too. An ordinary
-  class instance that only a struct can read reads as a plain object there, so a key nothing states
-  is stripped. Every renamed struct now takes the strict pass, about 14 to 34 µs per request.
+  read strictly too, at any depth the library can see, so the value goes through the decoder and
+  keeps its field. The same goes for a transformation between objects. A struct reads a stated name
+  however a value holds it, so an accessor on a class, an inherited field and one that is not
+  enumerable are now fields under such a schema, and a value read field by field keeps them on a
+  plain struct too. An ordinary class instance that only a struct can read reads as a plain object
+  there, so a key nothing states is stripped. Every renamed struct now takes the strict pass, about
+  14 to 34 µs per request.
 - **Breaking:** refuse a value that mixes the names of two renamed fields. `{ a, B }` used to lose
   `B`, and it is now a `SchemaError` that names it.
 - **Breaking:** refuse a field no union member can keep. `{ a, b }` under a union of `{ a }` and
   `{ b }` used to send `a` and drop `b`, and a value a wider member refused was dropped the same
   way. It is now a `SchemaError` before anything is sent, which names the field and never its value.
   This call compiled and ran, and it now fails at run time, for the values that reach it. Add a
-  member that holds both fields, or send one of them. The library cannot see inside text that holds
-  JSON, a `Map`, an `Option` or another declaration, so nothing is refused for what happens there,
-  and the schema's own reading applies. A field a schema stacked with the union takes is not lost,
-  in headers and query, so that call goes on working. `Draft` requires new `takenQuery` and
-  `takenHeaders` members, of a new `Request.Taken` type, and `Request.Shape` a new `chooses` member
+  member that holds both fields, or send one of them. The library cannot see inside text given as
+  text, a `Schema.Map`, a `Schema.Option` or a declaration with no struct behind it, so nothing is
+  refused for what happens there, and the schema's own reading applies. An object given to a field
+  that holds JSON and the value in `Schema.OptionFromNullOr` can be seen, so a union there is
+  refused like any other. A field a schema stacked with the union takes is not lost, in headers and
+  query, so that call goes on working. `Draft` requires new `takenQuery` and `takenHeaders` members,
+  of a new `Request.Taken` type, and `Request.Shape` a new `chooses` member
   ([#134](https://github.com/viell-dev/slop-effect-schema-http/issues/134)).
 - Leave a field with the schema that took it. A union stacked after a schema that holds one of its
   fields used to take that value for a default it could not hold, and a raw value under that name
