@@ -1,6 +1,6 @@
 /**
- * EXT-13 and EXT-14h: the declarations of `header-declarations.node.test.ts` through `fetch`, in
- * both lanes; the letters match EXT-12. A platform refuses or adds some of these, so each test
+ * EXT-13, EXT-14h and EXT-14i: the declarations of `header-declarations.node.test.ts` through
+ * `fetch`, in both lanes; the letters match EXT-12. A platform refuses or adds some of these, so each test
  * states what the client received as well as what arrived: the two differ only by what the platform
  * did.
  *
@@ -424,7 +424,27 @@ describe(`a request's own headers through fetch (${lane.name})`, () => {
     plainBody,
     "hello",
   );
+
+  arrives(
+    "[EXT-13u] client middleware that removes Accept reaches the client with none, and the platform adds its own",
+    automatic.u,
+    {},
+    { accept: "*/*" },
+  );
 });
+
+/**
+ * What EXT-14b to EXT-14g leave in the lines a provider reads, which `fetch` then has no use for.
+ * Only the Node lane can send these, so this is where a browser-only loss of them would show.
+ */
+const spelledLines = [
+  ["appendHeader", spelling.b, ["X-Multi: a", "x-multi: b"]],
+  ["a replacing setHeader", spelling.c, ["X-Thing: 3", "X-Other: 2"]],
+  ["removeHeader", spelling.d, []],
+  ["a header schema", spelling.e, ["X-API-Key: v"]],
+  ["a raw default under a schema", spelling.f, ["X-Api-Key: v"]],
+  ["middleware", spelling.g, ["X-Other: 2", "x-thing: 3"]],
+] as const;
 
 describe(`the spelling of a header name through fetch (${lane.name})`, () => {
   it.live(
@@ -437,6 +457,21 @@ describe(`the spelling of a header name through fetch (${lane.name})`, () => {
         expect(entry.lines).toContainEqual(["x-api-key", "v"]);
       }),
   );
+
+  for (const [declaration, declared, lines] of spelledLines)
+    it.live(
+      `[EXT-14i] the client receives the lines ${declaration} leaves, and fetch sends their names in lower case`,
+      () =>
+        Effect.gen(function* () {
+          const { entry, details } = yield* delivered(declared);
+          expect(
+            details.lines.map(([name, value]) => `${name}: ${value}`),
+          ).toEqual([...lines, "accept: text/plain"]);
+          const names = entry.lines.map(([name]) => name);
+          for (const line of lines)
+            expect(names).toContain(line.split(":")[0]!.toLowerCase());
+        }),
+    );
 });
 
 /** The code of the Node error behind a failed `fetch`, kept as the `TypeError`'s cause. */

@@ -238,6 +238,16 @@ export const automatic = {
     (origin) => post(origin).pipe(text, Request.removeHeader("content-length")),
     hello,
   ),
+  u: ((origin, last) =>
+    Operation.make(get(origin), notFound, {
+      transformClient: (client) =>
+        last(
+          HttpClient.mapRequest(
+            client,
+            HttpClientRequest.removeHeader("accept"),
+          ),
+        ),
+    }).execute(undefined)) satisfies Declared,
 };
 
 /** A form with one field. A function, so that this module builds nothing at load beyond it. */
