@@ -159,7 +159,7 @@ export interface Declaration {
 
 /**
  * What one header or query schema says about its group: the names it allows, whether it allows
- * others, and the names it always writes.
+ * others, the names it always writes, and whether a union in it can lose a field.
  *
  * @remarks
  * This is a low-level extension type, read from the schema's encoded side and its fields' own

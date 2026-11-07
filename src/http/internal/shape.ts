@@ -309,7 +309,7 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
   const taken = (
     input: unknown,
     output: object,
-    lost: ReadonlyArray<Excess.Path>,
+    losing: ReadonlyArray<Excess.Path>,
   ): ReadonlySet<PropertyKey> =>
     new Set(
       [
@@ -320,7 +320,7 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
             input !== null &&
             (input as Record<string, unknown>)[name] !== undefined,
         ),
-      ].filter((name) => !lost.some(([key]) => key === name)),
+      ].filter((name) => !losing.some(([key]) => key === name)),
     );
   const settle = <W extends object, A>(
     output: W,

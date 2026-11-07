@@ -127,6 +127,17 @@ const queried = <
   schema: S,
 ) => Request.get("/x").pipe(Request.query(schema));
 
+/** A request to `/x` with two query schemas stacked, the first bound first. */
+const stacked = <
+  F extends Schema.Top &
+    Schema.ConstraintCodec<unknown, UrlEncoding.QueryInput, unknown, unknown>,
+  G extends Schema.Top &
+    Schema.ConstraintCodec<unknown, UrlEncoding.QueryInput, unknown, unknown>,
+>(
+  first: F,
+  second: G,
+) => Request.get("/x").pipe(Request.query(first), Request.query(second));
+
 /** A compiled request's header lines. */
 const linesOf = <I, E, R>(request: Request.Request<I, E, R>, input: I) =>
   Effect.map(compile(request, input), (compiled) => compiled.headerLines);
@@ -5545,26 +5556,6 @@ describe("a caller's field under a union", () => {
         Schema.Struct({ "x-a": text }),
         Schema.Struct({ "x-b": text }),
       ]);
-      const stacked = <
-        F extends Schema.Top &
-          Schema.ConstraintCodec<
-            unknown,
-            UrlEncoding.QueryInput,
-            unknown,
-            unknown
-          >,
-        G extends Schema.Top &
-          Schema.ConstraintCodec<
-            unknown,
-            UrlEncoding.QueryInput,
-            unknown,
-            unknown
-          >,
-      >(
-        first: F,
-        second: G,
-      ) => Request.get("/x").pipe(Request.query(first), Request.query(second));
-
       it.effect("is not lost, in either order", () =>
         Effect.gen(function* () {
           const query = { a: "x", b: "y" };
