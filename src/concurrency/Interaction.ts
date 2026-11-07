@@ -50,7 +50,13 @@ export interface Interaction<in I, out A, out E = never> {
 export interface Options<I, A> {
   /** Defaults to `Equal.equals`, which compares plain objects and arrays structurally. */
   readonly equivalence?: Equivalence.Equivalence<I> | undefined;
-  /** Whether to retain a success. Defaults to retaining; the result is returned either way. */
+  /**
+   * Whether to retain a success. Defaults to retaining; the result is returned either way.
+   *
+   * @remarks
+   * Rejecting a result also drops an earlier retained success for equal input, which it replaces.
+   * Another input's retained success stays.
+   */
   readonly retain?: ((value: A, input: I) => boolean) | undefined;
 }
 

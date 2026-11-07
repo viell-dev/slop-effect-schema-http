@@ -16,8 +16,9 @@ import * as UrlEncoding from "./UrlEncoding.js";
  * Request preparation failed before dispatch.
  *
  * @remarks
- * Covers computed-field failures, URL-rendering exceptions, and fields that do not fit the schemas
- * bound to their group. Schema failures of the caller's input remain separate `SchemaError` values.
+ * Covers computed-field failures, URL-rendering and {@link mapBaseUrl} exceptions, a path value
+ * that does not encode to one value, and fields that do not fit the schemas bound to their group.
+ * Schema failures of the caller's input remain separate `SchemaError` values.
  * A failed check of a group names its fields and leaves out their values, which may be credentials.
  */
 export class InvalidRequest extends Data.TaggedError("InvalidRequest")<{
@@ -80,6 +81,9 @@ export type QueryFields = Readonly<
  * type, such as one from text to text, an already encoded value fits the decoded side, so it is
  * encoded again, with no error. A mix is one level deep in the type. Renamed fields take their
  * encoded names only when the whole value is on the encoded side.
+ *
+ * Under a union, Effect takes the first member that fits and drops what that member does not state,
+ * with no error, so put a wider member before a narrower one.
  */
 export type Input<S extends Schema.Top> = Inputs.Input<S>;
 
@@ -121,7 +125,9 @@ export type InputOf<R> =
  * This is a low-level extension type. Prefer {@link make} and the request combinators.
  */
 export interface Declaration {
+  /** The HTTP method, passed on as written. */
   readonly method: string;
+  /** The constructor's path or URL, without its query and fragment. */
   readonly url: string;
   /** The fragment written in the constructor, without its `#`. */
   readonly hash: string | undefined;
@@ -130,7 +136,9 @@ export interface Declaration {
    * and service types carry what that Effect needs. {@link mapBaseUrl} always leaves an Effect.
    */
   readonly baseUrl: string | Effect.Effect<string, unknown, unknown>;
+  /** The raw header declarations, in order. */
   readonly headers: Fields.Fields;
+  /** The raw query declarations, in order, including entries written in the constructor. */
   readonly query: Fields.Fields<string | null>;
   /** The constructor wrote a `?` with nothing after it, which holds no entries. */
   readonly emptyQuery: boolean;
@@ -205,7 +213,9 @@ export interface Draft {
  */
 export interface Request<in I, out E = never, out R = never>
   extends Pipeable.Pipeable {
+  /** What preparation starts from. */
   readonly declaration: Declaration;
+  /** Apply the request's bindings and transforms to a draft, with the call's input. */
   readonly prepare: (input: I, draft: Draft) => Effect.Effect<Draft, E, R>;
 }
 
@@ -725,7 +735,8 @@ const applyDeclaredBodyFields = (
  * case.
  *
  * Under a union, the defaults and what the schema wrote have to fit one member together. A field
- * that would be lost otherwise is an {@link InvalidRequest}, which names that field.
+ * that would be lost otherwise is an {@link InvalidRequest}, which names that field. The caller's
+ * own value is read before that, as {@link Input} describes, so put a wider member first.
  *
  * Header schemas stack: a second one adds its fields, and together they state the shape. Use
  * {@link unbind} to start again.
@@ -831,7 +842,8 @@ export const headers = <
  * of pairs allows any name.
  *
  * Under a union, the defaults and what the schema wrote have to fit one member together. A field
- * that would be lost otherwise is an {@link InvalidRequest}, which names that field.
+ * that would be lost otherwise is an {@link InvalidRequest}, which names that field. The caller's
+ * own value is read before that, as {@link Input} describes, so put a wider member first.
  *
  * A field can encode to a `Date`, which is written as ISO text. Text under a field that encodes to
  * a number, boolean, bigint or `Date` is read as one first, and a single value under a list field
@@ -959,7 +971,9 @@ export interface PathValue<
   K extends string = string,
   S extends PathSchema = PathSchema,
 > {
+  /** The value's field under `path` in the input. */
   readonly name: K;
+  /** What checks and encodes the value. */
   readonly schema: S;
 }
 
@@ -1249,9 +1263,10 @@ export type Unbound<I, K extends Group> = K extends keyof I
  * stay too. For `"path"`, the text of earlier {@link path} calls goes with their values, and
  * {@link setPath} is what changes the constructor's path.
  *
- * Other steps stay as well. A {@link mapEffect} that reads the removed input receives `undefined`
- * for it. After {@link mapInput}, the binding is skipped, but the mapped input keeps whatever the
- * mapping requires. The request's error and service types keep what the removed bindings added.
+ * Other steps stay as well. A {@link mapEffect} finds the removed property `undefined`, and where
+ * no other input is left the whole input is `undefined`, so reading the property there is a defect.
+ * After {@link mapInput}, the binding is skipped, but the mapped input keeps whatever the mapping
+ * requires. The request's error and service types keep what the removed bindings added.
  */
 export const unbind =
   <K extends Group>(group: K) =>
@@ -1326,7 +1341,9 @@ export const mapEffect =
  * `request.url` holds the joined URL and its query. A fragment is in `request.hash`, as written.
  */
 export interface Compiled {
+  /** The native request, with its URL and query joined. */
   readonly request: HttpClientRequest.HttpClientRequest;
+  /** The header lines, in the spelling they were written with. */
   readonly headerLines: Transport.Lines;
   /** Lowercase header names the request removed, so the library adds no automatic value. */
   readonly removedHeaders: ReadonlySet<string>;

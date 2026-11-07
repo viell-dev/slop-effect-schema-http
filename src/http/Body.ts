@@ -15,6 +15,7 @@ import * as Inputs from "./internal/input.js";
  */
 export interface Encoder<in A, out E = never, out R = never>
   extends Pipeable.Pipeable {
+  /** Turn a value into an outgoing body. */
   readonly encode: (value: A) => Effect.Effect<HttpBody.HttpBody, E, R>;
 }
 
@@ -27,6 +28,7 @@ export interface Encoder<in A, out E = never, out R = never>
  */
 export interface Decoder<out A, out E = never, out R = never>
   extends Pipeable.Pipeable {
+  /** Read a response's body into a value. */
   readonly decode: (
     response: HttpClientResponse.HttpClientResponse,
   ) => Effect.Effect<A, E, R>;
