@@ -10,12 +10,17 @@ type EncodedField<B, K> = B extends unknown
     : never
   : never;
 
-/** Either side of a schema, chosen field by field. A list is a value, so it has no fields. */
+/**
+ * Either side of a schema, chosen field by field. A list is a value, so it has no fields, and an
+ * object whose encoded side is not one, such as a `Date` from text, has none to choose from.
+ */
 type Fieldwise<A, B> =
   A extends ReadonlyArray<unknown>
     ? never
     : A extends object
-      ? { readonly [K in keyof A]: A[K] | EncodedField<B, K> }
+      ? B extends object
+        ? { readonly [K in keyof A]: A[K] | EncodedField<B, K> }
+        : never
       : never;
 
 type EitherSide<A, B> = [A, B] extends [B, A] ? A : A | B | Fieldwise<A, B>;

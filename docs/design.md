@@ -139,7 +139,8 @@ before anything is sent.
   name is an ordinary default that the caller's value replaces.
 - **Schemas stack.** A second `Request.query` or `Request.headers` adds its fields, and together the
   schemas state the shape. Each takes its own fields from one input, and a default goes through
-  every schema that allows its name.
+  every schema that allows its name. An open schema sees every field, so its value type has to
+  accept the others.
 - **A schema can allow other names.** A record or `Schema.StructWithRest` allows any name, and
   values are still checked. Callers can then pass any name as well.
 - **`Request.unbind` removes bindings.** `Request.unbind(group)` makes earlier bindings of that group
@@ -169,7 +170,9 @@ Some things are outside the check:
 
 - Text in the URL is not a field. A `?` in a base URL or in `Request.path` output is not read.
 - `Request.mapEffect` is the deliberate way around a schema, so a native edit is not a declaration.
-  `transformClient` and a client layer work on the prepared request, so the check does not see them.
+  A schema's output replaces every entry under the names it writes, so a native edit has to come
+  after the schema to survive under such a name. `transformClient` and a client layer work on the
+  prepared request, so the check does not see them.
 - A check is only as strict as its schema. `Schema.NumberFromString` accepts `"two"` as `NaN`.
 - "Required" is read from the encoded side. A field with `Schema.withDecodingDefaultKey` is optional
   there, so a raw edit of it after the schema is not refused, although the schema always writes it
