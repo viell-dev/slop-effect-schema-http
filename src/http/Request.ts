@@ -572,7 +572,7 @@ const misfit = (
   defaults: ReadonlyArray<readonly [string, unknown]>,
 ): InvalidRequest =>
   new InvalidRequest({
-    message: `These declared ${group} values do not fit the schema bound to that group: ${listNames(defaults.map(([name]) => name))}.`,
+    message: `The ${group} group cannot be built against its schema with these declared values: ${listNames(defaults.map(([name]) => name))}.`,
   });
 
 /** Fields a body's encoder supplies unless the request says otherwise. */
@@ -654,6 +654,10 @@ export const headers = <
         const settled = yield* Effect.mapError(settle(output, defaults), () =>
           misfit("header", defaults),
         );
+        // A default the schema does not write would be lost, as a member of a union can lose it.
+        const kept = Shapes.written(settled, foldHeader);
+        if (defaults.some(([name]) => !kept.has(foldHeader(name))))
+          return yield* misfit("header", defaults);
         const lines = Transport.entries(settled);
         const replaced = new Set([
           ...names,
@@ -754,6 +758,10 @@ export const query = <
         const settled = yield* Effect.mapError(settle(output, defaults), () =>
           misfit("query", defaults),
         );
+        // A default the schema does not write would be lost, as a member of a union can lose it.
+        const kept = Shapes.written(settled, foldQuery);
+        if (defaults.some(([name]) => !kept.has(foldQuery(name))))
+          return yield* misfit("query", defaults);
         return replaceQuery(
           prepared,
           UrlEncoding.queryEntries(settled),

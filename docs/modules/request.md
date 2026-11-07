@@ -259,6 +259,9 @@ Where several schemas allow the same name, keep it in a shared constant rather t
 `ApiHeaders` does above. A record or `Schema.StructWithRest` allows any name, and still checks each
 value. Callers can then pass any name as well.
 
+An open schema, such as a record, sees every field of the input, so its value type has to accept the
+other schemas' fields.
+
 #### Start again with unbind
 
 `Request.unbind(group)` removes that group's earlier bindings, their input type and the shape they

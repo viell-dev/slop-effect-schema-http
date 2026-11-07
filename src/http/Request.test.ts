@@ -2940,28 +2940,51 @@ describe("a schema states the shape of its group", () => {
       }),
     );
 
-    it.effect("goes out as the schema writes it, or not at all", () =>
-      Effect.gen(function* () {
-        const dropped = Schema.optionalKey(Schema.String).pipe(
-          Schema.decodeTo(Schema.optionalKey(Schema.String), {
-            decode: SchemaGetter.passthrough(),
-            encode: SchemaGetter.omit(),
-          }),
-        );
-        const query = Request.get("/things?gone=1").pipe(
-          Request.query(Schema.Struct({ gone: dropped })),
-        );
-        expect(yield* urlOf(query, { query: {} })).toBe("/things");
-        const headers = yield* compile(
-          Request.get("/things").pipe(
+    it.effect(
+      "is refused if the schema would not write it, so nothing is lost",
+      () =>
+        Effect.gen(function* () {
+          const dropped = Schema.optionalKey(Schema.String).pipe(
+            Schema.decodeTo(Schema.optionalKey(Schema.String), {
+              decode: SchemaGetter.passthrough(),
+              encode: SchemaGetter.omit(),
+            }),
+          );
+          const query = Request.get("/things?gone=1").pipe(
+            Request.query(Schema.Struct({ gone: dropped })),
+          );
+          expect((yield* refusal(query, { query: {} })).message).toContain(
+            '"gone"',
+          );
+          const headers = Request.get("/things").pipe(
             Request.setHeader("X-Gone", "1"),
             Request.headers(Schema.Struct({ "X-Gone": dropped })),
-          ),
-          { headers: {} },
-        );
-        expect(headers.headerLines).toEqual([]);
-        expect(headers.request.headers["x-gone"]).toBeUndefined();
-      }),
+          );
+          expect((yield* refusal(headers, { headers: {} })).message).toContain(
+            '"X-Gone"',
+          );
+        }),
+    );
+
+    it.effect(
+      "is refused if the caller picks a union member that leaves it out",
+      () =>
+        Effect.gen(function* () {
+          const Either = Schema.Union([
+            Schema.Struct({ kind: Schema.Literal("a"), a: Schema.String }),
+            Schema.Struct({ kind: Schema.Literal("b"), b: Schema.String }),
+          ]);
+          const request = Request.get("/things?b=1").pipe(
+            Request.query(Either),
+          );
+          const error = yield* refusal(request, {
+            query: { kind: "a", a: "x" },
+          });
+          expect(error.message).toContain('"b"');
+          expect(yield* urlOf(request, { query: { kind: "b", b: "2" } })).toBe(
+            "/things?kind=b&b=2",
+          );
+        }),
     );
 
     it.effect("is decoded with the rest of the group", () =>
