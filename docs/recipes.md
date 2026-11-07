@@ -11,7 +11,9 @@ others. Paths follow the [slash convention](./modules/request.md#add-to-a-path).
 ## Adjust a definition for one component
 
 A definition describes the most common request, and each component adjusts it for its own case.
-Write the definitions once, near the integration:
+Write the definitions once, near the integration.
+[`Response.tag`](./modules/response.md#add-an-alternative) names each outcome, so a caller can tell
+them apart:
 
 <<< ../examples/recipes/adjust-a-definition.ts#define
 
@@ -21,10 +23,11 @@ change, then apply them to the definition:
 <<< ../examples/recipes/adjust-a-definition.ts#adjust
 
 `getThings` does not change. The request and the response change together, because a request that
-asks for a different shape gets a different shape. The variant's result is the list of options or
-the `Missing` case, and the whole `Thing` has left its type.
+asks for a different shape gets a different shape. The variant's result is the `Found` list of
+options or the `Missing` case, and the whole `Thing` has left its type.
 
-Running an operation is an Effect, so a generator can run the variant beside other operations:
+Running an operation is an Effect, so a generator can run the variant beside other operations. A
+declared 404 is a result and not a failure, so each result is checked by its `_tag`:
 
 <<< ../examples/recipes/adjust-a-definition.ts#run
 

@@ -20,14 +20,17 @@ const thingId = Request.pathValue("id", Schema.FiniteFromString);
 
 const getThings = Operation.make(
   Request.get("/things?page=1&limit=25").pipe(api),
-  Response.status(200, Body.jsonSchema(Schema.Array(Thing))).pipe(
-    Response.orElse(missing),
-  ),
+  Response.status(
+    200,
+    Response.tag("Found", Body.jsonSchema(Schema.Array(Thing))),
+  ).pipe(Response.orElse(missing)),
 );
 
 const getThing = Operation.make(
   Request.get("").pipe(api, Request.path`/things/${thingId}`),
-  Response.status(200, Body.jsonSchema(Thing)).pipe(Response.orElse(missing)),
+  Response.status(200, Response.tag("Found", Body.jsonSchema(Thing))).pipe(
+    Response.orElse(missing),
+  ),
 );
 // #endregion define
 
@@ -38,7 +41,7 @@ const withoutPaging = Request.removeQuery("page");
 const idAndNameOnly = Request.setQuery({ limit: "all", fields: "id,name" });
 const asOptions = Response.replace(
   200,
-  Body.jsonSchema(Schema.Array(ThingOption)),
+  Response.tag("Found", Body.jsonSchema(Schema.Array(ThingOption))),
 );
 
 const thingOptions = getThings.pipe(
@@ -52,7 +55,10 @@ const thingOptions = getThings.pipe(
 const openPicker = Effect.gen(function* () {
   const options = yield* thingOptions.execute(undefined);
   const selected = yield* getThing.execute({ path: { id: 42 } });
-  return { options, selected };
+  return {
+    options: options._tag === "Found" ? options.value : [],
+    selected: selected._tag === "Found" ? selected.value : undefined,
+  };
 });
 // #endregion run
 
@@ -89,7 +95,7 @@ const original = await Effect.runPromise(
 assert.equal(original._tag, "DecodeError");
 assert.equal(sent.at(-1), "https://api.example.test/v1/things?page=1&limit=25");
 
-// The error case came through the variant.
+// The error case came through the variant, and the component reads each outcome.
 const absent = HttpClient.make((request) =>
   Effect.succeed(
     HttpClientResponse.fromWeb(
@@ -98,10 +104,12 @@ const absent = HttpClient.make((request) =>
     ),
   ),
 );
+const noThings = Effect.provideService(HttpClient.HttpClient, absent);
 const outcome = await Effect.runPromise(
-  thingOptions
-    .execute(undefined)
-    .pipe(Effect.provideService(HttpClient.HttpClient, absent)),
+  thingOptions.execute(undefined).pipe(noThings),
 );
-assert.ok("_tag" in outcome);
 assert.equal(outcome._tag, "Missing");
+assert.deepEqual(await Effect.runPromise(openPicker.pipe(noThings)), {
+  options: [],
+  selected: undefined,
+});
