@@ -4816,6 +4816,301 @@ describe("a schema-backed input takes either side of its schema", () => {
       void Request.compile(request, { query: { id: Id.make("a") } });
       void Request.compile(request, { query: { id: "a" } });
     });
+
+    describe("what each schema takes", () => {
+      /** A literal passed here meets the input directly, so a stray key is an error too. */
+      const takes =
+        <S extends Schema.Top>(_schema: S) =>
+        (_input: Request.Input<S>) =>
+          undefined;
+
+      const Optional = Schema.Struct({
+        limit: Schema.optional(Schema.FiniteFromString),
+      });
+
+      it("is one object where the mix takes all that each side does", () => {
+        expectTypeOf<Request.Input<typeof Optional>>().toEqualTypeOf<{
+          readonly limit?: string | number | undefined;
+        }>();
+        const Group = Schema.Struct({
+          page: Schema.FiniteFromString,
+          from: Schema.optional(Schema.DateFromString),
+          name: Schema.String,
+        });
+        expectTypeOf<Request.Input<typeof Group>>().toEqualTypeOf<{
+          readonly page: string | number;
+          readonly from?: string | Date | undefined;
+          readonly name: string;
+        }>();
+        const Defaulted = Schema.Struct({
+          limit: Schema.FiniteFromString.pipe(
+            Schema.withConstructorDefault(Effect.succeed(25)),
+          ),
+        });
+        expectTypeOf<Request.Input<typeof Defaulted>>().toEqualTypeOf<{
+          readonly limit?: string | number;
+        }>();
+      });
+
+      it("keeps each side where the mix does not take all that it does", () => {
+        const Renamed = Schema.Struct({
+          page: Schema.optional(Schema.FiniteFromString),
+          size: Schema.optional(Schema.FiniteFromString),
+        }).pipe(Schema.encodeKeys({ page: "page_number" }));
+        expectTypeOf<{
+          readonly page_number?: string | undefined;
+          readonly size?: string | undefined;
+        }>().toExtend<Request.Input<typeof Renamed>>();
+        expectTypeOf<Request.Input<typeof Renamed>>().toEqualTypeOf<
+          | {
+              readonly page?: number | undefined;
+              readonly size?: number | undefined;
+            }
+          | {
+              readonly page_number?: string | undefined;
+              readonly size?: string | undefined;
+            }
+          | {
+              readonly page?: number | undefined;
+              readonly size?: string | number | undefined;
+            }
+        >();
+        const Defaulted = Schema.Struct({
+          limit: Schema.FiniteFromString.pipe(
+            Schema.withDecodingDefaultKey(Effect.succeed("25")),
+          ),
+        });
+        expectTypeOf<Request.Input<typeof Defaulted>>().toEqualTypeOf<
+          | { readonly limit: number }
+          | { readonly limit?: string }
+          | { readonly limit: string | number | undefined }
+        >();
+      });
+
+      it("takes each side of an optional field", () => {
+        const input = takes(Optional);
+        input({});
+        input({ limit: 1 });
+        input({ limit: "1" });
+        input({ limit: undefined });
+        // @ts-expect-error: a boolean is on neither side
+        input({ limit: true });
+        // @ts-expect-error: no side has this field
+        input({ other: 1 });
+        // @ts-expect-error: no side has this field, whatever else is there
+        input({ limit: 1, other: 1 });
+      });
+
+      it("takes each side of a required field, and a mix", () => {
+        const input = takes(
+          Schema.Struct({
+            a: Schema.FiniteFromString,
+            b: Schema.FiniteFromString,
+          }),
+        );
+        input({ a: 1, b: 2 });
+        input({ a: "1", b: "2" });
+        input({ a: 1, b: "2" });
+        input({ a: "1", b: 2 });
+        // @ts-expect-error: `b` is required on both sides
+        input({ a: 1 });
+        // @ts-expect-error: a boolean is on neither side
+        input({ a: 1, b: true });
+      });
+
+      it("takes a renamed field under one name per side", () => {
+        const input = takes(
+          Schema.Struct({
+            page: Schema.FiniteFromString,
+            size: Schema.FiniteFromString,
+          }).pipe(Schema.encodeKeys({ page: "page_number" })),
+        );
+        input({ page: 1, size: 2 });
+        input({ page: 1, size: "2" });
+        input({ page_number: "1", size: "2" });
+        // @ts-expect-error: a mix cannot use an encoded name
+        input({ page_number: "1", size: 2 });
+        // @ts-expect-error: the decoded name takes only the decoded value
+        input({ page: "1", size: 2 });
+        // @ts-expect-error: the encoded name takes only the encoded value
+        input({ page_number: 1, size: "2" });
+      });
+
+      it("takes an encoded name when every field is optional", () => {
+        const input = takes(
+          Schema.Struct({
+            page: Schema.optional(Schema.FiniteFromString),
+            size: Schema.optional(Schema.FiniteFromString),
+          }).pipe(Schema.encodeKeys({ page: "page_number" })),
+        );
+        input({});
+        input({ page: 1 });
+        input({ size: 2 });
+        input({ size: "2" });
+        input({ page_number: "1" });
+        input({ page_number: "1", size: "2" });
+        // @ts-expect-error: the encoded name takes only the encoded value
+        input({ page_number: 1 });
+        // @ts-expect-error: no side has this field
+        input({ other: "1" });
+      });
+
+      it("keeps the encoded side where a decoding default leaves a field out", () => {
+        const input = takes(
+          Schema.Struct({
+            limit: Schema.FiniteFromString.pipe(
+              Schema.withDecodingDefaultKey(Effect.succeed("25")),
+            ),
+          }),
+        );
+        input({});
+        input({ limit: 1 });
+        input({ limit: "1" });
+        // @ts-expect-error: a boolean is on neither side
+        input({ limit: true });
+      });
+
+      it("lets a constructor default leave a field out", () => {
+        const input = takes(
+          Schema.Struct({
+            limit: Schema.FiniteFromString.pipe(
+              Schema.withConstructorDefault(Effect.succeed(25)),
+            ),
+          }),
+        );
+        input({});
+        input({ limit: 1 });
+        input({ limit: "1" });
+        // @ts-expect-error: a boolean is on neither side
+        input({ limit: true });
+      });
+
+      it("takes a class's fields, or an instance of it", () => {
+        class Filter extends Schema.Class<Filter>("Filter")({
+          page: Schema.FiniteFromString,
+          tag: Schema.optional(Schema.String),
+        }) {
+          get first() {
+            return this.page === 1;
+          }
+        }
+        const input = takes(Filter);
+        input({ page: 1 });
+        input({ page: "1", tag: "a" });
+        input(new Filter({ page: 1 }));
+        // @ts-expect-error: `page` is required on both sides
+        input({});
+        // @ts-expect-error: a boolean is on neither side
+        input({ page: true });
+        // @ts-expect-error: no side has this field
+        input({ page: 1, other: 1 });
+      });
+
+      it("takes a `Date` or its text only where the encoded side is text", () => {
+        const text = takes(Schema.Struct({ from: Schema.DateFromString }));
+        text({ from: new Date(0) });
+        text({ from: "2026-11-07" });
+        // @ts-expect-error: a number is on neither side
+        text({ from: 1 });
+        const value = takes(Schema.Struct({ from: Schema.Date }));
+        value({ from: new Date(0) });
+        // @ts-expect-error: `Schema.Date` encodes to a `Date`, so text is on neither side
+        value({ from: "2026-11-07" });
+        const scalar = takes(Schema.DateFromString);
+        scalar(new Date(0));
+        scalar("2026-11-07");
+        // @ts-expect-error: a number is on neither side
+        scalar(1);
+      });
+
+      it("takes an application type, or the `Date` it encodes to", () => {
+        const input = takes(
+          Schema.Struct({ from: Schema.DateTimeUtcFromDate }),
+        );
+        input({ from: DateTime.makeUnsafe(0) });
+        input({ from: new Date(0) });
+        // @ts-expect-error: text is on neither side
+        input({ from: "2026-11-07" });
+      });
+
+      it("takes each member of a union, on either side", () => {
+        const input = takes(
+          Schema.Union([
+            Schema.Struct({
+              kind: Schema.Literal("a"),
+              n: Schema.FiniteFromString,
+            }),
+            Schema.Struct({
+              kind: Schema.Literal("b"),
+              m: Schema.optional(Schema.FiniteFromString),
+            }),
+          ]),
+        );
+        input({ kind: "a", n: 1 });
+        input({ kind: "a", n: "1" });
+        input({ kind: "b" });
+        input({ kind: "b", m: "1" });
+        // @ts-expect-error: a boolean is on neither side
+        input({ kind: "a", n: true });
+        // @ts-expect-error: no member has this field
+        input({ kind: "b", other: 1 });
+      });
+
+      it("takes a member's encoded name under a union", () => {
+        const input = takes(
+          Schema.Union([
+            Schema.Struct({ a: Schema.optional(Schema.FiniteFromString) }),
+            Schema.Struct({
+              b: Schema.optional(Schema.FiniteFromString),
+              c: Schema.optional(Schema.FiniteFromString),
+            }).pipe(Schema.encodeKeys({ b: "encoded_b" })),
+          ]),
+        );
+        input({ a: "1" });
+        input({ b: 1 });
+        input({ encoded_b: "1" });
+        input({ encoded_b: "1", c: "2" });
+        // @ts-expect-error: no member has this field
+        input({ other: "1" });
+      });
+
+      it("takes each side of a record and of a struct with rest", () => {
+        const record = takes(
+          Schema.Record(Schema.String, Schema.FiniteFromString),
+        );
+        record({ a: 1 });
+        record({ a: "1" });
+        record({ a: 1, b: "2" });
+        // @ts-expect-error: a boolean is on neither side
+        record({ a: true });
+        const rest = takes(
+          Schema.StructWithRest(Schema.Struct({ a: Schema.FiniteFromString }), [
+            Schema.Record(
+              Schema.String,
+              Schema.Union([Schema.Number, Schema.String]),
+            ),
+          ]),
+        );
+        rest({ a: 1, b: 2 });
+        rest({ a: "1", b: "2" });
+        // @ts-expect-error: `a` is required on both sides
+        rest({ b: 2 });
+      });
+
+      it("takes a nested struct's fields, side by side", () => {
+        const input = takes(
+          Schema.Struct({
+            nested: Schema.Struct({ n: Schema.FiniteFromString }),
+          }),
+        );
+        input({ nested: { n: 1 } });
+        input({ nested: { n: "1" } });
+        // @ts-expect-error: a boolean is on neither side
+        input({ nested: { n: true } });
+        // @ts-expect-error: no side has this field
+        input({ nested: { n: 1, other: 1 } });
+      });
+    });
   });
 });
 

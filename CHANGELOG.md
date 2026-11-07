@@ -88,6 +88,11 @@ compiles and still changes your URLs.
   schema's decoding services as well as its encoding services, so a schema-backed body's
   `EncodeServices` include both. `Request.Input` names the input type
   ([#113](https://github.com/viell-dev/slop-effect-schema-http/issues/113)).
+- Show a schema-backed input as one object in an editor. A hover used to list the decoded side, the
+  encoded side and the mix by field, as
+  `{ limit?: number } | { limit?: string } | { limit?: string | number }`, where the last takes
+  everything the others do. It now shows only that member. The sides stay where they are needed, for
+  a renamed field or a field one side leaves out. What an input accepts and rejects does not change.
 - Let `Request.setQuery` and `Request.setHeader` take a plain object, so several fixed fields no
   longer need a call each. Each key replaces its name, in key order. `setQuery` takes what a query
   schema may encode to, so `page: 2` writes `page=2`, `null` is a bare key and an array repeats the
