@@ -13,11 +13,14 @@ import * as Transport from "./Transport.js";
  *
  * @remarks
  * Contains no body. Header and cookie visibility depends on the HTTP provider and browser.
- * `headerLines` is present only when a provider attached its observed lines.
+ * `headerLines` is `None` unless a provider attached its observed lines.
  */
 export interface Metadata {
+  /** The HTTP status code. */
   readonly status: number;
+  /** The normalized headers: lowercase names, with repeated lines joined. */
   readonly headers: Headers.Headers;
+  /** The cookies the response set, as far as the provider shows them. */
   readonly cookies: Cookies.Cookies;
   /** Provider-observed lines, when the provider supplied them. Normalized headers are always available. */
   readonly headerLines: Option.Option<Transport.Lines>;
@@ -63,6 +66,7 @@ export interface Response<
   out C extends AnyCase = AnyCase,
 >
   extends Pipeable.Pipeable {
+  /** The decoder of the first case that matches, if any case does. */
   readonly select: (metadata: Metadata) => Option.Option<Body.Decoder<A, E, R>>;
   /** Media types contributed to the automatic `Accept` header, in declaration order. */
   readonly accepts: ReadonlyArray<string>;
@@ -79,8 +83,11 @@ export interface Response<
  * and can repeat.
  */
 export interface Case<out K, out A, out E, out R> {
+  /** What addresses this case in {@link replace} and {@link remove}. */
   readonly key: K;
+  /** Whether this case applies, from the metadata alone. */
   readonly matches: (metadata: Metadata) => boolean;
+  /** What reads the body when this case is selected. */
   readonly decoder: Body.Decoder<A, E, R>;
 }
 
@@ -345,8 +352,11 @@ export const remove =
  * Checking `_tag` narrows the value type when several tagged outcomes form a union.
  */
 export interface Tagged<Tag extends string, A> {
+  /** The case name given to {@link tag}. */
   readonly _tag: Tag;
+  /** The decoded value. */
   readonly value: A;
+  /** The metadata of the response it came from. */
   readonly metadata: Metadata;
 }
 

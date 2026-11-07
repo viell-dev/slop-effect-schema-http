@@ -87,7 +87,8 @@ export interface Service {
    * Combine the base origin/prefix and the request's rendered path or absolute URL.
    *
    * @remarks
-   * Both arrive without a fragment. A fragment in the result is moved after the query.
+   * Both arrive without a fragment. A fragment in the result moves to the request's `hash`, so the
+   * query goes before it, unless a fragment from the request or the base wins.
    */
   readonly join: (base: string, path: string) => string;
 }

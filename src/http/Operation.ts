@@ -42,6 +42,7 @@ export interface Operation<
   out P = unknown,
 >
   extends Pipeable.Pipeable {
+  /** Describe one evaluation for this input. Nothing runs until the Effect does. */
   readonly execute: (input: I) => Effect.Effect<A, E, R>;
   /** What the operation was built from. A value from {@link fromEffect} has no parts. */
   readonly parts?: P;
@@ -338,6 +339,7 @@ export const execute: {
  * it was written for is what the response still produces, so neither is repeated here.
  */
 export interface Step<out E = never, out R = never> {
+  /** Convert the operation's result. */
   readonly run: (value: never) => Effect.Effect<unknown, E, R>;
 }
 
@@ -356,9 +358,13 @@ export interface Step<out E = never, out R = never> {
  * `execute` itself, and keep it.
  */
 export interface Parts<out Q, in out S, out O, out T = undefined> {
+  /** The request it was built from. */
   readonly request: Q;
+  /** The response contract it was built from. */
   readonly response: S;
+  /** The options it was built with, or `undefined` for none. */
   readonly options: O | undefined;
+  /** The recorded {@link Step}, or `undefined` for none. */
   readonly step: T;
 }
 
