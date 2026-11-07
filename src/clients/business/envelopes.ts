@@ -391,9 +391,8 @@ const at = Request.path(Schema.URLFromString, (href) => href);
 /** The `/v1/` contracts for a deployment at `origin`. Construction is pure. */
 export const make = (origin: string) => {
   const base = `${origin}/v1`;
-  const service = <I, E, R, H extends boolean, Q extends boolean>(
-    request: Request.Request<I, E, R, H, Q>,
-  ) => request.pipe(Request.baseUrl(base));
+  const service = <I, E, R>(request: Request.Request<I, E, R>) =>
+    request.pipe(Request.baseUrl(base));
   const lookup = Response.status(200, Body.jsonSchema(CustomerLookup));
 
   const requests = {

@@ -40,15 +40,8 @@ const german = [
 
 /** A declaration, what the client received from it, what arrived, and the answer. */
 const cases = [
-  ["the base URL", Help.inBaseUrl, `${HELP}#closing`, undefined, HELP, english],
-  [
-    "path output",
-    Help.inPathOutput,
-    `${HELP}#closing`,
-    undefined,
-    HELP,
-    english,
-  ],
+  ["the base URL", Help.inBaseUrl, HELP, "closing", HELP, english],
+  ["path output", Help.inPathOutput, HELP, "closing", HELP, english],
   [
     "setHash in transformClient",
     Help.inMiddleware,
@@ -57,14 +50,14 @@ const cases = [
     `${HELP}?lang=de`,
     german,
   ],
-  ["the constructor", Help.inConstructor, HELP, undefined, HELP, english],
+  ["the constructor", Help.inConstructor, HELP, "closing", HELP, english],
   [
     "path output with a query",
     Help.inPathOutputWithQuery,
-    `${HELP}#closing?lang=de`,
-    undefined,
-    HELP,
-    english,
+    `${HELP}?lang=de`,
+    "closing",
+    `${HELP}?lang=de`,
+    german,
   ],
 ] as const;
 

@@ -1,14 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { Effect, type Layer } from "effect";
+import type { HttpClient } from "effect/http";
 import { lane } from "#lane";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 import { Actions, Soap } from "../clients/soap-store/index.js";
 import { bodyText, headerValues } from "../harness/lane.js";
 
 /**
- * Node-only scenarios of the SOAP document store. Each needs the line-preserving `node:http`
- * provider, which does not exist in a browser; the fetch variants live in `soap-store.test.ts`.
+ * Node-only scenarios of the SOAP document store. Each needs a provider that does not exist in a
+ * browser, the line-preserving `node:http` one or the raw one; the fetch variants live in
+ * `soap-store.test.ts`.
  */
 
 const start = () =>
@@ -25,59 +26,52 @@ const start = () =>
 
 const NS = "urn:docvault:store:2003";
 
+/** The providers that send a GET with a body, by name, for the server at an origin. */
+const providers: ReadonlyArray<
+  readonly [string, (origin: string) => Layer.Layer<HttpClient.HttpClient>]
+> = [
+  ["lines", () => lane.linesClient!],
+  ["raw", (origin) => lane.rawClient!(origin)],
+];
+
 describe("soap-store (node only)", () => {
-  // lane: node-only — browsers refuse to send a GET with a body, and only the node:http provider
-  // sends one.
-  it.live(
-    "[STAT-12] the fixture really serves a GET with a SOAP body, reachable only by rewriting the method in client middleware",
-    () =>
-      Effect.gen(function* () {
-        const lines = lane.linesClient!;
-        const backend = yield* start();
-        const id = yield* Actions.operations(backend.origin)
-          .listDocuments.execute({ body: { prefix: "contract" } })
-          .pipe(
-            Effect.provide(lines),
-            Effect.map((listed) =>
-              listed._tag === "Listed" ? listed.documents[0]!.id : "",
+  // lane: node-only — fetch refuses a GET with a body in both lanes, which `soap-store.test.ts`
+  // pins, and only these two providers send one.
+  for (const [client, layerOf] of providers)
+    it.live(
+      `[STAT-12] the documented GET download with a SOAP body reaches the servlet (${client})`,
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          const layer = layerOf(backend.origin);
+          const id = yield* Actions.operations(backend.origin)
+            .listDocuments.execute({ body: { prefix: "contract" } })
+            .pipe(
+              Effect.provide(layer),
+              Effect.map((listed) =>
+                listed._tag === "Listed" ? listed.documents[0]!.id : "",
+              ),
+            );
+          const bytes = yield* Operation.make(
+            Request.get("soap/download").pipe(
+              Request.baseUrl(backend.origin),
+              Request.setHeader(
+                "SOAPAction",
+                `"${Actions.DownloadDocument.uri}"`,
+              ),
+              Request.body(Soap.Soap11.body(Actions.DownloadDocument)),
             ),
-          );
-        // The library checks the method before dispatch; client middleware runs after that check.
-        const download = Operation.make(
-          Request.post("soap/download").pipe(
-            Request.baseUrl(backend.origin),
-            Request.setHeader(
-              "SOAPAction",
-              `"${Actions.DownloadDocument.uri}"`,
-            ),
-            Request.body(Soap.Soap11.body(Actions.DownloadDocument)),
-          ),
-          Response.status(200, Body.bytes),
-          {
-            transformClient: HttpClient.mapRequest(
-              HttpClientRequest.setMethod("GET"),
-            ),
-          },
-        );
-        const bytes = yield* download
-          .execute({ body: { id } })
-          .pipe(Effect.provide(lines));
-        expect(new TextDecoder().decode(bytes)).toBe("%PDF-1.4 contract");
-        const [, recorded] = yield* backend.ledger;
-        expect(recorded!.method).toBe("GET");
-        expect(recorded!.target).toBe("/soap/download");
-        expect(bodyText(recorded!)).toContain(`<Id>${id}</Id>`);
-        // Node's fetch refuses the same rewritten request as a transport error.
-        const error = yield* download
-          .execute({ body: { id } })
-          .pipe(Effect.provide(lane.fetchClient), Effect.flip);
-        expect(error._tag).toBe("HttpClientError");
-        expect(
-          error._tag === "HttpClientError" ? error.reason._tag : undefined,
-        ).toBe("TransportError");
-        expect(yield* backend.ledger).toHaveLength(2);
-      }),
-  );
+            Response.status(200, Body.bytes),
+          )
+            .execute({ body: { id } })
+            .pipe(Effect.provide(layer));
+          expect(new TextDecoder().decode(bytes)).toBe("%PDF-1.4 contract");
+          const [, recorded] = yield* backend.ledger;
+          expect(recorded!.method).toBe("GET");
+          expect(recorded!.target).toBe("/soap/download");
+          expect(bodyText(recorded!)).toContain(`<Id>${id}</Id>`);
+        }),
+    );
 
   // lane: node-only — only the node:http provider sends repeated header lines unjoined.
   it.live(

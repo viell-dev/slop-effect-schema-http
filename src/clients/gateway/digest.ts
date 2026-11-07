@@ -185,7 +185,7 @@ export interface Authorizable {
  */
 export const withDigest =
   <I extends Authorizable, A, E, R, E2, R2>(
-    request: Request.Request<I, E2, R2, boolean, boolean>,
+    request: Request.Request<I, E2, R2>,
     operation: Operation.Operation<I, A | Challenged, E, R>,
     credentials: Credentials,
   ) =>

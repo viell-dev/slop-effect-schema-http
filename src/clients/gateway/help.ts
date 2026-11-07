@@ -110,7 +110,7 @@ const pathOutput = Request.get("").pipe(
   Request.path(Schema.String, (path) => path),
 );
 
-/** The fragment in the base URL, which the library joins as it stands. */
+/** The fragment in the base URL, which the library moves to the request's `hash`. */
 export const inBaseUrl = (origin: string, last: Last) =>
   Operation.make(
     Request.get("").pipe(Request.baseUrl(`${origin}${ACCOUNTS}#closing`)),
@@ -118,13 +118,13 @@ export const inBaseUrl = (origin: string, last: Last) =>
     { transformClient: last },
   ).execute(undefined);
 
-/** The fragment in path output, which the library joins as it stands. */
+/** The fragment in path output, which the library moves to the request's `hash`. */
 export const inPathOutput = (origin: string, last: Last) =>
   Operation.make(pathOutput.pipe(Request.baseUrl(origin)), response, {
     transformClient: last,
   }).execute({ path: `${ACCOUNTS}#closing` });
 
-/** The fragment in path output with a query, which the library writes after it. */
+/** The fragment in path output with a query, which goes before it. */
 export const inPathOutputWithQuery = (origin: string, last: Last) =>
   Operation.make(
     pathOutput.pipe(Request.baseUrl(origin), Request.setQuery("lang", "de")),
@@ -132,7 +132,7 @@ export const inPathOutputWithQuery = (origin: string, last: Last) =>
     { transformClient: last },
   ).execute({ path: `${ACCOUNTS}#closing` });
 
-/** The fragment in the constructor, which the library's documentation says it discards. */
+/** The fragment in the constructor, which stays on the request as its `hash`. */
 export const inConstructor = (origin: string, last: Last) =>
   Operation.make(Request.get(`${origin}${ACCOUNTS}#closing`), response, {
     transformClient: last,

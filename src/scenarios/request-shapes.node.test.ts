@@ -17,8 +17,8 @@ import { bodyText, header, headerValues } from "../harness/lane.js";
 const notFound = Response.status(404, Body.text);
 
 /** Send one request through the raw client to a fresh `echo`, which must see exactly that one. */
-const sentWith = <I, E, R, H extends boolean, Q extends boolean>(
-  build: (origin: string) => Request.Request<I, E, R, H, Q>,
+const sentWith = <I, E, R>(
+  build: (origin: string) => Request.Request<I, E, R>,
   input: I,
 ) =>
   Effect.gen(function* () {
@@ -41,8 +41,8 @@ const sentWith = <I, E, R, H extends boolean, Q extends boolean>(
     };
   });
 
-const sent = <E, R, H extends boolean, Q extends boolean>(
-  build: (origin: string) => Request.Request<unknown, E, R, H, Q>,
+const sent = <E, R>(
+  build: (origin: string) => Request.Request<unknown, E, R>,
 ) => sentWith(build, undefined);
 
 const headOf = (...lines: ReadonlyArray<string>) => lines.join("\r\n");

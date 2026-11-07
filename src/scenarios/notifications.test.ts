@@ -446,9 +446,7 @@ describe(`notification service (${lane.name})`, () => {
           const backend = yield* start();
           const notify = yield* connect(backend);
           const signed = Notify.signAttempts({ secret: fixture.secret });
-          const operation = <I, E, R>(
-            declaration: Request.Request<I, E, R, true, false>,
-          ) =>
+          const operation = <I, E, R>(declaration: Request.Request<I, E, R>) =>
             Operation.make(declaration, Notify.announceResponse, {
               transformClient: (client) => signed(notify.service(client)),
             });
