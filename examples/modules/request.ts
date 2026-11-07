@@ -66,13 +66,15 @@ assert.equal(
 );
 
 // #region inputs
+const userId = Request.pathValue("userId", Schema.FiniteFromString);
+
 const updateUser = Request.patch("").pipe(
   withApiDefaults,
-  Request.path(Schema.NumberFromString, (id, encode) => `/users/${encode(id)}`),
+  Request.path`/users/${userId}`,
   Request.body(Body.jsonSchema(Schema.Struct({ name: Schema.String }))),
 );
 const update = await Effect.runPromise(
-  Request.compile(updateUser, { path: 42, body: { name: "Ada" } }),
+  Request.compile(updateUser, { path: { userId: 42 }, body: { name: "Ada" } }),
 );
 // PATCH https://api.example.test/api/v1/users/42, JSON body { "name": "Ada" }
 // #endregion inputs
@@ -82,35 +84,16 @@ assert.equal(update.request.headers["content-type"], "application/json");
 assert.equal(update.request.headers["accept-language"], "en");
 
 // #region nested-paths
-const CalendarPath = Schema.Struct({
-  customer: Schema.String,
-  user: Schema.String,
-  schedule: Schema.String,
-  calendar: Schema.String,
-});
-const EventPath = Schema.Struct({
-  ...CalendarPath.fields,
-  event: Schema.String,
-});
+const customer = Request.pathValue("customer");
+const schedule = Request.pathValue("schedule");
+const calendarId = Request.pathValue("calendar");
+const eventId = Request.pathValue("event");
 
-const calendarPath = (
-  ids: typeof CalendarPath.Encoded,
-  encode: (value: string) => string,
-) =>
-  `/end-customers/${encode(ids.customer)}/users/${encode(ids.user)}` +
-  `/schedules/${encode(ids.schedule)}/calendars/${encode(ids.calendar)}`;
+const atCalendar = Request.path`/customers/${customer}/schedules/${schedule}/calendars/${calendarId}`;
+const atEvent = Request.path`/events/${eventId}`;
 
-const getCalendar = Request.get("").pipe(
-  withApiDefaults,
-  Request.path(CalendarPath, calendarPath),
-);
-const getEvent = Request.get("").pipe(
-  withApiDefaults,
-  Request.path(
-    EventPath,
-    (ids, encode) => `${calendarPath(ids, encode)}/events/${encode(ids.event)}`,
-  ),
-);
+const getCalendar = Request.get("").pipe(withApiDefaults, atCalendar);
+const getEvent = getCalendar.pipe(atEvent);
 // #endregion nested-paths
 
 // #region nested-input
@@ -118,30 +101,127 @@ const event = await Effect.runPromise(
   Request.compile(getEvent, {
     path: {
       customer: "customer-42",
-      user: "user-7",
       schedule: "work",
       calendar: "primary",
       event: "meeting/1",
     },
   }),
 );
-// https://api.example.test/api/v1/end-customers/customer-42/users/user-7/schedules/work/calendars/primary/events/meeting%2F1
+// https://api.example.test/api/v1/customers/customer-42/schedules/work/calendars/primary/events/meeting%2F1
 // #endregion nested-input
+const calendarInput = {
+  path: { customer: "customer-42", schedule: "work", calendar: "primary" },
+};
 const calendar = await Effect.runPromise(
-  Request.compile(getCalendar, {
-    path: {
-      customer: "customer-42",
-      user: "user-7",
-      schedule: "work",
-      calendar: "primary",
-    },
-  }),
+  Request.compile(getCalendar, calendarInput),
 );
 assert.equal(
   calendar.request.url,
-  "https://api.example.test/api/v1/end-customers/customer-42/users/user-7/schedules/work/calendars/primary",
+  "https://api.example.test/api/v1/customers/customer-42/schedules/work/calendars/primary",
 );
 assert.equal(event.request.url, `${calendar.request.url}/events/meeting%2F1`);
+
+// #region path-suffix
+const thing = Request.pathValue("thing");
+
+const getThing = Request.get("/things").pipe(api, Request.path`/${thing}`);
+const archiveThing = Request.post("/things").pipe(
+  api,
+  Request.path`/${thing}:archive`,
+);
+const listThingParts = getThing.pipe(Request.path`/parts/`);
+// /things/a%20b, /things/a%20b:archive and /things/a%20b/parts/ under the base
+// #endregion path-suffix
+const thingInput = { path: { thing: "a b" } };
+assert.equal(
+  (await Effect.runPromise(Request.compile(getThing, thingInput))).request.url,
+  "https://api.example.test/api/v1/things/a%20b",
+);
+assert.equal(
+  (await Effect.runPromise(Request.compile(archiveThing, thingInput))).request
+    .url,
+  "https://api.example.test/api/v1/things/a%20b:archive",
+);
+assert.equal(
+  (await Effect.runPromise(Request.compile(listThingParts, thingInput))).request
+    .url,
+  "https://api.example.test/api/v1/things/a%20b/parts/",
+);
+
+// #region path-variant
+const toLegacyPath = flow(
+  Request.unbind("path"),
+  Request.path`/legacy/calendars/${calendarId}`,
+);
+const getLegacyCalendar = toLegacyPath(getCalendar);
+// Input: { path: { calendar: "primary" } }; /legacy/calendars/primary under the base
+
+const atArchive = Request.setPath("/archive/things");
+const getArchivedThing = getThing.pipe(atArchive);
+// Input: { path: { thing: "a b" } }; /archive/things/a%20b under the base
+// #endregion path-variant
+assert.equal(
+  (
+    await Effect.runPromise(
+      Request.compile(getLegacyCalendar, { path: { calendar: "primary" } }),
+    )
+  ).request.url,
+  "https://api.example.test/api/v1/legacy/calendars/primary",
+);
+assert.equal(
+  (await Effect.runPromise(Request.compile(getArchivedThing, thingInput)))
+    .request.url,
+  "https://api.example.test/api/v1/archive/things/a%20b",
+);
+
+// #region path-renderer
+const folderPath = Request.path(Schema.String, (folder, encode) =>
+  folder === "" ? "/" : `/${folder.split("/").map(encode).join("/")}/`,
+);
+const listFolder = Request.get("/files").pipe(api, folderPath);
+// "" gives /files/, and "a b/c" gives /files/a%20b/c/ under the base
+// #endregion path-renderer
+assert.equal(
+  (await Effect.runPromise(Request.compile(listFolder, { path: "" }))).request
+    .url,
+  "https://api.example.test/api/v1/files/",
+);
+assert.equal(
+  (await Effect.runPromise(Request.compile(listFolder, { path: "a b/c" })))
+    .request.url,
+  "https://api.example.test/api/v1/files/a%20b/c/",
+);
+
+// #region path-constraint
+const invoice = Request.pathValue(
+  "invoice",
+  Schema.TemplateLiteral(["inv-", Schema.Int]),
+);
+const getInvoice = Request.get("").pipe(
+  api,
+  Request.path`/invoices/${invoice}`,
+);
+// { path: { invoice: "inv-7" } } gives /invoices/inv-7 under the base
+// { path: { invoice: ".." } } is a SchemaError, and nothing is sent
+// #endregion path-constraint
+assert.equal(
+  (
+    await Effect.runPromise(
+      Request.compile(getInvoice, { path: { invoice: "inv-7" } }),
+    )
+  ).request.url,
+  "https://api.example.test/api/v1/invoices/inv-7",
+);
+assert.equal(
+  (
+    await Effect.runPromise(
+      Effect.flip(
+        Request.compile(getInvoice, { path: { invoice: ".." as "inv-7" } }),
+      ),
+    )
+  )._tag,
+  "SchemaError",
+);
 
 // #region query
 const search = Request.get("https://api.example.test/users").pipe(
@@ -264,7 +344,7 @@ assert.equal(
 // #region adapt
 const renameUser = updateUser.pipe(
   Request.mapInput((input: { id: number; name: string }) => ({
-    path: input.id,
+    path: { userId: input.id },
     body: { name: input.name },
   })),
 );

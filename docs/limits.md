@@ -39,6 +39,17 @@ Bodies are finite. Streaming bodies are deferred. The library does not provide a
 generation, runtime, configuration system, or general cache. `Interaction` retains one success for
 one interaction. Read [Design](./design.md) for the precise behavior and delegated policies.
 
+### Paths and other requests passed on as written
+
+The library passes the request you declared to the HTTP client you chose, and its promise stops
+there. The client may rewrite or refuse it, and a server may read it differently. The library does
+not promise that an unusual request works.
+
+For a path, Node.js Fetch keeps repeated and trailing slashes and resolves dot segments, including
+encoded ones. A server may merge `//`, and another client can differ. Encoding a path value does not
+make it safe, so [constrain a value from a
+user](./modules/request.md#encoding-does-not-make-a-value-safe) in its schema.
+
 ### Slow or unusual responses
 
 Unmatched responses are drained before `UnexpectedResponse` is returned. A server that never ends

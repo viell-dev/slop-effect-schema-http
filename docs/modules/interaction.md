@@ -20,7 +20,7 @@ scope that immediately ends gives you an already-closed interaction.
 
 Pass an operation's `execute` method to `Interaction.make`, for example
 `Interaction.make(getUser.execute)` from the [usage guide](../usage.md). The interaction then
-accepts the same `{ path: number }` input as the operation.
+accepts the same input as the operation.
 
 Provide `HttpClient` and other required services around **acquisition**. `Interaction.make` captures
 them there; later calls to `run` use those captured services. Effect's [scope

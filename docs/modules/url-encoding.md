@@ -13,8 +13,9 @@ Describe query values as data and let the request encode them:
 
 The defaults percent-encode path values and query keys/values with `encodeURIComponent`. Base URL
 joining adds a slash at the boundary when needed; an absolute request URL takes precedence over the
-base. For path values, call the encoder passed to the `Request.path` renderer, as shown in the
-[Request guide](./request.md#path-and-body).
+base. A value in a `Request.path` template always goes through the path encoder, as shown in the
+[Request guide](./request.md#path-and-body). A
+[renderer](./request.md#paths-whose-shape-depends-on-a-value) calls the encoder it is given.
 
 ## Represent query entries
 
@@ -74,8 +75,9 @@ Keep query parameters out of a base URL: the default join is a string join of an
 and a request path. Declare shared query fields with request combinators instead.
 
 The default policy does not remove dot segments or empty path values. Effect's standard client
-wrapper subsequently parses a URL with the platform's URL parser, which can normalize it. Validate
-path input or replace `path` when those values are invalid for your application.
+wrapper subsequently parses a URL with the platform's URL parser, which can normalize it. [Constrain
+path input](./request.md#encoding-does-not-make-a-value-safe) or replace `path` when those values
+are invalid for your application.
 
 Native middleware that appends parameters through `URLSearchParams` can reserialize the whole query,
 turning a bare `?preview` into `?preview=` or `%20` into `+`. Prefer request combinators when exact

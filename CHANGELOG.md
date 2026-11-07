@@ -84,6 +84,22 @@
   name, as well as a function. `setHeader` takes text or a function. `undefined` removes a name's
   earlier declarations in both
   ([#85](https://github.com/viell-dev/slop-effect-schema-http/issues/85)).
+- **Breaking, and silent:** join the constructor's path and `Request.path` exactly. The path is now
+  the constructor's path followed by what each `Request.path` adds, in order, with no `/` added or
+  removed. `Request.path` used to replace whatever came before it. **Code that relied on that still
+  compiles and now asks for a different URL.** `Request.get("/users")` with a renderer returning
+  `/users/1` now asks for `/users/users/1`, and a second `Request.path` adds to the first instead of
+  replacing it. Check every `Request.path` whose constructor has a non-empty path, and every stacked
+  call. A `Request.path` after `Request.get("")` is unchanged, and a constructor's query and
+  fragment still survive ([#82](https://github.com/viell-dev/slop-effect-schema-http/issues/82)).
+- Write a path as a template. `Request.path` also works as a tagged template, with values declared
+  by `Request.pathValue(name, schema?)`, so a child endpoint adds to its parent with no schema
+  spread or hand-written renderer, and the input is inferred. Each value goes through its own
+  schema, always through the active `UrlEncoding` path encoder, and a plain string in a template is
+  a compile error. The text is used as written, and a template with no values adds fixed text. The
+  renderer form stays for a path whose shape depends on its value. `Request.setPath` replaces the
+  constructor's path, and `Request.unbind("path")` also removes a template's text
+  ([#80](https://github.com/viell-dev/slop-effect-schema-http/issues/80)).
 
 ## 0.1.0 — 2026-11-04
 

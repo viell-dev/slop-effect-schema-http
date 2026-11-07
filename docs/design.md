@@ -247,12 +247,104 @@ final. URL-dependent signing belongs in client middleware through `Operation.mak
 `transformClient`, after any request edits the signature must cover. It runs per attempt, after the
 library renders the base URL and query. The provider's own URL normalization still applies.
 
+### The path is joined exactly
+
+A request's path is the constructor's path followed by what each `Request.path` call adds, in order,
+joined exactly as written. The library adds no `/` and removes none:
+
+| Constructor           | Added             | Path                          |
+| --------------------- | ----------------- | ----------------------------- |
+| `/users`              | `/42`             | `/users/42`                   |
+| `""`                  | `/users/1`        | `/users/1`                    |
+| `https://api.test/v1` | `/users/1`        | `https://api.test/v1/users/1` |
+| `/things/42`          | `:archive`        | `/things/42:archive`          |
+| `/a`                  | `/b#x`, then `/c` | `/a/b`, with fragment `x/c`   |
+| `/users/`             | `/42`             | `/users//42`                  |
+| `/users`              | `42`              | `/users42`                    |
+
+This is one rule with no exceptions. It does not tidy a URL, and only it can express a suffix such
+as `:archive` or `.json`. The cost is that `/users/` and `/42` pass a double slash to the client, so
+the [Request guide](./modules/request.md#add-to-a-path) recommends a convention: start each piece
+with `/`, do not end one with `/`, and leave both off a base URL. A trailing slash is part of the
+address, so the library never adds or removes one, and one a server wants goes on the last piece.
+
+- **`?` and `#` in path text are ordinary URL syntax.** Joining comes first, so anything after a `#`
+  belongs to the fragment, and a `?` starts query text. That text is [not a
+  field](#a-schema-states-the-shape-of-its-group), and a declared query goes after it.
+- **A whole URL gets no special case.** After an empty constructor path it is the request URL, and
+  the default `UrlEncoding.join` lets it bypass the base. After other text it is added like any
+  other, because `/fetch/https://other.test/x` is a legitimate path, and letting it replace what
+  came before would bring back a silent loss.
+- **A constructor's query and fragment are not part of the path.** They are separated before any
+  path work, so they survive `Request.path` and `Request.setPath`.
+- **A base URL is joined last.** `UrlEncoding.join` handles that boundary, so it is the one place
+  with slash logic of its own.
+
+The finished path is passed to the client as written, and what the client then does is outside the
+library's promise. Measured on Node.js 24 with Fetch, `//` and a trailing slash are kept and dot
+segments are resolved, including encoded ones. A server may merge `//`. Another client can differ,
+and the library does not promise that an unusual path works.
+
+#### Templates and renderers
+
+`Request.path` has two forms, and which to use depends on the path's shape, not on taste.
+
+A **template** is for a fixed shape:
+`` Request.path`/customers/${customer}/calendars/${calendar}` ``. A tagged template is a function
+called with backticks, which receives the text and the `${}` values separately, so there is no
+grammar and nothing to escape. Text is used as written, from `strings.raw`, so a `\` is a backslash
+and no JavaScript escape applies. That also means a template cannot write a backtick or `${` without
+its backslash, so a path that needs one uses the constructor or a renderer. Fixed text is a template
+with no values, and it needs no input.
+
+Only a `PathValue` compiles in a template, declared by `Request.pathValue(name, schema?)`. A value
+arrives under its name in `{ path }`, as a string when it has no schema. Its input is `Input<S>`, so
+it takes [either side of its schema](#a-schema-has-two-sides). What the schema writes is then always
+encoded with the active `UrlEncoding` path encoder. A plain string in a template is a compile error,
+and so are parentheses in place of the backticks and a schema that does not encode to one string,
+number, bigint or boolean. A schema can still get past that type: `Schema.Any` has no type to check,
+and `Schema.optionalKey` can leave the value out. A value that is not a scalar then fails with
+`Request.InvalidRequest` rather than writing `undefined` or `[object Object]`.
+
+A **renderer** is for a shape that depends on the value: a value holding several segments, a whole
+URL, or a path that branches on a value. `Request.path(schema, render)` passes `render` the
+schema-encoded value and the path encoder, and adds what it returns. Escaping each dynamic value is
+up to the renderer. Text chosen at run time also needs a renderer, or `Request.mapEffect`, because a
+template's text is fixed when it is written.
+
+The compiler checks a value's name against the input, not against the text around it, so
+`` Request.path`/users${id}` `` compiles and gives `/users42`. A value is declared apart from the
+template, so a variable and the name it holds can drift apart.
+
+Schema failures stay `SchemaError`, and they name the value. Exceptions from a renderer or from the
+path encoder stay `Request.InvalidRequest`.
+
+#### Values share one input
+
+Each `Request.path` adds to the `path` input, so a child states only its own part and the combined
+input is inferred. A schema reads its own fields and ignores the others, for a template value, a
+`Schema.Struct` and a `Schema.Class` alike.
+
+- **The same name with the same type is one value,** and every use receives it.
+- **The same name with incompatible types makes the input impossible to supply,** which shows as a
+  compile error at `execute`. Inside one template, two schemas under one name are a union in the
+  type, so that mistake fails when the request is prepared. Give each level its own field name.
+- **A scalar renderer has no name.** It takes the whole `path` value, so stacked with a template, or
+  with a scalar of another type, it makes the input impossible to supply. Scalars of one type share
+  one value.
+
+#### Replacing a path
+
+Nothing replaces a path silently. `Request.unbind("path")` makes earlier `Request.path` calls skip
+themselves, which removes their text as well as their input, and it leaves later ones alone. The
+constructor's path stays, because it is a declaration. `Request.setPath` replaces that text and
+leaves every binding in place, and it keeps the constructor's query and fragment. The two together
+replace a whole path.
+
 ### URLs are made sendable, not normalized
 
-`Request.baseUrl` supplies a shared origin and fixed prefix. `Request.path` renders the complete
-request path from schema-encoded input, replacing the constructor's path; it does not append to it.
-The base is joined afterwards. Reuse application renderers for variable parent paths; the library
-does not join two Request values or incrementally merge typed path bindings.
+`Request.baseUrl` supplies a shared origin and fixed prefix, and the base is joined after the path
+is complete. The library does not join two Request values.
 
 The `UrlEncoding` service renders path values, query entries, and the final URL. Its defaults
 percent-encode path values and query entries with `encodeURIComponent`, and join the base URL and
@@ -268,6 +360,11 @@ the composed URL with the WHATWG `URL` parser, which resolves dot segments. The 
 calls also receives the unparsed request, so a provider can send the composed URL unchanged. A
 consumer that must never send a dot segment validates the value in the path schema or replaces
 `UrlEncoding.path`; the default does not restrict every consumer to protect some.
+
+Encoded is not the same as safe. A `/` in a value cannot add a segment, but `..` and an empty string
+contain nothing to encode, so a value from a user needs a constraint in its schema, such as
+`Schema.TemplateLiteral` or a pattern. `encodeURIComponent` also leaves `'` alone, so a value inside
+`` `Customers('${customer}')` `` can close the quote.
 
 A base URL is an origin plus a path prefix. The default join is a string join, so a query string in
 the base URL ends up before the joined path. Put parameters that every request needs in a shared

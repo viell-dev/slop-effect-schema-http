@@ -105,9 +105,9 @@ real servers, or packaged installation.
 `src/http/Operation.socket.test.ts` runs in the ordinary `npm test` command and required CI. It
 checks Node Fetch's followed/manual redirects, cookies with and without an explicit Effect jar,
 multipart boundary/body agreement, repeated request and response lines and header-name spelling
-through a small `node:http` provider, constructor query text, a dropped fragment, a declared or
-removed `Content-Type`, Fetch's refusal of a GET body, and socket closure when an in-progress
-buffered or stream body read is interrupted.
+through a small `node:http` provider, constructor query text, a dropped fragment, kept slashes and
+resolved dot segments in a path, a declared or removed `Content-Type`, Fetch's refusal of a GET
+body, and socket closure when an in-progress buffered or stream body read is interrupted.
 
 `test/socket.ts` starts fresh servers on ephemeral `127.0.0.1` ports and closes their connections at
 scope exit. Its line-preserving client is a GET-only test control, not a supported transport. Tests

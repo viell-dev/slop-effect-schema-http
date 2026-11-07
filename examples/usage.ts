@@ -6,10 +6,8 @@ import { FetchHttpClient } from "effect/http";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 
 const api = Request.baseUrl("https://api.example.test");
-const userPath = Request.path(
-  Schema.Struct({ userId: Schema.NumberFromString }),
-  ({ userId }, encode) => `/users/${encode(userId)}`,
-);
+const userId = Request.pathValue("userId", Schema.FiniteFromString);
+const userPath = Request.path`/users/${userId}`;
 const userBody = Body.jsonSchema(
   Schema.Struct({ id: Schema.Number, name: Schema.String }),
 );
@@ -35,7 +33,7 @@ const rename = updateUser.execute({
 
 // #region input-type
 export type UpdateUserInput = Parameters<typeof updateUser.execute>[0];
-// { readonly path: { readonly userId: number } }
+// { readonly path: { readonly userId: string | number } }
 // & { readonly body: { readonly name: string } }
 // #endregion input-type
 
