@@ -50,9 +50,9 @@ const isMemberChoice = (ast: Ast): boolean =>
   (ast._tag === "Union" && ast.types.filter(readsKeys).length > 1);
 
 /**
- * A choice of side: two ends that do not state the same names, as a renamed field's do. A value on
- * the encoded side can then fit the decoded side by losing the names it holds. An encoded side with
- * no keys, such as text, has none to lose.
+ * A choice of side: two ends that do not state the same names, as a renamed field's do, or an
+ * encoded end with a rest. A value on the encoded side can then fit the decoded side by losing the
+ * names it holds. An encoded side with no keys, such as text, has none to lose.
  */
 const isSideChoice = (ast: Ast): boolean => {
   const end = encodedEnd(ast);
@@ -60,10 +60,9 @@ const isSideChoice = (ast: Ast): boolean => {
   const decoded = fieldsOf(ast).map(({ name }) => name);
   const encoded = fieldsOf(end).map(({ name }) => name);
   return (
-    end._tag !== "Objects" ||
-    end.indexSignatures.length > 0 ||
     decoded.length !== encoded.length ||
-    decoded.some((name) => !encoded.includes(name))
+    decoded.some((name) => !encoded.includes(name)) ||
+    (end._tag === "Objects" && end.indexSignatures.length > 0)
   );
 };
 
@@ -257,10 +256,8 @@ export const statedFields = (
 ): ReadonlyArray<PropertyKey> => {
   if (!isObject(value) || Array.isArray(value)) return [];
   const sides = sidesOf(ast, value);
-  const open = leaveKeysOpen(sides);
   return [...keysOf(value), ...unlisted(sides, value)].filter(
-    (key) =>
-      value[key] !== undefined && (open || typesAt(sides, key).length > 0),
+    (key) => value[key] !== undefined && typesAt(sides, key).length > 0,
   );
 };
 
@@ -283,7 +280,6 @@ const hidesChoice = (sides: ReadonlyArray<Ast>, key: PropertyKey): boolean =>
     const encoded = fieldsOf(encodedEnd(side)).map(({ name }) => name);
     return (
       encoded.includes(key) &&
-      decoded.every(({ name }) => name !== key) &&
       decoded.some(
         ({ name, type }) => !encoded.includes(name) && holdsMemberChoice(type),
       )

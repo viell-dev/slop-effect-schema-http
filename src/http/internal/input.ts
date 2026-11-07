@@ -205,7 +205,7 @@ export const reader = <S extends Schema.Top, A, R>(
     R | S["DecodingServices"]
   > => {
     const given = Excess.normalised([contract.ast], input);
-    // A strict read cannot see a field outside a value's keys, so no read may start from `input`.
+    // A strict read cannot see a field outside a value's keys, so it may not fall back on `input`.
     const seen = (
       given === input ? input : Excess.exposed([contract.ast], input)
     ) as Input<S>;
@@ -216,7 +216,7 @@ export const reader = <S extends Schema.Top, A, R>(
           : Effect.catch(kept(given as Input<S>), () => kept(seen)),
         keepsAll,
       ),
-      () => compared(seen, given),
+      () => compared(input, given),
     );
   };
 };
