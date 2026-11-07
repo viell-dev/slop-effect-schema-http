@@ -204,27 +204,23 @@ describe(`a Date in a query (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-22c] a computation that returns a Date is a compile error",
-    () =>
-      Effect.sync(() => {
-        // @ts-expect-error a computation returns text, so a `Date` needs its `toISOString()` here
-        const edit = Request.setQuery({ since: () => date() });
-        expect(edit).toBeDefined();
-      }),
-  );
-
-  it.live(
-    "[EXT-22c] currently a computed Date past the types goes out as String(date), in the time zone of whatever runs it",
+    "[EXT-22c] a computation that returns a Date goes out as ISO text, read on each evaluation",
     () =>
       Effect.gen(function* () {
-        const computed = date as unknown as () => string;
-        const [sent, ...rest] = yield* targetsOf(
-          (origin) => at(origin).pipe(Request.setQuery({ since: computed })),
-          undefined,
+        const echo = yield* start();
+        const mutable = date();
+        const operation = Operation.make(
+          at(echo.origin).pipe(Request.setQuery({ since: () => mutable })),
+          notFound,
         );
-        expect(rest).toEqual([]);
-        expect(decodeURIComponent(sent!)).toBe(`/x?since=${String(date())}`);
-      }),
+        yield* operation.execute(undefined);
+        mutable.setUTCFullYear(1999);
+        yield* operation.execute(undefined);
+        expect((yield* echo.ledger).map((entry) => entry.target)).toEqual([
+          target,
+          "/x?since=1999-11-07T12%3A30%3A45.678Z",
+        ]);
+      }).pipe(Effect.provide(lane.fetchClient)),
   );
 
   for (const [name, schema] of [

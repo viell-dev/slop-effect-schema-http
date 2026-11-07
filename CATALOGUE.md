@@ -2192,16 +2192,11 @@ value does, and what each service then answers.
   - `[EXT-22b] an invalid Date under ${name} is a SchemaError, with nothing sent`
   - `[EXT-22b] a raw invalid Date has no ISO text, and goes out as Invalid Date`
 - **EXT-22c** When a raw date is read. A `Date` in the object form is read when the request is
-  defined, so changing it later changes nothing. A computation is read on each evaluation, and it
-  returns text: one that returns a `Date` is a compile error. Past the types, as from JavaScript or
-  a cast, it currently goes out as `String(date)`, which holds the time zone of whatever runs it and
-  not ISO text. The design page says a computation returns text, so this is outside the documented
-  contract, which is why the entry is tested. #132 fixes it, and this pin changes with the next
-  `library-ref` move. Status: tested.
+  defined, so changing it later changes nothing. A computation is read on each evaluation, whether
+  it returns text or a `Date`, and a `Date` goes out as ISO text. Status: tested.
   - `[EXT-22c] a raw Date is read when the request is defined, so changing it later changes nothing`
   - `[EXT-22c] a computation is read on each evaluation, so its text reaches the next request`
-  - `[EXT-22c] a computation that returns a Date is a compile error` (type-level)
-  - `[EXT-22c] currently a computed Date past the types goes out as String(date), in the time zone of whatever runs it`
+  - `[EXT-22c] a computation that returns a Date goes out as ISO text, read on each evaluation`
 - **EXT-22d** A raw `Date` under each of the three schemas is a default, which the schema writes and
   a caller's value replaces. Status: tested.
   - `[EXT-22d] a raw Date under ${name} is a default, which the schema writes and a caller's value replaces`
