@@ -190,7 +190,9 @@ The current release matrix uses Node.js 24.22.2 and the newest Node.js 26 on Win
 4.0.7 and 4.1.2, TypeScript 6.0.3 and 7.0.2 consumers, and Chromium supplied by Playwright 1.65.0.
 Playwright is test infrastructure, not a consumer dependency. The checked-out suite lockfile and
 release workflow own the exact tool versions; record them with qualification evidence when updating
-the matrix.
+the matrix. `docs:build` compares these versions with `package.json`, `package-lock.json`, `.nvmrc`,
+`scripts/prepare-release.mjs`, the workflows and the suite's lockfile at its pin. It skips the
+Playwright version, with a note, in a checkout without that commit.
 
 ## Documentation site
 
@@ -242,14 +244,19 @@ npm run docs:dev
 ```
 
 The first command type-checks `examples/**/*.ts` without `skipLibCheck`, checks public summaries
-against generated declarations, and type-checks every `@example` and standalone Markdown TypeScript
-block. It then executes all three introductory guides, the current migration examples, all eight
+against generated declarations, requires a docblock on every member of a public interface, resolves
+every `{@link}`, and type-checks every `@example` and standalone Markdown TypeScript block. A
+Markdown fence the compiler does not see fails unless `scripts/check-doc-examples.mjs` lists it with
+a reason. It then executes all three introductory guides, the current migration examples, all eight
 module examples and every recipe through the built package's public entry points. The pages import
 their code regions directly. Examples use synthetic clients and make no external requests; runtime
 assertions verify the shown results. When changing onboarding, also copy its displayed snippets into
 a fresh consumer of the published version and run the documented commands without a checkout.
 `docs:build` builds the static site, fails on VitePress dead links or missing snippets, and checks
-rendered internal pages, assets, anchors and package facts. External links are reviewed separately.
+rendered internal pages, assets, anchors and package facts. Those facts include the rendered
+`library-version`, the release status paragraphs, every install command, that each page is in the
+site navigation or deliberately unlisted, the tested versions, and that the commands, workflows,
+inputs and jobs named in this guide and RELEASING exist. External links are reviewed separately.
 `docs:dev` starts the local development server; `docs:preview` serves the production build on
 `127.0.0.1`. It uses the Vite preview server shipped with VitePress because this pinned VitePress
 version's own preview command ignores the host option. Keep development and preview servers on

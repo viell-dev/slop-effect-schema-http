@@ -11,6 +11,11 @@
 - State that a success `retain` rejects drops an earlier retained success for equal input, and what
   a `Request.mapEffect` finds after `Request.unbind` removes the input it reads.
 - Show editor help on the members of public types, such as `execute`, `decoder` and `headerLines`.
+- State in the compatibility guide why `engines.node` has no upper limit.
+- Check more published facts in the ordinary documentation commands: the rendered `library-version`,
+  the release status paragraphs, every install command, navigation completeness, tested versions,
+  the commands and workflows the guides name, skipped Markdown fences, docblocks on public interface
+  members and `{@link}` targets.
 
 ## 0.2.0 — 2026-11-07
 

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import console from "node:console";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, relative, resolve, sep } from "node:path";
-import { URL } from "node:url";
+import { pathToFileURL, URL } from "node:url";
 import process from "node:process";
 
 const root = resolve("docs/.vitepress/dist");
@@ -13,6 +13,7 @@ const commit = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
 const read = (path) => readFileSync(path, "utf8");
+const manifest = JSON.parse(read("package.json"));
 const decode = (value) =>
   value
     .replaceAll("&amp;", "&")
@@ -50,6 +51,11 @@ for (const page of pages) {
     provenance[1],
     commit,
     `Documentation commit disagrees with checkout: ${page}`,
+  );
+  assert.equal(
+    /name="library-version" content="([^"]*)"/.exec(html)?.[1],
+    manifest.version,
+    `The library-version meta tag disagrees with package.json: ${page}`,
   );
   if (process.env.GITHUB_ACTIONS === "true") {
     assert.doesNotMatch(
@@ -93,7 +99,6 @@ for (const page of pages) {
   }
 }
 
-const manifest = JSON.parse(read("package.json"));
 assert.equal(
   new URL(manifest.homepage).pathname,
   base,
@@ -125,15 +130,46 @@ assert.ok(
   read("docs/versions.md").includes(`${manifest.name}-${manifest.version}.tgz`),
   "Update the documented tarball filename for this package version",
 );
+// The paragraph that tells a reader which release is current, not a version anywhere on the page.
+for (const file of ["README.md", "docs/index.md", "docs/versions.md"]) {
+  const status = read(file)
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.replace(/\s+/g, " "))
+    .filter((paragraph) => /^`\d+\.\d+\.\d+\S*` is /.test(paragraph));
+  assert.equal(
+    status.length,
+    1,
+    `Expected one release status paragraph, opening with the version, in ${file}`,
+  );
+  const stage = manifest.version.includes("-") ? "" : "the current ";
+  assert.ok(
+    status[0].startsWith(`\`${manifest.version}\` is ${stage}`),
+    `Update the release status paragraph in ${file}`,
+  );
+  for (const [, tag] of status[0].matchAll(/\/releases\/tag\/([^)\s]+)/g)) {
+    assert.equal(
+      tag,
+      manifest.version,
+      `Update the release link in the status paragraph of ${file}`,
+    );
+  }
+}
 const installSpecifier = manifest.version.includes("-")
   ? `${manifest.name}@${manifest.version}`
   : manifest.name;
 for (const file of ["README.md", "docs/getting-started.md"]) {
-  assert.equal(
-    /^npm install (\S+)/m.exec(read(file))?.[1],
-    installSpecifier,
-    `Use the explicit prerelease or unversioned stable npm install command in ${file}`,
+  const specifiers = Array.from(
+    read(file).matchAll(/^(?:npm install|pnpm add|yarn add) (\S+)/gm),
+    (match) => match[1],
   );
+  assert.ok(specifiers.length > 0, `Missing the install command in ${file}`);
+  for (const specifier of specifiers) {
+    assert.equal(
+      specifier,
+      installSpecifier,
+      `Use the explicit prerelease or unversioned stable install command in ${file}`,
+    );
+  }
   assert.ok(
     read(file).includes(manifest.peerDependencies.effect),
     `Update the documented Effect peer range in ${file}`,
@@ -158,6 +194,205 @@ for (const subpath of Object.keys(manifest.exports)) {
     );
   }
 }
+
+// Every built page is in the site navigation, or deliberately left out of it here.
+const unlisted = new Set([
+  "/404", // VitePress's own error page.
+]);
+const { default: site } = await import(
+  pathToFileURL(resolve("docs/.vitepress/config.ts")).href
+);
+const navigation = new Set();
+const collectLinks = (items) => {
+  for (const item of items) {
+    if (item.link) navigation.add(item.link);
+    collectLinks(item.items ?? []);
+  }
+};
+collectLinks(site.themeConfig.nav);
+collectLinks(site.themeConfig.sidebar);
+for (const page of pages) {
+  const path = page.split(sep).join("/");
+  const route = `/${path.replace(/(?:index)?\.html$/, "")}`;
+  assert.notEqual(
+    navigation.has(route),
+    unlisted.has(route),
+    `Add ${route} to the site navigation, or list it as deliberately unlisted, not both`,
+  );
+}
+
+// The tested versions the documents state, from the files that set them.
+const workflow = (name) => read(`.github/workflows/${name}`);
+const prepare = read("scripts/prepare-release.mjs");
+const preparedWith = (option) =>
+  new RegExp(`"--${option}",\\s*"([^"]+)"`).exec(prepare)?.[1];
+const nodeVersion = read(".nvmrc").trim();
+const newestNodes = new Set(
+  ["ci.yml", "release.yml"].flatMap((name) =>
+    Array.from(
+      workflow(name).matchAll(/node-version: "(\d+)"/g),
+      (match) => match[1],
+    ),
+  ),
+);
+assert.equal(
+  newestNodes.size,
+  1,
+  "CI and release qualification must test the same newest Node.js major",
+);
+const [newestNode] = newestNodes;
+const effectFloor = preparedWith("effect");
+const consumerCompiler = preparedWith("typescript");
+assert.equal(
+  manifest.peerDependencies.effect,
+  `^${effectFloor}`,
+  "Release preparation must test the floor of the Effect peer range",
+);
+const effect = lock.packages["node_modules/effect"].version;
+const compiler = lock.packages["node_modules/typescript"].version;
+
+// The pin is on the suite's own branch, which a shallow checkout does not have.
+const suiteCommit = /ref: ([0-9a-f]{40})/.exec(workflow("release.yml"))?.[1];
+assert.ok(suiteCommit, "Missing the hostile suite's pin in release.yml");
+let playwright;
+if (
+  spawnSync("git", ["cat-file", "-e", `${suiteCommit}^{commit}`]).status === 0
+) {
+  const suite = JSON.parse(
+    execFileSync("git", ["show", `${suiteCommit}:package-lock.json`], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    }),
+  );
+  playwright = suite.packages["node_modules/playwright"].version;
+} else {
+  const prefix = process.env.GITHUB_ACTIONS === "true" ? "::notice::" : "";
+  console.log(
+    `${prefix}Skipped the Playwright version: the hostile suite commit ${suiteCommit} is not in this checkout.`,
+  );
+}
+const testedNode = `Node.js ${nodeVersion} and the newest Node.js ${newestNode}`;
+const testedEffect = `Effect ${effectFloor} and ${effect}`;
+const statements = {
+  "docs/limits.md": [
+    `Node.js ${nodeVersion.split(".")[0]} or ${newestNode} on Windows or Linux`,
+    testedNode,
+    testedEffect,
+    `strict TypeScript consumers using ${compiler} and ${consumerCompiler}`,
+    `\`${manifest.engines.node}\``,
+  ],
+  "CONTRIBUTING.md": [
+    testedNode,
+    testedEffect,
+    `TypeScript ${compiler} and ${consumerCompiler} consumers`,
+    `effect@${effect}`,
+    `remains TypeScript ${compiler}`,
+    `consumers with TypeScript ${consumerCompiler}`,
+    ...(playwright ? [`Playwright ${playwright}`] : []),
+  ],
+  "RELEASING.md": [
+    `consumer with Effect ${effect}`,
+    `Effect ${effectFloor} peer floor`,
+    `TypeScript ${consumerCompiler} consumer`,
+    `newest Node.js ${newestNode}`,
+  ],
+};
+const testedVersions = {
+  "Node.js": [nodeVersion],
+  Effect: [effectFloor, effect],
+  TypeScript: [compiler, consumerCompiler],
+  Playwright: playwright ? [playwright] : undefined,
+};
+for (const [file, phrases] of Object.entries(statements)) {
+  const text = read(file).replace(/\s+/g, " ");
+  for (const phrase of phrases) {
+    assert.ok(
+      text.includes(phrase),
+      `Update the tested versions in ${file}: expected "${phrase}"`,
+    );
+  }
+  // A version left behind in another sentence of the same file.
+  for (const [, tool, ...stated] of text.matchAll(
+    /\b(Node\.js|Effect|TypeScript|Playwright) (\d+\.\d+\.\d+)(?: and (\d+\.\d+\.\d+))?/g,
+  )) {
+    for (const version of stated.filter(Boolean)) {
+      assert.ok(
+        testedVersions[tool]?.includes(version) ?? true,
+        `${file} states ${tool} ${version}, which is not a tested version`,
+      );
+    }
+  }
+}
+
+// The commands the procedures name, and the workflows, inputs and jobs they point to.
+const workflows = new Map(
+  readdirSync(".github/workflows").map((name) => [name, workflow(name)]),
+);
+for (const file of ["CONTRIBUTING.md", "RELEASING.md"]) {
+  const text = read(file);
+  const prose = text.replace(/\s+/g, " ");
+  for (const [, run, test] of text.matchAll(
+    /\bnpm (?:run ([\w:-]+)|(test)\b)/g,
+  )) {
+    assert.ok(
+      Object.hasOwn(manifest.scripts, run ?? test),
+      `${file} names a missing npm script: ${run ?? test}`,
+    );
+  }
+  for (const [path] of text.matchAll(/\bscripts\/[\w.-]+/g)) {
+    assert.ok(existsSync(path), `${file} names a missing script: ${path}`);
+  }
+  for (const [, name] of text.matchAll(/`([\w-]+\.yml)`/g)) {
+    assert.ok(workflows.has(name), `${file} names a missing workflow: ${name}`);
+  }
+  for (const [, title, name] of prose.matchAll(
+    /\*\*([^*]+)\*\* \(`([\w-]+\.yml)`\)/g,
+  )) {
+    assert.equal(
+      /^name: (.+)$/m.exec(workflows.get(name))?.[1],
+      title,
+      `${file} gives ${name} another name`,
+    );
+  }
+  for (const [, name, options] of text.matchAll(
+    /gh workflow run ([\w-]+\.yml)((?:\\\n|.)*)/g,
+  )) {
+    assert.ok(workflows.has(name), `${file} runs a missing workflow: ${name}`);
+    for (const [, input] of options.matchAll(/-f (\w+)=/g)) {
+      assert.match(
+        workflows.get(name),
+        new RegExp(`^ {6}${input}:$`, "m"),
+        `${file} passes ${name} a missing input: ${input}`,
+      );
+    }
+  }
+  for (const [, job] of prose.matchAll(/`([\w-]+)` job\b/g)) {
+    assert.ok(
+      [...workflows.values()].some((content) =>
+        new RegExp(`^ {2}${job}:$`, "m").test(content),
+      ),
+      `${file} names a missing workflow job: ${job}`,
+    );
+  }
+}
+const required = /```sh\n(npm ci\n[\s\S]*?)```/.exec(
+  read("CONTRIBUTING.md"),
+)?.[1];
+assert.ok(required, "Missing the required checks in CONTRIBUTING.md");
+const checksJob = /^ {2}checks:\n(?:(?: {3}.*)?\n)*/m.exec(
+  workflow("ci.yml"),
+)?.[0];
+assert.ok(checksJob, "Missing the checks job in ci.yml");
+for (const command of [
+  ...required.trim().split("\n"),
+  "npm run docs:examples",
+  "npm run docs:build",
+]) {
+  assert.ok(
+    checksJob.includes(`- run: ${command}\n`),
+    `CONTRIBUTING.md says CI requires a command its checks job does not run: ${command}`,
+  );
+}
 console.log(
-  `Documentation checked: ${pages.length} pages, ${links} internal links/assets, anchors and package facts.`,
+  `Documentation checked: ${pages.length} pages, ${links} internal links/assets, anchors, package facts, navigation, tested versions and named commands.`,
 );

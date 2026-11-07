@@ -31,6 +31,10 @@ Other Node majors, macOS, Firefox, Safari, Deno, Bun and CommonJS are outside th
 scope. Browser support does not imply support for every bundler or browser configuration; provider
 behavior and browser policy still apply.
 
+The package declares `engines.node` as `>=24`, which is broader than what is tested. It has no upper
+limit because one would only print a warning on install; it would not stop an untested version. So
+`engines` says what can install, and this page says what is tested.
+
 ## Supported behavior
 
 Bodies are finite. Streaming bodies are deferred. The library does not provide a transport, server
