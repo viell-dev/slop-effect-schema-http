@@ -85,6 +85,11 @@ export type QueryFields = Readonly<
  * there, even if it would fit the decoded side by losing them.
  * When both names of a renamed field are supplied, the decoded name still wins; give one name.
  *
+ * Known limits: TypeScript can exclude encoded aliases of partly renamed structs, and an invalid
+ * encoded alias can be replaced by an optional constructor default. Use decoded names for those
+ * schemas until the separate repairs in issues #169 and #170 are delivered. The Request guide
+ * describes these limits and the input-mapping workaround.
+ *
  * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that
  * names it, because the types allow that value and any member would lose a field the schema states.
