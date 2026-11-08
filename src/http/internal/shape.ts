@@ -309,13 +309,10 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
     chooses,
   };
   // A group transformation or declaration can change names or construct in its own way.
-  const constructorNames =
+  const directNames =
     contract.ast._tag === "Objects" && contract.ast.encoding === undefined
-      ? contract.ast.propertySignatures.flatMap(({ name, type }) =>
-          typeof name === "string" &&
-          type.context?.constructorDefault !== undefined
-            ? [name]
-            : [],
+      ? contract.ast.propertySignatures.flatMap(({ name }) =>
+          typeof name === "string" ? [name] : [],
         )
       : [];
   /** Snapshot caller omission before preparation can run a default or encoder. */
@@ -324,31 +321,25 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
     edits: ReadonlySet<string> | undefined,
   ): ReadonlyArray<string> =>
     edits !== undefined && typeof input === "object" && input !== null
-      ? constructorNames.filter(
+      ? directNames.filter(
           (name) => edits.has(fold(name)) && omitted(input, name),
         )
       : [];
-  /** The successful first constructor actually supplied these edited, encoded fields. */
+  /** Preparation supplied these omitted, edited fields in the record it actually writes. */
   const filled = (
     names: ReadonlyArray<string>,
-    constructed: unknown,
     output: unknown,
   ): ReadonlyArray<string> => {
     if (
-      typeof constructed !== "object" ||
-      constructed === null ||
       typeof output !== "object" ||
-      output === null
+      output === null ||
+      Symbol.iterator in output
     )
       return [];
     return names
       .filter((name) => {
-        const made = Object.getOwnPropertyDescriptor(constructed, name);
         const encoded = Object.getOwnPropertyDescriptor(output, name);
         return (
-          made !== undefined &&
-          "value" in made &&
-          made.value !== undefined &&
           encoded?.enumerable === true &&
           "value" in encoded &&
           encoded.value !== undefined

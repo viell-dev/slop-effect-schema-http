@@ -540,17 +540,21 @@ value there is refused too, as a field that would be lost. To give a required fi
 asking the caller, use `Request.mapInput`. A value the schema supplies itself, from a constructor or
 decoding default, counts as written, so it replaces a raw default.
 
-An optional field of a direct struct can also refuse a raw edit after its binding. The check applies
-when the successful first constructor actually supplies a `Schema.withConstructorDefault` value the
-caller left absent or `undefined`, and encoding writes that non-`undefined` value. Setting,
-appending or removing that name would be replaced, so the request fails with `InvalidRequest`.
-Earlier raw defaults and explicit caller values still work. The default runs only as part of normal
-preparation; the check does not evaluate it again.
+An optional field of a direct struct can also refuse a raw edit after its binding. Before
+preparation, the caller must have left it absent throughout its prototype chain, or supplied an own
+data property containing `undefined`. If successful ordinary non-iterable output then holds an own
+enumerable non-`undefined` data value under that same name, setting, appending or removing it would
+be replaced, so the request fails with `InvalidRequest`. The field can come from construction,
+decoding, fieldwise input or encoding. Earlier raw defaults and explicit caller values still work.
+The check reads the successful output without evaluating a default, transformation, getter or
+iterator again. [What's in 0.5](../release-notes/0.5.md) shows how to choose the value through
+input.
 
 This proof does not cover group transformations such as `Schema.encodeKeys`, classes, unions, or
-accessor and inherited input properties. It is also unavailable after the reader falls back to the
-whole decoder or field by field. A raw edit can still be replaced silently there. A default that
-returns `undefined`, or encoding that writes no value, supplies no proof for this refusal.
+accessor and inherited input properties. A raw edit can still be replaced silently there. Iterable
+output uses the entries it yields, so its own string properties supply no generated-field proof. An
+absent, non-enumerable, accessor or `undefined` output field supplies no proof either. The other
+schema/default and lost-field checks still apply.
 
 A decoding default shows in the field's own encoding, which `Schema.encodeKeys` replaces. A raw edit
 of a field with a default under a struct renamed that way is not refused, and it never reaches the
@@ -704,5 +708,5 @@ constructing them. `declaration.baseUrl` is text or an Effect, so to change a ba
 a request, use `Request.mapBaseUrl` rather than reading it.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.4.0/src/http/Request.ts) for
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.5.0/src/http/Request.ts) for
 all types and overloads.

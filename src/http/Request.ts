@@ -557,7 +557,7 @@ const editQuery =
  * With a {@link headers} schema bound, in either order, the name has to be one a schema allows, and
  * the value is a default that goes through the schema. Setting a name the schema always writes,
  * after that schema, is an {@link InvalidRequest}, because the value could never reach the client.
- * A direct struct's constructor-filled optional field is also refused when this preparation
+ * A direct struct's schema-supplied optional field is also refused when this preparation
  * supplies and encodes it after the caller leaves it out, as {@link headers} describes.
  *
  * In the object form each key replaces its name as above, in key order, and other names stay. A key
@@ -606,7 +606,7 @@ export const appendHeader = (name: string, value: FieldValue) =>
  * Names compare without case. Value functions are never evaluated to compare with `value`. Removing
  * a name a {@link headers} schema always writes, after that schema, is an {@link InvalidRequest},
  * because the schema puts the value back. Removing an optional field clears its default.
- * A constructor-filled optional field can also put it back and be refused, as {@link headers}
+ * A schema-supplied optional field can also put it back and be refused, as {@link headers}
  * describes.
  *
  * Without a value, this also stops the library's automatic value for that name: an operation's
@@ -644,7 +644,7 @@ export const removeHeader = (name: string, value?: string) =>
  * With a {@link query} schema bound, in either order, the name has to be one a schema allows, and
  * the value is a default that goes through the schema. Setting a name the schema always writes,
  * after that schema, is an {@link InvalidRequest}, because the value could never reach the client.
- * A direct struct's constructor-filled optional field is also refused when this preparation
+ * A direct struct's schema-supplied optional field is also refused when this preparation
  * supplies and encodes it after the caller leaves it out, as {@link query} describes.
  *
  * The object form takes {@link QueryFields}. Each key replaces its name as above, in key order, and
@@ -693,7 +693,7 @@ export const appendQuery = (name: string, value: FieldValue<string | null>) =>
  * functions are not evaluated for comparison. Removing a name a {@link query} schema always writes,
  * after that schema, is an {@link InvalidRequest}, because the schema puts the value back. Removing
  * an optional field clears its default.
- * A constructor-filled optional field can also put it back and be refused, as {@link query}
+ * A schema-supplied optional field can also put it back and be refused, as {@link query}
  * describes.
  */
 export const removeQuery = (name: string, value?: string | null) =>
@@ -772,10 +772,10 @@ const lostFields = (
     message: `The ${group} group cannot be built against its schema: with the rest of the group, these fields would be lost: ${listNames(names)}.`,
   });
 
-/** Names only: the caller's omitted fields were actually supplied and written by construction. */
-const constructorConflict = (group: string, names: ReadonlyArray<string>) =>
+/** Names only: schema preparation supplied the caller's omitted fields and wrote them. */
+const preparationConflict = (group: string, names: ReadonlyArray<string>) =>
   new InvalidRequest({
-    message: `A constructor supplied these omitted ${group} fields and their schema wrote them, so a later raw edit would be lost: ${listNames(names)}. Supply the value as input, set it with Request.mapInput, or use Request.unbind("${group}") first.`,
+    message: `Schema preparation supplied and wrote these omitted ${group} fields, so a later raw edit would be lost: ${listNames(names)}. Supply the value as input, set it with Request.mapInput, or use Request.unbind("${group}") first.`,
   });
 
 /** Fields a body's encoder supplies unless the request says otherwise. */
@@ -818,11 +818,11 @@ type GroupInput<K extends "query" | "headers", A> =
  * `undefined` still has to fit `Input`. Stacked schemas allow omission only when each one does;
  * a raw default does not make a required group optional. The invocation object is still required.
  *
- * In a direct struct, a constructor default can supply an omitted optional field. A raw edit
- * after that binding is an {@link InvalidRequest} when this preparation successfully constructs
- * the group and encodes a non-`undefined` value for that field. This reads the preparation's result;
- * it never reruns a default. Construction proof is unavailable after decoder fallback, for group
- * transformations, classes or unions, or for an accessor or inherited input property.
+ * In a direct struct, schema preparation can supply an omitted optional field. A raw edit after
+ * that binding is an {@link InvalidRequest} when successful preparation writes an own enumerable
+ * data property with a non-`undefined` value under that name in a non-iterable record. This reads
+ * the preparation's result without repeating schema work. The proof excludes group transformations,
+ * classes, unions, iterable output, and accessor or inherited input properties.
  *
  * The input is an {@link Input} of the schema. Encoding produces ordered header lines. The schema
  * states the shape of the group, whatever the order of the calls: once any schema is bound, every
@@ -881,8 +881,8 @@ export const headers = <
           input.headers === undefined ? {} : input.headers
         ) as Input<S>;
         const edited = candidates(value, draft.editedFields.get(shape));
-        const { output, lost: lostFromInput, constructed } = yield* read(value);
-        const conflicts = filled(edited, constructed, output);
+        const { output, lost: lostFromInput } = yield* read(value);
+        const conflicts = filled(edited, output);
         const own = draft.takenHeaders && taken(value, output, lostFromInput);
         const prepared = yield* self.prepare(
           input,
@@ -900,7 +900,7 @@ export const headers = <
             prepared.takenHeaders?.fields,
           );
         if (conflicts.length > 0)
-          return yield* constructorConflict("headers", conflicts);
+          return yield* preparationConflict("headers", conflicts);
         const names = Shapes.written(output, foldHeader);
         const elsewhere = Shapes.others(
           shape,
@@ -970,11 +970,11 @@ export const headers = <
  * `undefined` still has to fit `Input`. Stacked schemas allow omission only when each one does;
  * a raw default does not make a required group optional. The invocation object is still required.
  *
- * In a direct struct, a constructor default can supply an omitted optional field. A raw edit
- * after that binding is an {@link InvalidRequest} when this preparation successfully constructs
- * the group and encodes a non-`undefined` value for that field. This reads the preparation's result;
- * it never reruns a default. Construction proof is unavailable after decoder fallback, for group
- * transformations, classes or unions, or for an accessor or inherited input property.
+ * In a direct struct, schema preparation can supply an omitted optional field. A raw edit after
+ * that binding is an {@link InvalidRequest} when successful preparation writes an own enumerable
+ * data property with a non-`undefined` value under that name in a non-iterable record. This reads
+ * the preparation's result without repeating schema work. The proof excludes group transformations,
+ * classes, unions, iterable output, and accessor or inherited input properties.
  *
  * The input is an {@link Input} of the schema. The schema encodes to `UrlEncoding.QueryInput` and
  * states the shape of the group, whatever the order of the calls: once any schema is bound, every
@@ -1032,8 +1032,8 @@ export const query = <
           input.query === undefined ? {} : input.query
         ) as Input<S>;
         const edited = candidates(value, draft.editedFields.get(shape));
-        const { output, lost: lostFromInput, constructed } = yield* read(value);
-        const conflicts = filled(edited, constructed, output);
+        const { output, lost: lostFromInput } = yield* read(value);
+        const conflicts = filled(edited, output);
         const own = draft.takenQuery && taken(value, output, lostFromInput);
         const prepared = yield* self.prepare(
           input,
@@ -1051,7 +1051,7 @@ export const query = <
             prepared.takenQuery?.fields,
           );
         if (conflicts.length > 0)
-          return yield* constructorConflict("query", conflicts);
+          return yield* preparationConflict("query", conflicts);
         const names = Shapes.written(output, foldQuery);
         const elsewhere = Shapes.others(shape, prepared.takenQuery, foldQuery);
         const defaults = prepared.request.urlParams.params

@@ -32,6 +32,17 @@ to the versions above, and to Effect 4.0.7, the oldest the peer range allows. No
 run time, so on an untested Effect it can fall back to Effect's own reading, where a union takes the
 first member that fits and a field can go with no error.
 
+Known limits also remain on the tested versions: conflicting decoded/encoded aliases, defaults
+hidden by group transformations, and false refusals involving stacked unions or opaque neighbors.
+The [Request guide](./modules/request.md#a-schema-states-the-shape-of-its-group) and [tracked schema
+gaps](https://github.com/viell-dev/slop-effect-schema-http/issues/143) distinguish the supported
+checks from those cases.
+
+Effect can also refuse some omitted prototype-named fields, including `constructor` and an
+encode-only `toString` default. The [dependency
+overview](https://github.com/viell-dev/slop-effect-schema-http/issues/41) records the exact schemas,
+controls and upstream status. These remain schema failures; the library does not bypass them.
+
 Other Node majors, macOS, Firefox, Safari, Deno, Bun and CommonJS are outside the qualification
 scope. Browser support does not imply support for every bundler or browser configuration; provider
 behavior and browser policy still apply.
