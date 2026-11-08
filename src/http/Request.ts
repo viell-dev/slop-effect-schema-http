@@ -95,6 +95,12 @@ export type QueryFields = Readonly<
  * header or query group, a field a schema stacked with the union takes is not lost. Inside text given
  * as text, a `Schema.Map`, a `Schema.Option` or a declaration with no struct behind it, the schema's
  * own reading applies.
+ *
+ * A direct closed struct can recover an otherwise-refused nested field through constructor-only
+ * validation beside an opaque declaration. The original parent and output remain strictly
+ * validated, and complete preservation is required. Already successful calls keep their original
+ * path; new attempts can repeat effects or fail. Encoded-side recovery and unstable field evidence
+ * remain outside this bounded route.
  */
 export type Input<S extends Schema.Top> = Inputs.Input<S>;
 

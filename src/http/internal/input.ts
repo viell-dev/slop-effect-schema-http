@@ -1,5 +1,6 @@
 import { Effect, Schema, SchemaAST } from "effect";
 import * as Excess from "./excess.js";
+import { snapshotter } from "./snapshot.js";
 
 /** What a schema's constructor takes. This is the one place that names the `~`-prefixed key. */
 type ConstructorInput<S extends Schema.Top> = S["~type.make.in"];
@@ -178,6 +179,67 @@ export const reader = <S extends Schema.Top, A, R>(
         }),
       ),
     );
+  const ast = contract.ast;
+  const recoverable =
+    ast._tag === "Objects" &&
+    ast.encoding === undefined &&
+    ast.indexSignatures.length === 0 &&
+    !ast.propertySignatures.some(({ name }) => name === Symbol.iterator) &&
+    ast.propertySignatures.some(
+      ({ type }) => type._tag === "Declaration" && type.encoding === undefined,
+    );
+  const snapshot = recoverable ? snapshotter([ast]) : undefined;
+  const recover = Effect.fnUntraced(function* (
+    input: unknown,
+    original: Written<A>,
+  ) {
+    if (ast._tag !== "Objects") return original;
+    // Candidate callbacks receive the captured input too; keep their evidence independent of it.
+    const evidence = snapshot?.(input);
+    if (evidence === undefined) return original;
+    const given = Excess.normalised([ast], evidence.value);
+    const prototype: unknown = Object.getPrototypeOf(input);
+    const output = Object.create(prototype as object | null) as Record<
+      PropertyKey,
+      unknown
+    >;
+    for (const name of Reflect.ownKeys(input as object)) {
+      const property = Object.getOwnPropertyDescriptor(input, name)!;
+      Object.defineProperty(output, name, {
+        value: property.value,
+        enumerable: property.enumerable === true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    for (const { name, type } of ast.propertySignatures) {
+      const value = output[name];
+      if (value === undefined) continue;
+      const field = Schema.make<Schema.Top>(type);
+      const made = yield* Effect.mapError(
+        field.makeEffect(
+          value,
+          type._tag === "Declaration" && type.encoding === undefined
+            ? undefined
+            : { parseOptions: Excess.strict },
+        ),
+        (issue) => new Schema.SchemaError(issue),
+      );
+      Object.defineProperty(output, name, {
+        value: made,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    const value = yield* Effect.mapError(
+      contract.makeEffect(output, { parseOptions: Excess.strict }),
+      (issue) => new Schema.SchemaError(issue),
+    );
+    const candidate = yield* write(value, Excess.strict);
+    const lost = Excess.missing([ast], given, value, candidate);
+    return lost.length === 0 ? { output: candidate, lost } : original;
+  });
   return (
     input: Input<S>,
   ): Effect.Effect<
@@ -185,16 +247,25 @@ export const reader = <S extends Schema.Top, A, R>(
     Schema.SchemaError,
     R | S["DecodingServices"]
   > => {
+    const captured = snapshot?.(input);
     const given = Excess.normalised([contract.ast], input);
     // A strict read cannot see a field outside a value's keys, so it may not fall back on `input`.
     const seen = (
       given === input ? input : Excess.exposed([contract.ast], input)
     ) as Input<S>;
-    return Effect.catch(
+    const original = Effect.catch(
       given === input
         ? kept(input)
         : Effect.catch(kept(given as Input<S>), () => kept(seen)),
       () => compared(input, given),
+    );
+    if (captured === undefined) return original;
+    return Effect.flatMap(original, (result) =>
+      result.lost.some((path) => path.length > 1)
+        ? Effect.catch(recover(captured.value, result), () =>
+            Effect.succeed(result),
+          )
+        : Effect.succeed(result),
     );
   };
 };

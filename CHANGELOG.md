@@ -1,5 +1,17 @@
 # Change history
 
+## 0.6.1 — 2026-11-08
+
+Read [What's in 0.6](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.6) for the
+patch's constructor-only recovery and the earlier `0.6.0` migration.
+
+- Recover an otherwise-refused nested visible field beside a direct opaque declaration when all
+  supplied fields fit a closed struct's constructor. The ordinary reader still runs first; new
+  attempts preserve full input evidence, parent validation and whole-side priority, and accept only
+  complete preservation. Existing successes retain their original path. Text and general
+  encoded-side recovery remain outside this repair
+  ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
+
 ## 0.6.0 — 2026-11-08
 
 Read [What's in 0.6](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.6) for the
