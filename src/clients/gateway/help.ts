@@ -12,7 +12,7 @@
 import { Effect, Schema, SchemaTransformation } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
-import { ErrorLine, GatewayError, PipeLine } from "./pipe.js";
+import { ErrorLine, GatewayError, PipeLine, pipeText } from "./pipe.js";
 
 const Section = Schema.Struct({
   topic: Schema.String,
@@ -99,7 +99,7 @@ export const HelpReply = Lines.pipe(
 /** Every help reply, section or refusal, is HTTP 200. */
 export const response = Response.status(
   200,
-  Body.text.pipe(Body.schema(HelpReply)),
+  pipeText.pipe(Body.schema(HelpReply)),
 );
 
 /** Client middleware to apply last. */

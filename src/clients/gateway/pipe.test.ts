@@ -17,6 +17,8 @@ describe("pipe replies", () => {
       ],
       ["ERROR|E_TOPIC|no topic a|b\n", "E_TOPIC", "no topic a|b"],
       ["ERROR|E_SECTION|no section a|b||c\n", "E_SECTION", "no section a|b||c"],
+      ["ERROR|E_SECTION|no section ä😀\n", "E_SECTION", "no section ä😀"],
+      ["ERROR|E_SECTION|no section \ufffd\n", "E_SECTION", "no section \ufffd"],
     ] as const) {
       const error: GatewayError = { _tag: "GatewayError", code, message };
       expect(Schema.decodeUnknownSync(balance)(text)).toEqual(error);
