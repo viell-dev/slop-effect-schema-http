@@ -300,6 +300,61 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
     required: new Set(Array.from(reading.required, fold)),
     chooses,
   };
+  // A group transformation or declaration can change names or construct in its own way.
+  const constructorNames =
+    contract.ast._tag === "Objects" && contract.ast.encoding === undefined
+      ? contract.ast.propertySignatures.flatMap(({ name, type }) =>
+          typeof name === "string" &&
+          type.context?.constructorDefault !== undefined
+            ? [name]
+            : [],
+        )
+      : [];
+  /** Only stable absent/data properties prove the caller did not supply this field. */
+  const omitted = (input: object, name: string): boolean => {
+    const property = Object.getOwnPropertyDescriptor(input, name);
+    return property === undefined
+      ? !(name in input)
+      : "value" in property && property.value === undefined;
+  };
+  /** Snapshot caller omission before preparation can run a default or encoder. */
+  const candidates = (
+    input: unknown,
+    edits: ReadonlySet<string> | undefined,
+  ): ReadonlyArray<string> =>
+    edits !== undefined && typeof input === "object" && input !== null
+      ? constructorNames.filter(
+          (name) => edits.has(fold(name)) && omitted(input, name),
+        )
+      : [];
+  /** The successful first constructor actually supplied these edited, encoded fields. */
+  const filled = (
+    names: ReadonlyArray<string>,
+    constructed: unknown,
+    output: unknown,
+  ): ReadonlyArray<string> => {
+    if (
+      typeof constructed !== "object" ||
+      constructed === null ||
+      typeof output !== "object" ||
+      output === null
+    )
+      return [];
+    return names
+      .filter((name) => {
+        const made = Object.getOwnPropertyDescriptor(constructed, name);
+        const encoded = Object.getOwnPropertyDescriptor(output, name);
+        return (
+          made !== undefined &&
+          "value" in made &&
+          made.value !== undefined &&
+          encoded?.enumerable === true &&
+          "value" in encoded &&
+          encoded.value !== undefined
+        );
+      })
+      .map(fold);
+  };
   /**
    * The caller's fields this schema took: what it wrote, and any it states and the caller gave,
    * which may be written under another name or not at all. What it would lose is not among them.
@@ -355,5 +410,5 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
       through(),
     );
   };
-  return { shape, settle, taken };
+  return { shape, settle, taken, candidates, filled };
 };

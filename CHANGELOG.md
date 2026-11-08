@@ -14,6 +14,12 @@
   schema instead of guessing through that inner transformation
   ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
 
+- **Breaking:** refuse a raw query/header edit after a direct struct binding when this preparation
+  actually constructs and encodes a constructor default for the optional field the caller omitted.
+  The check uses the successful preparation without running defaults again. Group transformations,
+  classes, unions, decoder fallback and accessor/inherited input fields remain outside its proof
+  ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
+
 - Allow a query or header group to be omitted when its schema input accepts `{}`, including
   all-optional structs. An absent or `undefined` group is validated as `{}`, so constructor defaults
   and refinements still apply. Stacked schemas keep a group required when any binding requires it;

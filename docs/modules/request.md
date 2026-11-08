@@ -534,14 +534,26 @@ value there is refused too, as a field that would be lost. To give a required fi
 asking the caller, use `Request.mapInput`. A value the schema supplies itself, from a constructor or
 decoding default, counts as written, so it replaces a raw default.
 
+**Unreleased:** an optional field of a direct struct can also refuse a raw edit after its binding.
+The check applies when the successful first constructor actually supplies a
+`Schema.withConstructorDefault` value the caller left absent or `undefined`, and encoding writes
+that non-`undefined` value. Setting, appending or removing that name would be replaced, so the
+request fails with `InvalidRequest`. Earlier raw defaults and explicit caller values still work. The
+default runs only as part of normal preparation; the check does not evaluate it again.
+
+This proof does not cover group transformations such as `Schema.encodeKeys`, classes, unions, or
+accessor and inherited input properties. It is also unavailable after the reader falls back to the
+whole decoder or field by field. A raw edit can still be replaced silently there. A default that
+returns `undefined`, or encoding that writes no value, supplies no proof for this refusal.
+
 A decoding default shows in the field's own encoding, which `Schema.encodeKeys` replaces. A raw edit
 of a field with a default under a struct renamed that way is not refused, and it never reaches the
 client.
 
 The error names the fields and leaves out their values, because a default may be a credential. The
-check runs when the request is prepared, so a mismatch compiles and then fails on every run. It does
-not see what `Request.mapEffect` edits on the native request, what `transformClient` or a client
-layer does afterwards, or text in the URL, such as a `?` in a base URL.
+check runs when the request is prepared, so a mismatch compiles and then fails during preparation.
+It does not see what `Request.mapEffect` edits on the native request, what `transformClient` or a
+client layer does afterwards, or text in the URL, such as a `?` in a base URL.
 
 #### Stack schemas
 
