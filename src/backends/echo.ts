@@ -2,12 +2,14 @@ import { router, textReply } from "../harness/route.js";
 import type { Handler } from "../harness/server.js";
 
 /**
- * A neutral backend for harness smoke tests, not part of the catalogue.
+ * The harness's neutral probe for smoke tests and catalogue scenarios that assert the ledger.
+ * Probe documentation: README.md#the-neutral-echo-probe.
  *
  * - `GET /text` answers `ok` as text.
- * - `GET /scopes` answers 400 unless the request carries exactly one `X-Scope` value per line, and
- *   replies with two repeated `X-Scope` lines.
+ * - `GET /scopes` answers 400 if an `X-Scope` line contains a comma; otherwise it answers `ok`
+ *   with two repeated `X-Scope` lines, even when no request scope is present.
  * - `GET /hold` never answers; it ends only when the client goes away.
+ * - Other paths, including `GET /x` and `POST /x`, use the router's 404 text `Not Found` fallback.
  */
 export const handler = (): Handler =>
   router([
