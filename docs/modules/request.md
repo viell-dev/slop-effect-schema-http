@@ -446,10 +446,11 @@ schema states. Add a member that holds both, or send one of them.
 
 A key no member states is stripped, as a struct strips it. So is a key only a member with another
 tag states: where only the `"a"` member has `x`, `{ kind: "b", x }` goes out as `{ kind: "b" }`. The
-types refuse both of these in a literal. Under such a schema a key set to `undefined` is no field,
-so `{ a, b: undefined, c }` reads as `{ a, c }`. A field need not be a key: an accessor on a class
-and an inherited field count, as they do for a struct, and a class instance only a struct can read
-reads as a plain object.
+tag can choose by either its decoded or encoded name. Both views must rule a member out before its
+fields go; a constructor default is not run to guess a tag. The types refuse unstated fields in a
+literal. Under such a schema a key set to `undefined` is no field, so `{ a, b: undefined, c }` reads
+as `{ a, c }`. A field need not be a key: an accessor on a class and an inherited field count, as
+they do for a struct, and a class instance only a struct can read reads as a plain object.
 
 Stacked schemas read one input, and a field stays with the schema that took it. A union takes a
 sibling's field for a key it does not state, and a field it would lose is not lost if a stacked

@@ -271,6 +271,48 @@ describe("Excess.normalised", () => {
     });
   });
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it("lets a renamed encoded tag rule a member out", () => {
+    const Tagged = Schema.Union([
+      Schema.Struct({ kind: Schema.Literal("a"), x: text }).pipe(
+        Schema.encodeKeys({ kind: "k" }),
+      ),
+      Schema.Struct({ kind: Schema.Literal("c") }).pipe(
+        Schema.encodeKeys({ kind: "k" }),
+      ),
+    ]);
+    expect(Excess.normalised([Tagged.ast], { k: "c", x: "y" })).toEqual({
+      k: "c",
+    });
+    const both = { kind: "a", k: "c", x: "y" };
+    expect(Excess.normalised([Tagged.ast], both)).toBe(both);
+  });
+
+  it("does not guess a constructor tag's default or prune an untagged value", () => {
+    let calls = 0;
+    const Tagged = Schema.Union([
+      Schema.Struct({
+        kind: Schema.Literal("a").pipe(
+          Schema.withConstructorDefault(
+            Effect.sync(() => {
+              calls += 1;
+              return "a" as const;
+            }),
+          ),
+        ),
+        x: text,
+      }).pipe(Schema.encodeKeys({ kind: "k" })),
+      Schema.Struct({ kind: Schema.Literal("c") }).pipe(
+        Schema.encodeKeys({ kind: "k" }),
+      ),
+    ]);
+    const value = { k: "c", x: "y" };
+    expect(Excess.normalised([Tagged.ast], value)).toBe(value);
+    const untagged = { x: "y" };
+    expect(Excess.normalised([Tagged.ast], untagged)).toBe(untagged);
+    expect(calls).toBe(0);
+  });
+
   it("does not take a class instance apart", () => {
     class Held extends Schema.Class<Held>("Held")({ a: text }) {}
     const value = new Held({ a: "x" });

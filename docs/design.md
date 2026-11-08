@@ -184,10 +184,13 @@ choose a union member for certain, bind that member directly.
 - **A key no member states is stripped, as a struct strips it.** That is not a union choosing badly.
   The types did not allow the key, and a stacked schema's fields reach every schema in the group
   this way. So is a key only a member with another tag states, because the tag has already chosen. A
-  key set to `undefined` is no field at all, so `{ a, b: undefined, c }` reads as `{ a, c }`, and a
-  member that states `b` cannot take the value from one that states `c`. An encoded name beside its
-  decoded twin is stripped too, under a union as under a struct: the whole value is not on the
-  encoded side, so the decoded name is the field.
+  required literal tag can choose by its decoded or encoded name, including when a whole-object
+  transformation changes its name or literal. Both views must rule a member out before its fields
+  go. A missing tag with a constructor default leaves that view possible; its default is not run to
+  guess a member. A key set to `undefined` is no field at all, so `{ a, b: undefined, c }` reads as
+  `{ a, c }`, and a member that states `b` cannot take the value from one that states `c`. An
+  encoded name beside its decoded twin is stripped too, under a union as under a struct: the whole
+  value is not on the encoded side, so the decoded name is the field.
 - **A weak schema lets more through.** `Schema.NumberFromString` turns `"many"` into `NaN`, so
   `{ limit: "many" }` goes out as `limit=NaN`, and `Schema.FiniteFromString` refuses it. That is a
   property of the definition, and the library does not try to correct it.
