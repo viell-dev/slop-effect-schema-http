@@ -574,13 +574,15 @@ remain outside it. An absent, non-enumerable, accessor or `undefined` output pro
 generated value, and iterable output uses the entries it yields. Other schema/default and lost-field
 checks still apply.
 
-Two encoded-input limits also remain. TypeScript can reject an encoded alias for a partly renamed
-struct even when runtime accepts it
-([#169](https://github.com/viell-dev/slop-effect-schema-http/issues/169)). An invalid caller value
-under a renamed encoded name can instead be replaced by an optional constructor default
+Partly renamed structs retain both decoded and encoded input types. A helper using `Request.Input`
+must account for either shape; a helper intended to accept decoded names only should declare that
+input explicitly. [What's in 0.8](../release-notes/0.8.md) gives the helper migration.
+
+One encoded-input defect remains: an invalid caller value under a renamed encoded name can be
+replaced by an optional constructor default
 ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Use decoded input or an
-input mapping that supplies the decoded name for these schemas. Both limits predate 0.7 and remain
-separate from the generated-field refusal.
+input mapping that supplies the decoded name for these schemas until that separate repair is
+delivered.
 
 For a nonempty caller group, a decoding default hidden by a rename can still replace a later raw
 edit without refusal. The library does not infer general field correspondence or conflicting-alias
@@ -763,5 +765,5 @@ records without it remain valid and use the earlier selection behavior; the new 
 requires complete evidence.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.7.0/src/http/Request.ts) for
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.8.0/src/http/Request.ts) for
 all types and overloads.

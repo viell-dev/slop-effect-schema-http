@@ -42,7 +42,13 @@ type Merged<Sides, Mix> = [Sides] extends [Mix]
     : Sides | Mix
   : Sides | Mix;
 
-type EitherSide<A, B> = [A, B] extends [B, A]
+// Optional objects can be mutually assignable while exposing different renamed keys.
+type EitherSide<A, B> = [A, B, KeysOf<A>, KeysOf<B>] extends [
+  B,
+  A,
+  KeysOf<B>,
+  KeysOf<A>,
+]
   ? A
   : Merged<A | B, Fieldwise<A, B>>;
 
