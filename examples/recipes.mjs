@@ -1,5 +1,7 @@
 import "./recipes/adjust-a-definition.ts";
 import "./recipes/api-vocabulary.ts";
+import "./recipes/definition-defaults.ts";
+import "./recipes/fixed-credentials.ts";
 import "./recipes/shared-errors.ts";
 import "./recipes/counted-list.ts";
 import "./recipes/id-from-location.ts";
@@ -10,4 +12,4 @@ import "./recipes/cross-origin.ts";
 import "./recipes/second-prefix.ts";
 import console from "node:console";
 
-console.log("All ten recipes passed.");
+console.log("All twelve recipes passed.");

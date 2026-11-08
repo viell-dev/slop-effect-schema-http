@@ -82,6 +82,7 @@ export type QueryFields = Readonly<
  * encoded again, with no error. A mix is one level deep in the type. Renamed fields take their
  * encoded names only when the whole value is on the encoded side, and a value on that side stays
  * there, even if it would fit the decoded side by losing them.
+ * When both names of a renamed field are supplied, the decoded name still wins; give one name.
  *
  * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that

@@ -60,6 +60,59 @@ and `size` keeps it. A default has to fit the schema, so `sorted("price")` on `s
 compiles, and then fails with `Request.InvalidRequest` when the request is prepared. The Request
 guide explains [what a schema allows](./modules/request.md#a-schema-states-the-shape-of-its-group).
 
+## Choose who owns a default
+
+A required output field need not be required caller input. Put its default in the schema when every
+request must send it:
+
+<<< ../examples/recipes/definition-defaults.ts#required
+
+The caller can pass `{}`: the query group is optional because its schema accepts an empty input. The
+schema still writes `limit`, validates an override and refuses removal with
+`Request.removeQuery("limit")`. A raw default beside a required field would not make its input
+optional.
+
+For a default a variant may remove, make the field optional and set its raw value separately:
+
+<<< ../examples/recipes/definition-defaults.ts#removable
+
+To keep a value out of the invocation altogether, return it from a named input mapping:
+
+<<< ../examples/recipes/definition-defaults.ts#owned
+
+`summary` still validates its query against the schema. Its caller supplies `search`, and the
+definition supplies `limit`. `mapInput` constructs the whole input synchronously; it is a deliberate
+boundary on invocation input, while the definition's author can still derive another request. See
+[input adaptation](./modules/request.md#adapt-your-application-s-argument).
+
+## Keep credentials out of invocation input
+
+Shared credentials belong to the execution environment when callers should not pass them as fields.
+Read them in client middleware, after request preparation:
+
+<<< ../examples/recipes/fixed-credentials.ts#credentials
+
+Reuse `authorize` in each operation's options. The request schema then describes only the headers a
+caller supplies:
+
+<<< ../examples/recipes/fixed-credentials.ts#operation
+
+`ApiCredentials` and `CredentialsUnavailable` become part of the operation's service and failure
+types. The `current` Effect runs for every attempt, including retries. A client Layer can instead
+share a fixed token. A computed raw field or `mapInput` mapping is synchronous and runs during
+preparation, so its value stays fixed across retries. The [middleware
+guide](./modules/operation.md#client-middleware) explains attempt timing.
+
+An application author can still replace middleware or derive an operation. Export an execution-only
+view when consumers should run the definition without deriving it:
+
+<<< ../examples/recipes/fixed-credentials.ts#boundary
+
+<<< ../examples/recipes/fixed-credentials.ts#run
+
+This narrows the exported interface; it is not access control over application code or the services
+that application code provides.
+
 ## Shared error cases
 
 A service usually reports errors the same way everywhere. A response contract is an ordinary value,

@@ -9,6 +9,17 @@ import type * as Transport from "./Transport.js";
 
 const Optional = Schema.Struct({ limit: Schema.optionalKey(Schema.String) });
 
+// Runtime cases include invalid inputs; the separate type test checks the public inference.
+const compile = (
+  request: Request.Request<never, Schema.SchemaError | Request.InvalidRequest>,
+  input: unknown,
+) => Request.compile(request, input as never);
+
+const inspect = (compiled: Request.Compiled) => ({
+  url: compiled.request.url,
+  headers: compiled.headerLines,
+});
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/135
 describe("omittable query and header groups", () => {
   for (const group of ["query", "headers"] as const) {
@@ -28,19 +39,7 @@ describe("omittable query and header groups", () => {
         group === "query"
           ? self.pipe(Request.query(schema))
           : self.pipe(Request.headers(schema));
-    // Runtime cases include invalid inputs; the separate type test checks the public inference.
-    const compile = (
-      request: Request.Request<
-        never,
-        Schema.SchemaError | Request.InvalidRequest
-      >,
-      input: unknown,
-    ) => Request.compile(request, input as never);
     const request = Request.get("https://api.test/things").pipe(bind(Optional));
-    const inspect = (compiled: Request.Compiled) => ({
-      url: compiled.request.url,
-      headers: compiled.headerLines,
-    });
 
     it.effect(`treats absent and undefined ${group} as an empty group`, () =>
       Effect.gen(function* () {

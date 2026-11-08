@@ -274,6 +274,14 @@ export const lost = (
   );
 };
 
+/** Only stable absent/data properties prove the caller did not supply this field. */
+const omitted = (input: object, name: string): boolean => {
+  const property = Object.getOwnPropertyDescriptor(input, name);
+  return property === undefined
+    ? !(name in input)
+    : "value" in property && property.value === undefined;
+};
+
 /**
  * Read what a schema says about its group, and build what it sends.
  *
@@ -310,13 +318,6 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
             : [],
         )
       : [];
-  /** Only stable absent/data properties prove the caller did not supply this field. */
-  const omitted = (input: object, name: string): boolean => {
-    const property = Object.getOwnPropertyDescriptor(input, name);
-    return property === undefined
-      ? !(name in input)
-      : "value" in property && property.value === undefined;
-  };
   /** Snapshot caller omission before preparation can run a default or encoder. */
   const candidates = (
     input: unknown,
