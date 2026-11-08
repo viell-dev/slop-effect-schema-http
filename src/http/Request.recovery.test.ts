@@ -243,7 +243,6 @@ describe("remaining group-field recovery", () => {
   const checked = bare.check(Schema.makeFilter(() => true));
   for (const [name, schema] of [
     ["parent check", checked],
-    ["parent annotation", bare.pipe(Schema.annotate({ title: "parent" }))],
     [
       "group transformation",
       bare.pipe(

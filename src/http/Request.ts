@@ -853,12 +853,12 @@ type GroupInput<K extends "query" | "headers", A> =
  * one of them takes stays with it, whatever a union beside it leaves out. Use {@link unbind} to
  * start again.
  *
- * If a bare anyOf union would otherwise refuse uncovered root fields, it can retry the whole union
- * with each member first, using the complete original input. Recovery needs actual other-binding
- * claims for remaining losses and preserves every previously certified name. Parent metadata,
- * transformed, open or iterable members, nested losses and joint backtracking are excluded. Existing
- * successful reads do not retry. Recovery adds at most one whole-union read per other member; those
- * attempts can repeat schema effects and can fail.
+ * If an eligible anyOf union would otherwise refuse uncovered root fields, it can retry the whole
+ * union with each member first, using the complete original input. Recovery needs actual sibling
+ * claims for remaining losses and preserves every previously certified name. Annotations are kept;
+ * union-parent checks, context and encoding, transformed/open/iterable members, nested losses and
+ * joint backtracking are excluded. Successful reads do not retry. Recovery adds at most one
+ * whole-union read per other member; those attempts can repeat schema effects and can fail.
  *
  * A field the schema produces wins over an automatic `Accept`, `Content-Type` or `Content-Length`,
  * whether the schema is bound before or after the body, and so does a default. An optional field
@@ -1037,12 +1037,12 @@ export const headers = <
  * of them takes stays with it, whatever a union beside it leaves out. Use {@link unbind} to start
  * again, and {@link mapInput} to supply a required field's value.
  *
- * If a bare anyOf union would otherwise refuse uncovered root fields, it can retry the whole union
- * with each member first, using the complete original input. Recovery needs actual other-binding
- * claims for remaining losses and preserves every previously certified name. Parent metadata,
- * transformed, open or iterable members, nested losses and joint backtracking are excluded. Existing
- * successful reads do not retry. Recovery adds at most one whole-union read per other member; those
- * attempts can repeat schema effects and can fail.
+ * If an eligible anyOf union would otherwise refuse uncovered root fields, it can retry the whole
+ * union with each member first, using the complete original input. Recovery needs actual sibling
+ * claims for remaining losses and preserves every previously certified name. Annotations are kept;
+ * union-parent checks, context and encoding, transformed/open/iterable members, nested losses and
+ * joint backtracking are excluded. Successful reads do not retry. Recovery adds at most one
+ * whole-union read per other member; those attempts can repeat schema effects and can fail.
  */
 export const query = <
   S extends Schema.Top &
