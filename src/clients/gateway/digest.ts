@@ -174,7 +174,7 @@ type Challenged = Response.Tagged<"Challenge", Challenge>;
 
 /** An input whose header group may carry one `Authorization` line. */
 export interface Authorizable {
-  readonly headers: { readonly authorization?: string };
+  readonly headers?: { readonly authorization?: string };
 }
 
 /**
