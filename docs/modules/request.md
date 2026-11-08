@@ -559,12 +559,13 @@ without evaluating a default, transformation, getter or iterator again. [What's 
 
 A strictly empty caller group permits another proof through a group transformation, including
 `Schema.encodeKeys`. All decoded and encoded group shapes must be closed objects or finite unions of
-closed objects, including every group encoding step, and the caller must be an ordinary or
-null-prototype object with no own keys at all. Every declared name on both sides, including symbols,
-must also be absent through its prototype chain. This eligibility is snapshotted before preparation.
-Successful non-iterable output can then prove that a later raw edit of an encoded name would
-disappear, without inferring which field maps to which name or evaluating any callback again.
-[What's in 0.7](../release-notes/0.7.md) shows the union migration; [What's in
+closed objects, and the caller must be an ordinary or null-prototype object with no own keys at all.
+For the union extension, every intermediate group encoding step must also have one of those closed
+shapes; the earlier direct-object proof continues to check its two endpoints. Every declared name on
+both sides, including symbols, must also be absent through its prototype chain. This eligibility is
+snapshotted before preparation. Successful non-iterable output can then prove that a later raw edit
+of an encoded name would disappear, without inferring which field maps to which name or evaluating
+any callback again. [What's in 0.7](../release-notes/0.7.md) shows the union migration; [What's in
 0.6](../release-notes/0.6.md) covers the earlier direct transformed-group change.
 
 Any supplied own field disables this additional proof, even an unrelated, non-enumerable or symbol
@@ -572,6 +573,14 @@ key. Classes, declarations, suspended groups, open/unknown alternatives and inhe
 remain outside it. An absent, non-enumerable, accessor or `undefined` output property proves no
 generated value, and iterable output uses the entries it yields. Other schema/default and lost-field
 checks still apply.
+
+Two encoded-input limits also remain. TypeScript can reject an encoded alias for a partly renamed
+struct even when runtime accepts it
+([#169](https://github.com/viell-dev/slop-effect-schema-http/issues/169)). An invalid caller value
+under a renamed encoded name can instead be replaced by an optional constructor default
+([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Use decoded input or an
+input mapping that supplies the decoded name for these schemas. Both limits predate 0.7 and remain
+separate from the generated-field refusal.
 
 For a nonempty caller group, a decoding default hidden by a rename can still replace a later raw
 edit without refusal. The library does not infer general field correspondence or conflicting-alias

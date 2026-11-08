@@ -39,6 +39,12 @@ guide](./modules/request.md#a-schema-states-the-shape-of-its-group) and [tracked
 gaps](https://github.com/viell-dev/slop-effect-schema-http/issues/143) distinguish the supported
 checks from those cases.
 
+Partly renamed structs can also exclude valid encoded aliases from their TypeScript input type
+([#169](https://github.com/viell-dev/slop-effect-schema-http/issues/169)). An invalid value under a
+renamed encoded name can be replaced by an optional constructor default instead of being refused
+([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Supply decoded names for
+these schemas, directly or through an input mapping, until the separate repairs are delivered.
+
 Effect can also refuse some omitted prototype-named fields, including `constructor` and an
 encode-only `toString` default. The [dependency
 overview](https://github.com/viell-dev/slop-effect-schema-http/issues/41) records the exact schemas,
