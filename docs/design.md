@@ -151,8 +151,17 @@ where the current checks apply.
   Building and then encoding validates twice, which costs microseconds next to a request, so neither
   step is skipped.
 - **Preparation tries the decoded side first, then the decoder as a whole, then the decoder field by
-  field.** If all fail, it reports the decoded side's error, a `SchemaError` before dispatch, so
-  existing failures read the same.
+  field.** If all fail, it reports the decoded side's error, a `SchemaError` before dispatch. After
+  a typed strict read failure, stable plain root input can establish an additional encoded check
+  from finite closed object/union names: it supplies an encoded-only name and no decoded-only name.
+  The initial whole constructor still runs first, followed by existing strict-first writing. Only a
+  successful strict write that actually writes that supplied encoded-only name permits whole
+  decoding to replace the constructor result. The additional check retains loss/sibling certificates
+  and preserves the original strict refusal if decoding fails. An ordinary decoder/member/fieldwise
+  success is not reinterpreted; fieldwise recovery can still default an invalid alias beside mixed
+  encoded/decoded numeric fields. Successful strict reads, writer-failure fallback and other
+  constructor choices keep their paths. Initial default/writer effects can precede refusal;
+  construction is not repeated to classify the input.
 - **A value that fits the decoded side is read as decoded.** When both sides have the same type, as
   under a schema from `string` to `string` such as `Schema.StringFromBase64`, an already encoded
   value cannot be told apart from a decoded one, so it is encoded again, with no error. Under a
@@ -374,12 +383,12 @@ Some things are outside the check:
   after the schema to survive under such a name. `transformClient` and a client layer work on the
   prepared request, so the check does not see them.
 - A check is only as strict as its schema. `Schema.NumberFromString` accepts `"two"` as `NaN`.
-- An invalid value under a renamed encoded name can be replaced by an optional constructor default
-  instead of being refused
-  ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). This is a reproduced
-  defect, not intended precedence. Use decoded input for those schemas pending repair. Outer-object
-  and union-member alias typing is repaired in 0.8; helpers accepting `Request.Input` must account
-  for the encoded shape too.
+- Invalid encoded aliases can still take optional constructor defaults outside the bounded 0.9 root
+  proof ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). An encoded name
+  used on any decoded member, a supplied decoded-only name, open/opaque/class/suspended or iterable
+  group shapes, inherited/accessor fields and changing input cannot establish this route. Use
+  decoded input for those schemas. Outer-object/member alias typing is repaired in 0.8; helpers
+  accepting `Request.Input` must account for both shapes.
 - Nested renamed fields can still lose their encoded input type when outer names match
   ([#172](https://github.com/viell-dev/slop-effect-schema-http/issues/172)). Use decoded nested
   names or an input mapping; the whole encoded side executes, but the static refusal remains.

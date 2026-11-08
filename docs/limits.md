@@ -39,11 +39,17 @@ guide](./modules/request.md#a-schema-states-the-shape-of-its-group) and [tracked
 gaps](https://github.com/viell-dev/slop-effect-schema-http/issues/143) distinguish the supported
 checks from those cases.
 
-An invalid value under a renamed encoded name can be replaced by an optional constructor default
-instead of being refused ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)).
-Supply decoded names for these schemas, directly or through an input mapping, until that runtime
-repair is delivered. The outer-object and union-member input-typing repair is in 0.8; the [release
-article](./release-notes/0.8.md) describes the helper compatibility change.
+An invalid encoded alias is refused in 0.9 when stable plain root data, finite closed schema names,
+a successful whole constructor and its strict encoding establish that the encoded field would take a
+default. Valid encoded input still decodes and can retain fields held by a separate binding.
+Ambiguous decoded/encoded names, open/opaque/class/suspended or iterable group shapes,
+inherited/accessor fields and changing input remain outside the additional proof; default
+substitution can still occur there
+([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Use decoded names,
+directly or through a named input mapping. [What's in 0.9](./release-notes/0.9.md) gives examples
+and the migration. The earlier [0.8 helper migration](./release-notes/0.8.md) still applies. If the
+initial whole constructor fails and member/fieldwise recovery succeeds, this additional check does
+not run; an invalid alias beside mixed encoded/decoded numeric fields can still take a default.
 
 A nested renamed field can still lose its encoded alias from the static input type when outer field
 names match ([#172](https://github.com/viell-dev/slop-effect-schema-http/issues/172)). Use decoded

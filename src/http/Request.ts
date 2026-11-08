@@ -90,9 +90,14 @@ export type QueryFields = Readonly<
  * shape explicitly.
  * Nested renamed fields can still lose their encoded input type when outer names match (issue
  * #172); use decoded nested names or a decoded input mapping pending that separate repair.
- * An invalid encoded alias can still be replaced by an optional constructor default (issue #170).
- * Use decoded names for those schemas until that separate runtime repair is delivered. The Request
- * guide describes the helper migration and input-mapping workaround.
+ * Stable plain root data, finite closed object/union names, a successful whole constructor and
+ * strict encoding can establish an encoded-only field overwritten by a default after a typed
+ * strict read failure. Additional whole decoding then validates that input. Initial constructor/default and
+ * writer effects can run first; other constructor choices keep priority. Ambiguous names,
+ * open/opaque/class or suspended/iterable groups, inherited/accessor fields and changing input
+ * remain outside this proof, as does constructor failure recovered memberwise or fieldwise (issue
+ * #170). Use decoded names or a named input mapping. The Request guide describes the bounds and
+ * helper migration.
  *
  * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that
