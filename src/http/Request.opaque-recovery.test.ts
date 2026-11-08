@@ -13,6 +13,7 @@ import {
 } from "effect";
 import * as Body from "./Body.js";
 import * as Inputs from "./internal/input.js";
+import { snapshotter } from "./internal/snapshot.js";
 import * as Request from "./Request.js";
 
 const A = Schema.Struct({ a: Schema.String });
@@ -23,6 +24,11 @@ const input = () => ({
   f: { a: "x", b: "y" },
   o: Option.some({ a: "o", zz: "z" }),
 });
+const sparseStrings = () => {
+  const value: (string | undefined)[] = [];
+  value.length = 1;
+  return value;
+};
 const json = <S extends Schema.Top>(schema: S, value: Inputs.Input<S>) =>
   Effect.map(Body.jsonSchema(schema).encode(value), (body) => {
     if (body._tag !== "Uint8Array") throw new Error("expected a JSON body");
@@ -504,10 +510,111 @@ describe("constructor-only recovery beside opaque fields", () => {
     }),
   );
 
+  it.effect(
+    "does not lose an inherited array value or bypass its parent check",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Struct({
+          ...Core.fields,
+          x: Schema.Array(Schema.UndefinedOr(Schema.String)),
+        }).check(
+          Schema.makeFilter(
+            (value) => !("b" in value.f) || value.x[0] !== "original",
+          ),
+        );
+        const prototype: object = Object.create(Array.prototype);
+        Object.defineProperty(prototype, "0", { value: "original" });
+        const x = sparseStrings();
+        Object.setPrototypeOf(x, prototype);
+        const result = yield* Inputs.reader(
+          schema,
+          Schema.encodeEffect(schema),
+        )({
+          ...input(),
+          x,
+        });
+        expect(result.lost).toEqual([["f", "b"]]);
+        expect(result.output.x).toEqual(["original"]);
+      }),
+  );
+
+  it.effect(
+    "keeps ordinary sparse arrays eligible for constructor recovery",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Struct({
+          ...Core.fields,
+          x: Schema.Array(Schema.UndefinedOr(Schema.String)),
+        });
+        const result = yield* Inputs.reader(
+          schema,
+          Schema.encodeEffect(schema),
+        )({
+          ...input(),
+          x: sparseStrings(),
+        });
+        expect(result.lost).toEqual([]);
+        expect(result.output.x).toEqual([undefined]);
+      }),
+  );
+
+  it("declines inherited sparse indices without evaluating their getters", () => {
+    const schema = Schema.Struct({
+      ...Core.fields,
+      x: Schema.Array(Schema.UndefinedOr(Schema.String)),
+    });
+    const capture = snapshotter([schema.ast]);
+    expect(capture({ ...input(), x: [undefined] })).toBeDefined();
+    let gets = 0;
+    const prototype: object = Object.create(Array.prototype);
+    Object.defineProperty(prototype, "0", {
+      get: () => {
+        gets++;
+        return "original";
+      },
+    });
+    const custom = sparseStrings();
+    Object.setPrototypeOf(custom, prototype);
+    expect(capture({ ...input(), x: custom })).toBeUndefined();
+    expect(gets).toBe(0);
+    for (const polluted of [Array.prototype, Object.prototype]) {
+      const previous = Object.getOwnPropertyDescriptor(polluted, "0");
+      let captured: unknown;
+      try {
+        Object.defineProperty(polluted, "0", {
+          value: "original",
+          configurable: true,
+          writable: true,
+        });
+        captured = capture({ ...input(), x: sparseStrings() });
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(polluted, "0");
+        else Object.defineProperty(polluted, "0", previous);
+      }
+      expect(captured).toBeUndefined();
+    }
+  });
+
+  it("captures sparse array evidence without visiting every missing element", () => {
+    const schema = Schema.Struct({
+      ...Core.fields,
+      x: Schema.Array(Schema.UndefinedOr(Schema.String)),
+    });
+    const x: (string | undefined)[] = [];
+    x.length = 1_000_000_000;
+    const captured = snapshotter([schema.ast])({ ...input(), x });
+    expect(captured).toBeDefined();
+    const value = captured!.value as { readonly x: ReadonlyArray<unknown> };
+    expect(value.x.length).toBe(x.length);
+    expect(Object.hasOwn(value.x, "0")).toBe(false);
+  });
+
   for (const [name, opaque] of [
     ["Unknown", Schema.Unknown],
     ["Any", Schema.Any],
     ["ObjectKeyword", Schema.ObjectKeyword],
+    ["empty Struct", Schema.Struct({})],
+    ["union with empty Struct", Schema.Union([Schema.Struct({}), A])],
     ["union with Unknown", Schema.Union([Schema.Unknown, A])],
     [
       "union with Declaration",

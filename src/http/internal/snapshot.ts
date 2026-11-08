@@ -39,6 +39,11 @@ const describe = (types: ReadonlyArray<SchemaAST.AST>) => {
       sides.some(({ _tag }) =>
         ["Any", "Unknown", "ObjectKeyword"].includes(_tag),
       ) ||
+      objects.some(
+        (side) =>
+          side.propertySignatures.length === 0 &&
+          side.indexSignatures.length === 0,
+      ) ||
       ((objects.length > 0 || arrays.length > 0) &&
         sides.some(({ _tag }) => _tag === "Declaration")),
     visible: objects.length > 0 || arrays.length > 0,
@@ -79,6 +84,7 @@ export const snapshotter = (schemaTypes: ReadonlyArray<SchemaAST.AST>) => {
     types: ReadonlyArray<SchemaAST.AST>,
     value: unknown,
     seen: Set<object>,
+    arrayIndices: () => ReadonlyArray<readonly [string, number]> | undefined,
   ): Snapshot | undefined => {
     if (typeof value !== "object" || value === null) return { value };
     if (seen.has(value)) return undefined;
@@ -90,12 +96,25 @@ export const snapshotter = (schemaTypes: ReadonlyArray<SchemaAST.AST>) => {
     const list = Array.isArray(value);
     const prototype: unknown = Object.getPrototypeOf(value);
     if (
-      (!list && prototype !== Object.prototype && prototype !== null) ||
+      (list
+        ? prototype !== Array.prototype
+        : prototype !== Object.prototype && prototype !== null) ||
       (!list && Symbol.iterator in value)
     )
       return undefined;
     const descriptors: Record<PropertyKey, PropertyDescriptor> =
       Object.getOwnPropertyDescriptors(value);
+    if (list) {
+      const length = descriptors.length!.value as number;
+      const inherited = arrayIndices();
+      if (
+        inherited === undefined ||
+        inherited.some(
+          ([key, index]) => index < length && !Object.hasOwn(descriptors, key),
+        )
+      )
+        return undefined;
+    }
     if (
       shape.names.some(
         (name) => !Object.hasOwn(descriptors, name) && name in value,
@@ -105,7 +124,7 @@ export const snapshotter = (schemaTypes: ReadonlyArray<SchemaAST.AST>) => {
     for (const key of Reflect.ownKeys(descriptors)) {
       const descriptor = descriptors[key]!;
       if (!("value" in descriptor)) return undefined;
-      const next = copy(shape.child(key), descriptor.value, seen);
+      const next = copy(shape.child(key), descriptor.value, seen, arrayIndices);
       if (next === undefined) return undefined;
       descriptor.value = next.value;
     }
@@ -115,5 +134,25 @@ export const snapshotter = (schemaTypes: ReadonlyArray<SchemaAST.AST>) => {
         : Object.create(prototype as object | null, descriptors),
     };
   };
-  return (input: unknown) => copy(schemaTypes, input, new Set());
+  return (input: unknown) => {
+    // Inspect inherited names once per capture, without walking potentially enormous sparse holes.
+    let indices: ReadonlyArray<readonly [string, number]> | undefined;
+    const arrayIndices = () => {
+      if (Object.getPrototypeOf(Array.prototype) !== Object.prototype)
+        return undefined;
+      return (indices ??= [Array.prototype, Object.prototype].flatMap(
+        (prototype) =>
+          Reflect.ownKeys(prototype).flatMap((key) => {
+            if (typeof key !== "string") return [];
+            const index = Number(key);
+            return Number.isInteger(index) &&
+              index >= 0 &&
+              String(index) === key
+              ? [[key, index] as const]
+              : [];
+          }),
+      ));
+    };
+    return copy(schemaTypes, input, new Set(), arrayIndices);
+  };
 };
