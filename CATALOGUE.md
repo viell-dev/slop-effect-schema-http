@@ -2972,10 +2972,12 @@ records where the library says the rule stops.
 - **EXT-30o** A tag has already chosen, so a key only another tag's member states goes, with no
   error. Status: tested.
   - `[EXT-30o] a tag has already chosen, so a key only another tag's member states goes, with no error`
-- **EXT-30p** A union chooses before it knows what a stacked schema took, so `Union([{ team }, {
-owner, limit }])` stacked with `{ team }` refuses all three fields, and bound directly, the member
-  goes out whole. Item 1 of #143. Status: limit.
-  - `[EXT-30p] limit: a union chooses before it knows what a stacked schema took, so its wider member is refused beside that schema`
+- **EXT-30p** A bare union can recover another member using an actual sibling's consumption.
+  The original `Union([{ team }, { owner, limit }])` stacked with `{ team }` input now sends all
+  three fields; fields no member can hold together still refuse dispatch. EXT-34 exercises the
+  business-service workflow and the bounded recovery's limits. Item 1 of #143. Status: tested.
+  - `[EXT-30p] a bare union recovers its wider member beside an actual sibling holder`
+  - `[EXT-30p] control: fields no member can hold together remain refused beside a sibling`
   - `[EXT-30p] control: bound directly, the member goes out whole beside that schema`
 - **EXT-30q** A field whose own encode step omits it goes out without it. The schema decided that,
   so it is no loss the library can answer for. Status: tested.
@@ -3133,3 +3135,63 @@ EXT-30l's contradictory-alias pin is unchanged.
   constructor-generated query property. The iterable sends no entries, so removing that property
   must remain usable and the customer list receives no query. Status: tested.
   - `[EXT-33f] control: an empty iterable direct struct sends no own generated query field and permits removal`
+
+#### Empty transformed groups and bounded stacked-union recovery
+
+EXT-34 covers the two bounded `0.6` follow-ups accepted in
+[#143's scope decision](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6724274862).
+Consumer tests in `src/scenarios/group-preservation.test.ts` use the documented business customer
+list and seeded customers through Fetch and the socket listener, in Node and Chromium. Business
+successes check customer names, exact GET target, one JSON Accept line, empty body and one arrival.
+The inherited `toString` name uses the neutral echo probe's README contract and exact wire checks.
+Refusals check the error kind, a named field, redacted values and an empty ledger. Recovery may
+repeat schema work for formerly refused calls; successful calls retain their original path. No
+joint backtracking or general transformed-field correspondence is claimed. EXT-30l's conflicting
+aliases and the opaque-value pins remain unchanged.
+
+- **EXT-34a** A strictly empty plain or null-prototype caller group, including normalized omission,
+  proves a generated renamed field without a key map. Renamed and multistage closed-object schemas
+  refuse later set, append and removal of an actual encoded field. Status: tested.
+  - `[EXT-34a] an empty ${shape} group refuses a later query ${edit}`
+  - `[EXT-34a] an ${shape} empty group refuses replacement of its renamed default`
+- **EXT-34b** A renamed generated `Accept` header refuses later set and removal regardless of raw
+  edit casing. The ordinary generated header reaches the service. Status: tested.
+  - `[EXT-34b] an empty renamed header group protects Accept without case sensitivity`
+- **EXT-34c** The empty-group proof adds no default or transformation evaluations: compare the
+  exact callback trace against an ordinary successful call using the same schema. Status: tested.
+  - `[EXT-34c] empty-group evidence reuses ordinary default and transform evaluations`
+- **EXT-34d** Explicit decoded and encoded values retain their precedence over later raw defaults;
+  earlier raw defaults retain ordinary schema behavior. Status: tested.
+  - `[EXT-34d] control: explicit decoded and encoded values and earlier raw defaults retain precedence`
+- **EXT-34e** An unrelated own key, a nonenumerable own key, a symbol own key or a custom prototype
+  disables the new proof. These unchanged transformed-input limits still permit the generated
+  output to replace a later raw edit, including legitimate nonempty `{ page: 1 }` input. An
+  inherited encoded `toString` name also disables it. A renamed empty generator still sends
+  yielded entries rather than its own generated field.
+  Status: limit.
+  - `[EXT-34e] limit: an ${shape} disables the new empty-group proof`
+  - `[EXT-34e] limit: a nonempty renamed group keeps the broader generated-field correspondence limit`
+  - `[EXT-34e] control: an inherited encoded toString name disables empty-group evidence`
+  - `[EXT-34e] control: a renamed iterable output still sends yielded entries rather than own fields`
+- **EXT-34f** `Union([{ page }, { per_page, name }])` stacked with `{ page }` recovers the full
+  customer filter in both binding orders using actual sibling consumption. Status: tested.
+  - `[EXT-34f] ${order}: actual sibling consumption lets a union keep the remaining customer filters`
+- **EXT-34g** Recovery retains whole-union constructor-before-decoder priority: a later string
+  member keeps `name: "01"` although an earlier numeric member could decode it as `1`. Returned
+  customer names distinguish both wire spellings; the direct numeric control writes `1`.
+  Status: tested.
+  - `[EXT-34g] whole-union constructor priority preserves literal 01 during recovery`
+  - `[EXT-34g] control: directly binding the numeric member canonicalizes name 01 to 1`
+- **EXT-34h** A wider-first successful call keeps its baseline schema-evaluation trace and full
+  customer filter. Status: tested.
+  - `[EXT-34h] control: a wider-first successful union keeps its evaluation trace`
+- **EXT-34i** Two applications of one binding factory cannot hold three separate alternatives'
+  fields. Names merely stated by a union cannot excuse fields it did not consume. Status: tested.
+  - `[EXT-34i] control: reused bindings cannot pre-credit all names merely stated by their unions`
+- **EXT-34j** A binding's generated name cannot be withdrawn during recovery after a mapped inner
+  input relied on that name's certificate. The old false refusal is preserved rather than silently
+  losing the mapped caller value. Status: tested.
+  - `[EXT-34j] recovery cannot withdraw generated credit already used after mapInput`
+- **EXT-34k** Parent checks leave a union outside the bounded recovery route. Its original false
+  refusal remains a stated limit. Status: limit.
+  - `[EXT-34k] control: parent checks keep the bounded union recovery unavailable`

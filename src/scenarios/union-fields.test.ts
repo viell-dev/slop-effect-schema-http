@@ -583,10 +583,10 @@ describe(`a union's fields at the wire (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-30p] limit: a union chooses before it knows what a stacked schema took, so its wider member is refused beside that schema",
+    "[EXT-30p] a bare union recovers its wider member beside an actual sibling holder",
     () =>
       Effect.gen(function* () {
-        const { error, ledger } = yield* refused(
+        const ledger = yield* sent(
           (origin) =>
             at(origin).pipe(
               Request.query(Team),
@@ -594,7 +594,33 @@ describe(`a union's fields at the wire (${lane.name})`, () => {
             ),
           { query: { owner: "ada", limit: "5", team: "core" } },
         );
+        expect(ledger).toHaveLength(1);
+        expect(ledger[0]!.method).toBe("GET");
+        expect(ledger[0]!.target).toBe("/x?team=core&owner=ada&limit=5");
+        expect(headerValues(ledger[0]!.lines, "accept")).toEqual([
+          "text/plain",
+        ]);
+        expect(ledger[0]!.body.byteLength).toBe(0);
+      }),
+  );
+
+  it.live(
+    "[EXT-30p] control: fields no member can hold together remain refused beside a sibling",
+    () =>
+      Effect.gen(function* () {
+        const { error, ledger } = yield* refused(
+          (origin) =>
+            at(origin).pipe(
+              Request.query(Team),
+              Request.query(
+                Schema.Union([Owner, Schema.Struct({ limit: Schema.String })]),
+              ),
+            ),
+          { query: { owner: "ada", team: "core", limit: secret } },
+        );
         expect(error._tag).toBe("SchemaError");
+        expect(error.message).toContain('"limit"');
+        expect(error.message).not.toContain(secret);
         expect(ledger).toEqual([]);
       }),
   );
