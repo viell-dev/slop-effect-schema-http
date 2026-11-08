@@ -3059,3 +3059,41 @@ gateway or settled on the page, as each entry says.
     bytes of `#a|b`, so a reader takes the code and message from the first two `|` alone.
   - Consumer side: EXT-9p decodes the page's example through the consumer's contract, whose reader
     gave a decode error on it before.
+
+#### Candidate preparation contracts at the wire
+
+EXT-32 checks the request-preparation changes planned for `0.4`, using the source commit
+`859679932b3ab8788b6869533b62ec900a4804b1` in `library-ref`, rather than a published `0.4` package.
+Release qualification supplies its final library commit separately. The consumer tests in
+`src/scenarios/preparation-contracts.test.ts` use the customer-list endpoint documented in
+[services/business.md](./services/business.md), with seeded customers, its `page`, `per_page` and
+`name` query fields, and `Accept`. Both Node and Chromium use Fetch over the socket listener.
+Every successful call checks the returned customer names and the ledger's exact GET target, one
+JSON Accept line, empty body and one request; every preparation failure checks an empty ledger.
+EXT-30l's contradictory-alias limit remains unchanged.
+The gateway's Digest helper accepts the now-omittable header group; the existing successful AUTH-7
+handshake also starts without that group.
+
+- **EXT-32a** Query/header groups whose schema input accepts `{}` can be omitted. Raw defaults
+  still validate, explicit caller values override them, and refinements or explicit `null` can
+  still fail before dispatch. Status: tested.
+  - `[EXT-32a] omitted and undefined optional query/header groups reach the customer list`
+  - `[EXT-32a] omitted optional groups keep validated raw defaults and accept explicit overrides`
+  - `[EXT-32a] omission still validates refinements and explicit null before dispatch`
+- **EXT-32b** A direct struct's successful constructor fills an omitted optional field and its
+  encoder writes it, so a post-binding raw edit is an `InvalidRequest` with nothing dispatched.
+  Query set, append and both removals, plus case-insensitive header set/removal, are covered.
+  Earlier raw defaults and explicit input still dispatch. Whole-decoder fallback after a sibling
+  fails construction, an undefined-producing default and a failed-default fallback keep raw
+  values. Status: tested.
+  - `[EXT-32b] constructor-filled query/header fields refuse post-binding raw edits with nothing sent`
+  - `[EXT-32b] control: pre-binding defaults and explicit caller values reach the wire`
+  - `[EXT-32b] control: decoder fallback and undefined-producing defaults leave raw values to stand`
+- **EXT-32c** An encoded tag under `Schema.encodeKeys` selects its member before treating an
+  extra value as a field only the other member states. `name=cedar` arrives without the other
+  member's invalid `per_page`, and the customer list succeeds. Status: tested.
+  - `[EXT-32c] an encoded renamed tag rules out the other member's query field`
+- **EXT-32d** A transformed literal inside a tag union cannot be guessed through. The wider
+  member keeps `per_page` beside the tag and both arrive, instead of silently losing the field.
+  Status: tested.
+  - `[EXT-32d] a transformed literal inside a tag union keeps its wider member's query field`

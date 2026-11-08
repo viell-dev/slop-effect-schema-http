@@ -1356,7 +1356,7 @@ describe(`gateway (${lane.name})`, () => {
           expect(first.value.records).toBeUndefined();
           const challenge = narrow(first, "Challenge").value;
           expect(challenge).toMatchObject({ realm: REALM, stale: false });
-          const report = yield* viaFetch(run(period));
+          const report = yield* viaFetch(run({ query: period.query }));
           expect(report).toMatchObject({
             _tag: "Report",
             value: {
