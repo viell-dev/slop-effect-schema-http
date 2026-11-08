@@ -230,7 +230,9 @@ member. If the original reader reports a nested caller field it would lose, a di
 can try a constructor-only recovery. Root losses alone do not start it, because a sibling schema can
 hold those names. No earlier successful call takes this additional route.
 
-The attempt keeps the full original input and stable evidence captured before callbacks. It
+The attempt keeps the full original input and stable evidence captured before callbacks. Visible
+data must still match that evidence when recovery starts; input changed while its encoding Effect
+was pending retains the original refusal. The comparison does not inspect inside opaque values. It
 constructs supplied visible fields strictly, and direct opaque declarations without an encoding
 ordinarily. It then runs the original parent's strict constructor and writer, including its checks
 and defaults, and compares the actual result with the original visible fields. It accepts only
