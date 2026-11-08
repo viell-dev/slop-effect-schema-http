@@ -3387,3 +3387,38 @@ empty body and request count. These scenarios target the breaking `0.7.0` candid
 - **EXT-37j** Invalid supplied values retain their original `SchemaError`, field path and empty
   ledger rather than becoming a generated-field refusal. Status: tested.
   - `[EXT-37j] control: invalid ${group} input keeps its original schema failure and never dispatches`
+
+## Encoded input aliases in partly renamed structs
+
+EXT-38 covers the public input typing repair accepted in
+[#169](https://github.com/viell-dev/slop-effect-schema-http/issues/169), targeting unreleased 0.8.0.
+Consumer-authored scenarios in `src/scenarios/encoded-input-aliases.test.ts` use the neutral echo
+probe's [public contract](./README.md#the-neutral-echo-probe), Fetch in Node and Chromium, and
+physical socket ledgers. Published 0.7.0 rejects the positive encoded `Request.Input` assignments
+under strict TypeScript even though these valid calls already work at runtime. The repair retains
+those wire outcomes: `"05"` becomes `5`, decoded `5` stays `5`, and omission generates `25`.
+Singleton unions, all-string fields, required siblings and invalid names/value types have static
+checks too. Invalid encoded values being replaced by defaults remain outside this repair;
+[#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170) is still unresolved.
+
+- **EXT-38a** A partly renamed direct query accepts encoded input beside its unchanged optional
+  sibling; decoded and omitted inputs retain their exact targets. Status: tested.
+  - `[EXT-38a] a direct query accepts encoded aliases and retains decoded and omitted controls`
+- **EXT-38b** A multiple-member query union retains the same encoded, decoded and omitted behavior.
+  Status: tested.
+  - `[EXT-38b] a query union accepts encoded aliases and retains decoded and omitted controls`
+- **EXT-38c** Partly renamed direct headers accept encoded input, preserve the unchanged sibling,
+  and retain decoded and omitted behavior. Status: tested.
+  - `[EXT-38c] direct headers accept encoded aliases and retain decoded and omitted controls`
+- **EXT-38d** A multiple-member header union retains the same fields and canonical values.
+  Status: tested.
+  - `[EXT-38d] a header union accepts encoded aliases and retains decoded and omitted controls`
+- **EXT-38e** A discriminated query union exchanges `limit` and `page_size` between its members.
+  Both encoded aliases remain available in public input types even though the complete union has
+  the same keys on both sides. String values retain their exact `05` and `07` spelling. The initial
+  `a56585f` candidate still rejects these valid typed calls; their runtime controls already pass.
+  Status: tested.
+  - `[EXT-38e] a query union retains encoded aliases exchanged between discriminated members`
+- **EXT-38f** The same exchanged-alias union bound to headers sends each member's exact encoded
+  name and value once, without the other alias or an omitted sibling. Status: tested.
+  - `[EXT-38f] a header union retains encoded aliases exchanged between discriminated members`
