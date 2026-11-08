@@ -131,6 +131,29 @@ The caller passes a number for `page`, or [its encoded text](#a-schema-has-two-s
 schema writes text. Header schemas work the same way. Their encoded shapes must fit
 `Transport.HeaderInput`; query schemas must encode to `UrlEncoding.QueryInput`.
 
+**Unreleased:** when a query or header schema's input accepts `{}`, its group can be left out. For
+example, a query with only an optional `limit` lets the caller pass `{}`:
+
+```ts
+import { Schema } from "effect";
+import { Request } from "viell-effect-schema-http";
+
+const list = Request.get("/things").pipe(
+  Request.query(Schema.Struct({ limit: Schema.optional(Schema.FiniteFromString) })),
+);
+const prepared = Request.compile(list, {}); // URL: /things
+```
+
+The binding reads an absent or `undefined` group as `{}` and still validates it. Constructor
+defaults run, and a refinement can still reject the empty object. `null` and other explicit values
+are validated as supplied. With `exactOptionalPropertyTypes`, passing `query: undefined` or
+`headers: undefined` explicitly still has to fit the schema's input.
+
+A union permits omission when one member accepts `{}`; stacked schemas permit it only when each
+binding does. A raw default does not satisfy a required input field. `Request.mapInput` keeps the
+argument its function declares, and path and body bindings keep their input keys. An operation with
+only omittable groups takes `execute({})`; the input object is still required.
+
 | Binding                          | Input property | What it produces                                     |
 | -------------------------------- | -------------- | ---------------------------------------------------- |
 | `` Request.path`/users/${id}` `` | `path`         | Its text, with each value encoded, added to the path |

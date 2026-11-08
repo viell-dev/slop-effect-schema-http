@@ -14,6 +14,12 @@
   schema instead of guessing through that inner transformation
   ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
 
+- Allow a query or header group to be omitted when its schema input accepts `{}`, including
+  all-optional structs. An absent or `undefined` group is validated as `{}`, so constructor defaults
+  and refinements still apply. Stacked schemas keep a group required when any binding requires it;
+  path and body inputs stay as before
+  ([#135](https://github.com/viell-dev/slop-effect-schema-http/issues/135)).
+
 ## 0.3.0 — 2026-11-07
 
 Read [What's in 0.3](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.3) for the
