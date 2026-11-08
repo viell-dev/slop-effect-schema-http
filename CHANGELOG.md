@@ -1,6 +1,6 @@
 # Change history
 
-## 0.8.0 — 2026-11-08
+## 0.8.0 — 2026-11-09
 
 Read [What's in 0.8](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.8) for the
 encoded-input type repair and the migration for helpers that assumed decoded names only.
