@@ -414,7 +414,7 @@ const search = Request.get("https://api.example.test/things").pipe(
 Known preservation gaps remain in
 [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). Give a renamed field under
 one side's name: if both names are supplied, the decoded name still wins and the other value can go
-silently. Generated fields outside the direct-struct or strictly empty transformed-group proofs have
+silently. Generated fields outside the same-name or strictly empty closed-group proofs have
 [raw-edit limits](#a-schema-states-the-shape-of-its-group).
 
 #### When both sides share a type
@@ -547,28 +547,31 @@ value there is refused too, as a field that would be lost. To give a required fi
 asking the caller, use `Request.mapInput`. A value the schema supplies itself, from a constructor or
 decoding default, counts as written, so it replaces a raw default.
 
-An optional field of a direct struct can also refuse a raw edit after its binding. Before
-preparation, the caller must have left it absent throughout its prototype chain, or supplied an own
-data property containing `undefined`. If successful ordinary non-iterable output then holds an own
-enumerable non-`undefined` data value under that same name, setting, appending or removing it would
-be replaced, so the request fails with `InvalidRequest`. The field can come from construction,
-decoding, fieldwise input or encoding. Earlier raw defaults and explicit caller values still work.
-The check reads the successful output without evaluating a default, transformation, getter or
-iterator again. [What's in 0.5](../release-notes/0.5.md) shows how to choose the value through
-input.
+An optional field of a direct struct, or a finite closed union with no group encoding, can also
+refuse a raw edit after its binding. Before preparation, the caller must have left it absent
+throughout its prototype chain, or supplied an own data property containing `undefined`. If
+successful ordinary non-iterable output then holds an own enumerable non-`undefined` data value
+under that same name, setting, appending or removing it would be replaced, so the request fails with
+`InvalidRequest`. The field can come from construction, decoding, fieldwise input or encoding.
+Earlier raw defaults and explicit caller values still work. The check reads the successful output
+without evaluating a default, transformation, getter or iterator again. [What's in
+0.5](../release-notes/0.5.md) shows how to choose the value through input.
 
 A strictly empty caller group permits another proof through a group transformation, including
-`Schema.encodeKeys`. Both the decoded and encoded shapes must be closed objects, and the caller must
-be an ordinary or null-prototype object with no own keys at all. Every declared name on both sides,
-including symbols, must also be absent through its prototype chain. This eligibility is snapshotted
-before preparation. Successful non-iterable output can then prove that a later raw edit of an
-encoded name would disappear, without inferring which field maps to which name or evaluating any
-callback again. [What's in 0.6](../release-notes/0.6.md) shows the migration.
+`Schema.encodeKeys`. All decoded and encoded group shapes must be closed objects or finite unions of
+closed objects, including every group encoding step, and the caller must be an ordinary or
+null-prototype object with no own keys at all. Every declared name on both sides, including symbols,
+must also be absent through its prototype chain. This eligibility is snapshotted before preparation.
+Successful non-iterable output can then prove that a later raw edit of an encoded name would
+disappear, without inferring which field maps to which name or evaluating any callback again.
+[What's in 0.7](../release-notes/0.7.md) shows the union migration; [What's in
+0.6](../release-notes/0.6.md) covers the earlier direct transformed-group change.
 
 Any supplied own field disables this additional proof, even an unrelated, non-enumerable or symbol
-key. Classes, unions, open/unknown endpoints and inherited/accessor input remain outside it. An
-absent, non-enumerable, accessor or `undefined` output property proves no generated value, and
-iterable output uses the entries it yields. Other schema/default and lost-field checks still apply.
+key. Classes, declarations, suspended groups, open/unknown alternatives and inherited/accessor input
+remain outside it. An absent, non-enumerable, accessor or `undefined` output property proves no
+generated value, and iterable output uses the entries it yields. Other schema/default and lost-field
+checks still apply.
 
 For a nonempty caller group, a decoding default hidden by a rename can still replace a later raw
 edit without refusal. The library does not infer general field correspondence or conflicting-alias
@@ -751,5 +754,5 @@ records without it remain valid and use the earlier selection behavior; the new 
 requires complete evidence.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.6.2/src/http/Request.ts) for
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.7.0/src/http/Request.ts) for
 all types and overloads.

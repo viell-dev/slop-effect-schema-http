@@ -289,21 +289,24 @@ an error: `Request.InvalidRequest` before anything is sent.
   field. A field with a decoding default counts as required, because the schema writes it whatever
   the caller does. This is the one rule that depends on order. Before the schema, a raw value under
   a required name is an ordinary default that the caller's value replaces.
-- **Refuse an edit successful preparation replaces.** A direct struct can supply an omitted field
-  through construction, decoding, fieldwise input or encoding. When its ordinary non-iterable output
-  actually holds an own enumerable non-`undefined` data value under the same name, a raw edit after
-  the binding is an `InvalidRequest`. The caller must have left that field absent throughout its
-  prototype chain, or supplied an own data property containing `undefined`, before preparation runs.
-  This includes setting, appending and either kind of removal, with header names compared without
-  case. The check reads the successful encoded result without evaluating any callback again. Earlier
-  raw defaults and explicit caller values keep their existing behavior.
+- **Refuse an edit successful preparation replaces.** A direct struct or finite closed union with no
+  group encoding can supply an omitted field through construction, decoding, fieldwise input or
+  encoding. When its ordinary non-iterable output actually holds an own enumerable non-`undefined`
+  data value under the same name, a raw edit after the binding is an `InvalidRequest`. The caller
+  must have left that field absent throughout its prototype chain, or supplied an own data property
+  containing `undefined`, before preparation runs. This includes setting, appending and either kind
+  of removal, with header names compared without case. The check reads the successful encoded result
+  without evaluating any callback again. Earlier raw defaults and explicit caller values keep their
+  existing behavior.
 - **An empty group can prove generation through a transformation.** When the decoded and encoded
-  endpoints are closed objects, a plain or null-prototype caller group with no own keys supplies no
-  declared fields, provided every endpoint name is also absent from its prototype chain. This is
-  snapshotted before preparation, including symbol and non-enumerable keys. Actual ordinary output
-  can then prove that a later edit of a generated encoded name is replaced. Any own caller key,
-  custom prototype or inherited endpoint field disables this additional proof. It does not infer a
-  mapping between names or repeat a schema callback.
+  group shapes are closed objects or finite unions of closed objects, a plain or null-prototype
+  caller group with no own keys supplies no declared fields, provided every endpoint name is also
+  absent from its prototype chain. This is snapshotted before preparation, including symbol and
+  non-enumerable keys. Actual ordinary output can then prove that a later edit of a generated
+  encoded name is replaced. Any own caller key, custom prototype or inherited endpoint field
+  disables this additional proof. It does not infer a mapping between names or repeat a schema
+  callback. For the union extension, every traversed group encoding step must also be closed;
+  property-value schemas supply no group correspondence.
 - **Schemas stack.** A second `Request.query` or `Request.headers` adds its fields, and together the
   schemas state the shape. Each takes its own fields from one input, and a default goes through
   every schema that allows its name. An open schema sees every field, so its value type has to
@@ -374,11 +377,12 @@ Some things are outside the check:
 - A group transformation can hide a default's field correspondence. The strictly empty caller-group
   proof above covers some such calls. With any own caller field, a renamed default can still replace
   a later raw edit without refusal; the library does not guess which alias supplied that output.
-- Generated-field proof otherwise remains limited to explicit same-name fields of direct structs.
-  Classes, unions, unknown/open endpoints and accessor/inherited input remain outside the additional
-  empty-group proof. Iterable output uses yielded entries, so own string properties prove nothing
-  about what it sends. An absent, non-enumerable, accessor or `undefined` output property supplies
-  no generated-field evidence. Ordinary schema/default and lost-field checks still apply.
+- Generated-field proof otherwise remains limited to explicit same-name fields of direct structs and
+  closed unions without group encoding. Classes, declarations, suspended/unknown/open endpoints and
+  accessor/inherited input remain outside the additional empty-group proof. Iterable output uses
+  yielded entries, so own string properties prove nothing about what it sends. An absent,
+  non-enumerable, accessor or `undefined` output property supplies no generated-field evidence.
+  Ordinary schema/default and lost-field checks still apply.
 - A union outside the recovery guard keeps its initial selection. For example, a group-level check
   prevents recovery for the union of `{ b }` and `{ a, c }` stacked with `{ b }`, so `{ a, b, c }`
   can still be refused. Recovery also declines a candidate that would withdraw an earlier field

@@ -317,6 +317,56 @@ const omitted = (input: object, name: PropertyKey): boolean => {
     : "value" in property && property.value === undefined;
 };
 
+interface ClosedGroups {
+  readonly endpoints: ReadonlyArray<SchemaAST.Objects>;
+  readonly encoded: ReadonlyArray<string>;
+  readonly direct: boolean;
+}
+
+/** Static group names only; property codecs do not change their enclosing field's name. */
+const closedGroups = (
+  ast: SchemaAST.AST,
+  active = new Set<SchemaAST.AST>(),
+): ClosedGroups | undefined => {
+  if (
+    active.has(ast) ||
+    (ast._tag !== "Objects" && ast._tag !== "Union") ||
+    (ast._tag === "Objects" && ast.indexSignatures.length > 0) ||
+    (ast._tag === "Union" && ast.types.length === 0)
+  )
+    return undefined;
+  active.add(ast);
+  const children: ClosedGroups[] = [];
+  for (const node of [
+    ...(ast._tag === "Union" ? ast.types : []),
+    ...(ast.encoding ?? []).map(({ to }) => to),
+  ]) {
+    const child = closedGroups(node, active);
+    if (child === undefined) {
+      active.delete(ast);
+      return undefined;
+    }
+    children.push(child);
+  }
+  active.delete(ast);
+  return {
+    endpoints: [
+      ...(ast._tag === "Objects" ? [ast] : []),
+      ...children.flatMap(({ endpoints }) => endpoints),
+    ],
+    encoded:
+      (ast.encoding?.length ?? 0) > 0
+        ? (children.at(-1)?.encoded ?? [])
+        : ast._tag === "Objects"
+          ? ast.propertySignatures.flatMap(({ name }) =>
+              typeof name === "string" ? [name] : [],
+            )
+          : children.flatMap(({ encoded }) => encoded),
+    direct:
+      ast.encoding === undefined && children.every(({ direct }) => direct),
+  };
+};
+
 /**
  * Read what a schema says about its group, and build what it sends.
  *
@@ -343,27 +393,34 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
     required: new Set(Array.from(reading.required, fold)),
     chooses,
   };
-  // A group transformation or declaration can change names or construct in its own way.
+  const end = Excess.encodedEnd(contract.ast);
+  const union =
+    contract.ast._tag === "Union" || end._tag === "Union"
+      ? closedGroups(contract.ast)
+      : undefined;
+  const unionNames = Array.from(new Set(union?.encoded));
+  // Only a group with unchanged names can use per-field omission beside other caller input.
   const directNames =
     contract.ast._tag === "Objects" && contract.ast.encoding === undefined
       ? contract.ast.propertySignatures.flatMap(({ name }) =>
           typeof name === "string" ? [name] : [],
         )
-      : [];
-  const end = Excess.encodedEnd(contract.ast);
+      : union?.direct
+        ? unionNames
+        : undefined;
   const closedEndpoints =
     contract.ast._tag === "Objects" &&
     contract.ast.indexSignatures.length === 0 &&
     end._tag === "Objects" &&
     end.indexSignatures.length === 0
       ? [contract.ast, end]
-      : [];
+      : (union?.endpoints ?? []);
   const encodedNames =
     end._tag === "Objects"
       ? end.propertySignatures.flatMap(({ name }) =>
           typeof name === "string" ? [name] : [],
         )
-      : [];
+      : unionNames;
   /** No caller field can explain generated output when both closed endpoints are absent. */
   const empty = (input: object): boolean => {
     const prototype: unknown = Object.getPrototypeOf(input);
@@ -384,12 +441,9 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
     edits: ReadonlySet<string> | undefined,
   ): ReadonlyArray<string> =>
     edits !== undefined && typeof input === "object" && input !== null
-      ? (contract.ast.encoding === undefined
-          ? directNames
-          : empty(input)
-            ? encodedNames
-            : []
-        ).filter((name) => edits.has(fold(name)) && omitted(input, name))
+      ? (directNames ?? (empty(input) ? encodedNames : [])).filter(
+          (name) => edits.has(fold(name)) && omitted(input, name),
+        )
       : [];
   /** Preparation supplied these omitted, edited fields in the record it actually writes. */
   const filled = (
