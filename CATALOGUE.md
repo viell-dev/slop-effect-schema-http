@@ -3195,3 +3195,106 @@ aliases and the opaque-value pins remain unchanged.
 - **EXT-34k** Parent checks leave a union outside the bounded recovery route. Its original false
   refusal remains a stated limit. Status: limit.
   - `[EXT-34k] control: parent checks keep the bounded union recovery unavailable`
+
+## Visible fields beside opaque neighbors
+
+EXT-35 covers the constructor-only repair accepted in
+[#143, gap 10](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6725100255).
+The neutral echo probe's [public contract](./README.md#the-neutral-echo-probe) supplies its fixed
+404 response; Fetch in Node and Chromium reaches socket listeners, and the ledger establishes exact
+method, target, body bytes, relevant header lines and request counts. Refusals check `SchemaError`,
+field paths, value redaction and an empty ledger. Published `0.6.0` refuses nine intended successful
+calls at `["f"]["b"]`; its eighteen passing controls remain part of the regression evidence.
+EXT-30j uses `OptionFromNullOr`, whose encoded object is visible, and remains a separate limit.
+
+- **EXT-35a** A direct `Option` with an extra opaque key does not prevent a visible nested union
+  from keeping its wider member. Both a JSON body and a path renderer preserve `f.b`; the opaque
+  option retains its schema's ordinary reading. Status: tested.
+  - `[EXT-35a] a direct Option neighbor preserves the wider JSON body member`
+  - `[EXT-35a] a direct Option neighbor preserves the wider path renderer member`
+- **EXT-35b** A `ReadonlyMap` neighbor behaves the same. A path renderer serializes its entries so
+  both the visible member and the opaque value's ordinary reading reach the wire. Status: tested.
+  - `[EXT-35b] a ReadonlyMap neighbor preserves the visible member and its own ordinary reading`
+- **EXT-35c** Constructor-only recovery preserves whole-group side selection: encoded `n: "1"`
+  alongside `base64: "eA=="` remains refused, while decoded `n: 1` permits recovery and sends
+  `base64: "ZUE9PQ=="`. General fieldwise decoding would change the meaning of the first call.
+  Status: tested.
+  - `[EXT-35c] encoded numeric input cannot force a new fieldwise base64 interpretation`
+  - `[EXT-35c] decoded numeric input recovers with the constructor's double-encoded base64`
+- **EXT-35d** Existing successful calls keep their exact traces and body bytes: two checks on the
+  strict path and five on the loose fallback with opaque excess. No additional schema evaluations run on
+  either path. Status: tested.
+  - `[EXT-35d] control: an existing successful read retains its checks and bytes`
+  - `[EXT-35d] control: a successful loose read with opaque excess retains its check trace`
+- **EXT-35e** Parent refinements still reject a wider member, and an omitted constructor default
+  survives recovery as the generated field in the outgoing body. Status: tested.
+  - `[EXT-35e] a parent's rejection of the wider member still refuses dispatch`
+  - `[EXT-35e] recovery preserves an omitted parent's constructor default`
+- **EXT-35f** Fields no visible member can hold together remain refused by their full path, without
+  exposing their values or dispatching. Status: tested.
+  - `[EXT-35f] fields no visible member can hold together still refuse by path without their values`
+- **EXT-35g** A root sibling's actual consumption of `b` cannot excuse losing nested `f.b`.
+  Status: tested.
+  - `[EXT-35g] a root sibling named b cannot excuse losing nested f.b`
+- **EXT-35h** A decoded renamed visible sibling already works without opaque excess. Its union
+  also preserves the wider member's wire names when an opaque neighbor has excess.
+  Status: tested.
+  - `[EXT-35h] control: a renamed visible sibling already works without opaque excess`
+  - `[EXT-35h] a renamed visible sibling keeps its decoded values beside opaque excess`
+- **EXT-35i** Text supplied to a JSON-text field remains subject to its schema's own first-member
+  choice, within the documented opaque boundary. Status: limit.
+  - `[EXT-35i] control: JSON text remains subject to its schema's own member choice`
+- **EXT-35j** Reconstruction preserves caller-supplied own `__proto__` and `constructor` fields as
+  JSON data, and a declared symbol field remains available to a path renderer.
+  Status: tested.
+  - `[EXT-35j] recovery retains own prototype-named fields as JSON data`
+  - `[EXT-35j] recovery keeps a symbol field consumed by a path renderer`
+- **EXT-35k** The original wider member succeeds when its opaque neighbor has no excess key.
+  Status: tested.
+  - `[EXT-35k] control: the original wider member works when its Option neighbor has no excess`
+- **EXT-35l** A wider member that rejects a supplied visible field's value cannot discard it by
+  selecting the narrow member. Status: tested.
+  - `[EXT-35l] control: a visible field whose value the wider member rejects remains refused`
+- **EXT-35m** Accessor input remains outside the stable-input evidence used by the bounded repair;
+  its original refusal remains. Status: limit.
+  - `[EXT-35m] limit: accessor input retains its original refusal rather than manufacturing stable evidence`
+- **EXT-35n** An iterable parent is not reconstructed as an ordinary record. Its original visible
+  loss still refuses dispatch before the renderer runs. Status: limit.
+  - `[EXT-35n] limit: an iterable parent is not reconstructed as an ordinary record`
+- **EXT-35o** A null-prototype caller object omits `toString`, whose constructor default is `"25"`.
+  Recovery must preserve both visible union fields and write that default, without manufacturing
+  an inherited native method or mutating the caller. This independently covers the
+  [pre-publication candidate defect](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6725476571).
+  Status: tested.
+  - `[EXT-35o] null-prototype recovery keeps a missing toString field's constructor default`
+- **EXT-35p** A sparse array's custom prototype supplies inherited index `0: "original"`.
+  A parent check rejects the wider `f` member while that element remains. Recovery must retain
+  the refusal rather than copy away the element and dispatch `x: [null]`. The custom prototype
+  belongs only to this array. This and EXT-35q cover the
+  [two deep-review blockers](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6725666937).
+  Status: tested.
+  - `[EXT-35p] an inherited sparse-array element cannot be copied away to bypass a parent check`
+- **EXT-35q** An empty `Struct` receives an externally held object. A parent check rejects the
+  wider member while `x` retains that object's identity. Recovery must retain the refusal rather
+  than clone `x` and bypass the check. Status: tested.
+  - `[EXT-35q] an empty Struct's external identity cannot be copied away to bypass a parent check`
+- **EXT-35r** A caller adds visible `f.b` after creating a JSON encoding Effect but before running
+  it. A custom `Body.encoder` returns that pending Effect through `Request.body`. Recovery must
+  retain the refusal rather than send the older narrow value. This and EXT-35s/t cover the
+  [pending-input regression](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6726041080).
+  Status: tested.
+  - `[EXT-35r] a visible field added after creating a pending body cannot disappear during recovery`
+- **EXT-35s** Changing existing `f.a` while its body encoding Effect is pending must not recover
+  the earlier value. A typed refusal and empty socket ledger preserve the current input rather
+  than dispatch stale bytes. Status: tested.
+  - `[EXT-35s] a visible value changed after creating a pending body cannot recover its old value`
+- **EXT-35t** Replacing a direct opaque `Option` while its body encoding Effect is pending must
+  not let recovery test an older identity against the parent's check. The original refusal remains,
+  with no request sent. Status: tested.
+  - `[EXT-35t] an opaque identity replaced after creating a pending body cannot bypass a parent check`
+- **EXT-35u** Deleting and re-adding a nested Record's key while its body encoding Effect is pending
+  changes its observable key order. A parent check rejects the current order; recovery must not
+  bypass it using the old order. The
+  [own-key-order control](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6726073336)
+  retains a typed refusal and empty ledger. Status: tested.
+  - `[EXT-35u] record keys reordered after creating a pending body cannot bypass a parent check`
