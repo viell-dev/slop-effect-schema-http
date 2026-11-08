@@ -131,8 +131,8 @@ The caller passes a number for `page`, or [its encoded text](#a-schema-has-two-s
 schema writes text. Header schemas work the same way. Their encoded shapes must fit
 `Transport.HeaderInput`; query schemas must encode to `UrlEncoding.QueryInput`.
 
-**Unreleased:** when a query or header schema's input accepts `{}`, its group can be left out. For
-example, a query with only an optional `limit` lets the caller pass `{}`:
+When a query or header schema's input accepts `{}`, its group can be left out. For example, a query
+with only an optional `limit` lets the caller pass `{}`:
 
 ```ts
 import { Schema } from "effect";
@@ -408,6 +408,12 @@ const search = Request.get("https://api.example.test/things").pipe(
 // Input: { query: { a: "x", b: "y", c: "z" } }; URL query: ?a=x&c=z&b=y
 ```
 
+Known preservation gaps remain in
+[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). Give a renamed field under
+one side's name: if both names are supplied, the decoded name still wins and the other value can go
+silently. Defaults hidden by a whole-group transformation or a fallback route have their own
+[raw-edit limits](#a-schema-states-the-shape-of-its-group).
+
 #### When both sides share a type
 
 A value that fits the decoded side is read as decoded, which is the one rule for a case that cannot
@@ -534,12 +540,12 @@ value there is refused too, as a field that would be lost. To give a required fi
 asking the caller, use `Request.mapInput`. A value the schema supplies itself, from a constructor or
 decoding default, counts as written, so it replaces a raw default.
 
-**Unreleased:** an optional field of a direct struct can also refuse a raw edit after its binding.
-The check applies when the successful first constructor actually supplies a
-`Schema.withConstructorDefault` value the caller left absent or `undefined`, and encoding writes
-that non-`undefined` value. Setting, appending or removing that name would be replaced, so the
-request fails with `InvalidRequest`. Earlier raw defaults and explicit caller values still work. The
-default runs only as part of normal preparation; the check does not evaluate it again.
+An optional field of a direct struct can also refuse a raw edit after its binding. The check applies
+when the successful first constructor actually supplies a `Schema.withConstructorDefault` value the
+caller left absent or `undefined`, and encoding writes that non-`undefined` value. Setting,
+appending or removing that name would be replaced, so the request fails with `InvalidRequest`.
+Earlier raw defaults and explicit caller values still work. The default runs only as part of normal
+preparation; the check does not evaluate it again.
 
 This proof does not cover group transformations such as `Schema.encodeKeys`, classes, unions, or
 accessor and inherited input properties. It is also unavailable after the reader falls back to the
@@ -698,5 +704,5 @@ constructing them. `declaration.baseUrl` is text or an Effect, so to change a ba
 a request, use `Request.mapBaseUrl` rather than reading it.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.3.0/src/http/Request.ts) for
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.4.0/src/http/Request.ts) for
 all types and overloads.

@@ -102,10 +102,10 @@ exactly.
 `Request.path` and `Request.body` add their input to the request, so each can be combined with the
 other bindings.
 
-**Unreleased:** a query or header binding makes its input key optional when `Request.Input<S>`
-accepts `{}`. An all-optional struct qualifies, and a union qualifies when one member does. Stacked
-bindings intersect their input contributions, so every binding on the group has to permit omission.
-A required field stays required even when a raw default supplies its name.
+A query or header binding makes its input key optional when `Request.Input<S>` accepts `{}`. An
+all-optional struct qualifies, and a union qualifies when one member does. Stacked bindings
+intersect their input contributions, so every binding on the group has to permit omission. A
+required field stays required even when a raw default supplies its name.
 
 An absent or `undefined` query or header group is read as `{}` inside each binding, before schema
 validation or accounting for the caller's fields. Omitting it therefore behaves exactly like an
@@ -138,6 +138,12 @@ request is refused. It can see plain objects, lists, tuples, classes and unions 
 depth. Inside an opaque value, which is text that holds JSON, a `Map`, an `Option` or any other
 declaration, the schema's own reading applies, and nothing is refused for what happens there. To
 choose a union member for certain, bind that member directly.
+
+Known violations of this rule remain in
+[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). In particular, giving a
+renamed field under both names still lets the decoded name win, and defaults hidden by group
+transformations or fallback routes can still replace raw edits. The rules and limits below state
+where the current checks apply.
 
 - **The decoded side is what the schema's constructor takes.** The library builds the schema's value
   before encoding it, so a plain object works for a `Schema.Class`, and a field with a constructor
@@ -252,7 +258,7 @@ an error: `Request.InvalidRequest` before anything is sent.
   field. A field with a decoding default counts as required, because the schema writes it whatever
   the caller does. This is the one rule that depends on order. Before the schema, a raw value under
   a required name is an ordinary default that the caller's value replaces.
-- **Unreleased: refuse an edit a constructor actually replaces.** In a direct struct, a field with
+- **Refuse an edit a constructor actually replaces.** In a direct struct, a field with
   `Schema.withConstructorDefault` can be optional on both sides. When this preparation's first
   constructor succeeds, supplies the field the caller left absent or `undefined`, and encoding
   writes its non-`undefined` value, a raw edit of that name after the binding is an

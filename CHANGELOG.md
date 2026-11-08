@@ -1,6 +1,17 @@
 # Change history
 
-## Unreleased
+## 0.4.0 — 2026-11-08
+
+Read [What's in 0.4](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.4) for the
+consumer introduction and migration checks for constructor defaults and transformed union tags.
+
+- Add executable recipes for definition-owned values and defaults, and for effectful credentials in
+  client middleware. These use the existing API rather than introducing separate base fields or
+  tracking raw setter names in the input type
+  ([#111](https://github.com/viell-dev/slop-effect-schema-http/issues/111),
+  [#112](https://github.com/viell-dev/slop-effect-schema-http/issues/112)).
+- **Breaking for low-level extensions:** `Request.Draft` adds `editedFields`. Preserve it when
+  deriving a draft, or initialize it with `new Map()` when constructing one from scratch.
 
 - Fix a false refusal when a union's tag is given by its encoded name. Required literal tags can
   rule a member out on either side, including through a whole-object transformation, so a field only
@@ -20,11 +31,13 @@
   classes, unions, decoder fallback and accessor/inherited input fields remain outside its proof
   ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
 
-- Allow a query or header group to be omitted when its schema input accepts `{}`, including
-  all-optional structs. An absent or `undefined` group is validated as `{}`, so constructor defaults
-  and refinements still apply. Stacked schemas keep a group required when any binding requires it;
-  path and body inputs stay as before
-  ([#135](https://github.com/viell-dev/slop-effect-schema-http/issues/135)).
+- **Breaking for generic input helpers:** allow a query or header group to be omitted when its
+  schema input accepts `{}`, including all-optional structs. An absent or `undefined` group is
+  validated as `{}`, so constructor defaults and refinements still apply. Stacked schemas keep a
+  group required when any binding requires it; path and body inputs stay as before
+  ([#135](https://github.com/viell-dev/slop-effect-schema-http/issues/135)). Ordinary calls remain
+  compatible, but a helper constrained to a required group can need an optional-group constraint, as
+  the hostile suite's Digest helper demonstrated.
 
 ## 0.3.0 — 2026-11-07
 

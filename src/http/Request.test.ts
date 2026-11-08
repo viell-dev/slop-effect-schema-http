@@ -7287,9 +7287,10 @@ describe("a schema states the shape of its group", () => {
       }),
     );
 
+    // Raw defaults do not satisfy schema input; use a schema default or mapInput instead.
     // https://github.com/viell-dev/slop-effect-schema-http/issues/112
     it.effect(
-      "currently leaves a required field to the caller regardless",
+      "requires caller input when only a raw default supplies a required field",
       () =>
         Effect.gen(function* () {
           const request = Request.put("/things").pipe(
