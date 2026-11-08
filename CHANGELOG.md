@@ -1,5 +1,21 @@
 # Change history
 
+## 0.5.0 — 2026-11-08
+
+Read [What's in 0.5](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.5) for the
+consumer introduction and migration from raw edits to invocation input or `Request.mapInput`.
+
+- **Breaking:** refuse later raw query/header edits when successful direct-struct preparation writes
+  a field the caller stably omitted. This extends the constructor-default check to handwritten
+  decoding defaults, successful fieldwise fallback and encoder-generated fields, without evaluating
+  any callback again. The proof uses actual ordinary-record output and per-binding edit provenance;
+  group transformations, classes, unions and accessor/inherited input remain outside it
+  ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
+- Keep iterable output on its entry-based path. An own generated field beside a generator does not
+  prove that the field is sent, so it no longer triggers this particular false refusal.
+- Remove constructor-route and decoded-snapshot plumbing made unnecessary by the output proof.
+  Error/service types, fallback order and existing schema validation remain unchanged.
+
 ## 0.4.0 — 2026-11-08
 
 Read [What's in 0.4](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.4) for the

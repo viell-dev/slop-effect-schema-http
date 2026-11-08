@@ -60,7 +60,7 @@ export type Input<S extends Schema.Top> = EitherSide<
  * neither fails with the decoded side's error, so existing failures read the same. `options` go to
  * every parse.
  */
-const toDecodedWithEvidence = <S extends Schema.Top>(
+export const toDecoded = <S extends Schema.Top>(
   contract: S,
   options?: SchemaAST.ParseOptions,
 ) => {
@@ -88,45 +88,17 @@ const toDecodedWithEvidence = <S extends Schema.Top>(
       : byField(input);
   return (
     input: Input<S>,
-  ): Effect.Effect<
-    Decoded<S["Type"]>,
-    Schema.SchemaError,
-    S["DecodingServices"]
-  > =>
-    Effect.catch(
-      Effect.map(make(input), (value) => ({ value, constructed: true })),
-      (failure) =>
-        Effect.mapError(
-          Effect.map(
-            Effect.catch(decode(input, options), (encodedFailure) =>
-              typeof input === "object" && input !== null
-                ? byMember(input)
-                : Effect.fail(encodedFailure),
-            ),
-            (value) => ({ value, constructed: false }),
-          ),
-          () => failure,
+  ): Effect.Effect<S["Type"], Schema.SchemaError, S["DecodingServices"]> =>
+    Effect.catch(make(input), (failure) =>
+      Effect.mapError(
+        Effect.catch(decode(input, options), (encodedFailure) =>
+          typeof input === "object" && input !== null
+            ? byMember(input)
+            : Effect.fail(encodedFailure),
         ),
-    ) as Effect.Effect<
-      Decoded<S["Type"]>,
-      Schema.SchemaError,
-      S["DecodingServices"]
-    >;
-};
-
-/** Only the first successful constructor route proves how a group acquired an omitted field. */
-interface Decoded<A> {
-  readonly value: A;
-  readonly constructed: boolean;
-}
-
-/** Bring either side to the decoded side, without exposing how it was read. */
-export const toDecoded = <S extends Schema.Top>(
-  contract: S,
-  options?: SchemaAST.ParseOptions,
-) => {
-  const read = toDecodedWithEvidence(contract, options);
-  return (input: Input<S>) => Effect.map(read(input), ({ value }) => value);
+        () => failure,
+      ),
+    ) as Effect.Effect<S["Type"], Schema.SchemaError, S["DecodingServices"]>;
 };
 
 /** Read a field or union member, which may be on either side of its own schema. */
@@ -141,8 +113,6 @@ const fromPart = (
 export interface Written<A> {
   readonly output: A;
   readonly lost: ReadonlyArray<Excess.Path>;
-  /** Own data fields from the successful first direct-struct construction, before encoding. */
-  readonly constructed: unknown;
 }
 
 /** Takes a decoded value out through a schema, as the options say. */
@@ -183,55 +153,31 @@ export const reader = <S extends Schema.Top, A, R>(
   contract: S,
   write: Write<S, A, R>,
 ) => {
-  const decoded = toDecodedWithEvidence(contract);
-  const constructorFields =
-    contract.ast._tag === "Objects" && contract.ast.encoding === undefined
-      ? contract.ast.propertySignatures.filter(
-          ({ type }) => type.context?.constructorDefault !== undefined,
-        )
-      : [];
-  const construction = ({ value, constructed }: Decoded<S["Type"]>): unknown =>
-    constructed &&
-    constructorFields.length > 0 &&
-    typeof value === "object" &&
-    value !== null
-      ? Object.fromEntries(
-          constructorFields.flatMap(({ name }) => {
-            const property = Object.getOwnPropertyDescriptor(value, name);
-            return property !== undefined && "value" in property
-              ? [[name, property.value]]
-              : [];
-          }),
-        )
-      : undefined;
+  const decoded = toDecoded(contract);
   const written = (
     reading: ReturnType<typeof decoded>,
     options?: SchemaAST.ParseOptions,
   ) =>
-    Effect.flatMap(reading, (read) => {
-      const constructed = construction(read);
-      return Effect.map(write(read.value, options), (output): Written<A> => ({
+    Effect.flatMap(reading, (value) =>
+      Effect.map(write(value, options), (output): Written<A> => ({
         output,
         lost: [],
-        constructed,
-      }));
-    });
+      })),
+    );
   if (!Excess.choosing(contract.ast))
     return (input: Input<S>) => written(decoded(input));
-  const exact = toDecodedWithEvidence(contract, Excess.strict);
+  const exact = toDecoded(contract, Excess.strict);
   const kept = (input: Input<S>) => written(exact(input), Excess.strict);
   const compared = (input: Input<S>, given: unknown) =>
-    Effect.flatMap(decoded(input), (read) => {
-      const constructed = construction(read);
-      return Effect.map(
-        Effect.catch(write(read.value, Excess.strict), () => write(read.value)),
+    Effect.flatMap(decoded(input), (value) =>
+      Effect.map(
+        Effect.catch(write(value, Excess.strict), () => write(value)),
         (output): Written<A> => ({
           output,
-          lost: Excess.missing([contract.ast], given, read.value, output),
-          constructed,
+          lost: Excess.missing([contract.ast], given, value, output),
         }),
-      );
-    });
+      ),
+    );
   return (
     input: Input<S>,
   ): Effect.Effect<

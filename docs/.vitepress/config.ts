@@ -99,6 +99,7 @@ export default defineConfig({
         text: "Releases and project",
         items: [
           { text: "Versions", link: "/versions" },
+          { text: "What's in 0.5", link: "/release-notes/0.5" },
           { text: "What's in 0.4", link: "/release-notes/0.4" },
           { text: "What's in 0.3", link: "/release-notes/0.3" },
           { text: "What's in 0.2", link: "/release-notes/0.2" },
