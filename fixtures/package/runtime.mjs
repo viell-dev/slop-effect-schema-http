@@ -9,6 +9,9 @@ import {
   compileEncodedFilters,
   compileExchangedFirst,
   compileExchangedSecond,
+  compileInvalidEncodedFilters,
+  compileOmittedFilters,
+  compileStackedEncodedFilters,
   countFewNames,
   getItemId,
   nominalInput,
@@ -72,6 +75,18 @@ for (const compile of [compileEncodedFilters, compileDecodedFilters]) {
   const prepared = await Effect.runPromise(compile());
   assert.equal(prepared.request.url, "https://api.test/filtered?page_size=5");
 }
+assert.equal(
+  (await Effect.runPromise(Effect.flip(compileInvalidEncodedFilters())))._tag,
+  "SchemaError",
+);
+assert.equal(
+  (await Effect.runPromise(compileOmittedFilters())).request.url,
+  "https://api.test/filtered?page_size=25",
+);
+assert.equal(
+  (await Effect.runPromise(compileStackedEncodedFilters())).request.url,
+  "https://api.test/paged?page_size=5&cursor=next",
+);
 assert.equal(
   (await Effect.runPromise(compileExchangedFirst())).request.url,
   "https://api.test/exchanged?kind=a&page_size=05",

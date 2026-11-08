@@ -583,11 +583,21 @@ Nested renamed fields can still lose their encoded aliases from the static input
 names are unchanged ([#172](https://github.com/viell-dev/slop-effect-schema-http/issues/172)). Use
 decoded nested names or a named decoded-input mapping until that separate repair is delivered.
 
-An encoded-input runtime defect also remains: an invalid caller value under a renamed encoded name
-can be replaced by an optional constructor default
-([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Use decoded input or an
-input mapping that supplies the decoded name for these schemas until that separate repair is
-delivered.
+For stable plain root data under finite closed object/union group shapes, a supplied encoded-only
+name, a successful whole constructor and its strict encoding can establish an additional whole
+encoded check after a typed strict read failure. Invalid encoded input then fails instead of taking
+an optional constructor default; valid stacked input can keep fields held by another binding. Other
+constructor choices and their existing failures keep priority. The initial default/writer can run
+before the additional validation. [What's in 0.9](../release-notes/0.9.md) gives the example and
+migration.
+
+This additional proof excludes a supplied decoded-only name, an encoded name used as decoded by
+another member, open/opaque/class/suspended or iterable group shapes, inherited/accessor fields and
+changing input. It also excludes an initial constructor failure recovered memberwise or fieldwise;
+mixed encoded/decoded numeric fields can still let an invalid alias take a default. The earlier
+default substitution can remain outside it
+([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Supply decoded names or a
+named decoded-input mapping for those cases.
 
 For a nonempty caller group, a decoding default hidden by a rename can still replace a later raw
 edit without refusal. The library does not infer general field correspondence or conflicting-alias
@@ -770,5 +780,5 @@ records without it remain valid and use the earlier selection behavior; the new 
 requires complete evidence.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.8.0/src/http/Request.ts) for
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.9.0/src/http/Request.ts) for
 all types and overloads.

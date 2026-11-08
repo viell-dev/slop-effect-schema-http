@@ -1,4 +1,5 @@
 import { Effect, Schema, SchemaAST } from "effect";
+import { encodedInput } from "./encoded-input.js";
 import * as Excess from "./excess.js";
 import { snapshotter } from "./snapshot.js";
 
@@ -93,17 +94,24 @@ export const toDecoded = <S extends Schema.Top>(
       : byField(input);
   return (
     input: Input<S>,
+    onConstructed?: () => void,
   ): Effect.Effect<S["Type"], Schema.SchemaError, S["DecodingServices"]> =>
-    Effect.catch(make(input), (failure) =>
-      Effect.mapError(
-        Effect.catch(decode(input, options), (encodedFailure) =>
-          typeof input === "object" && input !== null
-            ? byMember(input)
-            : Effect.fail(encodedFailure),
+    Effect.matchEffect(make(input), {
+      onSuccess: (value) => {
+        // Observe only the initial whole constructor, outside its failure handler.
+        onConstructed?.();
+        return Effect.succeed(value);
+      },
+      onFailure: (failure) =>
+        Effect.mapError(
+          Effect.catch(decode(input, options), (encodedFailure) =>
+            typeof input === "object" && input !== null
+              ? byMember(input)
+              : Effect.fail(encodedFailure),
+          ),
+          () => failure,
         ),
-        () => failure,
-      ),
-    ) as Effect.Effect<S["Type"], Schema.SchemaError, S["DecodingServices"]>;
+    }) as Effect.Effect<S["Type"], Schema.SchemaError, S["DecodingServices"]>;
 };
 
 /** Read a field or union member, which may be on either side of its own schema. */
@@ -172,11 +180,30 @@ export const reader = <S extends Schema.Top, A, R>(
   if (!Excess.choosing(contract.ast))
     return (input: Input<S>) => written(decoded(input));
   const exact = toDecoded(contract, Excess.strict);
-  const kept = (input: Input<S>) => written(exact(input), Excess.strict);
-  const compared = (input: Input<S>, given: unknown) =>
-    Effect.flatMap(decoded(input), (value) =>
+  const kept = (input: Input<S>) =>
+    Effect.flatMap(
+      Effect.mapError(exact(input), (failure) => ({ failure, reading: true })),
+      (value) =>
+        Effect.mapError(
+          written(Effect.succeed(value), Excess.strict),
+          (failure) => ({
+            failure,
+            reading: false,
+          }),
+        ),
+    );
+  const compared = (
+    input: Input<S>,
+    given: unknown,
+    read = decoded,
+    onWriteFailure?: () => void,
+  ) =>
+    Effect.flatMap(read(input), (value) =>
       Effect.map(
-        Effect.catch(write(value, Excess.strict), () => write(value)),
+        Effect.catch(write(value, Excess.strict), () => {
+          onWriteFailure?.();
+          return write(value);
+        }),
         (output): Written<A> => ({
           output,
           lost: Excess.missing([contract.ast], given, value, output),
@@ -184,6 +211,8 @@ export const reader = <S extends Schema.Top, A, R>(
       ),
     );
   const ast = contract.ast;
+  const encoded = encodedInput(ast);
+  const decode = encoded && Schema.decodeUnknownEffect(contract);
   const recoverable =
     ast._tag === "Objects" &&
     ast.encoding === undefined &&
@@ -251,6 +280,7 @@ export const reader = <S extends Schema.Top, A, R>(
     Schema.SchemaError,
     R | S["DecodingServices"]
   > => {
+    const encodedEvidence = encoded?.(input);
     const captured = snapshot?.(input);
     const given = Excess.normalised([contract.ast], input);
     // A strict read cannot see a field outside a value's keys, so it may not fall back on `input`.
@@ -260,8 +290,56 @@ export const reader = <S extends Schema.Top, A, R>(
     const original = Effect.catch(
       given === input
         ? kept(input)
-        : Effect.catch(kept(given as Input<S>), () => kept(seen)),
-      () => compared(input, given),
+        : Effect.catch(kept(given as Input<S>), (first) =>
+            Effect.mapError(kept(seen), (last) => ({
+              ...last,
+              reading: first.reading && last.reading,
+            })),
+          ),
+      ({ failure, reading }) => {
+        if (!reading || decode === undefined || !encodedEvidence?.matches())
+          return compared(input, given);
+        return Effect.suspend(() => {
+          let constructed = false;
+          let strictWrite = true;
+          const read = (current: Input<S>) =>
+            decoded(current, () => {
+              constructed = true;
+            });
+          return Effect.flatMap(
+            compared(input, given, read, () => {
+              strictWrite = false;
+            }),
+            (constructedResult) => {
+              // Keep constructor alternatives and existing failures. Only an actual encoded write
+              // can hide this constructor's inability to consume the encoded-only caller field.
+              if (
+                !constructed ||
+                !strictWrite ||
+                !encodedEvidence.matches() ||
+                !encodedEvidence.written(constructedResult.output) ||
+                !encodedEvidence.matches()
+              )
+                return Effect.succeed(constructedResult);
+              const encodedRead = (current: Input<S>) =>
+                Effect.flatMap(
+                  Effect.mapError(decode(current), () => failure),
+                  (value) =>
+                    encodedEvidence.matches()
+                      ? Effect.succeed(value)
+                      : Effect.fail(failure),
+                );
+              return Effect.flatMap(
+                compared(input, given, encodedRead),
+                (result) =>
+                  encodedEvidence.matches()
+                    ? Effect.succeed(result)
+                    : Effect.fail(failure),
+              );
+            },
+          );
+        });
+      },
     );
     if (captured === undefined) return original;
     return Effect.flatMap(original, (result) =>

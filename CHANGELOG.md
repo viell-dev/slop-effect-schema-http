@@ -1,5 +1,18 @@
 # Change history
 
+## 0.9.0 — 2026-11-09
+
+Read [What's in 0.9](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.9) for the
+encoded-default refusal, retained valid inputs and migration.
+
+- **Breaking:** keep an encoded-only root field from being replaced by an optional constructor
+  default after a typed strict read failure. Stable closed root names and actual successful
+  constructor output under a successful strict write establish the retry through whole decoding;
+  invalid input fails and valid stacked input retains actual sibling coverage. Strict successes and
+  decoded/default omission routes keep their behavior. Ambiguous or unsupported shapes remain
+  outside this bounded repair
+  ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)).
+
 ## 0.8.0 — 2026-11-09
 
 Read [What's in 0.8](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.8) for the

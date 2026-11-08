@@ -171,5 +171,5 @@ Draining is not time-bounded by itself. Use an [attempt or operation
 timeout](./policy.md#bound-execution-time) for a service that might never finish its body.
 
 See the [response contract](../design.md#responses) and [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.8.0/src/http/Response.ts)
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.9.0/src/http/Response.ts)
 for the complete metadata and error types.

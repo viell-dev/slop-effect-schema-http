@@ -43,6 +43,18 @@ export const compileEncodedFilters = () =>
   Request.compile(filtered, { query: { page_size: "05" } });
 export const compileDecodedFilters = () =>
   Request.compile(filtered, { query: { limit: 5 } });
+export const compileInvalidEncodedFilters = () =>
+  Request.compile(filtered, { query: { page_size: "many" } });
+export const compileOmittedFilters = () =>
+  Request.compile(filtered, { query: {} });
+
+const Cursor = Schema.Struct({ cursor: Schema.String });
+const paged = Request.get("https://api.test/paged").pipe(
+  Request.query(Schema.Union([Filters, Cursor])),
+  Request.query(Cursor),
+);
+export const compileStackedEncodedFilters = () =>
+  Request.compile(paged, { query: { page_size: "05", cursor: "next" } });
 
 const Exchanged = Schema.Union([
   Schema.Struct({
