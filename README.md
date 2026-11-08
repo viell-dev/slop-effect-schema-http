@@ -81,8 +81,8 @@ conformance tests in `src/conformance/` may import neither a backend nor consume
 specifier that resolves to nothing and an undeclared package are refused. `npm run check` also runs
 the script's own tests, `scripts/boundaries.test.mjs`, on generated fixture trees.
 
-Each service is documented the way its owners would publish it for integrators, on a page under
-[services/](./services/): endpoints, formats, conventions, errors and the history of each quirk,
+Each hostile service is documented the way its owners would publish it for integrators, on a page
+under [services/](./services/): endpoints, formats, conventions, errors and the history of each quirk,
 with the options a test can set. New work writes the two sides in separate agent contexts, so that
 one misreading of a format cannot hide on both: a backend from the [catalogue](./CATALOGUE.md) and
 its service page, and the consumer side from the service page, the catalogue and observed HTTP
@@ -90,7 +90,8 @@ behaviour, without opening `src/backends/`. Code written before this rule was wr
 per area; it is checked against recordings of real software and independent parsers instead
 ([#32](https://github.com/viell-dev/slop-effect-schema-http/issues/32),
 [#33](https://github.com/viell-dev/slop-effect-schema-http/issues/33)). `scripts/boundaries.mjs`
-checks that every backend links its page, and on pull requests that change either side, CI's
+checks that every hostile backend links its page; the [neutral echo probe](#the-neutral-echo-probe)
+has its contract here instead. On pull requests that change either side, CI's
 `scripts/authorship.mjs` checks that the description says which context wrote which side.
 [AGENTS.md](./AGENTS.md) states the full rule. The
 independent parsers are [saxes](https://github.com/lddubeau/saxes) in Node, Chromium's `DOMParser`
@@ -147,6 +148,37 @@ replies: a message containing malformed octets fails as `Response.DecodeError`. 
 echo arbitrary request bytes, so this is a consumer policy, not a service encoding guarantee.
 `Body.bytes` preserves those bytes for inspection; the EXT-31b controls separately show that
 `Body.text` replaces malformed UTF-8 with U+FFFD, while the strict contracts preserve a valid U+FFFD.
+
+### The neutral echo probe
+
+`echo` is a harness-owned neutral probe at `src/backends/echo.ts`, available by name in both lanes.
+It supports harness smoke tests and scenarios that check request composition or dispatch through
+the ledger, such as EXT-10 to EXT-13 and EXT-30. It has no hostile-service history or service page;
+this section is its public contract.
+
+Start it with `lane.backend("echo", undefined, { listener: "socket" })` when the request must reach
+the ledger without `node:http` refusing or reshaping it. For the probe's ordinary `GET` and `POST`
+requests to `/x`, with or without a query, the router's unmatched-path fallback answers 404,
+`Content-Type: text/plain`, and the exact body `Not Found`, with no newline. A consumer declares
+`Response.status(404, Body.text)` so the operation can complete, then asserts the ledger's method,
+target, header lines, body bytes and request count. The fallback does not validate those fields or
+echo them in the response; the ledger records what arrived. A pre-dispatch refusal is checked by
+asserting that the ledger stays empty.
+
+The harness smoke routes are:
+
+- `GET /text`: 200, `Content-Type: text/plain`, body `ok`.
+- `GET /scopes`: 400 with body `one scope per line` if any `X-Scope` header line contains a comma;
+  otherwise 200 with body `ok` and two separate response lines, `X-Scope: a` and `X-Scope: b`.
+  Both replies use `Content-Type: text/plain`; no request scope is required.
+- `GET /hold`: sends no response while the client remains connected, for interruption checks.
+
+Routing ignores the query and fragment suffixes. Other paths use the 404 fallback; another method
+on a smoke route gets 405, `Allow: GET`, and the text `Method Not Allowed`. The listener applies
+normal HTTP response framing, including suppressing a body for `HEAD`. The socket listener's
+recording and framing limits remain those described above. Use a documented hostile backend when
+a scenario needs service validation, state or format semantics; this probe supplies only a neutral
+HTTP control and the harness's ledger.
 
 ### The packed lane
 

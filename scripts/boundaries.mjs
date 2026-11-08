@@ -19,8 +19,9 @@
 //   neither a backend, a Node-side harness module, nor consumer code.
 // - Every backend entry point (`src/backends/<name>.ts` or `src/backends/<name>/index.ts`, the
 //   files the harness loads by name) carries a `Service documentation: services/<page>.md` line,
-//   except the harness's own `echo` helper. Every such line in a backend names an existing page,
-//   with its exact spelling, so a link that works on Windows does not break on Linux.
+//   except the neutral `echo` probe (README.md#the-neutral-echo-probe). Every such line in a backend
+//   names an existing page, with its exact spelling, so a link that works on Windows does not break
+//   on Linux.
 //
 // Each specifier is resolved before it is classified, in this order:
 //

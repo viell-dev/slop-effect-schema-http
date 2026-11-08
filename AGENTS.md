@@ -10,8 +10,10 @@ the scenarios. The library's own design, which these tests are judged against, i
   lanes behind `#lane` (`lane.node.ts`, `lane.browser.ts` with its control server), the browser
   lane's same-origin proxy (`proxy.ts`), and the app lane's setup, which builds the app and serves
   it with that proxy (`app-setup.ts`). `fixtures/` holds neutral backends for the harness's own
-  tests, which a lane finds by name and no scenario uses. Change these only when a scenario needs
-  it, and keep them backend-neutral.
+  tests, which a lane finds by name. Those stay harness-only. The harness-owned `echo` probe lives
+  at `src/backends/echo.ts`; its [public contract](./README.md#the-neutral-echo-probe) also permits
+  scenarios that check request composition or dispatch through the ledger. Keep neutral fixtures
+  backend-neutral.
 - `services/`: one page per hostile service, as its owners would publish it for integrators:
   endpoints, formats, value conventions, errors, and the history of each quirk (who introduced it,
   when, and why nobody can remove it), with the JSON options a test can set in a separate "Test
@@ -61,20 +63,27 @@ the scenarios. The library's own design, which these tests are judged against, i
     cases too, by specifier text only.
 - **Separate authorship.** The import rule keeps the code apart; this rule keeps the authors'
   knowledge apart, so that one misreading of a format cannot end up on both sides and cancel out.
-  - A backend is written from the catalogue and its service page.
-  - Consumer code, consumer-side format helpers and their tests are written from the service page,
-    the catalogue and observed HTTP behaviour.
+  - A backend is written from the catalogue and its service page; the neutral `echo` probe uses
+    its README contract instead.
+  - Consumer code, consumer-side format helpers and their tests are written from the service page
+    (or `echo`'s README contract), the catalogue and observed HTTP behaviour.
   - Each side is written in a separate agent context; the consumer side's author does not open
     `src/backends/`.
-  - A change to observable behaviour updates the service page in the same pull request.
+  - A change to observable behaviour updates the service page (or `echo`'s README contract) in the
+    same pull request.
   - Pull requests record which context wrote which side, in a line or heading of the description
     that starts with "Authorship", such as `## Authorship`. On a pull request that changes
     `src/backends/`, `src/conformance/`, `services/` or consumer code, CI's
     `scripts/authorship.mjs` fails without one; editing the description runs it again. It checks
     that the statement is there, not that it is true.
   - The rule applies to new work; code written before it is not rewritten under it.
-  - `scripts/boundaries.mjs` also checks that every backend entry point links an existing page in
-    `services/` with a `Service documentation: services/<page>.md` line.
+  - `scripts/boundaries.mjs` also checks that every hostile backend entry point links an existing
+    page in `services/` with a `Service documentation: services/<page>.md` line. Only `echo` is
+    exempt: its ledger-only scenarios need a neutral HTTP control rather than service semantics.
+    Its README contract, observed HTTP replies and ledger assertions supply the evidence instead;
+    the import and separate-authorship rules still apply. Reconsider this exception if a scenario
+    needs validation, state or format semantics from the probe: give that behaviour a hostile
+    backend and service page.
   - The conformance tests in `src/conformance/` belong to the backend side. A backend that imitates
     recorded software keeps its conformance tests passing: fix a difference in the backend and its
     service page, or keep it, pin it in the test and explain it in the service page's "Recordings"
