@@ -412,7 +412,7 @@ const search = Request.get("https://api.example.test/things").pipe(
 Known preservation gaps remain in
 [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). Give a renamed field under
 one side's name: if both names are supplied, the decoded name still wins and the other value can go
-silently. Defaults hidden by a whole-group transformation or a fallback route have their own
+silently. Generated fields outside the direct-struct or strictly empty transformed-group proofs have
 [raw-edit limits](#a-schema-states-the-shape-of-its-group).
 
 #### When both sides share a type
