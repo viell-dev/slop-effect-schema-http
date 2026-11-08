@@ -574,12 +574,17 @@ remain outside it. An absent, non-enumerable, accessor or `undefined` output pro
 generated value, and iterable output uses the entries it yields. Other schema/default and lost-field
 checks still apply.
 
-Partly renamed structs retain both decoded and encoded input types. A helper using `Request.Input`
-must account for either shape; a helper intended to accept decoded names only should declare that
-input explicitly. [What's in 0.8](../release-notes/0.8.md) gives the helper migration.
+Renamed fields at the outer object, including union members, retain both decoded and encoded input
+types. A helper using `Request.Input` must account for either shape; a helper intended to accept
+decoded names only should declare that input explicitly. [What's in 0.8](../release-notes/0.8.md)
+gives the helper migration.
 
-One encoded-input defect remains: an invalid caller value under a renamed encoded name can be
-replaced by an optional constructor default
+Nested renamed fields can still lose their encoded aliases from the static input type when the outer
+names are unchanged ([#172](https://github.com/viell-dev/slop-effect-schema-http/issues/172)). Use
+decoded nested names or a named decoded-input mapping until that separate repair is delivered.
+
+An encoded-input runtime defect also remains: an invalid caller value under a renamed encoded name
+can be replaced by an optional constructor default
 ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Use decoded input or an
 input mapping that supplies the decoded name for these schemas until that separate repair is
 delivered.

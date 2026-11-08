@@ -42,8 +42,12 @@ checks from those cases.
 An invalid value under a renamed encoded name can be replaced by an optional constructor default
 instead of being refused ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)).
 Supply decoded names for these schemas, directly or through an input mapping, until that runtime
-repair is delivered. The earlier partly renamed input-typing defect is fixed in 0.8; the [release
+repair is delivered. The outer-object and union-member input-typing repair is in 0.8; the [release
 article](./release-notes/0.8.md) describes the helper compatibility change.
+
+A nested renamed field can still lose its encoded alias from the static input type when outer field
+names match ([#172](https://github.com/viell-dev/slop-effect-schema-http/issues/172)). Use decoded
+nested names or a named decoded-input mapping pending that separate repair.
 
 Effect can also refuse some omitted prototype-named fields, including `constructor` and an
 encode-only `toString` default. The [dependency

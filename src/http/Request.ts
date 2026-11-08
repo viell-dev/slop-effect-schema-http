@@ -85,8 +85,11 @@ export type QueryFields = Readonly<
  * there, even if it would fit the decoded side by losing them.
  * When both names of a renamed field are supplied, the decoded name still wins; give one name.
  *
- * Partly renamed structs retain their encoded input type. A helper accepting `Input` must handle
- * both shapes; a helper meant for decoded names only should declare that input shape explicitly.
+ * Outer-object and union-member aliases retain their encoded input type. A helper accepting
+ * `Input` must handle both shapes; a helper meant for decoded names only should declare that input
+ * shape explicitly.
+ * Nested renamed fields can still lose their encoded input type when outer names match (issue
+ * #172); use decoded nested names or a decoded input mapping pending that separate repair.
  * An invalid encoded alias can still be replaced by an optional constructor default (issue #170).
  * Use decoded names for those schemas until that separate runtime repair is delivered. The Request
  * guide describes the helper migration and input-mapping workaround.
