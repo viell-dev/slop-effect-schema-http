@@ -3422,3 +3422,41 @@ checks too. Invalid encoded values being replaced by defaults remain outside thi
 - **EXT-38f** The same exchanged-alias union bound to headers sends each member's exact encoded
   name and value once, without the other alias or an omitted sibling. Status: tested.
   - `[EXT-38f] a header union retains encoded aliases exchanged between discriminated members`
+
+## Encoded aliases beside optional constructor defaults
+
+EXT-39 covers the visible-input defect in
+[#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170), independently through
+`src/scenarios/encoded-default-loss.test.ts`. The consumer uses only the neutral echo probe's
+[public contract](./README.md#the-neutral-echo-probe), Fetch in Node and Chromium, and physical
+socket ledgers. A rejected encoded value must produce `SchemaError` before dispatch. Published
+0.8.0 instead sends `page_size=25` for both `"many"` and `null`, under direct and union bindings;
+it also replaces valid `"05"` with `25` beside a separately bound cursor. Valid encoded, decoded,
+omitted-default and whole-side codec controls preserve their observed bytes.
+
+- **EXT-39a** Direct and multiple-member query bindings refuse invalid text and explicit null under
+  the encoded alias rather than generate the optional constructor default. Status: tested.
+  - `[EXT-39a] a ${shape} query refuses invalid encoded aliases before dispatch`
+- **EXT-39b** Direct and multiple-member header bindings refuse the same invalid values with no
+  physical request. Status: tested.
+  - `[EXT-39b] ${shape} headers refuse invalid encoded aliases before dispatch`
+- **EXT-39c** Direct and union queries retain the encoded `"05"` to `5` conversion, decoded `5`,
+  the renamed optional sibling and an omitted group's default `25`. Status: tested.
+  - `[EXT-39c] a ${shape} query retains valid aliases, decoded input and omitted defaults`
+- **EXT-39d** The same controls send each encoded header once, with neither decoded alias on the
+  wire, and preserve method, target, empty body and exact request count. Status: tested.
+  - `[EXT-39d] ${shape} headers retain valid aliases, decoded input and omitted defaults`
+- **EXT-39e** A query union followed by a separate cursor binding keeps both `page_size=5` from
+  encoded `"05"` and `cursor=next`; the sibling cannot excuse replacement by `25`. Status: tested.
+  - `[EXT-39e] a stacked cursor binding preserves a valid encoded query alias`
+- **EXT-39f** The corresponding header bindings send `page_size: 5` and `cursor: next` exactly
+  once each. Status: tested.
+  - `[EXT-39f] a stacked cursor binding preserves a valid encoded header alias`
+- **EXT-39g** Whole encoded query input reads its unchanged Base64 field as encoded text. Decoded
+  input writes the same canonical result; an ambiguous Base64 spelling beside decoded numeric
+  input is encoded again. Both preserve whole-input priority rather than assuming an independent
+  decoder for every alias. Status: tested.
+  - `[EXT-39g] a whole encoded query keeps shared-type codec decoding priority`
+- **EXT-39h** Whole encoded headers retain the same Base64 behavior and canonical numeric alias,
+  with decoded and ambiguous shared-type controls. Status: tested.
+  - `[EXT-39h] whole encoded headers keep shared-type codec decoding priority`
