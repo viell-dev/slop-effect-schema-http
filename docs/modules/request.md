@@ -394,8 +394,9 @@ there. A stray key inside an opaque value can still make a union beside it read 
 a wider member could hold can be refused. To choose a union member for certain, bind that member
 directly.
 
-A union chooses before it knows what a stacked schema took, so `Union([{ b }, { a, c }])` stacked
-with `{ b }` refuses `{ a, b, c }`. Bound directly, the member you mean goes out whole:
+A union first chooses before it knows what a stacked schema took. Eligible bare unions can then
+[recover that choice](#recover-a-stacked-union-s-choice): `Union([{ b }, { a, c }])` stacked with
+`{ b }` can keep `{ a, b, c }`. Bind the member directly to choose it without recovery attempts:
 
 ```ts
 import { Schema } from "effect";
@@ -484,9 +485,12 @@ they do for a struct, and a class instance only a struct can read reads as a pla
 Stacked schemas read one input, and a field stays with the schema that took it. A union takes a
 sibling's field for a key it does not state, and a field it would lose is not lost if a stacked
 schema took it: a union of `{ a }` and `{ b }` stacked with `{ b }`, in either order, sends
-`{ a, b }` whole. A field no schema in the group took is still refused, so two unions that each
-leave `b` to the other refuse it. A union keeps the member it chose, so a union of `{ b }` and
-`{ a, c }` stacked with `{ b }` refuses `{ a, b, c }`. Put `{ a, c }` first.
+`{ a, b }` whole. If the initial selection leaves an uncovered root field, an eligible bare union
+can [recover another selection](#recover-a-stacked-union-s-choice) using actual sibling claims. For
+example, a union of `{ b }` and `{ a, c }` stacked with `{ b }` can keep `{ a, b, c }`. Two unions
+can also recover complementary members, but a field no resulting selection holds is still refused.
+Parent metadata, nested losses and joint backtracking remain outside this recovery. Put the intended
+member first or bind it directly when its choice must not depend on recovery.
 
 Two members can state one field under different wire names. A union of `{ c }` and `{ c }` renamed
 to `C` takes the first member that fits, so `{ C: "s" }` goes out as `?c=s`, with no error. Bind the
