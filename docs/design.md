@@ -195,7 +195,8 @@ where the current checks apply.
   other does. A strict read of a whole value does pass through an opaque one, because Effect has no
   way to stop it at one part. So beside a choice the library can see, a wider member inside can
   still win. A stray key inside fails that read, and what the library can see is then read as Effect
-  reads it and compared, so a field a wider member could hold can be refused.
+  reads it and compared, so a field a wider member could hold can be refused. A direct closed struct
+  can recover some such nested losses through the constructor-only route below.
 - **The reading of Effect is tested, not checked at run time.** Knowing what a schema states means
   reading Effect's schema structure, which a newer Effect could change. Tests hold that reading to
   the versions named in [Limits and recovery](./limits.md), in CI, on the oldest Effect the peer
@@ -221,6 +222,29 @@ name only when the whole value is on the encoded side. A plain value in a brande
 because it is on the encoded side, and it goes through the schema's checks. The compiler therefore
 checks less than it would for the decoded side alone: a string where a number was expected compiles,
 and fails when the request is prepared if the schema refuses it.
+
+#### A last constructor attempt
+
+A strict whole read can fail inside an opaque field and leave a visible union with its narrower
+member. If the original reader reports a nested caller field it would lose, a direct closed struct
+can try a constructor-only recovery. Root losses alone do not start it, because a sibling schema can
+hold those names. No earlier successful call takes this additional route.
+
+The attempt keeps the full original input and stable evidence captured before callbacks. It
+constructs supplied visible fields strictly, and direct opaque declarations without an encoding
+ordinarily. It then runs the original parent's strict constructor and writer, including its checks
+and defaults, and compares the actual result with the original visible fields. It accepts only
+complete preservation. A typed candidate failure or a remaining loss keeps the original refusal;
+defects and interruption propagate.
+
+Every supplied field must fit its constructor. Trying each field's decoder as well would change
+whole-input priority: one field might require whole decoding while another fits both sides and would
+be read differently in isolation. That case retains the original refusal. JSON text and broader
+transformed, open or unstable inputs remain outside this recovery; opaque values are not decoded and
+re-encoded to prepare a different input. New attempts can repeat effects and require schema
+services. The [0.6.1
+example](./release-notes/0.6.md#since-0-6-1-keep-visible-fields-beside-an-opaque-value) shows the
+bounded case.
 
 ### A schema states the shape of its group
 

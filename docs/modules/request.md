@@ -390,9 +390,11 @@ objects, lists, tuples, classes and unions of those, at any depth, on either sid
 sees an object given to a field that holds JSON, and the value in `Schema.OptionFromNullOr`. Inside
 an opaque value, which is text given as text, a `Schema.Map`, a `Schema.Option` or a declaration
 with no struct behind it, the schema's own reading applies, and nothing is refused for what happens
-there. A stray key inside an opaque value can still make a union beside it read loosely, so a field
-a wider member could hold can be refused. To choose a union member for certain, bind that member
-directly.
+there. A stray key inside an opaque value can make a union beside it read loosely. A direct closed
+struct can recover some otherwise-refused nested fields through constructor-only validation, as the
+[0.6.1 example](../release-notes/0.6.md#since-0-6-1-keep-visible-fields-beside-an-opaque-value)
+shows. Encoded-side/text cases and input without stable field evidence retain this limit. To choose
+a union member for certain, bind that member directly.
 
 A union first chooses before it knows what a stacked schema took. Eligible bare unions can then
 [recover that choice](#recover-a-stacked-union-s-choice): `Union([{ b }, { a, c }])` stacked with
@@ -743,5 +745,5 @@ records without it remain valid and use the earlier selection behavior; the new 
 requires complete evidence.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.6.0/src/http/Request.ts) for
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.6.1/src/http/Request.ts) for
 all types and overloads.

@@ -6,6 +6,7 @@ import "./migration-0-3.ts";
 import "./migration-0-4.ts";
 import "./migration-0-5.ts";
 import "./migration-0-6.ts";
+import "./opaque-neighbor.ts";
 import console from "node:console";
 
 console.log(
