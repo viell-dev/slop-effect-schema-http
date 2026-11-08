@@ -237,6 +237,11 @@ and defaults, and compares the actual result with the original visible fields. I
 complete preservation. A typed candidate failure or a remaining loss keeps the original refusal;
 defects and interruption propagate.
 
+Shared references and object values under open or empty schemas do not provide that evidence:
+copying them can change identity checks that the schema itself preserves. Arrays need their ordinary
+prototype and no inherited in-range elements. Accessors, inherited or nonplain visible data and
+suspended structure also prevent a stable capture.
+
 Every supplied field must fit its constructor. Trying each field's decoder as well would change
 whole-input priority: one field might require whole decoding while another fits both sides and would
 be read differently in isolation. That case retains the original refusal. JSON text and broader
