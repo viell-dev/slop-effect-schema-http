@@ -2479,25 +2479,6 @@ describe("Request.query", () => {
     }),
   );
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/135
-  it.effect(
-    "currently needs its group in the input with every field optional",
-    () =>
-      Effect.gen(function* () {
-        const request = Request.get("/things").pipe(
-          Request.query(
-            Schema.Struct({ limit: Schema.optional(Schema.FiniteFromString) }),
-          ),
-        );
-        expect(yield* urlOf(request, { query: {} })).toBe("/things");
-        const error = yield* Effect.flip(
-          // @ts-expect-error the group's key is required
-          compile(request, {}),
-        );
-        expect(error).toBeInstanceOf(Schema.SchemaError);
-      }),
-  );
-
   // https://github.com/viell-dev/slop-effect-schema-http/issues/87
   it.effect(
     "refuses raw entries the schema does not allow, including the URL's query string",
@@ -9317,7 +9298,7 @@ describe("a schema states the shape of its group", () => {
       const typed = withService(Request.get("/x").pipe(Request.query(Limit)));
       expectTypeOf(typed).toEqualTypeOf<
         Request.Request<
-          { readonly query: Request.Input<typeof Limit> },
+          { readonly query?: Request.Input<typeof Limit> },
           Schema.SchemaError | Request.InvalidRequest
         >
       >();

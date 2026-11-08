@@ -102,6 +102,20 @@ exactly.
 `Request.path` and `Request.body` add their input to the request, so each can be combined with the
 other bindings.
 
+**Unreleased:** a query or header binding makes its input key optional when `Request.Input<S>`
+accepts `{}`. An all-optional struct qualifies, and a union qualifies when one member does. Stacked
+bindings intersect their input contributions, so every binding on the group has to permit omission.
+A required field stays required even when a raw default supplies its name.
+
+An absent or `undefined` query or header group is read as `{}` inside each binding, before schema
+validation or accounting for the caller's fields. Omitting it therefore behaves exactly like an
+explicit `{}`, including constructor defaults and refinements that can reject an empty object. Other
+explicit values, including `null`, are validated as given. With TypeScript's
+`exactOptionalPropertyTypes`, an explicit `undefined` still has to fit the schema's input.
+`Request.mapInput` keeps its declared argument, and `Request.unbind` still removes the group. Path
+and body keys remain required. The call still takes an input object: `execute({})` works for
+omittable groups, and `execute()` remains a compile error.
+
 ### A schema has two sides
 
 A schema's decoded side is what an application works with, and its encoded side is what goes on the

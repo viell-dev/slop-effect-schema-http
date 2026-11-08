@@ -122,7 +122,9 @@ export type Input<S extends Schema.Top> = Inputs.Input<S>;
  * @remarks
  * This takes a request, and {@link Input} takes a schema. `Input` is what one binding takes, such
  * as the value under `query`, and this is the object that holds them all, which is what
- * {@link mapInput} has to return. `Operation.InputOf` gives the same for an operation.
+ * {@link mapInput} has to return. A query or header key is optional when that binding's `Input`
+ * accepts `{}`; stacked bindings intersect their contributions. `Operation.InputOf` gives the
+ * same for an operation.
  */
 export type InputOf<R> =
   R extends Request<infer I, unknown, unknown> ? I : never;
@@ -748,10 +750,23 @@ const applyDeclaredBodyFields = (
   );
 };
 
+/** A query or header binding needs its key only when its input cannot be an empty object. */
+type GroupInput<K extends "query" | "headers", A> =
+  Record<never, never> extends A
+    ? { readonly [P in K]?: A }
+    : { readonly [P in K]: A };
+
 /**
  * Bind a schema to the call's `{ headers }` input.
  *
  * @remarks
+ * When {@link Input} accepts `{}`, the `headers` key is optional, as with an all-optional struct
+ * or a union with one such member. An absent or `undefined` group is read as `{}` and still goes
+ * through the schema, including its refinements and constructor defaults. Other explicit values,
+ * including `null`, are validated as given. With exact optional property types, an explicit
+ * `undefined` still has to fit `Input`. Stacked schemas allow omission only when each one does;
+ * a raw default does not make a required group optional. The invocation object is still required.
+ *
  * The input is an {@link Input} of the schema. Encoding produces ordered header lines. The schema
  * states the shape of the group, whatever the order of the calls: once any schema is bound, every
  * header the request declares must be a name some schema allows. A raw header under such a name
@@ -787,7 +802,7 @@ export const headers = <
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
-    I & { readonly headers: Input<S> },
+    I & GroupInput<"headers", Input<S>>,
     E | Schema.SchemaError | InvalidRequest,
     R | S["EncodingServices"] | S["DecodingServices"]
   > =>
@@ -797,14 +812,16 @@ export const headers = <
         headerShapes: [...self.declaration.headerShapes, shape],
       },
       Effect.fnUntraced(function* (
-        input: I & { readonly headers: Input<S> },
+        input: I & GroupInput<"headers", Input<S>>,
         draft: Draft,
       ) {
         if (draft.unbound.has("headers"))
           return yield* self.prepare(input, draft);
-        const { output, lost: lostFromInput } = yield* read(input.headers);
-        const own =
-          draft.takenHeaders && taken(input.headers, output, lostFromInput);
+        const value = (
+          input.headers === undefined ? {} : input.headers
+        ) as Input<S>;
+        const { output, lost: lostFromInput } = yield* read(value);
+        const own = draft.takenHeaders && taken(value, output, lostFromInput);
         const prepared = yield* self.prepare(
           input,
           own === undefined
@@ -882,6 +899,13 @@ export const headers = <
  * ```
  *
  * @remarks
+ * When {@link Input} accepts `{}`, the `query` key is optional, as with an all-optional struct
+ * or a union with one such member. An absent or `undefined` group is read as `{}` and still goes
+ * through the schema, including its refinements and constructor defaults. Other explicit values,
+ * including `null`, are validated as given. With exact optional property types, an explicit
+ * `undefined` still has to fit `Input`. Stacked schemas allow omission only when each one does;
+ * a raw default does not make a required group optional. The invocation object is still required.
+ *
  * The input is an {@link Input} of the schema. The schema encodes to `UrlEncoding.QueryInput` and
  * states the shape of the group, whatever the order of the calls: once any schema is bound, every
  * query field the request declares must be a name some schema allows. A raw entry under such a
@@ -916,7 +940,7 @@ export const query = <
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
-    I & { readonly query: Input<S> },
+    I & GroupInput<"query", Input<S>>,
     E | Schema.SchemaError | InvalidRequest,
     R | S["EncodingServices"] | S["DecodingServices"]
   > =>
@@ -926,14 +950,16 @@ export const query = <
         queryShapes: [...self.declaration.queryShapes, shape],
       },
       Effect.fnUntraced(function* (
-        input: I & { readonly query: Input<S> },
+        input: I & GroupInput<"query", Input<S>>,
         draft: Draft,
       ) {
         if (draft.unbound.has("query"))
           return yield* self.prepare(input, draft);
-        const { output, lost: lostFromInput } = yield* read(input.query);
-        const own =
-          draft.takenQuery && taken(input.query, output, lostFromInput);
+        const value = (
+          input.query === undefined ? {} : input.query
+        ) as Input<S>;
+        const { output, lost: lostFromInput } = yield* read(value);
+        const own = draft.takenQuery && taken(value, output, lostFromInput);
         const prepared = yield* self.prepare(
           input,
           own === undefined
