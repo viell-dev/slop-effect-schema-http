@@ -3298,3 +3298,51 @@ EXT-30j uses `OptionFromNullOr`, whose encoded object is visible, and remains a 
   [own-key-order control](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6726073336)
   retains a typed refusal and empty ledger. Status: tested.
   - `[EXT-35u] record keys reordered after creating a pending body cannot bypass a parent check`
+
+## Annotations on whole request unions
+
+EXT-36 covers the annotation-only extension to bounded whole-union recovery accepted in
+[#143, gap 1](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6726559103).
+The neutral echo probe's [contract](./README.md#the-neutral-echo-probe), Fetch in Node and Chromium,
+and socket ledgers establish the decoded response, exact target, empty body, physical header lines
+and request count. Published `0.6.1` refuses eight intended successful calls solely because their
+union has annotations; twelve controls pass. Existing parent-behavior and member-shape limits
+remain separate from this extension.
+
+- **EXT-36a** Title, description and combined annotations retain all supplied query/header fields
+  under the narrower-first union stacked with an actual sibling holder. Both binding orders are
+  represented; the query preserves encoded punctuation and each header arrives exactly once.
+  Status: tested.
+  - `[EXT-36a] ${group}: ${annotation} annotations keep every field with ${order}`
+- **EXT-36b** Bare unions already preserve all fields for both query and headers, with the union
+  before or after its sibling. These keep the existing successful wire behavior. Status: tested.
+  - `[EXT-36b] control: a bare ${group} union already keeps every field with ${order}`
+- **EXT-36c** Wider-first annotated calls already succeed in both groups. Their exact three-check
+  trace and complete wire output remain unchanged. Status: tested.
+  - `[EXT-36c] control: a wider-first annotated ${group} union retains its successful trace`
+- **EXT-36d** An identifier and unfamiliar consumer metadata do not disable recovery. The original
+  schema retains the custom metadata object's identity before and after execution. Status: tested.
+  - `[EXT-36d] identifier and unfamiliar metadata do not prevent query recovery`
+- **EXT-36e** Recovery preserves whole-union constructor-before-decoder priority. A numeric member
+  before a string member cannot canonicalize caller text `"01"` when the later constructor accepts
+  that text. Status: tested.
+  - `[EXT-36e] annotated recovery keeps whole-union constructor priority for literal 01`
+- **EXT-36f** Three mutually exclusive members and one sibling cannot jointly hold every supplied
+  field. The refusal identifies `c`, omits its value and sends nothing. Status: tested.
+  - `[EXT-36f] contradictory member fields remain refused by name without exposing values`
+- **EXT-36g** A member's field check remains effective. An annotation and sibling cannot excuse a
+  value the only wider member rejects; the redacted `SchemaError` leaves the ledger empty.
+  Status: tested.
+  - `[EXT-36g] a rejected member value is not excused by an annotation or sibling`
+- **EXT-36h** A parent check leaves the union outside bounded recovery even when it always passes.
+  Its original refusal remains. Status: limit.
+  - `[EXT-36h] limit: a parent check still keeps annotated recovery unavailable`
+- **EXT-36i** A constructor default on the union is parent context, not descriptive metadata.
+  Recovery remains unavailable and the supplied input does not evaluate the default. Status: limit.
+  - `[EXT-36i] limit: a parent constructor default is not descriptive metadata`
+- **EXT-36j** An annotated `oneOf` union still refuses an input that also supplies the sibling's
+  fields. Its constraint is not converted to `anyOf`, and nothing is sent. Status: tested.
+  - `[EXT-36j] control: an annotated oneOf union remains a refusal with no dispatch`
+- **EXT-36k** A member with a group rename remains outside bounded recovery. An annotation does
+  not expand recovery to arbitrary transformed members. Status: limit.
+  - `[EXT-36k] limit: annotated transformed members stay outside bounded recovery`
