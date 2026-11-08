@@ -396,9 +396,9 @@ struct can recover some otherwise-refused nested fields through constructor-only
 shows. Encoded-side/text cases and input without stable field evidence retain this limit. To choose
 a union member for certain, bind that member directly.
 
-A union first chooses before it knows what a stacked schema took. Eligible bare unions can then
-[recover that choice](#recover-a-stacked-union-s-choice): `Union([{ b }, { a, c }])` stacked with
-`{ b }` can keep `{ a, b, c }`. Bind the member directly to choose it without recovery attempts:
+A union first chooses before it knows what a stacked schema took. Eligible unions can then [recover
+that choice](#recover-a-stacked-union-s-choice): `Union([{ b }, { a, c }])` stacked with `{ b }` can
+keep `{ a, b, c }`. Bind the member directly to choose it without recovery attempts:
 
 ```ts
 import { Schema } from "effect";
@@ -487,12 +487,13 @@ they do for a struct, and a class instance only a struct can read reads as a pla
 Stacked schemas read one input, and a field stays with the schema that took it. A union takes a
 sibling's field for a key it does not state, and a field it would lose is not lost if a stacked
 schema took it: a union of `{ a }` and `{ b }` stacked with `{ b }`, in either order, sends
-`{ a, b }` whole. If the initial selection leaves an uncovered root field, an eligible bare union
-can [recover another selection](#recover-a-stacked-union-s-choice) using actual sibling claims. For
+`{ a, b }` whole. If the initial selection leaves an uncovered root field, an eligible union can
+[recover another selection](#recover-a-stacked-union-s-choice) using actual sibling claims. For
 example, a union of `{ b }` and `{ a, c }` stacked with `{ b }` can keep `{ a, b, c }`. Two unions
 can also recover complementary members, but a field no resulting selection holds is still refused.
-Parent metadata, nested losses and joint backtracking remain outside this recovery. Put the intended
-member first or bind it directly when its choice must not depend on recovery.
+Annotations are retained. Union-parent checks, context/defaults or encoding, nested losses and joint
+backtracking remain outside this recovery. Put the intended member first or bind it directly when
+its choice must not depend on recovery.
 
 Two members can state one field under different wire names. A union of `{ c }` and `{ c }` renamed
 to `C` takes the first member that fits, so `{ C: "s" }` goes out as `?c=s`, with no error. Bind the
@@ -611,11 +612,16 @@ other schemas' fields.
 
 #### Recover a stacked union's choice
 
-A bare top-level union of closed struct members can recover when its initial selection would refuse
+A top-level anyOf union of closed struct members can recover when its initial selection would refuse
 fields another selection could keep with its siblings. Under `Union([{ b }, { a, c }])` stacked with
 `{ b }`, input `{ a, b, c }` can now use `{ a, c }` for the union and leave `b` with the binding
 that actually took it. See the [executable 0.6
 example](../release-notes/0.6.md#let-another-binding-hold-its-fields).
+
+Annotations, including titles and unfamiliar metadata, stay with the union. Since `0.6.2`, their
+presence alone no longer prevents recovery. The [annotated
+example](../release-notes/0.6.md#since-0-6-2-keep-annotations-during-union-recovery) uses the same
+stacked bindings.
 
 Only a normal group-level field refusal enters recovery. Each attempt retains the whole union and
 original full input, so decoded input still precedes whole and fieldwise decoding. A successful
@@ -623,10 +629,10 @@ replacement must keep every original loss obligation covered and cannot withdraw
 certified to an earlier check. Merely allowing a name is insufficient.
 
 These attempts can repeat defaults, checks and transformations, require their services, or fail.
-Calls whose fields were already kept follow their original path. Parent behavior, member group
-transformations, open/iterable representation, nested losses and joint backtracking remain outside
-this bounded recovery. Bind the intended member or put it first when a definition needs a specific
-choice while retaining its other constraints.
+Calls whose fields were already kept follow their original path. Union-parent checks,
+context/defaults or encoding, member group transformations, open/iterable representation, nested
+losses and joint backtracking remain outside this bounded recovery. Bind the intended member or put
+it first when a definition needs a specific choice while retaining its other constraints.
 
 #### Start again with unbind
 
@@ -745,5 +751,5 @@ records without it remain valid and use the earlier selection behavior; the new 
 requires complete evidence.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.6.1/src/http/Request.ts) for
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.6.2/src/http/Request.ts) for
 all types and overloads.

@@ -1,5 +1,16 @@
 # Change history
 
+## 0.6.2 — 2026-11-08
+
+Read [What's in 0.6](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.6) for
+annotation-preserving union recovery and the earlier `0.6.0` migration.
+
+- Keep the original annotations when trying an otherwise eligible whole-union alternative. Titles,
+  descriptions and unfamiliar metadata no longer prevent a stacked selection from keeping its caller
+  fields. Existing input priority, actual binding claims and successful evaluation paths remain
+  unchanged; union-parent checks, context and encoding remain outside this recovery
+  ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
+
 ## 0.6.1 — 2026-11-08
 
 Read [What's in 0.6](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.6) for the
