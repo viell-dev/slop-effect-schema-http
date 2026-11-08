@@ -1,5 +1,16 @@
 # Change history
 
+## 0.7.0 — 2026-11-08
+
+Read [What's in 0.7](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.7) for the
+closed-union generated-field refusal and migration.
+
+- Refuse later raw edits replaced by generated fields through finite closed unions. Strictly empty
+  input permits the proof across group encodings; unions with no group encoding retain same-name
+  omission evidence beside nonempty input. Use the successful output without repeating schema
+  callbacks. Explicit input and earlier raw defaults retain their behavior
+  ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
+
 ## 0.6.2 — 2026-11-08
 
 Read [What's in 0.6](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.6) for

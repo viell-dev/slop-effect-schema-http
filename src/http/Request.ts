@@ -830,11 +830,13 @@ type GroupInput<K extends "query" | "headers", A> =
  * In a direct struct, schema preparation can supply an omitted optional field. A raw edit after
  * that binding is an {@link InvalidRequest} when successful preparation writes an own enumerable
  * data property with a non-`undefined` value under that name in a non-iterable record. This reads
- * the preparation's result without repeating schema work. A transformed group also qualifies when
- * its decoded and encoded endpoints are closed structs and the ordinary or null-prototype caller
- * object has no own keys of any kind and none of either endpoint's names exists on its prototype
- * chain. Only an edited, declared encoded string name is checked. Nonempty transformed groups,
- * classes, unions and iterable output remain outside this proof.
+ * the preparation's result without repeating schema work. A finite union of closed structs has
+ * the same omission proof when no group node has an encoding. Transformed groups also qualify
+ * when their decoded and encoded shapes are closed structs or finite unions of closed structs,
+ * the ordinary or null-prototype caller object has no own keys of any kind and no endpoint name
+ * exists on its prototype chain. Only an edited, declared encoded string name is checked.
+ * Nonempty transformed groups, classes, open/suspended alternatives and iterable output remain
+ * outside the additional proof.
  *
  * The input is an {@link Input} of the schema. Encoding produces ordered header lines. The schema
  * states the shape of the group, whatever the order of the calls: once any schema is bound, every
@@ -1008,11 +1010,13 @@ export const headers = <
  * In a direct struct, schema preparation can supply an omitted optional field. A raw edit after
  * that binding is an {@link InvalidRequest} when successful preparation writes an own enumerable
  * data property with a non-`undefined` value under that name in a non-iterable record. This reads
- * the preparation's result without repeating schema work. A transformed group also qualifies when
- * its decoded and encoded endpoints are closed structs and the ordinary or null-prototype caller
- * object has no own keys of any kind and none of either endpoint's names exists on its prototype
- * chain. Only an edited, declared encoded string name is checked. Nonempty transformed groups,
- * classes, unions and iterable output remain outside this proof.
+ * the preparation's result without repeating schema work. A finite union of closed structs has
+ * the same omission proof when no group node has an encoding. Transformed groups also qualify
+ * when their decoded and encoded shapes are closed structs or finite unions of closed structs,
+ * the ordinary or null-prototype caller object has no own keys of any kind and no endpoint name
+ * exists on its prototype chain. Only an edited, declared encoded string name is checked.
+ * Nonempty transformed groups, classes, open/suspended alternatives and iterable output remain
+ * outside the additional proof.
  *
  * The input is an {@link Input} of the schema. The schema encodes to `UrlEncoding.QueryInput` and
  * states the shape of the group, whatever the order of the calls: once any schema is bound, every

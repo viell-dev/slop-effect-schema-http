@@ -618,41 +618,34 @@ describe("raw edits after schema preparation supplies a field", () => {
       }),
   );
 
-  it.effect(
-    "proves an empty transformed group while excluding classes and unions",
-    () =>
-      Effect.gen(function* () {
-        class DefaultClass extends Schema.Class<DefaultClass>("DefaultClass")({
-          limit: Schema.optionalKey(Schema.String).pipe(
-            Schema.withConstructorDefault(Effect.succeed("25")),
-          ),
-        }) {}
-        expect(
-          yield* Effect.flip(
-            Request.compile(
-              Request.get("/things").pipe(
-                Request.query(
-                  Defaulted.pipe(Schema.encodeKeys({ limit: "limit" })),
-                ),
-                Request.setQuery("limit", "5"),
+  it.effect("proves an empty transformed group while excluding classes", () =>
+    Effect.gen(function* () {
+      class DefaultClass extends Schema.Class<DefaultClass>("DefaultClass")({
+        limit: Schema.optionalKey(Schema.String).pipe(
+          Schema.withConstructorDefault(Effect.succeed("25")),
+        ),
+      }) {}
+      expect(
+        yield* Effect.flip(
+          Request.compile(
+            Request.get("/things").pipe(
+              Request.query(
+                Defaulted.pipe(Schema.encodeKeys({ limit: "limit" })),
               ),
-              {},
+              Request.setQuery("limit", "5"),
             ),
+            {},
           ),
-        ).toBeInstanceOf(Request.InvalidRequest);
-        for (const schema of [
-          DefaultClass,
-          Schema.Union([Defaulted, Schema.Struct({ other: Schema.String })]),
-        ]) {
-          const request = Request.get("/things").pipe(
-            Request.query(schema),
-            Request.setQuery("limit", "5"),
-          );
-          expect((yield* Request.compile(request, {})).request.url).toBe(
-            "/things?limit=25",
-          );
-        }
-      }),
+        ),
+      ).toBeInstanceOf(Request.InvalidRequest);
+      const request = Request.get("/things").pipe(
+        Request.query(DefaultClass),
+        Request.setQuery("limit", "5"),
+      );
+      expect((yield* Request.compile(request, {})).request.url).toBe(
+        "/things?limit=25",
+      );
+    }),
   );
 
   it.effect(
