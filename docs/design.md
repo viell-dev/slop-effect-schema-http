@@ -377,9 +377,12 @@ Some things are outside the check:
 - An invalid value under a renamed encoded name can be replaced by an optional constructor default
   instead of being refused
   ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). This is a reproduced
-  defect, not intended precedence. Use decoded input for those schemas pending repair. Partly
-  renamed input typing is fixed in 0.8; helpers accepting `Request.Input` must account for the
-  encoded shape too.
+  defect, not intended precedence. Use decoded input for those schemas pending repair. Outer-object
+  and union-member alias typing is repaired in 0.8; helpers accepting `Request.Input` must account
+  for the encoded shape too.
+- Nested renamed fields can still lose their encoded input type when outer names match
+  ([#172](https://github.com/viell-dev/slop-effect-schema-http/issues/172)). Use decoded nested
+  names or an input mapping; the whole encoded side executes, but the static refusal remains.
 - A group transformation can hide a default's field correspondence. The strictly empty caller-group
   proof above covers some such calls. With any own caller field, a renamed default can still replace
   a later raw edit without refusal; the library does not guess which alias supplied that output.
