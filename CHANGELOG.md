@@ -11,6 +11,9 @@ annotation-preserving union recovery and the earlier `0.6.0` migration.
   unchanged; union-parent checks, context and encoding remain outside this recovery
   ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
 
+- Update the development formatter to mdrefine 0.8.1 without document or configuration changes
+  ([#164](https://github.com/viell-dev/slop-effect-schema-http/pull/164)).
+
 ## 0.6.1 — 2026-11-08
 
 Read [What's in 0.6](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.6) for the
