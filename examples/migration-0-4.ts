@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { HttpClient, HttpClientResponse } from "effect/http";
 // #region imports
 import { Effect, Schema, SchemaTransformation } from "effect";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
-// #endregion imports
-import { HttpClient, HttpClientResponse } from "effect/http";
 
 const things = "https://api.example.test/things";
+// #endregion imports
+
 const urlOf = async <I, E>(request: Request.Request<I, E>, input: I) =>
   (await Effect.runPromise(Request.compile(request, input))).request.url;
 

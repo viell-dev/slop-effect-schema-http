@@ -98,7 +98,7 @@ export type QueryFields = Readonly<
 export type Input<S extends Schema.Top> = Inputs.Input<S>;
 
 /**
- * The whole input of a request: the object its call takes, with every binding's property.
+ * The whole input of a request: the object its call takes, assembled from its bindings.
  *
  * @example
  * ```ts
