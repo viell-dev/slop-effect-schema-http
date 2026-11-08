@@ -1,5 +1,19 @@
 # Change history
 
+## Unreleased
+
+- Fix a false refusal when a union's tag is given by its encoded name. Required literal tags can
+  rule a member out on either side, including through a whole-object transformation, so a field only
+  an excluded member states is stripped as it is for a decoded tag. Both views must rule a member
+  out, and a constructor default is not evaluated to guess a tag
+  ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
+
+- **Breaking:** keep a field beside a tag whose union contains a transformed literal. The old tag
+  check could mistake the literal's encoded value for a contradiction, discard the member that held
+  the field, and silently send a narrower value. Such a tag now leaves member selection to the
+  schema instead of guessing through that inner transformation
+  ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
+
 ## 0.3.0 — 2026-11-07
 
 Read [What's in 0.3](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.3) for the

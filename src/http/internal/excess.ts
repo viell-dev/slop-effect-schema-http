@@ -115,15 +115,52 @@ const refusesLiteral = (type: Ast, value: unknown): boolean =>
     refuses(side, value),
   );
 
-/** Whether a member's tag rules it out for a value, as Effect's union does before it reads one. */
-const ruledOut = (member: Ast, value: unknown): boolean =>
-  isObject(value) &&
-  fieldsOf(member).some(
-    ({ name, type }) =>
-      !SchemaAST.isOptional(type) &&
-      value[name] !== undefined &&
-      refusesLiteral(type, value[name]),
+const onlyLiterals = (ast: Ast): boolean =>
+  ast._tag === "Literal" ||
+  (ast._tag === "Union" &&
+    ast.types.every(
+      (member) => member.encoding === undefined && onlyLiterals(member),
+    ));
+
+/** Each side of an object transformation, without guessing which names correspond. */
+const objectSides = (ast: Ast): ReadonlyArray<Ast> => [
+  ast,
+  ...(ast.encoding ?? []).flatMap(({ to }) => objectSides(to)),
+];
+
+/** Whether this view's literal tags make it impossible, without reading a default. */
+const tagView = (
+  side: Ast,
+  value: Record<PropertyKey, unknown>,
+  constructing: boolean,
+) => {
+  const tags = fieldsOf(side).filter(
+    ({ type }) =>
+      !SchemaAST.isOptional(type) && objectSides(type).every(onlyLiterals),
   );
+  const mismatch = tags.some(
+    ({ name, type }) =>
+      value[name] !== undefined && refusesLiteral(type, value[name]),
+  );
+  const absent = tags.some(
+    ({ name, type }) =>
+      value[name] === undefined &&
+      (!constructing || type.context?.constructorDefault === undefined),
+  );
+  return { impossible: mismatch || absent, mismatch };
+};
+
+/** A tag can choose on either side; both views must rule a member out before its fields go. */
+const ruledOut = (member: Ast, value: unknown): boolean => {
+  if (!isObject(value)) return false;
+  const decoded = tagView(member, value, true);
+  const encoded = tagView(SchemaAST.toEncoded(member), value, false);
+  return (
+    decoded.impossible &&
+    encoded.impossible &&
+    (decoded.mismatch || encoded.mismatch)
+  );
+};
 
 /** The schemas a value can be read against here: each member its tag leaves, on each side. */
 const sidesOf = (ast: Ast, value: unknown): ReadonlyArray<Ast> => [
