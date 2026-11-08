@@ -7,8 +7,11 @@ import manifest from "viell-effect-schema-http/package.json" with { type: "json"
 import {
   compileDecodedFilters,
   compileEncodedFilters,
+  compileExchangedFirst,
+  compileExchangedSecond,
   countFewNames,
   getItemId,
+  nominalInput,
 } from "./dist/consumer.js";
 
 for (const subpath of Object.keys(manifest.exports)) {
@@ -69,6 +72,15 @@ for (const compile of [compileEncodedFilters, compileDecodedFilters]) {
   const prepared = await Effect.runPromise(compile());
   assert.equal(prepared.request.url, "https://api.test/filtered?page_size=5");
 }
+assert.equal(
+  (await Effect.runPromise(compileExchangedFirst())).request.url,
+  "https://api.test/exchanged?kind=a&page_size=05",
+);
+assert.equal(
+  (await Effect.runPromise(compileExchangedSecond())).request.url,
+  "https://api.test/exchanged?kind=b&limit=07",
+);
+assert.equal(nominalInput.read(), "token");
 
 console.log(
   `Packed consumer passed: ${Object.keys(manifest.exports).length} exports, id ${id}.`,
