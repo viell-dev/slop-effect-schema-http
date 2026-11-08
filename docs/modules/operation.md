@@ -13,9 +13,10 @@ This operation reads a service's health endpoint as text:
 
 <<< ../../examples/modules/operation.ts#simple
 
-`undefined` is the input for a request with no bindings. A request with a path, query, headers or
-body binding instead requires the corresponding properties. Their value types come from the request
-schemas. Hover over `execute` in your editor, or use `Operation.InputOf<typeof operation>` to
+`undefined` is the input for a request with no bindings. Bindings contribute path, query, headers or
+body properties whose value types come from their schemas. A query or headers property can be
+omitted when every binding on that group accepts an empty object; path and body properties remain
+required. Hover over `execute` in your editor, or use `Operation.InputOf<typeof operation>` to
 extract the input type. The [end-to-end example](../usage.md#understand-the-input-type) shows named
 path input and a JSON body.
 
