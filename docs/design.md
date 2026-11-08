@@ -266,20 +266,34 @@ an error: `Request.InvalidRequest` before anything is sent.
   This includes setting, appending and either kind of removal, with header names compared without
   case. The check reads the successful encoded result without evaluating any callback again. Earlier
   raw defaults and explicit caller values keep their existing behavior.
+- **An empty group can prove generation through a transformation.** When the decoded and encoded
+  endpoints are closed objects, a plain or null-prototype caller group with no own keys supplies no
+  declared fields, provided every endpoint name is also absent from its prototype chain. This is
+  snapshotted before preparation, including symbol and non-enumerable keys. Actual ordinary output
+  can then prove that a later edit of a generated encoded name is replaced. Any own caller key,
+  custom prototype or inherited endpoint field disables this additional proof. It does not infer a
+  mapping between names or repeat a schema callback.
 - **Schemas stack.** A second `Request.query` or `Request.headers` adds its fields, and together the
   schemas state the shape. Each takes its own fields from one input, and a default goes through
   every schema that allows its name. An open schema sees every field, so its value type has to
   accept the others.
-- **A field stays with the schema that took it.** Where a group has a union and a schema beside it,
-  each binding records what it took from the caller, and the union checks what it would lose against
-  that record once every schema in the group has read the input. So under a union of `{ a }` and
-  `{ b }` stacked with `{ b }`, in either order, `{ a, b }` goes out whole. The record holds what a
-  schema took, not what it states, because two unions that each state `b` would otherwise leave it
-  to each other and lose it with no error. They are refused instead. What another schema took is not
-  a default for the union, and it replaces a raw value under that name. A raw value the caller
-  leaves out stays with a schema that has no union and allows its name, which checks it, so the
-  union need not hold it. Two unions have no such claim on each other. A body or path has nothing
-  stacked beside it by name, so this applies to headers and query.
+- **A field stays with the schema that took it.** Each applied binding records actual consumption;
+  stating that a name is allowed supplies no certificate that it kept caller input. A union's lost
+  group fields are checked against the other bindings' records. Caller-key evidence stays exact;
+  header folding applies to wire names and defaults. A raw value a caller leaves out can stay with a
+  non-union schema that allows and validates it, so the union need not hold that default. A body or
+  path has no sibling bindings by name, so group sharing applies to headers and query.
+- **A bare union may recover an initial refusal.** If normal preparation would refuse uncovered
+  group-level fields, an eligible top-level anyOf union retries the whole schema with each other
+  member moved to the front, keeping every member and the original full input. Its members must be
+  closed direct structs without group transformations or iterable representation; parent behavior
+  and nested losses exclude this recovery. This preserves whole-union constructor/decoder/fieldwise
+  priority and each field's custom schema. A candidate must cover both original and new loss
+  obligations, and its certificate replaces only this applied binding's claim. Aggregate coverage of
+  previously certified names cannot decrease, so earlier successful checks stay justified. Reused
+  binding factories get distinct identities per application. If none qualifies, the original refusal
+  remains. These new attempts can evaluate schemas again or fail; already successful calls never
+  enter recovery. This is a bounded search, with no joint backtracking between bindings.
 - **A schema can allow other names.** A record or `Schema.StructWithRest` allows any name, and
   values are still checked. Callers can then pass any name as well.
 - **`Request.unbind` removes bindings.** `Request.unbind(group)` makes earlier bindings of that group
@@ -324,20 +338,18 @@ Some things are outside the check:
   after the schema to survive under such a name. `transformClient` and a client layer work on the
   prepared request, so the check does not see them.
 - A check is only as strict as its schema. `Schema.NumberFromString` accepts `"two"` as `NaN`.
-- A decoding default shows in a field's own encoding, and a struct-level transformation replaces the
-  fields with their encoded forms. Under `Schema.encodeKeys`, a field with a decoding default
-  therefore reads as optional, so a raw edit of it after the schema is not refused, although the
-  edit never reaches the client.
-- Generated-field proof is limited to explicit fields of direct structs with the same input and
-  output names. Group transformations, including `Schema.encodeKeys`, classes and unions are outside
-  it. So are accessor and inherited input properties, which do not prove omission. A raw edit can
-  still be replaced silently there. Iterable output is excluded: its yielded entries determine what
-  is sent, and own string properties supply no such proof. An encoded property that is absent,
-  non-enumerable, an accessor or `undefined` is not proof that preparation replaced an edit. The
-  ordinary schema/default and lost-field checks still apply.
-- A union chooses its member before it can know what a stacked schema took. A union of `{ b }` and
-  `{ a, c }` stacked with `{ b }` takes the first member for `{ a, b, c }`, so `a` and `c` are
-  refused, although the second member and the stacked schema could hold it all between them.
+- A group transformation can hide a default's field correspondence. The strictly empty caller-group
+  proof above covers some such calls. With any own caller field, a renamed default can still replace
+  a later raw edit without refusal; the library does not guess which alias supplied that output.
+- Generated-field proof otherwise remains limited to explicit same-name fields of direct structs.
+  Classes, unions, unknown/open endpoints and accessor/inherited input remain outside the additional
+  empty-group proof. Iterable output uses yielded entries, so own string properties prove nothing
+  about what it sends. An absent, non-enumerable, accessor or `undefined` output property supplies
+  no generated-field evidence. Ordinary schema/default and lost-field checks still apply.
+- A union outside the bare-recovery guard keeps its initial selection. For example, a group-level
+  check prevents recovery for the union of `{ b }` and `{ a, c }` stacked with `{ b }`, so
+  `{ a, b, c }` can still be refused. Recovery also declines a candidate that would withdraw an
+  earlier field certificate, and it does not jointly backtrack several choices.
 - Two members can state one field under different wire names. A union of `{ c }` and `{ c }` renamed
   to `C` takes the first member that fits, so `{ C: "s" }` goes out as `?c=s`. The value arrives,
   under the other member's name, with no error. Bind the member you mean directly.

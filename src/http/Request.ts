@@ -8,6 +8,7 @@ import {
 import type * as Body from "./Body.js";
 import * as Fields from "./internal/fields.js";
 import * as Inputs from "./internal/input.js";
+import * as Groups from "./internal/group.js";
 import * as Shapes from "./internal/shape.js";
 import * as Transport from "./Transport.js";
 import * as UrlEncoding from "./UrlEncoding.js";
@@ -182,7 +183,9 @@ export type Shape = Shapes.Shape;
  * @remarks
  * This is a low-level extension type. A field a union would lose is not lost if another schema in
  * the group took it, and `settled` is never an answer to that: a schema can allow a name it did not
- * take.
+ * take. Optional `certificates` records actual claims per applied binding, allowing a union to
+ * replace its claim without removing another binding's evidence. Custom drafts with only `fields`
+ * and `settled` keep the earlier behavior and skip union recovery.
  */
 export type Taken = Shapes.Taken;
 
@@ -821,8 +824,11 @@ type GroupInput<K extends "query" | "headers", A> =
  * In a direct struct, schema preparation can supply an omitted optional field. A raw edit after
  * that binding is an {@link InvalidRequest} when successful preparation writes an own enumerable
  * data property with a non-`undefined` value under that name in a non-iterable record. This reads
- * the preparation's result without repeating schema work. The proof excludes group transformations,
- * classes, unions, iterable output, and accessor or inherited input properties.
+ * the preparation's result without repeating schema work. A transformed group also qualifies when
+ * its decoded and encoded endpoints are closed structs and the ordinary or null-prototype caller
+ * object has no own keys of any kind and none of either endpoint's names exists on its prototype
+ * chain. Only an edited, declared encoded string name is checked. Nonempty transformed groups,
+ * classes, unions and iterable output remain outside this proof.
  *
  * The input is an {@link Input} of the schema. Encoding produces ordered header lines. The schema
  * states the shape of the group, whatever the order of the calls: once any schema is bound, every
@@ -841,6 +847,13 @@ type GroupInput<K extends "query" | "headers", A> =
  * one of them takes stays with it, whatever a union beside it leaves out. Use {@link unbind} to
  * start again.
  *
+ * If a bare anyOf union would otherwise refuse uncovered root fields, it can retry the whole union
+ * with each member first, using the complete original input. Recovery needs actual other-binding
+ * claims for remaining losses and preserves every previously certified name. Parent metadata,
+ * transformed, open or iterable members, nested losses and joint backtracking are excluded. Existing
+ * successful reads do not retry. Recovery adds at most one whole-union read per other member; those
+ * attempts can repeat schema effects and can fail.
+ *
  * A field the schema produces wins over an automatic `Accept`, `Content-Type` or `Content-Length`,
  * whether the schema is bound before or after the body, and so does a default. An optional field
  * left out with no default declares nothing, so the automatic value still applies.
@@ -855,6 +868,7 @@ export const headers = <
   contract: S,
 ) => {
   const read = Inputs.reader(contract, Schema.encodeEffect(contract));
+  const recover = Groups.recovery(contract);
   const { shape, settle, taken, candidates, filled } = Shapes.bind(
     contract,
     foldHeader,
@@ -865,8 +879,9 @@ export const headers = <
     I & GroupInput<"headers", Input<S>>,
     E | Schema.SchemaError | InvalidRequest,
     R | S["EncodingServices"] | S["DecodingServices"]
-  > =>
-    construct(
+  > => {
+    const token = {};
+    return construct(
       {
         ...self.declaration,
         headerShapes: [...self.declaration.headerShapes, shape],
@@ -881,24 +896,37 @@ export const headers = <
           input.headers === undefined ? {} : input.headers
         ) as Input<S>;
         const edited = candidates(value, draft.editedFields.get(shape));
-        const { output, lost: lostFromInput } = yield* read(value);
-        const conflicts = filled(edited, output);
+        let { output, lost: lostFromInput } = yield* read(value);
+        let conflicts = filled(edited, output);
         const own = draft.takenHeaders && taken(value, output, lostFromInput);
-        const prepared = yield* self.prepare(
+        let prepared = yield* self.prepare(
           input,
           own === undefined
             ? draft
             : {
                 ...draft,
-                takenHeaders: Shapes.taking(draft.takenHeaders, own),
+                takenHeaders: Shapes.taking(draft.takenHeaders, own, token),
               },
         );
-        if (lostFromInput.length > 0)
+        if (lostFromInput.length > 0) {
+          const recovered = yield* recover(
+            value,
+            { output, lost: lostFromInput },
+            prepared.takenHeaders,
+            token,
+            taken,
+          );
+          if (recovered !== undefined) {
+            ({ output, lost: lostFromInput } = recovered.reading);
+            conflicts = filled(edited, output);
+            prepared = { ...prepared, takenHeaders: recovered.taken };
+          }
           yield* Inputs.refuseLost(
             contract,
             lostFromInput,
             prepared.takenHeaders?.fields,
           );
+        }
         if (conflicts.length > 0)
           return yield* preparationConflict("headers", conflicts);
         const names = Shapes.written(output, foldHeader);
@@ -947,6 +975,7 @@ export const headers = <
         };
       }),
     );
+  };
 };
 
 /**
@@ -973,8 +1002,11 @@ export const headers = <
  * In a direct struct, schema preparation can supply an omitted optional field. A raw edit after
  * that binding is an {@link InvalidRequest} when successful preparation writes an own enumerable
  * data property with a non-`undefined` value under that name in a non-iterable record. This reads
- * the preparation's result without repeating schema work. The proof excludes group transformations,
- * classes, unions, iterable output, and accessor or inherited input properties.
+ * the preparation's result without repeating schema work. A transformed group also qualifies when
+ * its decoded and encoded endpoints are closed structs and the ordinary or null-prototype caller
+ * object has no own keys of any kind and none of either endpoint's names exists on its prototype
+ * chain. Only an edited, declared encoded string name is checked. Nonempty transformed groups,
+ * classes, unions and iterable output remain outside this proof.
  *
  * The input is an {@link Input} of the schema. The schema encodes to `UrlEncoding.QueryInput` and
  * states the shape of the group, whatever the order of the calls: once any schema is bound, every
@@ -998,6 +1030,13 @@ export const headers = <
  * Query schemas stack: a second one adds its fields, and together they state the shape. A field one
  * of them takes stays with it, whatever a union beside it leaves out. Use {@link unbind} to start
  * again, and {@link mapInput} to supply a required field's value.
+ *
+ * If a bare anyOf union would otherwise refuse uncovered root fields, it can retry the whole union
+ * with each member first, using the complete original input. Recovery needs actual other-binding
+ * claims for remaining losses and preserves every previously certified name. Parent metadata,
+ * transformed, open or iterable members, nested losses and joint backtracking are excluded. Existing
+ * successful reads do not retry. Recovery adds at most one whole-union read per other member; those
+ * attempts can repeat schema effects and can fail.
  */
 export const query = <
   S extends Schema.Top &
@@ -1006,6 +1045,7 @@ export const query = <
   contract: S,
 ) => {
   const read = Inputs.reader(contract, Schema.encodeEffect(contract));
+  const recover = Groups.recovery(contract);
   const { shape, settle, taken, candidates, filled } = Shapes.bind(
     contract,
     foldQuery,
@@ -1016,8 +1056,9 @@ export const query = <
     I & GroupInput<"query", Input<S>>,
     E | Schema.SchemaError | InvalidRequest,
     R | S["EncodingServices"] | S["DecodingServices"]
-  > =>
-    construct(
+  > => {
+    const token = {};
+    return construct(
       {
         ...self.declaration,
         queryShapes: [...self.declaration.queryShapes, shape],
@@ -1032,24 +1073,37 @@ export const query = <
           input.query === undefined ? {} : input.query
         ) as Input<S>;
         const edited = candidates(value, draft.editedFields.get(shape));
-        const { output, lost: lostFromInput } = yield* read(value);
-        const conflicts = filled(edited, output);
+        let { output, lost: lostFromInput } = yield* read(value);
+        let conflicts = filled(edited, output);
         const own = draft.takenQuery && taken(value, output, lostFromInput);
-        const prepared = yield* self.prepare(
+        let prepared = yield* self.prepare(
           input,
           own === undefined
             ? draft
             : {
                 ...draft,
-                takenQuery: Shapes.taking(draft.takenQuery, own),
+                takenQuery: Shapes.taking(draft.takenQuery, own, token),
               },
         );
-        if (lostFromInput.length > 0)
+        if (lostFromInput.length > 0) {
+          const recovered = yield* recover(
+            value,
+            { output, lost: lostFromInput },
+            prepared.takenQuery,
+            token,
+            taken,
+          );
+          if (recovered !== undefined) {
+            ({ output, lost: lostFromInput } = recovered.reading);
+            conflicts = filled(edited, output);
+            prepared = { ...prepared, takenQuery: recovered.taken };
+          }
           yield* Inputs.refuseLost(
             contract,
             lostFromInput,
             prepared.takenQuery?.fields,
           );
+        }
         if (conflicts.length > 0)
           return yield* preparationConflict("query", conflicts);
         const names = Shapes.written(output, foldQuery);
@@ -1077,6 +1131,7 @@ export const query = <
         );
       }),
     );
+  };
 };
 
 /** A renderer: what to add to the path, from the encoded value and the path-value encoder. */
@@ -1526,6 +1581,7 @@ const takenRecord = (shapes: ReadonlyArray<Shape>): Taken | undefined =>
   shapes.length > 1 && shapes.some(({ chooses }) => chooses)
     ? {
         fields: new Set(),
+        certificates: new Map(),
         settled: new Set(
           shapes.flatMap(({ chooses, names }) =>
             chooses ? [] : Array.from(names),

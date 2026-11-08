@@ -54,11 +54,11 @@ In an existing Node.js 24 or 26 ESM project with Effect `^4.0.7`, add the librar
 npm install viell-effect-schema-http
 ```
 
-`0.5.0` is the current release. The same package is available as a checksummed [GitHub release
-tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.5.0). It changes
+`0.6.0` is the current release. The same package is available as a checksummed [GitHub release
+tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.6.0). It changes
 existing behavior, so read [What's in
-0.5](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.5) before you update from
-`0.4`.
+0.6](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.6) before you update from
+`0.5`.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
@@ -77,8 +77,9 @@ versions and provider boundaries.
   Operation, Policy, Interaction, UrlEncoding and Transport, from basic use to advanced behavior.
 - [Limits and recovery](https://viell-dev.github.io/slop-effect-schema-http/limits): compatibility,
   where the library's promise stops, failure stages and bug reporting.
-- [What's in 0.5](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.5) introduces
+- [What's in 0.6](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.6) introduces
   the release and how to update, and [What's in
+  0.5](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.5), [What's in
   0.4](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.4), [What's in
   0.3](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.3), [What's in
   0.2](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.2) and [What's in

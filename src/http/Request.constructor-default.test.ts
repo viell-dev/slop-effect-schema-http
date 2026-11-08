@@ -619,7 +619,7 @@ describe("raw edits after schema preparation supplies a field", () => {
   );
 
   it.effect(
-    "does not infer construction through a group transform, class or union",
+    "proves an empty transformed group while excluding classes and unions",
     () =>
       Effect.gen(function* () {
         class DefaultClass extends Schema.Class<DefaultClass>("DefaultClass")({
@@ -627,8 +627,20 @@ describe("raw edits after schema preparation supplies a field", () => {
             Schema.withConstructorDefault(Effect.succeed("25")),
           ),
         }) {}
+        expect(
+          yield* Effect.flip(
+            Request.compile(
+              Request.get("/things").pipe(
+                Request.query(
+                  Defaulted.pipe(Schema.encodeKeys({ limit: "limit" })),
+                ),
+                Request.setQuery("limit", "5"),
+              ),
+              {},
+            ),
+          ),
+        ).toBeInstanceOf(Request.InvalidRequest);
         for (const schema of [
-          Defaulted.pipe(Schema.encodeKeys({ limit: "limit" })),
           DefaultClass,
           Schema.Union([Defaulted, Schema.Struct({ other: Schema.String })]),
         ]) {

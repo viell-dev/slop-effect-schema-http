@@ -33,8 +33,9 @@ run time, so on an untested Effect it can fall back to Effect's own reading, whe
 first member that fits and a field can go with no error.
 
 Known limits also remain on the tested versions: conflicting decoded/encoded aliases, defaults
-hidden by group transformations, and false refusals involving stacked unions or opaque neighbors.
-The [Request guide](./modules/request.md#a-schema-states-the-shape-of-its-group) and [tracked schema
+hidden by nonempty group transformations, and false refusals outside bounded stacked-union recovery
+or beside opaque neighbors. The [Request
+guide](./modules/request.md#a-schema-states-the-shape-of-its-group) and [tracked schema
 gaps](https://github.com/viell-dev/slop-effect-schema-http/issues/143) distinguish the supported
 checks from those cases.
 

@@ -48,8 +48,8 @@ records the detailed behavior contract.
 
 ## Installation and scope
 
-`0.5.0` is the current release, available from npm and as a checksummed [GitHub
-release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.5.0). Follow the
+`0.6.0` is the current release, available from npm and as a checksummed [GitHub
+release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.6.0). Follow the
 [installation guide](./getting-started.md) to add the library and run a first example.
 
 The library supports finite request and response bodies, typed input and output, definitions you can
