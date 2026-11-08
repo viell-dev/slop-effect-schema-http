@@ -252,6 +252,13 @@ an error: `Request.InvalidRequest` before anything is sent.
   field. A field with a decoding default counts as required, because the schema writes it whatever
   the caller does. This is the one rule that depends on order. Before the schema, a raw value under
   a required name is an ordinary default that the caller's value replaces.
+- **Unreleased: refuse an edit a constructor actually replaces.** In a direct struct, a field with
+  `Schema.withConstructorDefault` can be optional on both sides. When this preparation's first
+  constructor succeeds, supplies the field the caller left absent or `undefined`, and encoding
+  writes its non-`undefined` value, a raw edit of that name after the binding is an
+  `InvalidRequest`. This includes setting, appending and either kind of removal, with header names
+  compared without case. The check reads the constructed and encoded results without evaluating a
+  default again. Earlier raw defaults and explicit caller values keep their existing behavior.
 - **Schemas stack.** A second `Request.query` or `Request.headers` adds its fields, and together the
   schemas state the shape. Each takes its own fields from one input, and a default goes through
   every schema that allows its name. An open schema sees every field, so its value type has to
@@ -297,9 +304,10 @@ written empty segment has no name, so it is not a field, and it stays as written
 
 The check runs when the request is prepared, not in the editor. A definition's dictionary is
 normally incomplete, because required values come from the caller, and a stacked schema can allow a
-name a later step needs. An edit in a `pipe` returns a `Request`, so a refused edit is a request
-that fails when it runs, on every run and whatever the input. Catching it in the types would need
-field names in the request's type, which stops generic helpers from compiling.
+name a later step needs. An edit in a `pipe` returns a `Request`, so an incompatible shape or an
+edit of an always-written name fails on every run, whatever the input. A constructor-filled optional
+field's refusal depends on the invocation. Catching these in the types would need field names in the
+request's type, which stops generic helpers from compiling.
 
 Some things are outside the check:
 
@@ -313,9 +321,13 @@ Some things are outside the check:
   fields with their encoded forms. Under `Schema.encodeKeys`, a field with a decoding default
   therefore reads as optional, so a raw edit of it after the schema is not refused, although the
   edit never reaches the client.
-- An optional key with `Schema.withConstructorDefault` reads as optional on both sides, and only the
-  constructor writes it. A raw edit of it after the schema is not refused, and it never reaches the
-  client.
+- Constructor proof is limited to direct structs with the same field names and field-level
+  `Schema.withConstructorDefault` metadata. Group transformations, including `Schema.encodeKeys`,
+  classes and unions are outside it. So are accessor and inherited input properties, which do not
+  prove omission. If reading falls back to the whole decoder or field by field, the check claims no
+  construction proof, even if a later constructor supplies a value. A raw edit can still be replaced
+  silently in these cases. A default that produces `undefined`, or a field encoding that writes
+  nothing, is not proof that construction replaced the edit.
 - A union chooses its member before it can know what a stacked schema took. A union of `{ b }` and
   `{ a, c }` stacked with `{ b }` takes the first member for `{ a, b, c }`, so `a` and `c` are
   refused, although the second member and the stacked schema could hold it all between them.

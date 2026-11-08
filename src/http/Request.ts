@@ -230,6 +230,8 @@ export interface Draft {
   readonly takenQuery: Taken | undefined;
   /** The same for the header group, as in {@link takenQuery}. */
   readonly takenHeaders: Taken | undefined;
+  /** Raw names edited after each binding, recorded before that binding prepares its input. */
+  readonly editedFields: ReadonlyMap<Shape, ReadonlySet<string>>;
 }
 
 /**
@@ -451,6 +453,32 @@ const foldQuery: Fields.Fold = (name) => name;
 /** A raw edit: a request's fields change, and its input, errors and services stay. */
 type Edit = <I, E, R>(self: Request<I, E, R>) => Request<I, E, R>;
 
+/** Copy provenance for this evaluation; a binding snapshots it before earlier steps run. */
+const editing = (
+  draft: Draft,
+  shapes: ReadonlyArray<Shape>,
+  names: ReadonlyArray<string>,
+  fold: Fields.Fold,
+): Draft =>
+  shapes.length === 0
+    ? draft
+    : {
+        ...draft,
+        editedFields: new Map([
+          ...draft.editedFields,
+          ...shapes.map(
+            (shape) =>
+              [
+                shape,
+                new Set([
+                  ...(draft.editedFields.get(shape) ?? []),
+                  ...names.map(fold),
+                ]),
+              ] as const,
+          ),
+        ]),
+      };
+
 const editHeaders =
   (
     edited: ReadonlyArray<string>,
@@ -473,7 +501,11 @@ const editHeaders =
           ).map((name) => ["headers", name] as const),
         ],
       },
-      self.prepare,
+      (input, draft) =>
+        self.prepare(
+          input,
+          editing(draft, self.declaration.headerShapes, edited, foldHeader),
+        ),
     );
 
 const editQuery =
@@ -497,7 +529,11 @@ const editQuery =
           ).map((name) => ["query", name] as const),
         ],
       },
-      self.prepare,
+      (input, draft) =>
+        self.prepare(
+          input,
+          editing(draft, self.declaration.queryShapes, names, foldQuery),
+        ),
     );
 
 /**
@@ -520,6 +556,8 @@ const editQuery =
  * With a {@link headers} schema bound, in either order, the name has to be one a schema allows, and
  * the value is a default that goes through the schema. Setting a name the schema always writes,
  * after that schema, is an {@link InvalidRequest}, because the value could never reach the client.
+ * A direct struct's constructor-filled optional field is also refused when this preparation
+ * supplies and encodes it after the caller leaves it out, as {@link headers} describes.
  *
  * In the object form each key replaces its name as above, in key order, and other names stay. A key
  * set to `undefined` removes that name's declarations and stops no automatic value, which is what
@@ -567,6 +605,8 @@ export const appendHeader = (name: string, value: FieldValue) =>
  * Names compare without case. Value functions are never evaluated to compare with `value`. Removing
  * a name a {@link headers} schema always writes, after that schema, is an {@link InvalidRequest},
  * because the schema puts the value back. Removing an optional field clears its default.
+ * A constructor-filled optional field can also put it back and be refused, as {@link headers}
+ * describes.
  *
  * Without a value, this also stops the library's automatic value for that name: an operation's
  * `Accept`, or a body's `Content-Type` and `Content-Length`. It stops only that. A value that a
@@ -603,6 +643,8 @@ export const removeHeader = (name: string, value?: string) =>
  * With a {@link query} schema bound, in either order, the name has to be one a schema allows, and
  * the value is a default that goes through the schema. Setting a name the schema always writes,
  * after that schema, is an {@link InvalidRequest}, because the value could never reach the client.
+ * A direct struct's constructor-filled optional field is also refused when this preparation
+ * supplies and encodes it after the caller leaves it out, as {@link query} describes.
  *
  * The object form takes {@link QueryFields}. Each key replaces its name as above, in key order, and
  * other names stay. Use {@link appendQuery} for exact order across repeated names.
@@ -650,6 +692,8 @@ export const appendQuery = (name: string, value: FieldValue<string | null>) =>
  * functions are not evaluated for comparison. Removing a name a {@link query} schema always writes,
  * after that schema, is an {@link InvalidRequest}, because the schema puts the value back. Removing
  * an optional field clears its default.
+ * A constructor-filled optional field can also put it back and be refused, as {@link query}
+ * describes.
  */
 export const removeQuery = (name: string, value?: string | null) =>
   editQuery([name], (fields) => Fields.remove(fields, name, value));
@@ -727,6 +771,12 @@ const lostFields = (
     message: `The ${group} group cannot be built against its schema: with the rest of the group, these fields would be lost: ${listNames(names)}.`,
   });
 
+/** Names only: the caller's omitted fields were actually supplied and written by construction. */
+const constructorConflict = (group: string, names: ReadonlyArray<string>) =>
+  new InvalidRequest({
+    message: `A constructor supplied these omitted ${group} fields and their schema wrote them, so a later raw edit would be lost: ${listNames(names)}. Supply the value as input, set it with Request.mapInput, or use Request.unbind("${group}") first.`,
+  });
+
 /** Fields a body's encoder supplies unless the request says otherwise. */
 const bodyFields = ["content-type", "content-length"] as const;
 
@@ -767,6 +817,12 @@ type GroupInput<K extends "query" | "headers", A> =
  * `undefined` still has to fit `Input`. Stacked schemas allow omission only when each one does;
  * a raw default does not make a required group optional. The invocation object is still required.
  *
+ * In a direct struct, a constructor default can supply an omitted optional field. A raw edit
+ * after that binding is an {@link InvalidRequest} when this preparation successfully constructs
+ * the group and encodes a non-`undefined` value for that field. This reads the preparation's result;
+ * it never reruns a default. Construction proof is unavailable after decoder fallback, for group
+ * transformations, classes or unions, or for an accessor or inherited input property.
+ *
  * The input is an {@link Input} of the schema. Encoding produces ordered header lines. The schema
  * states the shape of the group, whatever the order of the calls: once any schema is bound, every
  * header the request declares must be a name some schema allows. A raw header under such a name
@@ -798,7 +854,10 @@ export const headers = <
   contract: S,
 ) => {
   const read = Inputs.reader(contract, Schema.encodeEffect(contract));
-  const { shape, settle, taken } = Shapes.bind(contract, foldHeader);
+  const { shape, settle, taken, candidates, filled } = Shapes.bind(
+    contract,
+    foldHeader,
+  );
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
@@ -820,7 +879,9 @@ export const headers = <
         const value = (
           input.headers === undefined ? {} : input.headers
         ) as Input<S>;
-        const { output, lost: lostFromInput } = yield* read(value);
+        const edited = candidates(value, draft.editedFields.get(shape));
+        const { output, lost: lostFromInput, constructed } = yield* read(value);
+        const conflicts = filled(edited, constructed, output);
         const own = draft.takenHeaders && taken(value, output, lostFromInput);
         const prepared = yield* self.prepare(
           input,
@@ -837,6 +898,8 @@ export const headers = <
             lostFromInput,
             prepared.takenHeaders?.fields,
           );
+        if (conflicts.length > 0)
+          return yield* constructorConflict("headers", conflicts);
         const names = Shapes.written(output, foldHeader);
         const elsewhere = Shapes.others(
           shape,
@@ -906,6 +969,12 @@ export const headers = <
  * `undefined` still has to fit `Input`. Stacked schemas allow omission only when each one does;
  * a raw default does not make a required group optional. The invocation object is still required.
  *
+ * In a direct struct, a constructor default can supply an omitted optional field. A raw edit
+ * after that binding is an {@link InvalidRequest} when this preparation successfully constructs
+ * the group and encodes a non-`undefined` value for that field. This reads the preparation's result;
+ * it never reruns a default. Construction proof is unavailable after decoder fallback, for group
+ * transformations, classes or unions, or for an accessor or inherited input property.
+ *
  * The input is an {@link Input} of the schema. The schema encodes to `UrlEncoding.QueryInput` and
  * states the shape of the group, whatever the order of the calls: once any schema is bound, every
  * query field the request declares must be a name some schema allows. A raw entry under such a
@@ -936,7 +1005,10 @@ export const query = <
   contract: S,
 ) => {
   const read = Inputs.reader(contract, Schema.encodeEffect(contract));
-  const { shape, settle, taken } = Shapes.bind(contract, foldQuery);
+  const { shape, settle, taken, candidates, filled } = Shapes.bind(
+    contract,
+    foldQuery,
+  );
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
@@ -958,7 +1030,9 @@ export const query = <
         const value = (
           input.query === undefined ? {} : input.query
         ) as Input<S>;
-        const { output, lost: lostFromInput } = yield* read(value);
+        const edited = candidates(value, draft.editedFields.get(shape));
+        const { output, lost: lostFromInput, constructed } = yield* read(value);
+        const conflicts = filled(edited, constructed, output);
         const own = draft.takenQuery && taken(value, output, lostFromInput);
         const prepared = yield* self.prepare(
           input,
@@ -975,6 +1049,8 @@ export const query = <
             lostFromInput,
             prepared.takenQuery?.fields,
           );
+        if (conflicts.length > 0)
+          return yield* constructorConflict("query", conflicts);
         const names = Shapes.written(output, foldQuery);
         const elsewhere = Shapes.others(shape, prepared.takenQuery, foldQuery);
         const defaults = prepared.request.urlParams.params
@@ -1480,6 +1556,7 @@ const initialDraft = (declaration: Declaration): Draft => {
       unbound: new Set(),
       takenQuery: takenRecord(declaration.queryShapes),
       takenHeaders: takenRecord(declaration.headerShapes),
+      editedFields: new Map(),
     },
     declaration.query.flatMap((field) =>
       Fields.resolve([field]).map(

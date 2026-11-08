@@ -8587,11 +8587,10 @@ describe("a schema states the shape of its group", () => {
         }),
       );
 
-      // An optional key reads as optional on both sides, and only the constructor writes it, so
-      // this edit is lost as the decoding default's was. The design page states the limit.
+      // Construction and encoding supply the omitted field, so this later edit would be lost.
       // https://github.com/viell-dev/slop-effect-schema-http/issues/143
       it.effect(
-        "currently misses an optional key with a constructor default",
+        "refuses an edit replaced by a constructor-filled optional field",
         () =>
           Effect.gen(function* () {
             const Defaulted = Schema.Struct({
@@ -8600,14 +8599,14 @@ describe("a schema states the shape of its group", () => {
               ),
             });
             expect(
-              yield* urlOf(
+              (yield* refusal(
                 Request.get("/x").pipe(
                   Request.query(Defaulted),
                   Request.setQuery("limit", "5"),
                 ),
                 { query: {} },
-              ),
-            ).toBe("/x?limit=25");
+              )).message,
+            ).toContain('"limit"');
           }),
       );
     });
