@@ -116,7 +116,7 @@
     "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-oxlint": "^1.92.0",
-    "mdrefine": "^0.7.1",
+    "mdrefine": "^0.8.1",
     "npm-run-all2": "^9.0.4",
     "oxlint": "^1.92.0",
     "prettier": "^3.9.10",
