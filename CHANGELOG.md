@@ -1,5 +1,15 @@
 # Change history
 
+## 0.8.0 — 2026-11-08
+
+Read [What's in 0.8](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.8) for the
+encoded-input type repair and the migration for helpers that assumed decoded names only.
+
+- Retain the encoded side of partly renamed schema input when optional objects share a field but
+  have different key sets. Direct and union bindings now accept valid encoded aliases in strict
+  TypeScript. Helpers using `Request.Input` must account for that admitted shape; the runtime reader
+  and bytes are unchanged ([#169](https://github.com/viell-dev/slop-effect-schema-http/issues/169)).
+
 ## 0.7.0 — 2026-11-08
 
 Read [What's in 0.7](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.7) for the

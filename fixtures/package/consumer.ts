@@ -26,6 +26,24 @@ export const getFolder = Request.get("https://api.test/files").pipe(
   Request.path(Schema.String, (folder, encode) => `/${encode(folder)}/`),
 );
 
+// Both sides must survive a partly renamed schema in the installed declarations.
+const Filters = Schema.Struct({
+  term: Schema.optionalKey(Schema.String),
+  limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+    Schema.withConstructorDefault(Effect.succeed(25)),
+  ),
+}).pipe(Schema.encodeKeys({ limit: "page_size" }));
+const filtered = Request.get("https://api.test/filtered").pipe(
+  Request.query(Schema.Union([Filters])),
+);
+export const encodedFilters: Request.Input<typeof Filters> = {
+  page_size: "05",
+};
+export const compileEncodedFilters = () =>
+  Request.compile(filtered, { query: { page_size: "05" } });
+export const compileDecodedFilters = () =>
+  Request.compile(filtered, { query: { limit: 5 } });
+
 // A consumer must retain a path value's type after declaration emit.
 // @ts-expect-error The path value requires a string.
 getItem.execute({ path: { id: 123 } });
@@ -76,6 +94,8 @@ export const listText = countNames.pipe(
 
 // Never called: the compiler refuses each of these through the emitted declarations.
 export const refused = () => {
+  // @ts-expect-error The encoded alias requires text, not a decoded number.
+  Request.compile(filtered, { query: { page_size: 5 } });
   // @ts-expect-error A response the mapping was not written for needs Operation.unmap.
   countNames.pipe(Operation.mapResponse(asText));
   // @ts-expect-error This contract has no 500 case.

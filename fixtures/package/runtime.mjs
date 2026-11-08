@@ -4,7 +4,12 @@ import { Effect } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as root from "viell-effect-schema-http";
 import manifest from "viell-effect-schema-http/package.json" with { type: "json" };
-import { countFewNames, getItemId } from "./dist/consumer.js";
+import {
+  compileDecodedFilters,
+  compileEncodedFilters,
+  countFewNames,
+  getItemId,
+} from "./dist/consumer.js";
 
 for (const subpath of Object.keys(manifest.exports)) {
   const specifier = manifest.name + (subpath === "." ? "" : subpath.slice(1));
@@ -59,6 +64,11 @@ const count = await Effect.runPromise(
 );
 assert.equal(count, 2);
 assert.deepEqual(names, ["https://api.test/names?limit=5"]);
+
+for (const compile of [compileEncodedFilters, compileDecodedFilters]) {
+  const prepared = await Effect.runPromise(compile());
+  assert.equal(prepared.request.url, "https://api.test/filtered?page_size=5");
+}
 
 console.log(
   `Packed consumer passed: ${Object.keys(manifest.exports).length} exports, id ${id}.`,

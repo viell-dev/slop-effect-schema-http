@@ -86,5 +86,5 @@ redirect metadata. Supplying a schema does not recover those hidden values. See 
 limits](../design.md#in-a-browser).
 
 See the [wire-representation contract](../design.md#wire-representations-stay-distinct) and [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.7.0/src/http/Transport.ts)
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.8.0/src/http/Transport.ts)
 for the complete input and line types.

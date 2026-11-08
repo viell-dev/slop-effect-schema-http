@@ -2,13 +2,14 @@
 
 ## Choose a release
 
-`0.7.0` is the current stable release, available from npm and GitHub. [Getting
+`0.8.0` is the current stable release, available from npm and GitHub. [Getting
 started](./getting-started.md) adds the current stable package to your Effect project. [What's in
-0.7](./release-notes/0.7.md) describes the steps to update from `0.6`, because more overwritten raw
-edits now fail before dispatch. [What's in 0.6](./release-notes/0.6.md), [What's in
-0.5](./release-notes/0.5.md), [What's in 0.4](./release-notes/0.4.md), [What's in
-0.3](./release-notes/0.3.md), [What's in 0.2](./release-notes/0.2.md) and [What's in
-0.1](./release-notes/0.1.md) introduce the earlier releases.
+0.8](./release-notes/0.8.md) describes the steps to update from `0.7`, because input helpers may
+need to handle encoded names. [What's in 0.7](./release-notes/0.7.md), [What's in
+0.6](./release-notes/0.6.md), [What's in 0.5](./release-notes/0.5.md), [What's in
+0.4](./release-notes/0.4.md), [What's in 0.3](./release-notes/0.3.md), [What's in
+0.2](./release-notes/0.2.md) and [What's in 0.1](./release-notes/0.1.md) introduce the earlier
+releases.
 
 The npm `latest` tag selects the stable release, so ordinary install commands need no version
 suffix. The `rc` tag still identifies `0.1.0-rc.1`; use an explicit prerelease version when
@@ -41,20 +42,20 @@ meets your project's policy, then retry the install command.
 
 ## Install a GitHub release tarball
 
-The [GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.7.0) offers
+The [GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.8.0) offers
 the same package bytes as npm. This is an alternative to registry installation.
 
 Download both
-[`viell-effect-schema-http-0.7.0.tgz`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.7.0/viell-effect-schema-http-0.7.0.tgz)
+[`viell-effect-schema-http-0.8.0.tgz`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.8.0/viell-effect-schema-http-0.8.0.tgz)
 and
-[`SHA256SUMS`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.7.0/SHA256SUMS)
+[`SHA256SUMS`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.8.0/SHA256SUMS)
 into one directory. Open a terminal in that directory and compare the downloaded tarball with its
 listed checksum.
 
 ### PowerShell
 
 ```powershell
-$archive = "viell-effect-schema-http-0.7.0.tgz"
+$archive = "viell-effect-schema-http-0.8.0.tgz"
 $entries = @(Get-Content -LiteralPath "./SHA256SUMS" |
     Where-Object { $_.EndsWith("  $archive") })
 if ($entries.Count -ne 1) { throw "Expected one checksum entry for $archive" }
@@ -69,7 +70,7 @@ if ($expected -notmatch "^[0-9a-f]{64}$" -or $actual -ne $expected) {
 ### Linux
 
 ```sh
-test -f ./viell-effect-schema-http-0.7.0.tgz &&
+test -f ./viell-effect-schema-http-0.8.0.tgz &&
   sha256sum --check --strict --ignore-missing SHA256SUMS
 ```
 
@@ -77,7 +78,7 @@ This checks the listed files present in the directory; `--ignore-missing` permit
 assets to be absent. With just the two downloads above, success prints:
 
 ```text
-viell-effect-schema-http-0.7.0.tgz: OK
+viell-effect-schema-http-0.8.0.tgz: OK
 ```
 
 Both versions compare the calculated SHA-256 with the release's recorded value. A missing checksum,
@@ -89,7 +90,7 @@ After the comparison succeeds, run this from your application directory, adjusti
 downloaded archive is elsewhere:
 
 ```sh
-npm install ./viell-effect-schema-http-0.7.0.tgz
+npm install ./viell-effect-schema-http-0.8.0.tgz
 ```
 
 ## Compatibility policy

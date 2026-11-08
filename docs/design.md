@@ -374,11 +374,12 @@ Some things are outside the check:
   after the schema to survive under such a name. `transformClient` and a client layer work on the
   prepared request, so the check does not see them.
 - A check is only as strict as its schema. `Schema.NumberFromString` accepts `"two"` as `NaN`.
-- A partly renamed struct can exclude its encoded aliases from the static input type
-  ([#169](https://github.com/viell-dev/slop-effect-schema-http/issues/169)). An invalid value under
-  a renamed encoded name can be replaced by an optional constructor default instead of being refused
-  ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). These are reproduced
-  defects, not intended precedence. Use decoded input for those schemas pending repair.
+- An invalid value under a renamed encoded name can be replaced by an optional constructor default
+  instead of being refused
+  ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). This is a reproduced
+  defect, not intended precedence. Use decoded input for those schemas pending repair. Partly
+  renamed input typing is fixed in 0.8; helpers accepting `Request.Input` must account for the
+  encoded shape too.
 - A group transformation can hide a default's field correspondence. The strictly empty caller-group
   proof above covers some such calls. With any own caller field, a renamed default can still replace
   a later raw edit without refusal; the library does not guess which alias supplied that output.
