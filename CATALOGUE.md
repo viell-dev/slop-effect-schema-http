@@ -3062,9 +3062,9 @@ gateway or settled on the page, as each entry says.
 
 #### Candidate preparation contracts at the wire
 
-EXT-32 checks the request-preparation changes planned for `0.4`, using the source commit
-`859679932b3ab8788b6869533b62ec900a4804b1` in `library-ref`, rather than a published `0.4` package.
-Release qualification supplies its final library commit separately. The consumer tests in
+EXT-32 checks the request-preparation changes introduced in `0.4`. The current default source
+commit is recorded in `library-ref`; release qualification supplies its final library commit
+separately. The consumer tests in
 `src/scenarios/preparation-contracts.test.ts` use the customer-list endpoint documented in
 [services/business.md](./services/business.md), with seeded customers, its `page`, `per_page` and
 `name` query fields, and `Accept`. Both Node and Chromium use Fetch over the socket listener.
@@ -3097,3 +3097,39 @@ handshake also starts without that group.
   member keeps `per_page` beside the tag and both arrive, instead of silently losing the field.
   Status: tested.
   - `[EXT-32d] a transformed literal inside a tag union keeps its wider member's query field`
+
+#### Generated direct-struct fields at the wire
+
+EXT-33 extends the direct-struct request-preparation contract for the `0.5` repair of
+[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). Consumer tests in
+`src/scenarios/generated-field-contracts.test.ts` use the documented business customer list,
+seeded customers and Fetch over real sockets in Node and Chromium. A successful ordinary encoded
+object writing an omitted field makes a later raw edit an `InvalidRequest`; an iterable's own
+properties do not establish which entries it sends. Every successful call checks returned customer
+names, the exact GET target, one JSON Accept line, empty body and one request. Every refusal checks
+an empty ledger and a field-naming error without the raw value. Group transformations, aliases,
+classes, unions, inherited/accessor input and opaque selection remain outside this extension;
+EXT-30l's contradictory-alias pin is unchanged.
+
+- **EXT-33a** A handwritten decoding default with a nonpassthrough encoder writes an omitted query
+  field. A later set, append or removal must be refused before dispatch. Status: tested.
+  - `[EXT-33a] a handwritten decoding default refuses a later query set before dispatch`
+  - `[EXT-33a] a handwritten decoding default refuses a later query append before dispatch`
+  - `[EXT-33a] a handwritten decoding default refuses a later query remove before dispatch`
+- **EXT-33b** An optional header generated only while encoding also refuses later set and removal,
+  comparing header names without case. Status: tested.
+  - `[EXT-33b] an encode-only generated header refuses later set and removal regardless of case`
+- **EXT-33c** Mixed input supplies `page` as text and `per_page` as a decoded number, while `name`
+  has a constructor default. Successful fieldwise reading must still protect that generated field,
+  without evaluating its default more often than an ordinary successful call. Status: tested.
+  - `[EXT-33c] mixed decoded input still refuses a generated field's later raw edit without rerunning its default`
+- **EXT-33d** Ordinary generated values reach the customer list. Raw defaults before the binding
+  and explicit caller values preserve their existing precedence. Status: tested.
+  - `[EXT-33d] control: generated values, pre-binding defaults and explicit caller values reach the customer list`
+- **EXT-33e** A decoder fallback that writes no omitted field leaves a later raw query value to
+  stand. Status: tested.
+  - `[EXT-33e] control: a decoder fallback that generates no field keeps a later raw query value`
+- **EXT-33f** A direct struct declares an empty generator at `Symbol.iterator` and has an own
+  constructor-generated query property. The iterable sends no entries, so removing that property
+  must remain usable and the customer list receives no query. Status: tested.
+  - `[EXT-33f] control: an empty iterable direct struct sends no own generated query field and permits removal`
