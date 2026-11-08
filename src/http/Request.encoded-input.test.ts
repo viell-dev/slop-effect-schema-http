@@ -112,6 +112,34 @@ describe("encoded input names beside unchanged fields", () => {
     }),
   );
 
+  it.effect("keeps aliases exchanged between discriminated union members", () =>
+    Effect.gen(function* () {
+      const First = Schema.Struct({
+        kind: Schema.Literal("a"),
+        term: Schema.optionalKey(Schema.String),
+        limit: Schema.optionalKey(Schema.String),
+      }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+      const Second = Schema.Struct({
+        kind: Schema.Literal("b"),
+        term: Schema.optionalKey(Schema.String),
+        page_size: Schema.optionalKey(Schema.String),
+      }).pipe(Schema.encodeKeys({ page_size: "limit" }));
+      const Either = Schema.Union([First, Second]);
+      const first: Request.Input<typeof Either> = {
+        kind: "a",
+        page_size: "05",
+      };
+      const second: Request.Input<typeof Either> = { kind: "b", limit: "07" };
+      const request = Request.get("/things").pipe(Request.query(Either));
+      expect(
+        (yield* Request.compile(request, { query: first })).request.url,
+      ).toBe("/things?kind=a&page_size=05");
+      expect(
+        (yield* Request.compile(request, { query: second })).request.url,
+      ).toBe("/things?kind=b&limit=07");
+    }),
+  );
+
   it.effect("preserves required siblings and entirely renamed inputs", () =>
     Effect.gen(function* () {
       const request = Request.get("/things").pipe(Request.query(Required));
@@ -330,6 +358,8 @@ describe("encoded input names beside unchanged fields", () => {
       (input): input is Token => input instanceof Token,
     );
     expectTypeOf<Request.Input<typeof Opaque>>().toEqualTypeOf<Token>();
+    const Same = Schema.Union([Opaque, Opaque]);
+    expectTypeOf<Request.Input<typeof Same>>().toEqualTypeOf<Token>();
     const token: Request.Input<typeof Opaque> = new Token();
     const request = Request.post("/things").pipe(
       Request.body(Body.jsonSchema(Opaque)),
@@ -344,4 +374,55 @@ describe("encoded input names beside unchanged fields", () => {
     });
     expect(token.read()).toBe("token");
   });
+
+  it.effect("preserves nominal identity beside an optional encoded key", () =>
+    Effect.gen(function* () {
+      class Token {
+        private readonly value = "token";
+        read() {
+          return this.value;
+        }
+      }
+      const Native = Schema.declare(
+        (input): input is Token => input instanceof Token,
+      );
+      const Wire = Schema.declare(
+        (input): input is Token & { readonly hint?: string } =>
+          input instanceof Token,
+      );
+      const TokenCodec = Wire.pipe(
+        Schema.decodeTo(
+          Native,
+          SchemaTransformation.transform({
+            decode: (input) => input,
+            encode: (input) => input,
+          }),
+        ),
+      );
+      const native: Request.Input<typeof TokenCodec> = new Token();
+      const hinted: Request.Input<typeof TokenCodec> = Object.assign(
+        new Token(),
+        {
+          hint: "wire",
+        },
+      );
+      const request = Request.get("").pipe(
+        Request.path(TokenCodec, (input) => `/${input.read()}`),
+      );
+      for (const path of [native, hinted]) {
+        expect((yield* Request.compile(request, { path })).request.url).toBe(
+          "/token",
+        );
+      }
+      void (() => {
+        // @ts-expect-error: an optional encoded key cannot erase the private identity
+        const forged: Request.Input<typeof TokenCodec> = {
+          read: () => "forged",
+        };
+        // @ts-expect-error: request input also requires the original nominal value
+        void Request.compile(request, { path: { read: () => "forged" } });
+        void forged;
+      });
+    }),
+  );
 });

@@ -42,14 +42,12 @@ type Merged<Sides, Mix> = [Sides] extends [Mix]
     : Sides | Mix
   : Sides | Mix;
 
-// Optional objects can be mutually assignable while exposing different renamed keys.
-type EitherSide<A, B> = [A, B, KeysOf<A>, KeysOf<B>] extends [
-  B,
-  A,
-  KeysOf<B>,
-  KeysOf<A>,
-]
-  ? A
+// Every key must exist in every opposite member, not just somewhere in its union.
+// Keep other mutually assignable sides whole so fieldwise mixing cannot erase nominal identity.
+type EitherSide<A, B> = [A, B] extends [B, A]
+  ? [KeysOf<A>, KeysOf<B>] extends [keyof B, keyof A]
+    ? A
+    : A | B
   : Merged<A | B, Fieldwise<A, B>>;
 
 /** What a schema-backed input takes: its decoded side, its encoded side, or a mix by field. */

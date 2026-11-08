@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Schema, SchemaTransformation } from "effect";
 import {
   Body,
   Operation,
@@ -43,6 +43,48 @@ export const compileEncodedFilters = () =>
   Request.compile(filtered, { query: { page_size: "05" } });
 export const compileDecodedFilters = () =>
   Request.compile(filtered, { query: { limit: 5 } });
+
+const Exchanged = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("a"),
+    limit: Schema.optionalKey(Schema.String),
+  }).pipe(Schema.encodeKeys({ limit: "page_size" })),
+  Schema.Struct({
+    kind: Schema.Literal("b"),
+    page_size: Schema.optionalKey(Schema.String),
+  }).pipe(Schema.encodeKeys({ page_size: "limit" })),
+]);
+const exchanged = Request.get("https://api.test/exchanged").pipe(
+  Request.query(Exchanged),
+);
+export const compileExchangedFirst = () =>
+  Request.compile(exchanged, { query: { kind: "a", page_size: "05" } });
+export const compileExchangedSecond = () =>
+  Request.compile(exchanged, { query: { kind: "b", limit: "07" } });
+
+class Token {
+  private readonly value = "token";
+  read() {
+    return this.value;
+  }
+}
+const NativeToken = Schema.declare(
+  (input): input is Token => input instanceof Token,
+);
+const WireToken = Schema.declare(
+  (input): input is Token & { readonly hint?: string } =>
+    input instanceof Token,
+);
+const TokenCodec = WireToken.pipe(
+  Schema.decodeTo(
+    NativeToken,
+    SchemaTransformation.transform({
+      decode: (input) => input,
+      encode: (input) => input,
+    }),
+  ),
+);
+export const nominalInput: Request.Input<typeof TokenCodec> = new Token();
 
 // A consumer must retain a path value's type after declaration emit.
 // @ts-expect-error The path value requires a string.
@@ -94,6 +136,9 @@ export const listText = countNames.pipe(
 
 // Never called: the compiler refuses each of these through the emitted declarations.
 export const refused = () => {
+  // @ts-expect-error Opaque sides retain their private class identity.
+  const forged: Request.Input<typeof TokenCodec> = { read: () => "forged" };
+  void forged;
   // @ts-expect-error The encoded alias requires text, not a decoded number.
   Request.compile(filtered, { query: { page_size: 5 } });
   // @ts-expect-error A response the mapping was not written for needs Operation.unmap.
