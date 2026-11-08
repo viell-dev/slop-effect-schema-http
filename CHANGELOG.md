@@ -1,5 +1,28 @@
 # Change history
 
+## 0.6.0 — 2026-11-08
+
+Read [What's in 0.6](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.6) for the
+consumer introduction, renamed-default migration and stacked-union recovery limits.
+
+- **Breaking:** refuse a later raw query/header edit when strictly empty caller input and actual
+  ordinary output prove that a closed object transformation generated the encoded field. Both
+  endpoint name sets must be absent through the ordinary/null prototype, and any own key disables
+  this additional proof. This covers empty renamed defaults without guessing a field map or
+  repeating callbacks ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
+- Recover some previously refused group-level fields under eligible bare unions by retrying the
+  whole schema with another member first, preserving the full input and reader priority. Actual
+  per-applied-binding certificates must cover the losses and retain all earlier aggregate field
+  coverage. Parent metadata, nested losses, transformed/open/iterable groups and joint backtracking
+  remain outside this recovery. These new attempts can repeat schema effects on formerly refused
+  calls; already successful calls use their original path
+  ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)).
+- Add optional `Request.Taken.certificates` evidence. Normal compilation initializes it; custom
+  preparation extensions should preserve received records. Legacy records without it retain the
+  previous selection behavior, with no new required field.
+- Keep the 0.3 migration program executable with the recovered union behavior, and distinguish the
+  historical limitation from the current recovery in its article.
+
 ## 0.5.0 — 2026-11-08
 
 Read [What's in 0.5](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.5) for the

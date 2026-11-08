@@ -3,6 +3,8 @@ import { Option } from "effect";
 // #region imports
 import { Effect, Schema } from "effect";
 import { Body, Policy, Request } from "viell-effect-schema-http";
+
+const things = "https://api.example.test/things";
 // #endregion imports
 
 const urlOf = async <I, E>(request: Request.Request<I, E>, input: I) =>
@@ -16,8 +18,6 @@ const refusedFor = async <I, E>(request: Request.Request<I, E>, input: I) => {
   assert.ok(error instanceof Schema.SchemaError);
   return error.message;
 };
-
-const things = "https://api.example.test/things";
 
 // The definition compiles and is unchanged. Whether it fails depends on the values.
 const EitherFilter = Schema.Union([
@@ -162,22 +162,22 @@ const searchOwner = Request.get(things).pipe(
 const heldMore = { owner: "ada", team: "core" };
 assert.equal(await urlOf(searchOwner, heldMore), `${things}?owner=ada`);
 
-// A union chooses before it knows what a stacked schema took.
+// This needed a directly selected member on 0.3; 0.6 can recover the bare union's choice.
 const NarrowOwner = Schema.Struct({ owner: Schema.String });
 const OwnerAndTeam = Schema.Union([
   NarrowOwner,
   Schema.Struct({ team: Schema.String, page: Schema.String }),
 ]);
 const wholeGroup = { owner: "ada", team: "core", page: "2" };
-assert.match(
-  await refusedFor(
+assert.equal(
+  await urlOf(
     Request.get(things).pipe(
       Request.query(OwnerAndTeam),
       Request.query(NarrowOwner),
     ),
     { query: wholeGroup },
   ),
-  /\["team"\]/,
+  `${things}?team=core&page=2&owner=ada`,
 );
 
 // #region direct-member

@@ -20,6 +20,8 @@ export interface Taken {
   readonly fields: ReadonlySet<PropertyKey>;
   /** The compared names schemas with no union allow. Each settles a raw value under its names. */
   readonly settled: ReadonlySet<string>;
+  /** Actual claims per applied binding; absent on legacy custom drafts, which cannot recover. */
+  readonly certificates?: ReadonlyMap<object, ReadonlySet<PropertyKey>>;
 }
 
 /** What a schema's encoded side states, in the schema's own spelling. */
@@ -253,10 +255,43 @@ export const others = (
 export const taking = (
   taken: Taken | undefined,
   own: ReadonlySet<PropertyKey>,
+  token: object,
 ): Taken => ({
   fields: new Set([...(taken?.fields ?? []), ...own]),
   settled: taken?.settled ?? new Set(),
+  ...(taken?.certificates === undefined
+    ? {}
+    : { certificates: new Map([...taken.certificates, [token, own]]) }),
 });
+
+/** Replace one binding's claim only if no previously certified name disappears. */
+export const retaking = (
+  taken: Taken,
+  own: ReadonlySet<PropertyKey>,
+  token: object,
+): Taken | undefined => {
+  if (taken.certificates === undefined || !taken.certificates.has(token))
+    return undefined;
+  const certificates = new Map(taken.certificates);
+  certificates.set(token, own);
+  const fields = new Set(
+    Array.from(certificates.values()).flatMap((set) => [...set]),
+  );
+  return Array.from(taken.fields).every((name) => fields.has(name))
+    ? { ...taken, fields, certificates }
+    : undefined;
+};
+
+/** Names an actual other binding took, never merely names it permits. */
+export const certifiedElsewhere = (
+  taken: Taken,
+  token: object,
+): ReadonlySet<PropertyKey> =>
+  new Set(
+    Array.from(taken.certificates ?? []).flatMap(([binding, fields]) =>
+      binding === token ? [] : [...fields],
+    ),
+  );
 
 /**
  * What went into `settle` and is gone from what came out, in the spelling it went in with. A schema
@@ -275,7 +310,7 @@ export const lost = (
 };
 
 /** Only stable absent/data properties prove the caller did not supply this field. */
-const omitted = (input: object, name: string): boolean => {
+const omitted = (input: object, name: PropertyKey): boolean => {
   const property = Object.getOwnPropertyDescriptor(input, name);
   return property === undefined
     ? !(name in input)
@@ -315,15 +350,46 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
           typeof name === "string" ? [name] : [],
         )
       : [];
+  const end = Excess.encodedEnd(contract.ast);
+  const closedEndpoints =
+    contract.ast._tag === "Objects" &&
+    contract.ast.indexSignatures.length === 0 &&
+    end._tag === "Objects" &&
+    end.indexSignatures.length === 0
+      ? [contract.ast, end]
+      : [];
+  const encodedNames =
+    end._tag === "Objects"
+      ? end.propertySignatures.flatMap(({ name }) =>
+          typeof name === "string" ? [name] : [],
+        )
+      : [];
+  /** No caller field can explain generated output when both closed endpoints are absent. */
+  const empty = (input: object): boolean => {
+    const prototype: unknown = Object.getPrototypeOf(input);
+    return (
+      closedEndpoints.length > 0 &&
+      (prototype === Object.prototype || prototype === null) &&
+      Reflect.ownKeys(input).length === 0 &&
+      closedEndpoints.every((endpoint) =>
+        endpoint.propertySignatures.every(
+          ({ name }) => omitted(input, name) && !(name in input),
+        ),
+      )
+    );
+  };
   /** Snapshot caller omission before preparation can run a default or encoder. */
   const candidates = (
     input: unknown,
     edits: ReadonlySet<string> | undefined,
   ): ReadonlyArray<string> =>
     edits !== undefined && typeof input === "object" && input !== null
-      ? directNames.filter(
-          (name) => edits.has(fold(name)) && omitted(input, name),
-        )
+      ? (contract.ast.encoding === undefined
+          ? directNames
+          : empty(input)
+            ? encodedNames
+            : []
+        ).filter((name) => edits.has(fold(name)) && omitted(input, name))
       : [];
   /** Preparation supplied these omitted, edited fields in the record it actually writes. */
   const filled = (

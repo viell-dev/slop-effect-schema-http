@@ -1,4 +1,4 @@
-import { Effect, Schema, type SchemaAST } from "effect";
+import { Effect, Schema, SchemaAST } from "effect";
 import * as Excess from "./excess.js";
 
 /** What a schema's constructor takes. This is the one place that names the `~`-prefixed key. */
@@ -197,6 +197,44 @@ export const reader = <S extends Schema.Top, A, R>(
       () => compared(input, given),
     );
   };
+};
+
+/**
+ * Whole-union alternatives for a bare anyOf group. Preserve every member and the whole input:
+ * trying one member alone would move its decoder ahead of another member's constructor.
+ * Parent behavior is deliberately excluded rather than copied or silently discarded.
+ */
+export const reorderedReaders = <S extends Schema.Top>(contract: S) => {
+  const ast = contract.ast;
+  if (
+    ast._tag !== "Union" ||
+    (ast.options?.mode ?? "anyOf") !== "anyOf" ||
+    ast.encoding !== undefined ||
+    ast.context !== undefined ||
+    ast.checks !== undefined ||
+    ast.encodingChecks !== undefined ||
+    (ast.annotations !== undefined &&
+      Reflect.ownKeys(ast.annotations).length > 0) ||
+    !ast.types.every(
+      (member) =>
+        member._tag === "Objects" &&
+        member.encoding === undefined &&
+        member.indexSignatures.length === 0 &&
+        !member.propertySignatures.some(({ name }) => name === Symbol.iterator),
+    )
+  )
+    return [];
+  // The unchanged order already supplied `original`; repeating it adds no selection alternative.
+  return ast.types.slice(1).map((member, offset) => {
+    const index = offset + 1;
+    const reordered = Schema.make<S>(
+      new SchemaAST.Union(
+        [member, ...ast.types.filter((_, position) => position !== index)],
+        ast.options,
+      ),
+    );
+    return reader(reordered, Schema.encodeEffect(reordered));
+  });
 };
 
 /**

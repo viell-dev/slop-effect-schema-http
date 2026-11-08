@@ -550,20 +550,26 @@ The check reads the successful output without evaluating a default, transformati
 iterator again. [What's in 0.5](../release-notes/0.5.md) shows how to choose the value through
 input.
 
-This proof does not cover group transformations such as `Schema.encodeKeys`, classes, unions, or
-accessor and inherited input properties. A raw edit can still be replaced silently there. Iterable
-output uses the entries it yields, so its own string properties supply no generated-field proof. An
-absent, non-enumerable, accessor or `undefined` output field supplies no proof either. The other
-schema/default and lost-field checks still apply.
+A strictly empty caller group permits another proof through a group transformation, including
+`Schema.encodeKeys`. Both the decoded and encoded shapes must be closed objects, and the caller must
+be an ordinary or null-prototype object with no own keys at all. Every declared name on both sides,
+including symbols, must also be absent through its prototype chain. This eligibility is snapshotted
+before preparation. Successful non-iterable output can then prove that a later raw edit of an
+encoded name would disappear, without inferring which field maps to which name or evaluating any
+callback again. [What's in 0.6](../release-notes/0.6.md) shows the migration.
 
-A decoding default shows in the field's own encoding, which `Schema.encodeKeys` replaces. A raw edit
-of a field with a default under a struct renamed that way is not refused, and it never reaches the
-client.
+Any supplied own field disables this additional proof, even an unrelated, non-enumerable or symbol
+key. Classes, unions, open/unknown endpoints and inherited/accessor input remain outside it. An
+absent, non-enumerable, accessor or `undefined` output property proves no generated value, and
+iterable output uses the entries it yields. Other schema/default and lost-field checks still apply.
 
-The error names the fields and leaves out their values, because a default may be a credential. The
-check runs when the request is prepared, so a mismatch compiles and then fails during preparation.
-It does not see what `Request.mapEffect` edits on the native request, what `transformClient` or a
-client layer does afterwards, or text in the URL, such as a `?` in a base URL.
+For a nonempty caller group, a decoding default hidden by a rename can still replace a later raw
+edit without refusal. The library does not infer general field correspondence or conflicting-alias
+equality. Choose the value through input or an input mapping. The error names the fields and leaves
+out their values, because a default may be a credential. The check runs when the request is
+prepared, so a mismatch compiles and then fails during preparation. It does not see what
+`Request.mapEffect` edits on the native request, what `transformClient` or a client layer does
+afterwards, or text in the URL, such as a `?` in a base URL.
 
 #### Stack schemas
 
@@ -596,6 +602,25 @@ Callers can then pass any name as well.
 
 An open schema, such as a record, sees every field of the input, so its value type has to accept the
 other schemas' fields.
+
+#### Recover a stacked union's choice
+
+A bare top-level union of closed struct members can recover when its initial selection would refuse
+fields another selection could keep with its siblings. Under `Union([{ b }, { a, c }])` stacked with
+`{ b }`, input `{ a, b, c }` can now use `{ a, c }` for the union and leave `b` with the binding
+that actually took it. See the [executable 0.6
+example](../release-notes/0.6.md#let-another-binding-hold-its-fields).
+
+Only a normal group-level field refusal enters recovery. Each attempt retains the whole union and
+original full input, so decoded input still precedes whole and fieldwise decoding. A successful
+replacement must keep every original loss obligation covered and cannot withdraw a name already
+certified to an earlier check. Merely allowing a name is insufficient.
+
+These attempts can repeat defaults, checks and transformations, require their services, or fail.
+Calls whose fields were already kept follow their original path. Parent behavior, member group
+transformations, open/iterable representation, nested losses and joint backtracking remain outside
+this bounded recovery. Bind the intended member or put it first when a definition needs a specific
+choice while retaining its other constraints.
 
 #### Start again with unbind
 
@@ -707,6 +732,12 @@ returns the header lines a supporting provider can send. The exported `Declarati
 constructing them. `declaration.baseUrl` is text or an Effect, so to change a base you hold only as
 a request, use `Request.mapBaseUrl` rather than reading it.
 
+`Request.Taken` carries the group's consumed-field evidence. Normal compilation initializes its
+optional `certificates` map, with a distinct entry for each applied binding. Extensions that rebuild
+these records should preserve the received metadata, for example by spreading the record. Legacy
+records without it remain valid and use the earlier selection behavior; the new union recovery
+requires complete evidence.
+
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.5.0/src/http/Request.ts) for
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.6.0/src/http/Request.ts) for
 all types and overloads.

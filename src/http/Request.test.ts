@@ -5704,16 +5704,19 @@ describe("a caller's field under a union", () => {
         }),
       );
 
-      it.effect("is lost if each schema only leaves it to the other", () =>
-        Effect.gen(function* () {
-          const Twin = Schema.Union([
-            Schema.Struct({ a: text }),
-            Schema.Struct({ b: text }),
-          ]);
-          const query = { a: "x", b: "y" };
-          for (const request of [stacked(Apart, Twin), stacked(Apart, Apart)])
-            expect(yield* schemaFailure(request, { query })).toContain('["b"]');
-        }),
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+      it.effect(
+        "recovers when two unions can actually hold the fields between them",
+        () =>
+          Effect.gen(function* () {
+            const Twin = Schema.Union([
+              Schema.Struct({ a: text }),
+              Schema.Struct({ b: text }),
+            ]);
+            const query = { a: "x", b: "y" };
+            for (const request of [stacked(Apart, Twin), stacked(Apart, Apart)])
+              expect(yield* urlOf(request, { query })).toBe("/x?b=y&a=x");
+          }),
       );
 
       it.effect("is lost if a tag ruled out the member that states it", () =>
@@ -6096,37 +6099,39 @@ describe("a caller's field under a union", () => {
         }),
       );
 
-      // A union reads its input before it can know what the others took, so it stays with the
-      // member it chose. The design page states the limit.
       // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-      it.effect("currently does not change the member a union chooses", () =>
-        Effect.gen(function* () {
-          const Either = Schema.Union([
-            Schema.Struct({ b: text }),
-            Schema.Struct({ a: text, c: text }),
-          ]);
-          const message = yield* schemaFailure(stacked(Either, Holds), {
-            query: { a: "x", b: "y", c: "z" },
-          });
-          expect(message).toContain('["a"]');
-          expect(message).toContain('["c"]');
-          // The member that leaves the sibling its field has to come first.
-          const Reordered = Schema.Union([
-            Schema.Struct({ a: text, c: text }),
-            Schema.Struct({ b: text }),
-          ]);
-          expect(
-            yield* urlOf(stacked(Reordered, Holds), {
-              query: { a: "x", b: "y", c: "z" },
-            }),
-          ).toBe("/x?a=x&c=z&b=y");
-          // Binding the member you mean leaves nothing to choose.
-          expect(
-            yield* urlOf(stacked(Schema.Struct({ a: text, c: text }), Holds), {
-              query: { a: "x", b: "y", c: "z" },
-            }),
-          ).toBe("/x?a=x&c=z&b=y");
-        }),
+      it.effect(
+        "recovers a bare union after the sibling takes its lost field",
+        () =>
+          Effect.gen(function* () {
+            const Either = Schema.Union([
+              Schema.Struct({ b: text }),
+              Schema.Struct({ a: text, c: text }),
+            ]);
+            expect(
+              yield* urlOf(stacked(Either, Holds), {
+                query: { a: "x", b: "y", c: "z" },
+              }),
+            ).toBe("/x?a=x&c=z&b=y");
+            const Reordered = Schema.Union([
+              Schema.Struct({ a: text, c: text }),
+              Schema.Struct({ b: text }),
+            ]);
+            expect(
+              yield* urlOf(stacked(Reordered, Holds), {
+                query: { a: "x", b: "y", c: "z" },
+              }),
+            ).toBe("/x?a=x&c=z&b=y");
+            // Binding the member you mean leaves nothing to choose.
+            expect(
+              yield* urlOf(
+                stacked(Schema.Struct({ a: text, c: text }), Holds),
+                {
+                  query: { a: "x", b: "y", c: "z" },
+                },
+              ),
+            ).toBe("/x?a=x&c=z&b=y");
+          }),
       );
     });
   });
@@ -8568,24 +8573,24 @@ describe("a schema states the shape of its group", () => {
         }),
       );
 
-      // A struct-level transformation replaces the fields with their encoded forms, so the
-      // encoding that shows the default is out of sight. The design page states the limit.
       // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-      it.effect("currently misses a field that a struct renames", () =>
-        Effect.gen(function* () {
-          const Renamed = Limited.pipe(
-            Schema.encodeKeys({ limit: "page_size" }),
-          );
-          expect(
-            yield* urlOf(
-              Request.get("/x").pipe(
-                Request.query(Renamed),
-                Request.setQuery("page_size", "5"),
-              ),
-              { query: {} },
-            ),
-          ).toBe("/x?page_size=25");
-        }),
+      it.effect(
+        "refuses a replaced edit for an empty group that a struct renames",
+        () =>
+          Effect.gen(function* () {
+            const Renamed = Limited.pipe(
+              Schema.encodeKeys({ limit: "page_size" }),
+            );
+            expect(
+              (yield* refusal(
+                Request.get("/x").pipe(
+                  Request.query(Renamed),
+                  Request.setQuery("page_size", "5"),
+                ),
+                { query: {} },
+              )).message,
+            ).toContain('"page_size"');
+          }),
       );
 
       // Construction and encoding supply the omitted field, so this later edit would be lost.
