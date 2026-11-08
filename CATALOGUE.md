@@ -3346,3 +3346,44 @@ remain separate from this extension.
 - **EXT-36k** A member with a group rename remains outside bounded recovery. An annotation does
   not expand recovery to arbitrary transformed members. Status: limit.
   - `[EXT-36k] limit: annotated transformed members stay outside bounded recovery`
+
+## Generated fields through closed request unions
+
+EXT-37 covers the bounded generated-field extension accepted in
+[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6727350120).
+Consumer tests use the neutral echo probe's [public contract](./README.md#the-neutral-echo-probe),
+Fetch in Node and Chromium, and physical socket ledgers. Refusals require `InvalidRequest`, a
+field name without its value and zero requests; controls assert exact method, target, relevant header lines,
+empty body and request count. These scenarios target the breaking `0.7.0` candidate after published `0.6.2`.
+
+- **EXT-37a** Singleton, multiple-member and nested reversed-member closed unions protect a
+  renamed generated optional field from later set, append and removal. Ordinary and null-prototype
+  empty caller groups are represented. Status: tested.
+  - `[EXT-37a] ${group}: a closed ${shape} union refuses a later ${kind} of a renamed generated field`
+- **EXT-37b** A closed union without any group codec protects the exact top-level identity of an
+  omitted generated field even beside supplied `other` input. Status: tested.
+  - `[EXT-37b] ${group}: an untransformed closed union protects an omitted exact-name field beside supplied input`
+- **EXT-37c** Explicit caller input under either decoded or encoded aliases chooses the outgoing
+  value despite a later raw default. Status: tested.
+  - `[EXT-37c] control: ${group} explicit decoded and encoded aliases choose the outgoing value`
+- **EXT-37d** Earlier raw defaults remain replaceable by generated values; unbinding allows the
+  later raw value through without schema evaluation. Status: tested.
+  - `[EXT-37d] control: ${group} pre-binding defaults and unbind retain their established behavior`
+- **EXT-37e** Nonempty renamed input remains outside the empty-group extension and retains its
+  generated value, replacing the later raw edit. Status: limit.
+  - `[EXT-37e] limit: a nonempty renamed ${group} union still replaces the later raw edit`
+- **EXT-37f** An open record, declaration, suspended schema or class alternative disables this
+  extension even when an earlier closed member succeeds. Status: limit.
+  - `[EXT-37f] limit: open, declared, suspended and class alternatives disable the empty ${group} extension`
+- **EXT-37g** An iterable output sends yielded entries, not own generated fields; an absent output
+  field supplies no evidence and permits the later raw value. Status: tested.
+  - `[EXT-37g] control: ${group} unions require actual output and honor iterable entries`
+- **EXT-37h** Comparing ordinary successful execution with the refusal preserves the constructor
+  and field-codec callback trace exactly. Classification adds no evaluations. Status: tested.
+  - `[EXT-37h] ${group}: generated-field refusal adds no constructor or field-codec callbacks`
+- **EXT-37i** Headers compare names without case; query names retain exact spelling. A separately
+  allowed uppercase query name remains distinct and reaches the wire. Status: tested.
+  - `[EXT-37i] ${group}: raw name comparison preserves query spelling and folds header case`
+- **EXT-37j** Invalid supplied values retain their original `SchemaError`, field path and empty
+  ledger rather than becoming a generated-field refusal. Status: tested.
+  - `[EXT-37j] control: invalid ${group} input keeps its original schema failure and never dispatches`
