@@ -579,6 +579,8 @@ request's lines plus one`
 - **ERR-1c** Pipe-delimited `ERROR` lines inside 200. Status: tested.
   - `[ERR-1c] an ERROR line inside 200 decodes as a gateway error beside the OK line`
   - `[ERR-1c] a reply that is neither an OK nor an ERROR line is a decode error`
+  - The consumer chooses strict UTF-8 for both ordinary pipe replies and help replies (EXT-31b).
+    Malformed echoed bytes fail as `Response.DecodeError`; they never become altered message text.
   - Backend conformance (EXT-31c): a message quotes the request unescaped, so it can hold `|` and
     is everything after the line's second `|`. Apache's own 404 and 405 are HTML pages (EXT-31a).
   - Round trips (`src/clients/gateway/pipe.test.ts`): the consumer's `ErrorLine` reads such a
@@ -3033,6 +3035,17 @@ gateway or settled on the page, as each entry says.
     stored text compared and written as UTF-8. Kept, in the page's "Recordings": CGI.pm 4.55 also
     reads `%uXXXX`, which the gateway keeps as it is.
   - Mutation controls: writing replies as UTF-8 fails 15 tests; keeping `%E4` undecoded fails 6.
+  - Consumer policy ([#149](https://github.com/viell-dev/slop-effect-schema-http/issues/149)):
+    strict UTF-8 for the text view of ordinary pipe and help replies, matching the byte-backed
+    error reader. The service's arbitrary echoed bytes remain available through `Body.bytes`.
+    `src/scenarios/gateway-utf8.test.ts` checks exact response bytes and request targets in both
+    lanes, through each lane's providers:
+    - `[EXT-31b] ${provider}: pipe and help contracts preserve valid UTF-8 ${escaped}` (ASCII,
+      `ä`, a four-byte emoji and a literal U+FFFD; `Accept` stays `text/plain`).
+    - `[EXT-31b] ${provider}: pipe and help contracts refuse malformed UTF-8 ${escaped}, while Body.text replaces it`
+      (a lone E4, a stray continuation byte, an overlong sequence, a surrogate and a value above
+      U+10FFFF). The refusal is a `Response.DecodeError` in HTTP 200 with a schema cause saying
+      `not UTF-8`. The transparent `Body.text` control keeps the library's lenient behavior.
 - **EXT-31c** A message quotes the request unescaped: a `|` in a fragment, a topic or a query value
   stays a `|`, so an `ERROR` line can have more than three fields and its message is everything
   after the second `|`; a value decoded from `%0A` ends the line inside the message. Status: tested.

@@ -93,13 +93,8 @@ export const reply = <A, RD, RE>(
   ok: Schema.Codec<A, ReadonlyArray<string>, RD, RE>,
 ) => PipeLine.pipe(Schema.decodeTo(Schema.Union([ok, ErrorLine])));
 
-/** A UTF-8 text decoder for a pipe reply. */
-export const pipeBody = <A, RD, RE>(
-  ok: Schema.Codec<A, ReadonlyArray<string>, RD, RE>,
-) => Body.text.pipe(Body.schema(reply(ok)));
-
-/** An ERROR line read from raw bytes, for endpoints whose success body is not text. */
-export const ErrorFromBytes = Schema.Uint8Array.pipe(
+/** Text interpreted as UTF-8 without replacing malformed octets. */
+const Utf8 = Schema.Uint8Array.pipe(
   Schema.decodeTo(
     Schema.String,
     SchemaTransformation.transformEffect<string, Uint8Array>({
@@ -121,6 +116,25 @@ export const ErrorFromBytes = Schema.Uint8Array.pipe(
       encode: (text) => Effect.succeed(new TextEncoder().encode(text)),
     }),
   ),
+);
+
+/**
+ * The consumer's strict UTF-8 view of pipe replies, still advertised as text/plain. The gateway
+ * echoes request bytes without an encoding guarantee; refuse a message this text contract cannot
+ * represent faithfully, rather than replacing bytes as Body.text does. A literal U+FFFD is valid.
+ */
+export const pipeText = Body.decoder(
+  (response) => Body.bytes.decode(response),
+  "text/plain",
+).pipe(Body.schema(Utf8));
+
+/** A strict UTF-8 decoder for one pipe reply. */
+export const pipeBody = <A, RD, RE>(
+  ok: Schema.Codec<A, ReadonlyArray<string>, RD, RE>,
+) => pipeText.pipe(Body.schema(reply(ok)));
+
+/** An ERROR line read from raw bytes, for endpoints whose success body is not text. */
+export const ErrorFromBytes = Utf8.pipe(
   Schema.decodeTo(PipeLine),
   Schema.decodeTo(ErrorLine),
 );
