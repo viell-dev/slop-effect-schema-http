@@ -222,7 +222,9 @@ describe(`candidate preparation contracts (${lane.name})`, () => {
         for (const [field, build] of cases) {
           const { error, ledger } = yield* refused(build, {});
           expect(error).toBeInstanceOf(Request.InvalidRequest);
-          expect(error.message).toContain("constructor");
+          expect(error.message).toContain(
+            "Schema preparation supplied and wrote",
+          );
           expect(error.message).toContain(JSON.stringify(field));
           expect(JSON.stringify(error)).not.toContain(secret);
           expect(ledger).toEqual([]);
