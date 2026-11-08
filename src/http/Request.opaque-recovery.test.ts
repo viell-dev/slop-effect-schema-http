@@ -63,6 +63,86 @@ describe("constructor-only recovery beside opaque fields", () => {
     }),
   );
 
+  it.effect(
+    "retains refusal when a pending encoding gains a visible field",
+    () =>
+      Effect.gen(function* () {
+        const value = {
+          f: { a: "x" } as { a: string; b?: string },
+          o: input().o,
+        };
+        const pending = Body.jsonSchema(Core).encode(value);
+        value.f.b = "y";
+        const result = yield* Effect.result(pending);
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure")
+          expect(String(result.failure)).toContain('["f"]["b"]');
+      }),
+  );
+
+  it.effect("retains current field values when pending input changes", () =>
+    Effect.gen(function* () {
+      const value = input();
+      const pending = Inputs.reader(Core, Schema.encodeEffect(Core))(value);
+      value.f.a = "changed";
+      const result = yield* pending;
+      expect(result.lost).toEqual([["f", "b"]]);
+      expect(result.output.f.a).toBe("changed");
+    }),
+  );
+
+  it.effect(
+    "does not substitute an older opaque identity while an Effect is pending",
+    () =>
+      Effect.gen(function* () {
+        const external = { keep: "same" };
+        const schema = Schema.Struct({
+          ...Core.fields,
+          x: Schema.declare(
+            (value): value is object =>
+              typeof value === "object" && value !== null,
+          ),
+        }).check(
+          Schema.makeFilter(
+            (value) => !("b" in value.f) || value.x !== external,
+          ),
+        );
+        const value = { ...input(), x: { keep: "same" } };
+        const pending = Inputs.reader(
+          schema,
+          Schema.encodeEffect(schema),
+        )(value);
+        value.x = external;
+        const result = yield* pending;
+        expect(result.lost).toEqual([["f", "b"]]);
+        expect(result.output.x).toBe(external);
+      }),
+  );
+
+  it.effect("retains changed record key order while an Effect is pending", () =>
+    Effect.gen(function* () {
+      const schema = Schema.Struct({
+        ...Core.fields,
+        x: Schema.Record(Schema.String, Schema.String),
+      }).check(
+        Schema.makeFilter(
+          (value) =>
+            !("b" in value.f) || Object.keys(value.x).join(",") !== "q,p",
+        ),
+      );
+      const value = {
+        ...input(),
+        x: { p: "p", q: "q" } as Record<string, string>,
+      };
+      const pending = Inputs.reader(schema, Schema.encodeEffect(schema))(value);
+      Reflect.deleteProperty(value.x, "p");
+      value.x.p = "p";
+      const result = yield* pending;
+      expect(result.lost).toEqual([["f", "b"]]);
+      expect(Object.keys(result.output.x)).toEqual(["q", "p"]);
+    }),
+  );
+
   it.effect("keeps whole-side priority rather than decoding each field", () =>
     Effect.gen(function* () {
       const Mixed = Schema.Struct({
@@ -602,11 +682,13 @@ describe("constructor-only recovery beside opaque fields", () => {
     });
     const x: (string | undefined)[] = [];
     x.length = 1_000_000_000;
-    const captured = snapshotter([schema.ast])({ ...input(), x });
+    const original = { ...input(), x };
+    const captured = snapshotter([schema.ast])(original);
     expect(captured).toBeDefined();
     const value = captured!.value as { readonly x: ReadonlyArray<unknown> };
     expect(value.x.length).toBe(x.length);
     expect(Object.hasOwn(value.x, "0")).toBe(false);
+    expect(captured!.matches(original)).toBe(true);
   });
 
   for (const [name, opaque] of [

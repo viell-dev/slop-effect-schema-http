@@ -134,6 +134,43 @@ export const snapshotter = (schemaTypes: ReadonlyArray<SchemaAST.AST>) => {
         : Object.create(prototype as object | null, descriptors),
     };
   };
+  const matches = (
+    types: ReadonlyArray<SchemaAST.AST>,
+    captured: unknown,
+    current: unknown,
+  ): boolean => {
+    if (Object.is(captured, current)) return true;
+    if (
+      typeof captured !== "object" ||
+      captured === null ||
+      typeof current !== "object" ||
+      current === null ||
+      Array.isArray(captured) !== Array.isArray(current) ||
+      Object.getPrototypeOf(captured) !== Object.getPrototypeOf(current)
+    )
+      return false;
+    const shape = metadata.get(types);
+    // Opaque values must retain their identity; compare only captured visible data structurally.
+    if (shape === undefined || shape.unsafe || !shape.visible) return false;
+    const keys = Reflect.ownKeys(captured);
+    const properties: Record<PropertyKey, PropertyDescriptor> =
+      Object.getOwnPropertyDescriptors(current);
+    const currentKeys = Reflect.ownKeys(properties);
+    if (keys.length !== currentKeys.length) return false;
+    return keys.every((key, index) => {
+      if (key !== currentKeys[index]) return false;
+      const before = Object.getOwnPropertyDescriptor(captured, key)!;
+      const after = properties[key];
+      return (
+        after !== undefined &&
+        "value" in after &&
+        before.enumerable === after.enumerable &&
+        before.configurable === after.configurable &&
+        before.writable === after.writable &&
+        matches(shape.child(key), before.value, after.value)
+      );
+    });
+  };
   return (input: unknown) => {
     // Inspect inherited names once per capture, without walking potentially enormous sparse holes.
     let indices: ReadonlyArray<readonly [string, number]> | undefined;
@@ -153,6 +190,19 @@ export const snapshotter = (schemaTypes: ReadonlyArray<SchemaAST.AST>) => {
           }),
       ));
     };
-    return copy(schemaTypes, input, new Set(), arrayIndices);
+    const captured = copy(schemaTypes, input, new Set(), arrayIndices);
+    return captured === undefined
+      ? undefined
+      : {
+          value: captured.value,
+          matches(current: unknown) {
+            try {
+              return matches(schemaTypes, captured.value, current);
+            } catch {
+              // Failed reflection provides no stable evidence; no schema callback runs here.
+              return false;
+            }
+          },
+        };
   };
 };

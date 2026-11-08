@@ -261,7 +261,7 @@ export const reader = <S extends Schema.Top, A, R>(
     );
     if (captured === undefined) return original;
     return Effect.flatMap(original, (result) =>
-      result.lost.some((path) => path.length > 1)
+      result.lost.some((path) => path.length > 1) && captured.matches(input)
         ? Effect.catch(recover(captured.value, result), () =>
             Effect.succeed(result),
           )
