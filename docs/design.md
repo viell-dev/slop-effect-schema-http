@@ -426,10 +426,12 @@ Some things are outside the check:
   group shapes, inherited/accessor fields and changing input cannot establish this route. The 0.12
   initial-constructor extension reaches nested aliases through finite closed untransformed direct
   objects; 0.13 also reaches eligible closed untransformed parent unions with shared field schemas.
-  Distinct field declarations, arrays, opaque/suspended/transformed/open parents and unsupported
-  member/fieldwise routes remain outside the proof. Default substitution can remain there; use
-  decoded input for those schemas. The whole encoded-side typing repaired in 0.10 does not change
-  this runtime selection limit; helpers accepting `Request.Input` must account for both shapes.
+  The 0.14 extension adds stable dense array/tuple positions with matching actual input/output
+  lengths. Distinct field declarations, array-shaped union parents, unsupported array profiles,
+  opaque/suspended/transformed/open parents and unsupported member/fieldwise routes remain outside
+  the proof. Default substitution can remain there; use decoded input for those schemas. The whole
+  encoded-side typing repaired in 0.10 does not change this runtime selection limit; helpers
+  accepting `Request.Input` must account for both shapes.
 - A group transformation can hide a default's field correspondence. The strictly empty caller-group
   proof above covers some such calls. With any own caller field, a renamed default can still replace
   a later raw edit without refusal; the library does not guess which alias supplied that output.
