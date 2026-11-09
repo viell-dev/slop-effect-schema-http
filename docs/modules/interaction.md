@@ -79,5 +79,5 @@ Cancellation can wait for resource cleanup. Do not use a timeout or supersession
 remote write was never applied; that depends on the service.
 
 See the [interaction contract](../design.md#interactions) and [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.13.0/src/concurrency/Interaction.ts)
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.14.0/src/concurrency/Interaction.ts)
 for the exact lifetime and error types.

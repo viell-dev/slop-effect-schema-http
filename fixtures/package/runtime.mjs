@@ -182,7 +182,7 @@ const nestedDefaultInner = Schema.Struct({
     Schema.withConstructorDefault(Effect.succeed(25)),
   ),
 }).pipe(Schema.encodeKeys({ limit: "page_size" }));
-for (const [schema, wrap] of [
+for (const [schema, wrap, errorPattern = /filter.*page_size/] of [
   [Schema.Struct({ filter: nestedDefaultInner }), (filter) => ({ filter })],
   [
     Schema.Struct({ wrapper: Schema.Struct({ filter: nestedDefaultInner }) }),
@@ -220,6 +220,54 @@ for (const [schema, wrap] of [
     ]),
     (filter) => ({ kind: "a", filter }),
   ],
+  [Schema.Array(nestedDefaultInner), (filter) => [filter], /page_size/],
+  [
+    Schema.Array(Schema.Array(nestedDefaultInner)),
+    (filter) => [[filter]],
+    /page_size/,
+  ],
+  [
+    Schema.Struct({ filters: Schema.Array(nestedDefaultInner) }),
+    (filter) => ({ filters: [filter] }),
+    /filters.*page_size/,
+  ],
+  [
+    Schema.Union([
+      Schema.Struct({ filters: Schema.Array(nestedDefaultInner) }),
+      Schema.Struct({ cursor: Schema.String }),
+    ]),
+    (filter) => ({ filters: [filter] }),
+    /filters.*page_size/,
+  ],
+  [
+    Schema.Array(
+      Schema.Union([
+        nestedDefaultInner,
+        Schema.Struct({ cursor: Schema.String }),
+      ]),
+    ),
+    (filter) => [filter],
+    /page_size/,
+  ],
+  [Schema.Tuple([nestedDefaultInner]), (filter) => [filter], /page_size/],
+  [
+    Schema.Tuple([Schema.Number, nestedDefaultInner]),
+    (filter) => [3, filter],
+    /page_size/,
+  ],
+  [
+    Schema.TupleWithRest(Schema.Tuple([Schema.Number]), [nestedDefaultInner]),
+    (filter) => [3, filter],
+    /page_size/,
+  ],
+  [
+    Schema.TupleWithRest(Schema.Tuple([Schema.String]), [
+      Schema.Number,
+      nestedDefaultInner,
+    ]),
+    (filter) => ["prefix", 3, filter],
+    /page_size/,
+  ],
 ]) {
   for (const kind of ["path", "body"]) {
     let rendered;
@@ -246,7 +294,7 @@ for (const [schema, wrap] of [
       ),
     );
     assert.equal(error._tag, "SchemaError");
-    assert.match(error.message, /filter.*page_size/);
+    assert.match(error.message, errorPattern);
     assert.equal(dispatches, 1);
     for (const [filter, expected] of [
       [{ page_size: "05" }, "5"],

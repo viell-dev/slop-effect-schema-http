@@ -171,12 +171,19 @@ where the current checks apply.
   supply ownership. Normalize and merge declarations inside objects with the same guard, including
   numeric/string collisions for one JavaScript key. A conflicting type stays ambiguous after later
   repeated declarations. Distinct declarations remain names in ancestor evidence but end that path.
-  No schema, default or suspension runs to build this metadata. Capture stable own-data paths before
-  callbacks and select one coherent caller path and actual strict output write, never independent
-  candidates. Validate output correspondence at selection, then retain caller evidence through whole
-  decoding and loss checks. Whole decoding can repeat checks and services; do not replay
-  construction. Root fieldwise success cannot establish nested ownership because its property reader
-  can already consume that alias. Unsupported evidence remains under
+  Untransformed array nodes also contribute explicit element/rest positions. Capture stable dense
+  own-data arrays of ordinary/null prototype, including nonenumerable/frozen cells. Record all own
+  keys/descriptors/identities and known positional absences, without invoking iterators or cloning
+  values. Use actual length for post-rest positions and require every selected array's strict-output
+  length to match. Reject sparse/accessor/inherited/subclass/custom-iterator/changing profiles and
+  array-shaped parent union members for this extension. Metadata and selected-path validation have
+  linear reflection gates; capture each ancestor frame once. No schema, default or suspension runs
+  to build this metadata. Capture stable own-data paths before callbacks and select one coherent
+  caller path and actual strict output write, never independent candidates. Validate output
+  correspondence at selection, then retain caller evidence through whole decoding and loss checks.
+  Whole decoding can repeat checks and services; do not replay construction. Root fieldwise success
+  cannot establish nested ownership because its property reader can already consume that alias.
+  Unsupported evidence remains under
   [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
 - **A value that fits the decoded side is read as decoded.** When both sides have the same type, as
   under a schema from `string` to `string` such as `Schema.StringFromBase64`, an already encoded

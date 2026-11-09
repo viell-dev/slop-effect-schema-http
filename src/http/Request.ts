@@ -101,11 +101,14 @@ export type QueryFields = Readonly<
  * Ambiguous names, open/opaque/class or suspended/iterable groups, inherited/accessor fields and
  * changing input remain outside this proof, as do later member-constructor and unsupported recovery
  * routes. Successful initial whole construction also permits a nested proof through finite closed,
- * untransformed objects and parent unions. Every declaring parent member must use the same field
+ * untransformed objects, parent unions and dense array/tuple positions. Array indices/length must
+ * be stable own data with ordinary/null prototype and matching original strict-output length.
+ * Every declaring parent member must use the same field
  * schema; stable own-data links must reach the same encoded-only field actually written by the
  * original strict writer. Whole decoding can repeat checks/services, refuse valid mixed-side input
  * or give shared-type fields their encoded meaning. Construction is not replayed. Distinct field
- * declarations, arrays, opaque/suspended/transformed parents and unsupported member/fieldwise paths
+ * declarations, sparse/accessor/inherited/subclass/custom-iterator/changing arrays, array-shaped
+ * parent union members, opaque/suspended/transformed parents and unsupported member/fieldwise paths
  * remain outside this extension (issue #170). Use decoded names
  * or a validated decoded mapping there. The Request guide describes the bounds and migration.
  *

@@ -13,10 +13,11 @@ import "./migration-0-10.ts";
 import "./migration-0-11.ts";
 import "./migration-0-12.ts";
 import "./migration-0-13.ts";
+import "./migration-0-14.ts";
 import "./opaque-neighbor.ts";
 import "./union-annotations.ts";
 import console from "node:console";
 
 console.log(
-  "All three introductory guides and the 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.10, 0.11, 0.12 and 0.13 migration examples passed.",
+  "All three introductory guides and the 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.10, 0.11, 0.12, 0.13 and 0.14 migration examples passed.",
 );
