@@ -6,9 +6,6 @@ syntax, start with [Request](./modules/request.md#bind-application-input) or
 stacked query/header bindings. Use the rules below to choose an input form and check its
 preservation limits.
 
-The constructor-default extensions in the [0.16 migration](./release-notes/0.16.md) are unreleased.
-The published 0.15 package retains the limitations recorded in its migration article.
-
 ## Choose an input form
 
 | You have                                         | What to supply                              | Important limit                                                                        |

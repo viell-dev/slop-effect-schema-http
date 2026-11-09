@@ -54,20 +54,14 @@ In an existing Node.js 24 or 26 ESM project with Effect `^4.0.7`, add the librar
 npm install viell-effect-schema-http
 ```
 
-`0.15.0` is the current release. The same package is available as a checksummed [GitHub release
-tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.15.0). This is a
+`0.16.0` is the current release. The same package is available as a checksummed [GitHub release
+tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.16.0). This is a
 breaking release. Read [What's in
-0.15](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.15) before updating from
-`0.14`: array normalization retains actual positions and length instead of compacting holes,
-dropping hidden cells or appending metadata. Symbol keys no longer cause numeric-conversion defects.
-Removing accidental failures can expose existing unsupported sparse/custom-iterator constructor
-defaults; the migration gives exact cases and a validated decoded mapping. The broader default and
-alias-preservation limits remain active.
-
-Unreleased work groups optional/nullable object alternatives, sparse own cells and exact native own
-iterators into one constructor-default repair. The [0.16
-migration](https://github.com/viell-dev/slop-effect-schema-http/blob/main/docs/release-notes/0.16.md)
-describes the candidate's refusals, changed whole-reading results and retained limits.
+0.16](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.16) before updating from
+`0.15`: constructor-default validation now covers eligible optional/nullable object alternatives,
+sparse own cells and exact native own iterators. Invalid aliases refuse before dispatch; whole
+decoding can also refuse mixed-side calls or change successful output. The migration gives checked
+cases and validated decoded mappings. Broader default and alias-preservation limits remain active.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
@@ -86,8 +80,8 @@ versions and provider boundaries.
   Operation, Policy, Interaction, UrlEncoding and Transport, from basic use to advanced behavior.
 - [Limits and recovery](https://viell-dev.github.io/slop-effect-schema-http/limits): compatibility,
   where the library's promise stops, failure stages and bug reporting.
-- [What's in 0.15](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.15): the
-  current release, array positions, symbol keys and the remaining default limits.
+- [What's in 0.16](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.16): the
+  grouped constructor-alias repair, migration and remaining limits.
 - [Release history](https://viell-dev.github.io/slop-effect-schema-http/release-notes/): earlier
   articles and a comparison of the related schema-input repairs.
 - [Versions](https://viell-dev.github.io/slop-effect-schema-http/versions): updates and
