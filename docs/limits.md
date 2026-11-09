@@ -32,126 +32,22 @@ to the versions above, and to Effect 4.0.7, the oldest the peer range allows. No
 run time, so on an untested Effect it can fall back to Effect's own reading, where a union takes the
 first member that fits and a field can go with no error.
 
-Known limits also remain on the tested versions: conflicting decoded/encoded aliases, defaults
-hidden by nonempty group transformations, and false refusals outside bounded stacked-union or
-constructor-only opaque-neighbor recovery. The [Request
-guide](./modules/request.md#a-schema-states-the-shape-of-its-group) and [tracked schema
-gaps](https://github.com/viell-dev/slop-effect-schema-http/issues/143) distinguish the supported
-checks from those cases.
-
-An invalid encoded alias is refused in 0.9 when stable plain root data, finite closed schema names,
-a successful whole constructor and its strict encoding establish that the encoded field would take a
-default. Valid encoded input still decodes and can retain fields held by a separate binding.
-Ambiguous decoded/encoded names, open/opaque/class/suspended or iterable group shapes,
-inherited/accessor fields and changing input remain outside the additional proof; default
-substitution can still occur there
-([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Use decoded names,
-directly or through a named input mapping. [What's in 0.9](./release-notes/0.9.md) gives examples
-and the migration. The earlier [0.8 helper migration](./release-notes/0.8.md) still applies.
-
-The same proof now refuses an ignored encoded-only name after actual successful final fieldwise
-construction, at the root or through winning root union members, following failed whole decoding.
-The existing strict writer must succeed and actually write that name. No decoding is replayed or
-input rebuilt; existing schema effects can run before refusal. Valid aliases beside mixed common
-fields can also refuse. [What's in 0.11](./release-notes/0.11.md) gives complete-side and validated
-decoded-mapping alternatives. Later member-constructor choices and unsupported recovery routes
-remain outside the additional check.
-
-A union between defaulted filters and a cursor can still refuse complete encoded filter fields
-beside a cursor held by a separate binding. This pre-existing selection/coverage limit remains under
-[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6730345959), in
-either binding order; the fieldwise refusal does not add general backtracking.
-
-In 0.12, the initial whole-constructor proof also follows declared fields through finite closed,
-untransformed direct objects. Stable own-data links must reach the same encoded-only terminal field
-actually written by the original strict writer. Invalid `filter: { page_size: "many" }` then fails
-instead of sending a finite-number default; valid encoded text and omission retain their meaning in
-complete-side cases. A closed union can be the terminal child. Where another value forces a
-strict-read failure, valid aliases can newly refuse beside decoded-only common fields, and
-shared-type fields can change interpretation when the whole encoded group succeeds; use a complete
-side or validated decoded mapping. Whole decoding can repeat checks and services; construction is
-not replayed. [What's in 0.12](./release-notes/0.12.md) gives path, JSON and decoded mapping
-examples.
-
-In 0.13, finite closed untransformed parent unions can also supply unchanged field paths. Every
-member that declares a field must use the same field schema; other closed members may omit it. All
-member names remain in stable ancestor evidence. The original whole construction and strict writer
-still have to succeed, followed by one coherent caller/output witness and whole-schema validation.
-[What's in 0.13](./release-notes/0.13.md) covers the migration, including valid mixed-side refusals
-and shared-type interpretation changes. At 0.13, distinct field declarations, arrays,
-opaque/suspended/transformed/open parents, changing caller objects and unsupported member/fieldwise
-routes remained outside that extension under #170. Supply decoded values or a validated decoded
-mapping there.
-
-The same ambiguity guard now excludes conflicting normalized declarations inside direct objects,
-including numeric `1` and string `"1"`. This can weaken a 0.12 refusal into a generated default in
-0.13, directly or below another unchanged field. Supplied `wire: "many"` can therefore produce
-`/limit/25` in the [typed
-reproduction](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6733524389).
-This newly exposed kept-or-refused defect remains open under #170. Validate and map to decoded names
-before preparation, or supply validated decoded values; default substitution is not an intended
-guarantee.
-
-In 0.14, stable dense array and tuple positions can also establish that same constructor-only proof.
-Own data indices/length, ordinary or null prototype, static element/rest metadata and an unchanged
-original strict-output length keep each position's identity. Frozen and nonenumerable positions are
-supported. Whole decoding can change mixed runtime input or shared-text meaning; whole-side static
-array input already excludes mixed literals. Construction defaults still do not apply to omitted
-fields on an ordinary decoding route. [What's in 0.14](./release-notes/0.14.md) gives checked
-path/JSON, prefix/rest/tail, omission and decoded-mapping examples.
-
-An item supplied under both decoded and encoded names can also change which value wins when an
-encoded-only sibling establishes whole-array reading. The typed nonliteral input
-`[{ limit: 1, page_size: "02" }, { page_size: "25" }]` wrote `1/25` on 0.13 and writes `2/25` on
-0.14. Constructor/decoded name preference is not a whole-encoded-reading rule. This remains a
-[conflicting-alias
-limit](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6735302019), not
-a conflict repair or an input statically excluded in every form. Give one complete side or
-validate/map to decoded names.
-
-Sparse/accessor/inherited/subclass/custom-iterator/changing arrays, array-shaped parent union
-members, group transforms, opaque/suspended ancestors and unsupported member/fieldwise routes stay
-outside the added proof under #170. The distinct normalized-declaration defect above also remains
-open; use validated decoded values for affected schemas. No general per-element recovery, alias map
-or arbitrary equality rule is introduced.
-
-The 0.15 normalization fixes retain actual array keys/length after an inner rewrite: holes and
-readable hidden/inherited cells stay in place, metadata is not appended as a cell, and symbols no
-longer cause accidental numeric-conversion TypeErrors (#189/#191). The caller's layout remains
-unchanged. Ordinary getter/prototype processing can still occur; the fixes do not expand the
-constructor-default proof. Hidden/inherited-position discovery requires a structural array view
-without an open or opaque alternative. A union containing Unknown, Any, ObjectKeyword or a
-declaration does not establish that its Array alternative reads the value. Those mixed views keep
-their prior enumerable-child normalization; this is not a general preservation proof for every
-alternative.
-
-Removing those accidental failures can expose existing unsupported #170 defaults. A length-two
-sparse array with only position one `{ page_size: "many", stray: "ignored" }` previously refused
-after compaction; it can now write `[null,{"page_size":"25"}]`. An own enumerable iterator's invalid
-alias can change TypeError to generated `25`, even with the normal Array iterator. These are actual
-preservation defects, not intended validation. [What's in 0.15](./release-notes/0.15.md) provides
-checked examples and a named validated mapping to decoded values. Use that explicit route for
-unsupported profiles; declining their constructor evidence does not guarantee clean refusal.
-
-Whole encoded nested shapes retain their static input type in 0.10. Helpers using `Request.Input`
-must handle encoded nested names too, or declare their own decoded input shape; the [0.10
-migration](./release-notes/0.10.md) gives a checked example. This changes no runtime route. Inside
-opaque values such as `Schema.ReadonlyMap`, the schema's own reading still applies, and accepted
-encoded contents do not force whole decoding. A map's constructor can accept a nested renamed object
-by losing its alias; supply decoded map contents for a predictable decoded route.
-
-Effect can also refuse some omitted prototype-named fields, including `constructor` and an
-encode-only `toString` default. The [dependency
-overview](https://github.com/viell-dev/slop-effect-schema-http/issues/41) records the exact schemas,
-controls and upstream status. These remain schema failures; the library does not bypass them.
+Schema structure is tested against the configurations above, rather than checked at runtime. The
+[Schema-backed input reference](./schema-input.md) owns current constructor/encoded reading and
+array behavior, including [active preservation/default
+limits](./schema-input.md#active-limits-and-recovery) under #143 and #170. The [group
+reference](./schema-groups.md) covers raw defaults and bounded stacked-union recovery. Those pages
+state today's support without assembling it from release history.
 
 Other Node majors, macOS, Firefox, Safari, Deno, Bun and CommonJS are outside the qualification
 scope. Browser support does not imply support for every bundler or browser configuration; provider
 behavior and browser policy still apply.
 
-The package declares `engines.node` as `>=24`, which is broader than what is tested. It has no upper
-limit because one would only print a warning on install; it would not stop an untested version. So
-`engines` says what can install, and this page says what is tested.
+The package declares `engines.node` as `>=24`. The open upper range is a compatibility choice, not a
+claim that later Node majors are qualified. npm normally treats an incompatible engine range as
+advisory, but [`engine-strict`](https://docs.npmjs.com/cli/v11/using-npm/config#engine-strict) can
+refuse installation. Other package managers apply their own policies. This page identifies the
+qualified environments; the manifest declares the package's accepted range.
 
 ## Supported behavior
 
