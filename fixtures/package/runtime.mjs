@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import console from "node:console";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as root from "viell-effect-schema-http";
 import manifest from "viell-effect-schema-http/package.json" with { type: "json" };
@@ -109,6 +109,74 @@ assert.equal(
 );
 assert.equal(nominalInput.read(), "token");
 assert.equal(nestedNominalInput.token.read(), "token");
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/170
+const fieldwiseFilters = Schema.Struct({
+  limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+    Schema.withConstructorDefault(Effect.succeed(25)),
+  ),
+  count: Schema.FiniteFromString,
+  offset: Schema.FiniteFromString,
+}).pipe(Schema.encodeKeys({ limit: "page_size" }));
+for (const schema of [
+  fieldwiseFilters,
+  Schema.Union([fieldwiseFilters, Schema.Struct({ cursor: Schema.String })]),
+]) {
+  for (const group of ["query", "headers", "path", "body"]) {
+    const base = root.Request.get("https://api.test/fieldwise");
+    const request =
+      group === "query"
+        ? base.pipe(root.Request.query(schema))
+        : group === "headers"
+          ? base.pipe(root.Request.headers(schema))
+          : group === "path"
+            ? base.pipe(
+                root.Request.path(schema, (value) =>
+                  "page_size" in value ? `/${value.page_size}` : "/cursor",
+                ),
+              )
+            : root.Request.post("https://api.test/fieldwise").pipe(
+                root.Request.body(root.Body.jsonSchema(schema)),
+              );
+    const operation = root.Operation.make(
+      request,
+      root.Response.status(204, root.Body.empty),
+    );
+    for (const page_size of ["many", "05", "25"]) {
+      const error = await Effect.runPromise(
+        Effect.flip(
+          operation
+            .execute({ [group]: { page_size, count: "07", offset: 9 } })
+            .pipe(Effect.provideService(HttpClient.HttpClient, client)),
+        ),
+      );
+      assert.equal(error._tag, "SchemaError");
+      assert.match(error.message, /page_size/);
+      assert.equal(dispatches, 1);
+    }
+    const prepared = await Effect.runPromise(
+      root.Request.compile(request, {
+        [group]: { page_size: "05", count: "07", offset: "09" },
+      }),
+    );
+    if (group === "query") assert.match(prepared.request.url, /page_size=5/);
+    else if (group === "headers")
+      assert.deepEqual(prepared.headerLines, [
+        ["page_size", "5"],
+        ["count", "7"],
+        ["offset", "9"],
+      ]);
+    else if (group === "path")
+      assert.equal(prepared.request.url, "https://api.test/fieldwise/5");
+    else {
+      assert.equal(prepared.request.body._tag, "Uint8Array");
+      assert.equal(
+        new globalThis.TextDecoder().decode(prepared.request.body.body),
+        '{"page_size":"5","count":"7","offset":"9"}',
+      );
+    }
+  }
+}
 for (const [compile, expected] of [
   [compileNestedEncoded, "/05"],
   [compileNestedDecoded, "/05"],

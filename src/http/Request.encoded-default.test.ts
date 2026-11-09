@@ -712,28 +712,6 @@ describe("encoded input beside constructor defaults", () => {
       }),
   );
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect(
-    "currently retains the fieldwise alias limit after initial construction fails",
-    () =>
-      Effect.gen(function* () {
-        const schema = Schema.Struct({
-          ...Base.fields,
-          count: Schema.FiniteFromString,
-          offset: Schema.FiniteFromString,
-        }).pipe(Schema.encodeKeys({ limit: "page_size" }));
-        const result = yield* Inputs.reader(
-          schema,
-          Schema.encodeEffect(schema),
-        )({ page_size: "many", count: "07", offset: 9 } as never);
-        expect(result.output).toEqual({
-          page_size: "25",
-          count: "7",
-          offset: "9",
-        });
-      }),
-  );
-
   it.effect(
     "does not retry decoding when its constructor observer defects",
     () =>

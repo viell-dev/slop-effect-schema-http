@@ -47,9 +47,20 @@ inherited/accessor fields and changing input remain outside the additional proof
 substitution can still occur there
 ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Use decoded names,
 directly or through a named input mapping. [What's in 0.9](./release-notes/0.9.md) gives examples
-and the migration. The earlier [0.8 helper migration](./release-notes/0.8.md) still applies. If the
-initial whole constructor fails and member/fieldwise recovery succeeds, this additional check does
-not run; an invalid alias beside mixed encoded/decoded numeric fields can still take a default.
+and the migration. The earlier [0.8 helper migration](./release-notes/0.8.md) still applies.
+
+The same proof now refuses an ignored encoded-only name after actual successful final fieldwise
+construction, at the root or through winning root union members, following failed whole decoding.
+The existing strict writer must succeed and actually write that name. No decoding is replayed or
+input rebuilt; existing schema effects can run before refusal. Valid aliases beside mixed common
+fields can also refuse. [What's in 0.11](./release-notes/0.11.md) gives complete-side and validated
+decoded-mapping alternatives. Later member-constructor choices and unsupported recovery routes
+remain outside the additional check.
+
+A union between defaulted filters and a cursor can still refuse complete encoded filter fields
+beside a cursor held by a separate binding. This pre-existing selection/coverage limit remains under
+[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6730345959), in
+either binding order; the fieldwise refusal does not add general backtracking.
 
 The additional proof is also limited to root fields. An invalid encoded alias inside an unchanged
 nested object can still take its constructor default: for example, `filter: { page_size: "many" }`

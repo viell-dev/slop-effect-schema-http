@@ -82,24 +82,32 @@ export const toDecoded = <S extends Schema.Top>(
       (issue) => new Schema.SchemaError(issue),
     );
   const decode = Schema.decodeUnknownEffect(contract);
-  const byField = Effect.fnUntraced(function* (input: object) {
+  const byField = Effect.fnUntraced(function* (
+    input: object,
+    onFieldwise?: () => void,
+  ) {
     const output: Record<PropertyKey, unknown> = { ...input };
     // A field need not be a key, as an accessor on a class is not, so it comes from `input`.
     const fields: Record<PropertyKey, unknown> = input as never;
     for (const { name, type } of Excess.fieldsOf(contract.ast))
       if (fields[name] !== undefined)
         output[name] = yield* fromPart(type, fields[name], options);
-    return yield* make(output);
+    const value = yield* make(output);
+    onFieldwise?.();
+    return value;
   });
-  const byMember = (input: object) =>
+  const byMember = (input: object, onFieldwise?: () => void) =>
     contract.ast._tag === "Union" && contract.ast.types.length > 0
       ? Effect.firstSuccessOf(
-          contract.ast.types.map((member) => fromPart(member, input, options)),
+          contract.ast.types.map((member) =>
+            fromPart(member, input, options, onFieldwise),
+          ),
         )
-      : byField(input);
+      : byField(input, onFieldwise);
   return (
     input: Input<S>,
     onConstructed?: () => void,
+    onFieldwise?: () => void,
   ): Effect.Effect<S["Type"], Schema.SchemaError, S["DecodingServices"]> =>
     Effect.matchEffect(make(input), {
       onSuccess: (value) => {
@@ -111,7 +119,7 @@ export const toDecoded = <S extends Schema.Top>(
         Effect.mapError(
           Effect.catch(decode(input, options), (encodedFailure) =>
             typeof input === "object" && input !== null
-              ? byMember(input)
+              ? byMember(input, onFieldwise)
               : Effect.fail(encodedFailure),
           ),
           () => failure,
@@ -124,8 +132,13 @@ const fromPart = (
   ast: SchemaAST.AST,
   value: unknown,
   options?: SchemaAST.ParseOptions,
+  onFieldwise?: () => void,
 ): Effect.Effect<unknown, Schema.SchemaError, unknown> =>
-  toDecoded(Schema.make<Schema.Top>(ast), options)(value);
+  toDecoded(Schema.make<Schema.Top>(ast), options)(
+    value,
+    undefined,
+    onFieldwise,
+  );
 
 /** What a schema wrote, and the fields of its input it would lose, which may be held elsewhere. */
 export interface Written<A> {
@@ -306,11 +319,18 @@ export const reader = <S extends Schema.Top, A, R>(
           return compared(input, given);
         return Effect.suspend(() => {
           let constructed = false;
+          let fieldwise = false;
           let strictWrite = true;
           const read = (current: Input<S>) =>
-            decoded(current, () => {
-              constructed = true;
-            });
+            decoded(
+              current,
+              () => {
+                constructed = true;
+              },
+              () => {
+                fieldwise = true;
+              },
+            );
           return Effect.flatMap(
             compared(input, given, read, () => {
               strictWrite = false;
@@ -319,13 +339,16 @@ export const reader = <S extends Schema.Top, A, R>(
               // Keep constructor alternatives and existing failures. Only an actual encoded write
               // can hide this constructor's inability to consume the encoded-only caller field.
               if (
-                !constructed ||
+                (!constructed && !fieldwise) ||
                 !strictWrite ||
                 !encodedEvidence.matches() ||
                 !encodedEvidence.written(constructedResult.output) ||
                 !encodedEvidence.matches()
               )
                 return Effect.succeed(constructedResult);
+              // This winning fieldwise route followed a failed whole decode and never read the
+              // encoded-only caller name. Refuse its generated replacement without replaying effects.
+              if (fieldwise) return Effect.fail(failure);
               const encodedRead = (current: Input<S>) =>
                 Effect.flatMap(
                   Effect.mapError(decode(current), () => failure),
