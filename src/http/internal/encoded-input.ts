@@ -1,4 +1,5 @@
 import type { SchemaAST } from "effect";
+import { isNonObjectAlternative } from "./primitive.js";
 
 interface Names {
   readonly decoded: ReadonlySet<PropertyKey>;
@@ -34,6 +35,9 @@ const namesOf = (
     [(ast.encoding ?? []).map(({ to }) => to), encodings],
   ] as const) {
     for (const node of nodes) {
+      // This is only a union-member rule. Primitive encoding intermediates remain unsupported,
+      // and never enter the shared memo as an empty group view.
+      if (output === members && isNonObjectAlternative(node)) continue;
       const names = namesOf(node, active, known);
       if (names === undefined) {
         active.delete(ast);
@@ -44,6 +48,12 @@ const namesOf = (
     }
   }
   active.delete(ast);
+  // A union of primitives is still a primitive encoding intermediate. Requiring an object view
+  // also prevents the shared memo from turning that intermediate into an empty group view.
+  if (ast._tag === "Union" && members.length === 0) {
+    known.set(ast, undefined);
+    return undefined;
+  }
   const decoded = new Set(
     ast._tag === "Objects"
       ? ast.propertySignatures.map(({ name }) => keyOf(name))

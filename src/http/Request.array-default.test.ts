@@ -318,12 +318,9 @@ describe("nested aliases below unchanged array positions", () => {
     }
   });
 
-  it("declines holes, accessors, inherited cells, subclasses and custom iterators", () => {
+  it("declines accessors, inherited cells, subclasses and custom iterators", () => {
     const capture = nestedEncodedInput(Schema.Array(Inner).ast)!;
     let reads = 0;
-    const sparse: Array<object> = [];
-    sparse.length = 2;
-    sparse[1] = { page_size: "many" };
     const accessor = Object.defineProperty([], "0", {
       get() {
         reads++;
@@ -347,7 +344,6 @@ describe("nested aliases below unchanged array positions", () => {
       },
     );
     for (const input of [
-      sparse,
       accessor,
       inherited,
       new Other({ page_size: "many" }),

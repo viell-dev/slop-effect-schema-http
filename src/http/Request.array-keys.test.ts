@@ -77,8 +77,7 @@ describe("array key normalization during request preparation", () => {
       );
 
       // https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6737040870
-      const refuses = key === Symbol.iterator ? it.effect.fails : it.effect;
-      refuses(`${binding} refuses invalid cells beside ${String(key)}`, () =>
+      it.effect(`${binding} refuses invalid cells beside ${String(key)}`, () =>
         Effect.gen(function* () {
           for (const invalid of ["many", null]) {
             const input = [{ page_size: invalid, stray: "ignored" }];
@@ -93,24 +92,6 @@ describe("array key normalization during request preparation", () => {
           }
         }),
       );
-
-      if (key === Symbol.iterator) {
-        // https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6737040870
-        it.effect(`currently ${binding} retains an own-iterator default`, () =>
-          Effect.gen(function* () {
-            for (const invalid of ["many", null]) {
-              const input = [{ page_size: invalid, stray: "ignored" }];
-              Object.defineProperty(input, Symbol.iterator, {
-                value: Array.prototype[Symbol.iterator],
-                enumerable: true,
-              });
-              expect(
-                yield* prepare(Schema.Array(Filter), input, binding),
-              ).toEqual([{ page_size: "25" }]);
-            }
-          }),
-        );
-      }
     }
 
     it.effect(`${binding} retains sparse, hidden and inherited positions`, () =>
@@ -413,34 +394,18 @@ describe("array key normalization during request preparation", () => {
       }),
   );
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6736960353
-  it.effect(
-    "currently exposes the sparse default after correcting compaction",
-    () =>
-      Effect.gen(function* () {
-        const input: Array<object> = [];
-        input.length = 2;
-        input[1] = { page_size: "many", stray: "ignored" };
-        expect(
-          yield* prepare(Schema.Array(Schema.optional(Filter)), input, "body"),
-        ).toEqual([null, { page_size: "25" }]);
-        expect(Object.hasOwn(input, "0")).toBe(false);
-      }),
-  );
-
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect.fails(
-    "refuses an invalid sparse alias after an inner rewrite",
-    () =>
-      Effect.gen(function* () {
-        const input: Array<object> = [];
-        input.length = 2;
-        input[1] = { page_size: "many", stray: "ignored" };
-        expect(
-          yield* Effect.flip(
-            prepare(Schema.Array(Schema.optional(Filter)), input, "body"),
-          ),
-        ).toBeInstanceOf(Schema.SchemaError);
-      }),
+  it.effect("refuses an invalid sparse alias after an inner rewrite", () =>
+    Effect.gen(function* () {
+      const input: Array<object> = [];
+      input.length = 2;
+      input[1] = { page_size: "many", stray: "ignored" };
+      expect(
+        yield* Effect.flip(
+          prepare(Schema.Array(Schema.optional(Filter)), input, "body"),
+        ),
+      ).toBeInstanceOf(Schema.SchemaError);
+      expect(Object.hasOwn(input, "0")).toBe(false);
+    }),
   );
 });
