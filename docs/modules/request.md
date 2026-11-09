@@ -601,5 +601,5 @@ records without it remain valid and use the earlier selection behavior; the new 
 requires complete evidence.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.16.0/src/http/Request.ts)
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.16.1/src/http/Request.ts)
 for all types and overloads.

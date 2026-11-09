@@ -1,6 +1,10 @@
 # Change history
 
-## Unreleased
+## 0.16.1 — 2026-11-10
+
+Read [What's in
+0.16](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.16#recover-validated-query-and-header-unions)
+for the compatible validated-union recovery correction.
 
 - Retain parent checks, encoding checks and context/default metadata during bounded stacked-union
   field-loss recovery (#143). Eligible query/header calls can recover a member that keeps the
