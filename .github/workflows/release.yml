@@ -76,7 +76,11 @@ jobs:
       - run: npm ci
       # The oldest Effect the peer range allows, with the test helpers published for it. The library
       # reads Effect's schema structure, so the floor has to pass the behavior tests, not just load.
-      - run: npm install --no-save effect@4.0.7 @effect/vitest@4.0.7
+      # Saving exact floor specifications preserves unrelated locked dependencies. Reject any
+      # unexpected graph drift, then install the generated floor lockfile reproducibly (#193).
+      - run: npm install --save-dev --save-exact effect@4.0.7 @effect/vitest@4.0.7
+      - run: node scripts/check-effect-floor.mjs
+      - run: npm ci
       - run: npm test
 
   hostile:

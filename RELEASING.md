@@ -111,6 +111,12 @@ explains the earlier related repairs without claiming they complete every schema
    to a reviewed commit in the workflow and stays in its independent history. Its package build is
    independently qualified; the isolated consumers qualify the actual release tarball.
 
+   The full source peer-floor lane uses the [saved-lockfile procedure in
+   CONTRIBUTING](./CONTRIBUTING.md#development-and-verification). Only Effect and its matching test
+   helpers may change; the guard rejects unrelated tooling drift before installing the generated
+   lockfile with `npm ci`. It runs in ordinary CI too. Its existing comparison with an Effect helper
+   unavailable at 4.0.7 remains explicitly skipped; the current-peer lane covers that comparison.
+
    Retain the Actions run and results in the release PR. Pending, skipped or failing required work
    is not release evidence. A subsequent code or tooling change requires fresh qualification.
 7. Download `candidate-ubuntu-latest` from that successful run. Use its tarball for publication; do

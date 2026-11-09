@@ -35,14 +35,36 @@ npm run test:package
 - `npm run test:release`: reject invalid qualification producers/artifacts, exercise bounded
   registry visibility recovery and terminal integrity/provenance failures, check the read-only
   workflow, the handover from publication to the site, that release preparation refuses a stale
-  tested version, and every comparison `npm run check-live` makes, against synthetic surfaces.
+  tested version, that peer-floor selection preserves unrelated locked tooling, and every comparison
+  `npm run check-live` makes, against synthetic surfaces.
 - `npm run test:package`: verify the built tarball in an isolated consumer; run the build first.
 - `npm run format`: apply the configured formatters.
 
 CI requires these verification commands on Linux, plus the documentation checks below, as its
-`checks` job. Its `node-26` job repeats the build, `npm test` and `npm run test:package` on the
-newest Node.js 26, and is required too. For code changes, reproduce the reported behavior first and
-add a meaningful test at the layer that exposes it.
+`checks` job. After the current-peer checks, it also runs the peer-floor procedure below. Its
+`node-26` job repeats the build, `npm test` and `npm run test:package` on the newest Node.js 26, and
+is required too. For code changes, reproduce the reported behavior first and add a meaningful test
+at the layer that exposes it.
+
+Run the full Effect floor check in a disposable checkout after committing the candidate:
+
+```sh
+npm ci
+npm install --save-dev --save-exact effect@4.0.7 @effect/vitest@4.0.7
+node scripts/check-effect-floor.mjs
+npm ci
+npm test
+```
+
+The saved exact specifications keep unrelated tooling locked; a no-save install can re-resolve it
+([#193](https://github.com/viell-dev/slop-effect-schema-http/issues/193)). The guard compares the
+manifest and complete lockfile with `HEAD`, permitting only the selected Effect/helper records and
+their root development specifications. Unexpected transitive changes need investigation and an
+explicit policy review. The second `npm ci` installs the generated floor lockfile. This procedure
+leaves the disposable checkout's manifests and installed dependencies on the floor; do not commit
+those changes. One existing source comparison skips on Effect 4.0.7 because that version does not
+export `HttpClient.isTransientResponse`; the library's own transient-classification assertions still
+run. The current-peer lane runs that comparison too.
 
 `.npmrc` sets `ignore-scripts=true`, so no dependency's install script runs. Keep it: none of the
 current dependencies needs one, and a new dependency that does needs a review of what the script
