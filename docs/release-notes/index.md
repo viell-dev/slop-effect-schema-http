@@ -1,12 +1,14 @@
 # Release history
 
-The current release is [0.16](./0.16.md). [Versions](../versions.md) covers installation and
+The current release is [0.16.1](./0.16.md). [Versions](../versions.md) covers installation and
 updates. Use [Schema-backed input](../schema-input.md) and [Schema-backed
 groups](../schema-groups.md) for today's rules and active limits; the articles below explain changes
 between releases.
 
 The [0.16 batch](./0.16.md) groups optional/nullable object alternatives, sparse own cells and exact
-native own iterators into one constructor-default extension.
+native own iterators into one constructor-default extension. Compatible patch
+[0.16.1](./0.16.md#recover-validated-query-and-header-unions) retains parent validation during
+bounded stacked-union recovery; it does not extend the constructor-default proof again.
 
 ## Schema-input hardening
 

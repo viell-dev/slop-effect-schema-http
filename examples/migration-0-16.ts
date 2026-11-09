@@ -169,3 +169,35 @@ assert.equal(
   '[null,{"page_size":"5"},{"page_size":"25"}]',
 );
 await refused(compileForms([{ limit: "many" }]));
+
+// #region checked-union
+const Paging = Schema.Struct({ page: Schema.FiniteFromString });
+const Search = Schema.Struct({
+  category: Schema.String,
+  batchSize: Schema.FiniteFromString,
+});
+const CheckedQuery = Schema.Union([Paging, Search]).check(
+  Schema.makeFilter(
+    (value) => !("batchSize" in value) || value.batchSize <= 100,
+  ),
+);
+const search = Request.get("/items").pipe(
+  Request.query(CheckedQuery),
+  Request.query(Paging),
+);
+const preparedSearch = await Effect.runPromise(
+  Request.compile(search, {
+    query: { page: 1, category: "books", batchSize: 20 },
+  }),
+);
+// preparedSearch.request.url === "/items?category=books&batchSize=20&page=1"
+// #endregion checked-union
+assert.equal(
+  preparedSearch.request.url,
+  "/items?category=books&batchSize=20&page=1",
+);
+await refused(
+  Request.compile(search, {
+    query: { page: 1, category: "books", batchSize: 200 },
+  }),
+);
