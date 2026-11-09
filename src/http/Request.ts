@@ -834,6 +834,86 @@ type GroupInput<K extends "query" | "headers", A> =
     ? { readonly [P in K]?: A }
     : { readonly [P in K]: A };
 
+/** Read, recover and settle one binding before its adapter writes native header/query fields. */
+const prepareGroup = <
+  S extends Schema.Top &
+    Schema.ConstraintCodec<unknown, object, unknown, unknown>,
+>(
+  contract: S,
+  group: "headers" | "query",
+  fold: Fields.Fold,
+) => {
+  const read = Inputs.reader(contract, Schema.encodeEffect(contract));
+  const recover = Groups.recovery(contract);
+  const { shape, settle, taken, candidates, filled } = Shapes.bind(
+    contract,
+    fold,
+  );
+  const takenKey = group === "headers" ? "takenHeaders" : "takenQuery";
+  const label = group === "headers" ? "header" : "query";
+  return {
+    shape,
+    // Delegate directly so extraction adds no Effect boundary between the original steps.
+    *evaluate<I, E, R>(
+      self: Request<I, E, R>,
+      input: I,
+      value: Input<S>,
+      draft: Draft,
+      token: object,
+      defaultsFrom: (
+        prepared: Draft,
+        names: ReadonlySet<string>,
+        elsewhere: ReadonlySet<PropertyKey>,
+      ) => ReadonlyArray<readonly [string, unknown]>,
+    ) {
+      const edited = candidates(value, draft.editedFields.get(shape));
+      let { output, lost: lostFromInput } = yield* read(value);
+      let conflicts = filled(edited, output);
+      const own = draft[takenKey] && taken(value, output, lostFromInput);
+      let prepared = yield* self.prepare(
+        input,
+        own === undefined
+          ? draft
+          : {
+              ...draft,
+              [takenKey]: Shapes.taking(draft[takenKey], own, token),
+            },
+      );
+      if (lostFromInput.length > 0) {
+        const recovered = yield* recover(
+          value,
+          { output, lost: lostFromInput },
+          prepared[takenKey],
+          token,
+          taken,
+        );
+        if (recovered !== undefined) {
+          ({ output, lost: lostFromInput } = recovered.reading);
+          conflicts = filled(edited, output);
+          prepared = { ...prepared, [takenKey]: recovered.taken };
+        }
+        yield* Inputs.refuseLost(
+          contract,
+          lostFromInput,
+          prepared[takenKey]?.fields,
+        );
+      }
+      if (conflicts.length > 0)
+        return yield* preparationConflict(group, conflicts);
+      const names = Shapes.written(output, fold);
+      const elsewhere = Shapes.others(shape, prepared[takenKey], fold);
+      const defaults = defaultsFrom(prepared, names, elsewhere);
+      const settled = yield* Effect.mapError(settle(output, defaults), () =>
+        misfit(label, defaults),
+      );
+      // A field the schema does not write back would be lost, as a union member can lose one.
+      const lost = Shapes.lost(output, defaults, settled, fold);
+      if (lost.length > 0) return yield* lostFields(label, lost);
+      return { prepared, settled, names, defaults };
+    },
+  };
+};
+
 /**
  * Bind a schema to the call's `{ headers }` input.
  *
@@ -893,12 +973,7 @@ export const headers = <
 >(
   contract: S,
 ) => {
-  const read = Inputs.reader(contract, Schema.encodeEffect(contract));
-  const recover = Groups.recovery(contract);
-  const { shape, settle, taken, candidates, filled } = Shapes.bind(
-    contract,
-    foldHeader,
-  );
+  const { shape, evaluate } = prepareGroup(contract, "headers", foldHeader);
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
@@ -921,58 +996,20 @@ export const headers = <
         const value = (
           input.headers === undefined ? {} : input.headers
         ) as Input<S>;
-        const edited = candidates(value, draft.editedFields.get(shape));
-        let { output, lost: lostFromInput } = yield* read(value);
-        let conflicts = filled(edited, output);
-        const own = draft.takenHeaders && taken(value, output, lostFromInput);
-        let prepared = yield* self.prepare(
+        const { prepared, settled, names, defaults } = yield* evaluate(
+          self,
           input,
-          own === undefined
-            ? draft
-            : {
-                ...draft,
-                takenHeaders: Shapes.taking(draft.takenHeaders, own, token),
-              },
+          value,
+          draft,
+          token,
+          (prepared, names, elsewhere) =>
+            prepared.headerLines.filter(
+              ([name]) =>
+                !names.has(foldHeader(name)) &&
+                !elsewhere.has(foldHeader(name)) &&
+                Shapes.allows(shape, foldHeader(name)),
+            ),
         );
-        if (lostFromInput.length > 0) {
-          const recovered = yield* recover(
-            value,
-            { output, lost: lostFromInput },
-            prepared.takenHeaders,
-            token,
-            taken,
-          );
-          if (recovered !== undefined) {
-            ({ output, lost: lostFromInput } = recovered.reading);
-            conflicts = filled(edited, output);
-            prepared = { ...prepared, takenHeaders: recovered.taken };
-          }
-          yield* Inputs.refuseLost(
-            contract,
-            lostFromInput,
-            prepared.takenHeaders?.fields,
-          );
-        }
-        if (conflicts.length > 0)
-          return yield* preparationConflict("headers", conflicts);
-        const names = Shapes.written(output, foldHeader);
-        const elsewhere = Shapes.others(
-          shape,
-          prepared.takenHeaders,
-          foldHeader,
-        );
-        const defaults = prepared.headerLines.filter(
-          ([name]) =>
-            !names.has(foldHeader(name)) &&
-            !elsewhere.has(foldHeader(name)) &&
-            Shapes.allows(shape, foldHeader(name)),
-        );
-        const settled = yield* Effect.mapError(settle(output, defaults), () =>
-          misfit("header", defaults),
-        );
-        // A field the schema does not write back would be lost, as a union member can lose one.
-        const lost = Shapes.lost(output, defaults, settled, foldHeader);
-        if (lost.length > 0) return yield* lostFields("header", lost);
         const lines = Transport.entries(settled);
         const replaced = new Set([
           ...names,
@@ -1072,12 +1109,7 @@ export const query = <
 >(
   contract: S,
 ) => {
-  const read = Inputs.reader(contract, Schema.encodeEffect(contract));
-  const recover = Groups.recovery(contract);
-  const { shape, settle, taken, candidates, filled } = Shapes.bind(
-    contract,
-    foldQuery,
-  );
+  const { shape, evaluate } = prepareGroup(contract, "query", foldQuery);
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
@@ -1100,58 +1132,24 @@ export const query = <
         const value = (
           input.query === undefined ? {} : input.query
         ) as Input<S>;
-        const edited = candidates(value, draft.editedFields.get(shape));
-        let { output, lost: lostFromInput } = yield* read(value);
-        let conflicts = filled(edited, output);
-        const own = draft.takenQuery && taken(value, output, lostFromInput);
-        let prepared = yield* self.prepare(
+        const { prepared, settled, names, defaults } = yield* evaluate(
+          self,
           input,
-          own === undefined
-            ? draft
-            : {
-                ...draft,
-                takenQuery: Shapes.taking(draft.takenQuery, own, token),
-              },
+          value,
+          draft,
+          token,
+          (prepared, names, elsewhere) =>
+            prepared.request.urlParams.params
+              .filter(
+                (param) =>
+                  prepared.declaredQuery.has(param) &&
+                  !isEmptySegment(prepared, param) &&
+                  !names.has(param[0]) &&
+                  !elsewhere.has(param[0]) &&
+                  Shapes.allows(shape, param[0]),
+              )
+              .map((param) => [param[0], queryValue(prepared, param)] as const),
         );
-        if (lostFromInput.length > 0) {
-          const recovered = yield* recover(
-            value,
-            { output, lost: lostFromInput },
-            prepared.takenQuery,
-            token,
-            taken,
-          );
-          if (recovered !== undefined) {
-            ({ output, lost: lostFromInput } = recovered.reading);
-            conflicts = filled(edited, output);
-            prepared = { ...prepared, takenQuery: recovered.taken };
-          }
-          yield* Inputs.refuseLost(
-            contract,
-            lostFromInput,
-            prepared.takenQuery?.fields,
-          );
-        }
-        if (conflicts.length > 0)
-          return yield* preparationConflict("query", conflicts);
-        const names = Shapes.written(output, foldQuery);
-        const elsewhere = Shapes.others(shape, prepared.takenQuery, foldQuery);
-        const defaults = prepared.request.urlParams.params
-          .filter(
-            (param) =>
-              prepared.declaredQuery.has(param) &&
-              !isEmptySegment(prepared, param) &&
-              !names.has(param[0]) &&
-              !elsewhere.has(param[0]) &&
-              Shapes.allows(shape, param[0]),
-          )
-          .map((param) => [param[0], queryValue(prepared, param)] as const);
-        const settled = yield* Effect.mapError(settle(output, defaults), () =>
-          misfit("query", defaults),
-        );
-        // A field the schema does not write back would be lost, as a union member can lose one.
-        const lost = Shapes.lost(output, defaults, settled, foldQuery);
-        if (lost.length > 0) return yield* lostFields("query", lost);
         return replaceQuery(
           prepared,
           UrlEncoding.queryEntries(settled),
