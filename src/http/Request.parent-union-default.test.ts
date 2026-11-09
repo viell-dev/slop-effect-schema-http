@@ -575,7 +575,7 @@ describe("nested aliases below unchanged parent unions", () => {
     Object.assign(cycle, { types: [cycle] });
     expect(nestedEncodedInput(cycle)).toBeUndefined();
     for (const other of [
-      Schema.String,
+      Schema.Void,
       Schema.Array(Schema.String),
       Schema.Record(Schema.String, Schema.Unknown),
       Direct.pipe(Schema.encodeKeys({ filter: "q" })),

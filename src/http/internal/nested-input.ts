@@ -1,5 +1,6 @@
 import type { SchemaAST } from "effect";
 import { encodedInput } from "./encoded-input.js";
+import { isNonObjectAlternative } from "./primitive.js";
 
 type CaptureTerminal = NonNullable<ReturnType<typeof encodedInput>>;
 type Key = string | symbol;
@@ -30,6 +31,36 @@ interface Captured {
 
 const keyOf = (name: PropertyKey): Key =>
   typeof name === "number" ? String(name) : name;
+
+/** Canonical own positions only: symbols and index-looking metadata never become array cells. */
+const arrayIndex = (key: Key, length: number): number | undefined => {
+  if (typeof key !== "string") return undefined;
+  const index = Number(key);
+  return Number.isInteger(index) &&
+    index >= 0 &&
+    index < length &&
+    String(index) === key
+    ? index
+    : undefined;
+};
+
+const arrayIterator: unknown = Object.getOwnPropertyDescriptor(
+  Array.prototype,
+  Symbol.iterator,
+)?.value;
+
+const nativeIteratorUnchanged = (): boolean => {
+  const current = Object.getOwnPropertyDescriptor(
+    Array.prototype,
+    Symbol.iterator,
+  );
+  return (
+    typeof arrayIterator === "function" &&
+    current !== undefined &&
+    "value" in current &&
+    current.value === arrayIterator
+  );
+};
 
 /** Retain the actual enumerable output link or write, including its object identity. */
 const writtenData = (output: unknown, key: Key, array = false) => {
@@ -69,7 +100,11 @@ const writtenData = (output: unknown, key: Key, array = false) => {
 };
 
 /** Data only; capture each shared ancestor prefix once, without copying the caller's values. */
-const ownData = (input: unknown, names: ReadonlyArray<Key>, array = false) => {
+const ownData = (
+  input: unknown,
+  names: ReadonlyArray<Key>,
+  array: false | "caller" | "output" = false,
+) => {
   if (typeof input !== "object" || input === null) return undefined;
   const prototype: unknown = Object.getPrototypeOf(input);
   if (
@@ -90,6 +125,12 @@ const ownData = (input: unknown, names: ReadonlyArray<Key>, array = false) => {
     )
   )
     return undefined;
+  const ownIterator = properties.get(Symbol.iterator);
+  const iteratorAllowed = () =>
+    ownIterator === undefined ||
+    (array === "caller" &&
+      ownIterator.value === arrayIterator &&
+      nativeIteratorUnchanged());
   const length: unknown = array ? properties.get("length")?.value : undefined;
   if (
     array &&
@@ -97,17 +138,10 @@ const ownData = (input: unknown, names: ReadonlyArray<Key>, array = false) => {
       !Number.isInteger(length) ||
       length < 0 ||
       length > 0xffff_ffff ||
-      properties.has(Symbol.iterator) ||
-      keys.filter((key) => {
-        if (typeof key !== "string") return false;
-        const index = Number(key);
-        return (
-          Number.isInteger(index) &&
-          index >= 0 &&
-          index < length &&
-          String(index) === key
-        );
-      }).length !== length)
+      !iteratorAllowed() ||
+      (array === "output" &&
+        keys.filter((key) => arrayIndex(key, length) !== undefined).length !==
+          length))
   )
     return undefined;
   const absent = names.filter((name) => !properties.has(name));
@@ -120,6 +154,7 @@ const ownData = (input: unknown, names: ReadonlyArray<Key>, array = false) => {
         if (
           Object.getPrototypeOf(input) !== prototype ||
           (array ? !Array.isArray(input) : Symbol.iterator in input) ||
+          (array && !iteratorAllowed()) ||
           absent.some((name) => name in input)
         )
           return false;
@@ -148,7 +183,7 @@ const ownData = (input: unknown, names: ReadonlyArray<Key>, array = false) => {
 };
 
 /**
- * Nested encoded-only evidence through unchanged object/union fields and dense array positions.
+ * Nested encoded-only evidence through unchanged object/union fields and own array positions.
  * A parent union contributes a field only when every declaring member uses the same schema.
  * No schema or thunk runs.
  */
@@ -195,6 +230,7 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
     viewing.add(part);
     const fields = new Map<Key, SchemaAST.AST | undefined>();
     for (const member of part.types) {
+      if (isNonObjectAlternative(member)) continue;
       const declared = fieldsOf(member);
       if (declared === undefined) {
         viewing.delete(part);
@@ -286,10 +322,16 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
       };
     }
     const positions = node.array;
-    const data = ownData(input, node.names, positions !== undefined);
+    const data = ownData(
+      input,
+      node.names,
+      positions === undefined ? false : "caller",
+    );
     if (data === undefined) return undefined;
     const fields = positions
-      ? Array.from({ length: data.length! }, (_, index) => {
+      ? Array.from(data.properties.keys()).flatMap((name) => {
+          const index = arrayIndex(name, data.length!);
+          if (index === undefined) return [];
           const tail = Math.max(
             positions.elements.length,
             data.length! - Math.max(0, positions.rest.length - 1),
@@ -300,8 +342,8 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
               : index >= tail
                 ? positions.rest[index - tail + 1]
                 : positions.rest[0];
-          return child === undefined ? [] : [[String(index), child] as const];
-        }).flat()
+          return child === undefined ? [] : [[name, child] as const];
+        })
       : node.fields;
     const children = fields.flatMap(([name, child]) => {
       const property = data.properties.get(name);
@@ -321,7 +363,7 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
           )
             return undefined;
           const arrayOutput = positions
-            ? ownData(output, node.names, true)
+            ? ownData(output, node.names, "output")
             : undefined;
           if (
             positions &&

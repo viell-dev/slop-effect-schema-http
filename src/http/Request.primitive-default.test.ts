@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Schema, SchemaTransformation } from "effect";
+import { Effect, Schema, SchemaIssue, SchemaTransformation } from "effect";
 import * as Body from "./Body.js";
 import { encodedInput } from "./internal/encoded-input.js";
 import { nestedEncodedInput } from "./internal/nested-input.js";
@@ -90,17 +90,7 @@ const shapes = [
 describe("constructor defaults beside transparent primitive alternatives", () => {
   for (const kind of ["path", "body"] as const) {
     for (const { name, schema, wrap } of shapes) {
-      it.effect(
-        `currently ${kind} replaces invalid aliases through ${name}`,
-        () =>
-          Effect.gen(function* () {
-            for (const page_size of ["many", null])
-              expect(yield* prepare(schema, wrap({ page_size }), kind)).toEqual(
-                wrap({ page_size: "25" }),
-              );
-          }),
-      );
-      it.effect.fails(`${kind} refuses invalid aliases through ${name}`, () =>
+      it.effect(`${kind} refuses invalid aliases through ${name}`, () =>
         Effect.gen(function* () {
           for (const page_size of ["many", null])
             expect(
@@ -149,15 +139,6 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
       ? (["path", "body"] as const)
       : (["path"] as const)) {
       it.effect(
-        `currently ${kind} defaults below a first ${name} alternative`,
-        () =>
-          Effect.gen(function* () {
-            expect(
-              yield* prepare(schema, [{ page_size: "many" }], kind),
-            ).toEqual([{ page_size: "25" }]);
-          }),
-      );
-      it.effect.fails(
         `${kind} refuses an invalid alias below a first ${name} alternative`,
         () =>
           Effect.gen(function* () {
@@ -256,24 +237,6 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
 
   for (const kind of ["path", "body"] as const) {
     it.effect(
-      `currently ${kind} defaults on a nullable root fieldwise route`,
-      () =>
-        Effect.gen(function* () {
-          expect(
-            yield* prepare(
-              Schema.NullOr(Gated),
-              { page_size: "many", gate: "03" },
-              kind,
-            ),
-          ).toEqual({ page_size: "25", gate: "3" });
-          expect(
-            yield* Effect.flip(
-              prepare(Gated, { page_size: "many", gate: "03" }, kind),
-            ),
-          ).toBeInstanceOf(Schema.SchemaError);
-        }),
-    );
-    it.effect.fails(
       `${kind} refuses an invalid alias on a nullable root fieldwise route`,
       () =>
         Effect.gen(function* () {
@@ -286,9 +249,56 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
               ),
             ),
           ).toBeInstanceOf(Schema.SchemaError);
+          expect(
+            yield* Effect.flip(
+              prepare(Gated, { page_size: "many", gate: "03" }, kind),
+            ),
+          ).toBeInstanceOf(Schema.SchemaError);
         }),
     );
   }
+
+  it.effect(
+    "does not execute primitive checks during capture or replay constructor defaults",
+    () =>
+      Effect.gen(function* () {
+        let checks = 0;
+        let defaults = 0;
+        const primitive = Schema.String.check(
+          Schema.makeFilter(() => {
+            checks++;
+            return true;
+          }),
+        );
+        const Counted = Schema.Struct({
+          limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+            Schema.withConstructorDefault(
+              Effect.sync(() => {
+                defaults++;
+                return 25;
+              }),
+            ),
+          ),
+        }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+        const schema = Schema.Array(Schema.Union([primitive, Counted]));
+        const input = [{ page_size: "many" }];
+        expect(
+          nestedEncodedInput(schema.ast)!(input)
+            ?.select([{ page_size: "25" }])
+            ?.matches(),
+        ).toBe(true);
+        expect(checks).toBe(0);
+        expect(defaults).toBe(0);
+        for (const kind of ["path", "body"] as const) {
+          defaults = 0;
+          expect(
+            yield* Effect.flip(prepare(schema, input, kind)),
+          ).toBeInstanceOf(Schema.SchemaError);
+          expect(defaults).toBe(1);
+          expect(checks).toBe(0);
+        }
+      }),
+  );
 
   it("does not classify Void, encoded primitives or opaque alternatives as transparent", () => {
     const Count = Schema.Struct({ page_size: Schema.String }).pipe(
@@ -321,6 +331,55 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
       nestedEncodedInput(Schema.Array(Schema.fromJsonString(Filter)).ast),
     ).toBeUndefined();
   });
+
+  it.effect(
+    "keeps a primitive-only union encoding intermediate outside the object proof",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Struct({ page_size: Schema.String }).pipe(
+          Schema.decodeTo(
+            Schema.NullOr(Schema.String),
+            SchemaTransformation.transform<
+              string | null,
+              { readonly page_size: string }
+            >({
+              decode: (value) => value.page_size,
+              encode: (value) => ({ page_size: value ?? "" }),
+            }),
+          ),
+          Schema.decodeTo(
+            Schema.Struct({
+              limit: Schema.optionalKey(Schema.Number).pipe(
+                Schema.withConstructorDefault(Effect.succeed(25)),
+              ),
+            }),
+            SchemaTransformation.transformEffect<
+              { readonly limit?: number },
+              string | null
+            >({
+              decode: (value) =>
+                value === null || Number.isNaN(Number(value))
+                  ? Effect.fail(
+                      new SchemaIssue.InvalidValue({ message: "not a number" }),
+                    )
+                  : Effect.succeed({ limit: Number(value) }),
+              encode: (value) => Effect.succeed(String(value.limit)),
+            }),
+          ),
+        );
+        expect(encodedInput(schema.ast)).toBeUndefined();
+        expect(nestedEncodedInput(Schema.Array(schema).ast)).toBeUndefined();
+        for (const kind of ["path", "body"] as const)
+          for (const [input, expected] of [
+            [{ page_size: "many" }, "25"],
+            [{ page_size: "05" }, "5"],
+            [{}, "25"],
+          ] as const)
+            expect(yield* prepare(schema, input, kind)).toEqual({
+              page_size: expected,
+            });
+      }),
+  );
 
   it.effect(
     "keeps the schema's own reading for Void, open and object-encoded primitive alternatives",
