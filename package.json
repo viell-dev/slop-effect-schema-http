@@ -1,6 +1,6 @@
 {
   "name": "viell-effect-schema-http",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Consumer-owned HTTP contracts composed with Effect",
   "license": "MIT",
   "repository": {

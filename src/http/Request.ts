@@ -75,7 +75,8 @@ export type QueryFields = Readonly<
  *
  * Preparation tries the decoded side first, then the decoder as a whole, then the decoder field by
  * field. If all fail, it reports the decoded side's error, a `SchemaError` before dispatch. Both
- * routes validate, so text cannot get past a schema, but a weak schema lets more through:
+ * routes validate the values they consume. Unsupported constructor-default paths below can still
+ * ignore a supplied alias. A weak schema also lets more through:
  * `Schema.NumberFromString` turns `"many"` into `NaN`, and `Schema.FiniteFromString` refuses it.
  *
  * A value that fits the decoded side is read as decoded. Under a schema whose two sides share a
@@ -86,6 +87,12 @@ export type QueryFields = Readonly<
  * When both names are supplied, a constructor/decoded read prefers the decoded name. A whole
  * encoded read uses the encoded name instead, including after the added whole-group validation.
  * Conflicting values are not generally refused; give one side's name or validate a decoded mapping.
+ *
+ * Array normalization retains actual positions/length, including holes and readable hidden or
+ * inherited cells; metadata is not converted into another element. Symbol keys keep their identity.
+ * These corrections do not expand constructor-default evidence. Removing an accidental failure can
+ * expose an existing default for invalid aliases in sparse or own-iterator arrays (issue #170).
+ * Validate and map to decoded names for those unsupported inputs; see the 0.15 migration.
  *
  * A helper accepting `Input` must handle both shapes, including nested encoded names. A helper
  * meant for decoded names only should declare that input shape explicitly and can supply it through

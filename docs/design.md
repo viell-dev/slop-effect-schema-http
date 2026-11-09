@@ -146,6 +146,15 @@ name, while a whole encoded read uses the encoded name. Added whole-group valida
 choice. Defaults hidden by group transformations or fallback routes can still replace raw edits. The
 rules and limits below state where the current checks apply.
 
+- **Array normalization preserves positions.** When stripping an inner object's unstated fields
+  requires a new view, keep the array's actual keys and length, holes and readable hidden/inherited
+  numeric cells. Metadata is not an additional element or looked up as an element type. Symbols stay
+  symbols in lookup and loss diagnostics; noncanonical index-looking strings stay metadata. Keep an
+  unchanged value's identity and do not invoke its iterator to rebuild it. Ordinary processing can
+  still read getters and inspect prototypes. These 0.15 corrections do not extend the bounded
+  constructor-default proof: previously accidental failures can uncover existing unsupported sparse
+  or own-iterator default substitutions under #170. The [0.15 migration](./release-notes/0.15.md)
+  states exact changed outputs and the validated-decoded workaround.
 - **The decoded side is what the schema's constructor takes.** The library builds the schema's value
   before encoding it, so a plain object works for a `Schema.Class`, and a field with a constructor
   default can be left out. These functions need `Schema.Top`, the bound that has a constructor.
@@ -191,8 +200,9 @@ rules and limits below state where the current checks apply.
   value cannot be told apart from a decoded one, so it is encoded again, with no error. Under a
   group with other fields, the order above decides: a group that only fits on the encoded side goes
   through the decoder as a whole, so a shared-type field in it is read as encoded.
-- **Both routes validate.** An encoded value goes through the decoder, so text cannot get past a
-  schema. A value on neither side is a compile error.
+- **Each route validates what it consumes.** An encoded field read through the decoder is validated;
+  a value fitting neither reading fails during preparation. Unsupported constructor-default paths
+  can still ignore an alias instead, as recorded under #170 above.
 - **A value stays on the side it was given on.** Where a schema's two sides state different names, a
   value on the encoded side can also fit the decoded side by losing them. Under
   `Struct({ a: optionalKey(String) }).pipe(encodeKeys({ a: "A" }))`, `{ A: "x" }` would be an empty
@@ -315,9 +325,10 @@ an error: `Request.InvalidRequest` before anything is sent.
   replaces a raw default.
 - **A default goes through the schema.** The group is decoded and encoded again, together with what
   the schema wrote, and the request carries the result. A value that does not fit is an error. Raw
-  text cannot get past a schema, and a decoder that accepts more spellings than its encoder writes
-  cannot let a loose spelling out. A default therefore loses its exact text: `?page=02` under a
-  number field goes out as `page=2`, and order and header spelling follow the schema.
+  text consumed through the schema is validated, and a decoder that accepts more spellings than its
+  encoder writes cannot let a loose spelling out. The raw-default correspondence limits below remain
+  exceptions. A default therefore loses its exact text: `?page=02` under a number field goes out as
+  `page=2`, and order and header spelling follow the schema.
 - **A default cannot push a field out.** Effect strips what a union member does not state, so a
   group whose default and caller's field sit in different members would lose one of them with no
   error. The whole group is matched first, so a member that holds all of it wins over an earlier

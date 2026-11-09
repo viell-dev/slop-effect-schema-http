@@ -110,5 +110,5 @@ middleware](./operation.md#client-middleware) for per-attempt data, which receiv
 number.
 
 See the [execution contract](../design.md#execution) and [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.14.0/src/http/Policy.ts) for
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.15.0/src/http/Policy.ts) for
 the complete reason and policy types.
