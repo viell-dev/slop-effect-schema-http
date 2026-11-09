@@ -584,7 +584,9 @@ describe(`array key normalization (${lane.name})`, () => {
       const { schema } = position;
       for (const shape of ["normal iterator", "watched iterator"] as const) {
         it.live(
-          `[EXT-45o] currently ${binding} ${position.name} ${shape} invalid aliases expose unsupported defaults`,
+          shape === "normal iterator"
+            ? `[EXT-45o] ${binding} ${position.name} native iterator invalid aliases refuse without dispatch`
+            : `[EXT-45o] currently ${binding} ${position.name} watched iterator invalid aliases expose unsupported defaults`,
           () =>
             Effect.gen(function* () {
               const backend = yield* start();
@@ -626,13 +628,14 @@ describe(`array key normalization (${lane.name})`, () => {
                 }
               const ledger = yield* backend.ledger;
               expect({ outcomes, requests: received(ledger) }).toMatchObject({
-                outcomes: Array.from({ length: 4 }, () => ({
-                  kind: "success",
-                  value: "Not Found",
-                })),
-                requests: [{}, {}, {}, {}],
+                outcomes: Array.from({ length: 4 }, () =>
+                  shape === "normal iterator"
+                    ? { kind: "failure", error: { _tag: "SchemaError" } }
+                    : { kind: "success", value: "Not Found" },
+                ),
+                requests: shape === "normal iterator" ? [] : [{}, {}, {}, {}],
               });
-              expect(ledger).toHaveLength(4);
+              expect(ledger).toHaveLength(shape === "normal iterator" ? 0 : 4);
               for (const entry of ledger)
                 wire(entry, binding, position.json('{"page_size":"25"}'));
             }),
@@ -640,9 +643,8 @@ describe(`array key normalization (${lane.name})`, () => {
       }
     }
 
-    it.live.fails(
-      `[EXT-45p] goal ${binding} invalid enumerable iterator aliases are kept or refused`,
-      () =>
+    const iteratorGoal =
+      (shape: "normal iterator" | "watched iterator") => () =>
         Effect.gen(function* () {
           const backend = yield* start();
           const outcomes = [];
@@ -666,47 +668,50 @@ describe(`array key normalization (${lane.name})`, () => {
               ),
               response,
             );
-            for (const shape of [
-              "normal iterator",
-              "watched iterator",
-            ] as const)
-              for (const stray of [false, true])
-                for (const invalid of ["many", null]) {
-                  const input = position.input({
-                    page_size: invalid,
-                    ...(stray ? { stray: "ignored" } : {}),
-                  });
-                  const watched = decorate(input, shape);
-                  const before = snapshot(input);
-                  const supplied = input as Request.Input<typeof schema>;
-                  outcomes.push(
-                    yield* (
-                      binding === "path"
-                        ? path.execute({ path: supplied })
-                        : body.execute({ body: supplied })
-                    ).pipe(Effect.provide(lane.fetchClient), observe),
-                  );
-                  unchanged(input, before);
-                  expect(watched.calls()).toBe(0);
-                }
+            for (const stray of [false, true])
+              for (const invalid of ["many", null]) {
+                const input = position.input({
+                  page_size: invalid,
+                  ...(stray ? { stray: "ignored" } : {}),
+                });
+                const watched = decorate(input, shape);
+                const before = snapshot(input);
+                const supplied = input as Request.Input<typeof schema>;
+                outcomes.push(
+                  yield* (
+                    binding === "path"
+                      ? path.execute({ path: supplied })
+                      : body.execute({ body: supplied })
+                  ).pipe(Effect.provide(lane.fetchClient), observe),
+                );
+                unchanged(input, before);
+                expect(watched.calls()).toBe(0);
+              }
           }
-          // Invalid finite-number aliases cannot be kept by this schema. This known #170 goal
-          // remains separate from the ordinary current-output pins using these exact fixtures.
+          // Exact native data is covered. Arbitrary wrappers remain outside the accepted
+          // evidence, so their separate kept-or-refused goal stays an expected failure.
           expect({
             outcomes,
             requests: received(yield* backend.ledger),
           }).toMatchObject({
-            outcomes: Array.from({ length: 24 }, () => ({
+            outcomes: Array.from({ length: 12 }, () => ({
               kind: "failure",
               error: { _tag: "SchemaError" },
             })),
             requests: [],
           });
-        }),
+        });
+    it.live(
+      `[EXT-45p] ${binding} invalid enumerable native iterator aliases refuse before dispatch`,
+      iteratorGoal("normal iterator"),
+    );
+    it.live.fails(
+      `[EXT-45p] goal ${binding} invalid enumerable watched iterator aliases are kept or refused`,
+      iteratorGoal("watched iterator"),
     );
 
-    it.live.fails(
-      `[EXT-45q] goal ${binding} invalid sparse aliases are kept or refused with and without rewriting`,
+    it.live(
+      `[EXT-45q] ${binding} invalid sparse own aliases refuse with and without rewriting`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
@@ -898,7 +903,7 @@ describe(`array key normalization (${lane.name})`, () => {
     );
 
     it.live(
-      `[EXT-45j] currently ${binding} sparse invalid aliases take defaults with and without inner rewriting`,
+      `[EXT-45j] ${binding} sparse invalid aliases refuse with and without inner rewriting`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
@@ -937,14 +942,12 @@ describe(`array key normalization (${lane.name})`, () => {
           }
           const ledger = yield* backend.ledger;
           expect(outcomes).toMatchObject([
-            { kind: "success", value: "Not Found" },
-            { kind: "success", value: "Not Found" },
+            { kind: "failure", error: { _tag: "SchemaError" } },
+            { kind: "failure", error: { _tag: "SchemaError" } },
           ]);
-          // The inner-stray case refused on published14. Restored layout now exposes the
-          // same unsupported sparse default as the no-stray control; #170 remains open.
-          expect(ledger).toHaveLength(2);
-          for (const entry of ledger)
-            wire(entry, binding, '[null,{"page_size":"25"}]');
+          // Layout-only repair exposed the default route on 0.15. The own-cell constructor
+          // extension now refuses both exact inputs; their former requests remain in reports.
+          expect(ledger).toEqual([]);
         }),
     );
 

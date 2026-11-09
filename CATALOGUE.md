@@ -3759,10 +3759,11 @@ transformed-group ownership, or unsupported member/final-fieldwise repairs.
   reads belong to existing schema execution. These are unsupported defect pins, not intended
   guarantees. Status: defect.
   - `[EXT-44e] currently ${shape} arrays retain their unsupported default overwrite`
-- **EXT-44f** A sparse array with optional elements retains a hole and the existing invalid-alias
-  overwrite; JSON writes the hole as null. The caller still lacks own index zero. This is an
-  unsupported defect pin. Status: defect.
-  - `[EXT-44f] currently sparse arrays retain their unsupported default overwrite`
+- **EXT-44f** A sparse array with optional elements refuses an invalid alias in its stable own
+  cell without dispatch, retaining the caller's hole and lack of own index zero. The original
+  default-overwrite pin remains in baseline reports before the EXT-47 combined repair.
+  Status: tested.
+  - `[EXT-44f] sparse own-cell aliases refuse instead of dispatching constructor defaults`
 - **EXT-44g** A union containing an array-shaped ancestor retains its unproved default overwrite;
   the object cursor alternative retains exact path and JSON. Status: defect.
   - `[EXT-44g] currently an array-shaped union ancestor retains its unproved overwrite`
@@ -3811,10 +3812,13 @@ transformed-group ownership, or unsupported member/final-fieldwise repairs.
   Following the [public disposition](https://github.com/viell-dev/slop-effect-schema-http/issues/189#issuecomment-6737041284),
   the unreleased key repair exposes the existing unsupported #170 default 25 for invalid text;
   the original valid encoded/decoded controls each write 5. Native/watched iterator and path/JSON
-  cases retain all three old inputs, now asserting three exact received requests and zero calls.
-  This current-output pin does not establish invalid-alias preservation; EXT-45p keeps that goal.
+  cases retain all three old inputs and zero calls. The later EXT-47 combined repair splits the
+  iterator profiles: exact native own data refuses the invalid alias and sends the two valid
+  controls; the watched wrapper still sends all three requests, including its unsupported default.
+  Unchanged candidate reports preserve the exact first pin failures before that conversion.
   Status: defect.
-  - `[EXT-44p] currently ${binding} enumerable ${iterator} array iterator exposes an unsupported default and valid controls`
+  - `[EXT-44p] ${binding} exact native own iterator refuses invalid aliases and retains valid controls`
+  - `[EXT-44p] currently ${binding} watched own iterator retains its unsupported default and valid controls`
 
 ## Array keys and normalization layout (EXT-45)
 
@@ -3852,6 +3856,12 @@ Frozen follow-up `dbfd8a48bc2845d3f3d0c053bfb770dc0176745f` passes all 176 ordin
 four expected #170 cases in each source lane (180 focused cases), including the 27 mixed-boundary
 and length additions. This remains consumer source evidence; final pin, packing, complete suite
 qualification and publication are separate.
+
+The EXT-47 combined constructor repair at frozen source `24de284595c4d3044f632f9ec31d0629c0a21b84`
+later supersedes sparse-own-cell and exact-native-iterator overwrite pins. Its unchanged Node and
+Chromium runs are retained under `artifacts/constructor-input-24de284-unchanged-*` before conversion.
+EXT-45p now splits native ordinary refusal checks from two retained watched-wrapper expected
+failures. Arbitrary iterator and private/custom-prototype evidence remains excluded.
 
 - **EXT-45a** Plain encoded, decoded, encoded/decoded inner-stray, omitted-default and empty arrays
   retain their ordinary wire bytes on both bindings. Status: tested.
@@ -3894,14 +3904,15 @@ qualification and publication are separate.
   default 25 with zero calls. Its descriptor and caller data remain intact. This current limit is
   separate from valid enumerable-iterator goals and original EXT-44p pins. Status: defect.
   - `[EXT-45i] currently ${binding} hidden iterators retain their unsupported default meaning`
-- **EXT-45j** Sparse invalid text now sends null/25 both with and without inner stray. Published
+- **EXT-45j** The 0.15 layout correction sent null/25 both with and without inner stray. Published
   0.14 refused the inner-stray call after faulty compaction; that exact report is retained. The
   [public #170 disposition](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6736960353)
   identifies this refusal-to-default consequence as an exposed unsupported route, not repaired
-  input preservation or a sparse constructor proof. Two received requests, exact bytes and caller
-  hole/identity checks pin current output. EXT-45q retains the separate preservation goal.
-  Status: defect.
-  - `[EXT-45j] currently ${binding} sparse invalid aliases take defaults with and without inner rewriting`
+  input preservation or a sparse constructor proof. The later accepted own-cell repair refuses
+  both exact inputs without dispatch, preserving caller hole/identity checks. Earlier received
+  requests and first candidate failures remain in reports; EXT-45q is now also an ordinary check.
+  Status: tested.
+  - `[EXT-45j] ${binding} sparse invalid aliases refuse with and without inner rewriting`
 - **EXT-45k** A plain text-array schema without reader-choice normalization preserves bytes and
   leaves an enumerable symbol-metadata getter uncalled. This is an observed narrow control,
   not a general no-getter promise. Status: tested.
@@ -3921,22 +3932,28 @@ qualification and publication are separate.
   constructor-default evidence. Status: tested.
   - `[EXT-45n] ${binding} valid inherited numeric cells remain readable with and without rewriting`
 - **EXT-45o** Native/watched enumerable iterators on arrays, fixed tuples and post-rest tuples
-  expose current unsupported default 25 for invalid text/null, with and without inner stray data.
-  Each current pin checks four exact requests, zero iterator calls and unchanged caller descriptors.
+  retain text/null cases with and without inner stray data. Exact native data now refuses all four
+  inputs without dispatch; arbitrary watched wrappers retain four unsupported default-25 requests.
+  Both profiles check zero iterator calls and unchanged caller descriptors.
   The [public finding](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6737040870)
-  records the earlier TypeError-to-default change; EXT-45p is the separate goal. Status: defect.
-  - `[EXT-45o] currently ${binding} ${position.name} ${shape} invalid aliases expose unsupported defaults`
-- **EXT-45p** Expected-failure #170 preservation goal for the exact enumerable-iterator fixtures
-  pinned ordinarily under EXT-45o. Invalid finite aliases require typed refusal without dispatch;
-  current output remains generated 25. This known failing goal is not a new constructor proof or
-  a release claim. Plain failing candidate evidence is retained before marking it expected-failure.
+  records the earlier TypeError-to-default change; EXT-45p keeps the corresponding checks separate.
   Status: defect.
-  - `[EXT-45p] goal ${binding} invalid enumerable iterator aliases are kept or refused`
-- **EXT-45q** Expected-failure #170 goal for the exact sparse invalid aliases pinned under EXT-45j,
-  with and without inner rewriting. Current `[null,25]` behavior remains visible alongside the
-  future kept-or-refused goal; correcting positions does not establish sparse alias preservation.
-  Plain failing candidate evidence is retained before marking it expected-failure. Status: defect.
-  - `[EXT-45q] goal ${binding} invalid sparse aliases are kept or refused with and without rewriting`
+  - `[EXT-45o] ${binding} ${position.name} native iterator invalid aliases refuse without dispatch`
+  - `[EXT-45o] currently ${binding} ${position.name} watched iterator invalid aliases expose unsupported defaults`
+- **EXT-45p** The exact native enumerable-iterator fixtures of EXT-45o now require ordinary typed
+  refusal without dispatch. Watched arbitrary wrappers remain separate expected-failure #170
+  goals: their current output is still generated 25. Each profile retains all twelve original
+  inputs per binding; no selected case is skipped. Earlier plain failures and the first unchanged
+  candidate run remain in reports. This does not establish arbitrary-iterator evidence or release
+  qualification.
+  Status: defect.
+  - `[EXT-45p] ${binding} invalid enumerable native iterator aliases refuse before dispatch`
+  - `[EXT-45p] goal ${binding} invalid enumerable watched iterator aliases are kept or refused`
+- **EXT-45q** The exact sparse own-cell invalid aliases of EXT-45j, with and without inner
+  rewriting, now refuse without dispatch under the combined constructor repair. Original
+  `[null,25]` requests and plain baseline failures remain in reports. Caller holes, descriptors
+  and identities remain unchanged. Status: tested.
+  - `[EXT-45q] ${binding} invalid sparse own aliases refuse with and without rewriting`
 - **EXT-45r** A fully own dense `Array(Filter)` proxy whose `getPrototypeOf` throws retains valid
   encoded 5, with and without inner stray data, on path and JSON. Published 0.14 succeeds; first
   checkpoint `e95c7aa` adds an unnecessary failing walk. The
@@ -4013,3 +4030,119 @@ establish broader opaque/array correspondence or a constructor-default proof.
   Caller readable/native lengths, holes, descriptors and cell identity remain unchanged.
   Status: tested.
   - `[EXT-46b] ${binding} structural array reading preserves readable length beyond its native descriptor`
+
+## Constructor input profiles (EXT-47)
+
+Independent consumer authorship from the accepted
+[#170 combined batch](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6749956596),
+public Schema/Operation APIs, existing consumer scenarios and the README's
+[neutral echo contract](./README.md#the-neutral-echo-probe). No library implementation, source
+tests, backend or conformance code informed this context. The new
+`src/scenarios/constructor-input-profiles.test.ts` runs path and JSON-body operations through Fetch
+over real loopback sockets in Node and Chromium; the same file also runs against the packed
+package. It checks exact method, target, relevant header lines, JSON bytes and request counts.
+Caller own keys, descriptors and direct cell identities remain unchanged. These synthetic checks
+do not establish human use or release qualification.
+
+The baseline was main `0b72233da7b7e4dde4e51fafad70ccd45433b098` (package version 0.15.0), with
+Effect 4.1.2, Node 24.22.2 and Chromium 158 on Windows. Passing overwrite pins and forty plain
+failing goals per source lane remain under `artifacts/constructor-input-main-*`, before conversion.
+The frozen unreleased candidate is `24de284595c4d3044f632f9ec31d0629c0a21b84`, using the same
+environment. Both unchanged source lanes first detected exactly 95 invalidated pins/expected-failure
+markers across EXT-44, EXT-45 and EXT-47, with 225 ordinary passes and two retained wrapper goals.
+Those first reports remain under `artifacts/constructor-input-24de284-unchanged-*`. Covered calls
+now require ordinary `SchemaError` assertions and empty ledgers.
+
+Frozen-candidate verification on 2026-11-09 passes the full Node lane (2,210 ordinary cases),
+Chromium lane (1,385), packed lane (2,223) and app lane (3), with two additional expected failures
+for watched iterator wrappers in each source/packed lane and zero skips everywhere. All 142 new
+EXT-47 cases pass ordinarily in Node, Chromium and packed mode. Source/packed/app catalogue gates,
+strict source and packed declarations, formatting, boundaries and lint pass. Full logs are retained as
+`artifacts/constructor-input-24de284-{source,packed,app}-full.log`, with copied per-lane JUnit
+reports. The existing app lane supplies general installed-package smoke evidence, not direct tests
+of these profiles. These checks use Effect 4.1.2 on Windows; they do not establish other peers or
+platforms, human use, implementation review or release qualification. This evidence does not expand
+inherited-only, arbitrary-iterator, Void, open-member, normalized-declaration or conflicting-alias
+policy; EXT-44o retains the separate #143 migration pin.
+
+- **EXT-47a** Dense optional Filter elements, fixed optional tuples, optional object ancestors,
+  NullOr/NullishOr ancestors, root NullOr, and object/string or boolean/object alternatives retain
+  encoded `"05"` to `"5"`, decoded `5` to `"5"`, and omitted limit to default `"25"` bytes.
+  Unencoded primitive alternatives add no new scalar interpretation. Status: tested.
+  - `[EXT-47a] ${binding} ${fixture.name} retains encoded decoded and omitted bytes`
+- **EXT-47b** Every EXT-47a shape refuses supplied invalid text and null aliases without dispatch.
+  The baseline's exact default-25 requests remain preserved independently of the original goals.
+  Status: tested.
+  - `[EXT-47b] ${binding} ${fixture.name} refuses invalid aliases without default dispatch`
+- **EXT-47c** The exact EXT-47b inputs also retain the original independently authored refusal
+  goals as required ordinary passes under the transparent primitive union extension. Status: tested.
+  - `[EXT-47c] ${binding} ${fixture.name} refuses invalid aliases before dispatch`
+- **EXT-47d** Sparse optional arrays retain leading/trailing holes and a stable own cell, including
+  hidden and null-prototype arrays. Fixed optional tuples and post-rest tuples retain their actual
+  positions. Encoded, decoded and default controls assert exact null padding and caller layout.
+  Holes use schemas that accept undefined; optionalKey alone does not make present undefined valid.
+  Status: tested.
+  - `[EXT-47d] ${binding} ${fixture.name} retains encoded decoded and omitted bytes`
+- **EXT-47e** Every EXT-47d profile refuses supplied invalid text/null without dispatch. Earlier
+  default-25 requests at the real index, with surrounding null padding, remain in baseline reports.
+  Status: tested.
+  - `[EXT-47e] ${binding} ${fixture.name} refuses invalid aliases without default dispatch`
+- **EXT-47f** The original sparse own-cell goals now require ordinary typed refusal with zero
+  requests. They certify no inherited cell and require no global prototype mutation. Status: tested.
+  - `[EXT-47f] ${binding} ${fixture.name} refuses invalid aliases before dispatch`
+- **EXT-47g** Exact native own iterator data, enumerable/hidden/frozen/null-prototype profiles,
+  nested arrays and wrapped arrays with inner stray fields retain valid/default wire controls.
+  Descriptor snapshots do not invoke the iterator. Status: tested.
+  - `[EXT-47g] ${binding} ${fixture.name} retains encoded decoded and omitted bytes`
+- **EXT-47h** The EXT-47g arrays refuse invalid text/null aliases without dispatch. Their original
+  default-25 baseline remains distinct from the earlier symbol-coercion normalization defect.
+  Status: tested.
+  - `[EXT-47h] ${binding} ${fixture.name} refuses invalid aliases without default dispatch`
+- **EXT-47i** The exact native-own-data goals now require ordinary `SchemaError` passes without
+  dispatch under the accepted bounded iterator extension. Status: tested.
+  - `[EXT-47i] ${binding} ${fixture.name} refuses invalid aliases before dispatch`
+- **EXT-47j** Empty arrays, undefined elements, absent tuple/object fields, null and primitive
+  alternatives keep their own bytes. Explicit undefined object values render absent on the path;
+  the JSON codec's existing representation is null. Status: tested.
+  - `[EXT-47j] ${binding} scalar null absent and empty alternatives retain their own bytes`
+- **EXT-47k** Wrapper, entries, bound-native, accessor and subclass iterator profiles retain the
+  unsupported invalid-alias default route. The wrapper call count and iterator getter count stay
+  exactly zero, and descriptors remain unchanged. No iterable is consumed for evidence.
+  Status: defect.
+  - `[EXT-47k] currently ${binding} ${shape} iterator profiles remain excluded without iteration`
+- **EXT-47l** Void-first and Unknown-first alternatives retain their distinct existing member
+  behavior: Void consumes the object and writes undefined (absent in path JSON, null in body JSON),
+  while Unknown preserves the invalid text. Neither becomes a transparent primitive.
+  Status: limit.
+  - `[EXT-47l] currently ${binding} Void and open alternatives preserve their own member behavior`
+- **EXT-47m** An optionalKey-only ancestor already refuses invalid text/null before dispatch and
+  keeps omitted filter absent. This remains a positive refusal control rather than a repair goal.
+  Status: tested.
+  - `[EXT-47m] ${binding} optionalKey ancestors retain their existing refusal and omission behavior`
+- **EXT-47n** A flat nullable renamed root refuses valid encoded `"05"` beside decoded numeric
+  count after two complete-side controls retain their distinct Base64 bytes. The earlier mixed
+  default-25/double-encoded request remains in baseline reports. Status: tested.
+  - `[EXT-47n] ${binding} a nullable root mixed-side gate refuses after complete-side controls`
+- **EXT-47o** The original mixed-root goal is an ordinary required refusal when the whole encoded
+  decoder rejects decoded count. Independent field decoding may not choose a new shared-text
+  interpretation. Status: tested.
+  - `[EXT-47o] ${binding} a nullable root mixed-side gate refuses without fieldwise reinterpretation`
+- **EXT-47p** An inherited-only invalid alias retains its unsupported default overwrite. The
+  prototype belongs only to that input; no own index is manufactured. Status: defect.
+  - `[EXT-47p] currently ${binding} an inherited-only alias supplies no own-cell witness`
+- **EXT-47q** The native-own-iterator invalid route evaluates its original constructor default
+  exactly once before refusing the alias without dispatch. The retained baseline had the same
+  callback count before sending `25`; the repair may not replay construction. Status: tested.
+  - `[EXT-47q] ${binding} native iterator refusal preserves the original default callback count`
+- **EXT-47r** A nested Filter genuinely read during fieldwise preparation inside a nullable root
+  keeps valid alias `5` beside decoded count and double-encoded shared Base64 text. This existing
+  success is separate from the flat root gate and must retain its exact wire meaning.
+  Status: tested.
+  - `[EXT-47r] ${binding} actual nested fieldwise consumption retains shared decoded text`
+- **EXT-47s** A private/custom array prototype containing an inherited invalid neighbor beside an
+  own valid encoded alias currently writes two defaults. The custom prototype keeps this input
+  outside the accepted ordinary/null-prototype subset, so it retains a current-output pin. The
+  exploratory refusal goal is preserved in reports before its scope correction. Source coverage
+  carries the accepted Array.prototype neighbor case without global mutation in wire scenarios.
+  Input ownership, cell identity and descriptors remain unchanged. Status: defect.
+  - `[EXT-47s] currently ${binding} a private array prototype with own and inherited aliases retains defaults`
