@@ -12,7 +12,7 @@ import { isDocumentationSource } from "./documentation-scope.mjs";
 //
 // - The newest stable GitHub release is package.json's version, its tag is the commit it targets
 //   and records, and its assets are complete and agree with each other.
-// - npm's latest is that version and serves the same bytes.
+// - npm's latest is that version and its registry integrity matches the GitHub tarball.
 // - The deployed site's meta tags name that version and commit, or a documentation correction.
 // - GitHub's labels are exactly .github/labels.json.
 // - The About description and homepage agree with package.json and the README.
@@ -204,16 +204,35 @@ export async function reconcile({ read, testFiles, github, fetch }) {
           .browser_download_url,
       );
     bytes = await asset(tarball);
+    const checker = await asset("release-check.mjs");
     const sums = (await asset("SHA256SUMS")).toString("utf8");
     const record = JSON.parse((await asset("manifest.json")).toString("utf8"));
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
-    if (sums.split("\n").some((line) => line === `${sha256}  ${tarball}`))
+    const expectedSums = [
+      [tarball, bytes],
+      ["release-check.mjs", checker],
+    ]
+      .map(
+        ([name, content]) =>
+          `${createHash("sha256").update(content).digest("hex")}  ${name}`,
+      )
+      .toSorted();
+    // The producer records these two assets. Compare complete rows so missing, duplicate,
+    // malformed or extra entries cannot hide behind one valid package checksum.
+    const actualSums = sums
+      .replaceAll("\r\n", "\n")
+      .replace(/\n$/, "")
+      .split("\n")
+      .toSorted();
+    if (
+      actualSums.length === expectedSums.length &&
+      actualSums.every((line, index) => line === expectedSums[index])
+    )
       add("ok", `SHA256SUMS of ${version}`);
     else
       add(
         "DIFFERS",
         `SHA256SUMS of ${version}`,
-        `does not list ${sha256} for ${tarball}. If the published bytes are wrong, release a new version.`,
+        `must contain exactly one correct SHA-256 entry each for ${tarball} and release-check.mjs. If the published bytes are wrong, release a new version.`,
       );
     const correct =
       "The assets of a release come from one qualification; if they do not, release a new version.";
@@ -257,7 +276,7 @@ export async function reconcile({ read, testFiles, github, fetch }) {
     );
     if (!published.ok) throw new Error(`HTTP ${published.status} from npm`);
     agree(
-      `npm bytes of ${version}`,
+      `npm integrity metadata of ${version}`,
       (await published.json()).dist.integrity,
       integrityOf(bytes),
       "npm and the GitHub release must offer the same tarball; if they do not, release a new version.",

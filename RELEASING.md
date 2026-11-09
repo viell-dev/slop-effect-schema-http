@@ -279,10 +279,15 @@ repository and with each other. From a checkout of `main` at the release, with `
 npm run check-live
 ```
 
-It changes nothing. It compares the newest stable GitHub release and its assets, npm `latest` and
-its bytes, the deployed site's `library-version` and `documentation-commit`, the release's tag
+It changes nothing. It downloads the GitHub package and release checker, requiring exactly one
+correct checksum entry for each and no other rows. It also compares the release's manifest identity,
+npm `latest`, the deployed site's `library-version` and `documentation-commit`, the release's tag
 target, GitHub's labels against `.github/labels.json`, the repository description and homepage
 against `package.json` and the README, and whether each `currently …` test links an open issue.
+
+Registry reconciliation compares npm's reported SRI integrity with the downloaded GitHub tarball.
+The fresh registry-consumer step separately downloads and verifies the npm package, including its
+signatures and provenance.
 
 Each line starts with what it found:
 

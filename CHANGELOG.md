@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Verify the downloaded release checker as well as the package in the final publication check
+  (#197). Require the complete pair of checksum records and reject missing, duplicate, malformed,
+  extra or mismatched entries. Describe the npm comparison as registry integrity metadata.
 - Honor an empty result from a custom query renderer without calling it again with empty input
   (#196). Truly empty queries still receive one empty-input call; written query text and the order
   of separate generated runs remain unchanged. This is a compatible correction to the documented
