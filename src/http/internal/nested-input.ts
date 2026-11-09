@@ -26,11 +26,6 @@ interface Captured {
 
 const keyOf = (name: PropertyKey): Key =>
   typeof name === "number" ? String(name) : name;
-const ancestor = (ast: SchemaAST.AST): ast is SchemaAST.Objects =>
-  ast._tag === "Objects" &&
-  ast.encoding === undefined &&
-  ast.indexSignatures.length === 0 &&
-  !ast.propertySignatures.some(({ name }) => name === Symbol.iterator);
 
 /** Retain the actual enumerable output link or write, including its object identity. */
 const writtenData = (output: unknown, key: Key) => {
@@ -127,14 +122,61 @@ const ownData = (input: unknown, names: ReadonlyArray<Key>) => {
 };
 
 /**
- * Nested encoded-only evidence through unchanged direct object fields. Union and transformed
- * nodes may be terminals; they never supply ancestor correspondence. No schema or thunk runs.
+ * Nested encoded-only evidence through unchanged closed object/union fields. A parent union
+ * contributes a field only when every declaring member uses the same schema. No schema or thunk runs.
  */
 export const nestedEncodedInput = (ast: SchemaAST.AST) => {
-  if (!ancestor(ast)) return undefined;
+  type Fields = ReadonlyMap<Key, SchemaAST.AST | undefined>;
+  const views = new Map<SchemaAST.AST, Fields | undefined>();
+  const viewing = new Set<SchemaAST.AST>();
+  let cyclic = false;
+  const fieldsOf = (part: SchemaAST.AST): Fields | undefined => {
+    if (views.has(part)) return views.get(part);
+    if (
+      part.encoding !== undefined ||
+      (part._tag !== "Objects" && part._tag !== "Union") ||
+      (part._tag === "Objects" &&
+        (part.indexSignatures.length > 0 ||
+          part.propertySignatures.some(
+            ({ name }) => name === Symbol.iterator,
+          ))) ||
+      (part._tag === "Union" && part.types.length === 0)
+    ) {
+      views.set(part, undefined);
+      return undefined;
+    }
+    if (part._tag === "Objects") {
+      const fields = new Map(
+        part.propertySignatures.map(({ name, type }) => [keyOf(name), type]),
+      );
+      views.set(part, fields);
+      return fields;
+    }
+    if (viewing.has(part)) {
+      cyclic = true;
+      return undefined;
+    }
+    viewing.add(part);
+    const fields = new Map<Key, SchemaAST.AST | undefined>();
+    for (const member of part.types) {
+      const declared = fieldsOf(member);
+      if (declared === undefined) {
+        viewing.delete(part);
+        views.set(part, undefined);
+        return undefined;
+      }
+      for (const [name, type] of declared) {
+        if (!fields.has(name)) fields.set(name, type);
+        else if (fields.get(name) !== type) fields.set(name, undefined);
+      }
+    }
+    viewing.delete(part);
+    views.set(part, fields);
+    return fields;
+  };
+  if (fieldsOf(ast) === undefined) return undefined;
   const known = new Map<SchemaAST.AST, Node | undefined>();
   const active = new Set<SchemaAST.AST>();
-  let cyclic = false;
   const nodeOf = (part: SchemaAST.AST, root = false): Node | undefined => {
     if (active.has(part)) {
       cyclic = true;
@@ -147,21 +189,23 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
       known.set(part, node);
       return node;
     }
-    if (!ancestor(part)) {
+    const declared = fieldsOf(part);
+    if (declared === undefined) {
       known.set(part, undefined);
       return undefined;
     }
     active.add(part);
-    const fields = part.propertySignatures.flatMap(({ name, type }) => {
+    const fields = [...declared].flatMap(([name, type]) => {
+      if (type === undefined) return [];
       const node = nodeOf(type);
-      return node === undefined ? [] : [[keyOf(name), node] as const];
+      return node === undefined ? [] : [[name, node] as const];
     });
     active.delete(part);
     const node =
       fields.length === 0
         ? undefined
         : {
-            names: part.propertySignatures.map(({ name }) => keyOf(name)),
+            names: [...declared.keys()],
             fields,
           };
     known.set(part, node);

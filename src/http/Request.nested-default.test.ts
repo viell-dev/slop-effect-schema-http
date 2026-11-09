@@ -689,7 +689,7 @@ describe("nested aliases replaced during whole construction", () => {
     }
   });
 
-  it("does not traverse parent unions, transformations, arrays, declarations or suspensions", () => {
+  it("does not traverse transformations, arrays, declarations or suspensions", () => {
     class Wrapped extends Schema.Class<Wrapped>("NestedAncestor")({
       filter: Inner,
     }) {}
@@ -699,7 +699,6 @@ describe("nested aliases replaced during whole construction", () => {
       return Direct;
     });
     for (const schema of [
-      Schema.Union([Direct, Schema.Struct({ cursor: Schema.String })]),
       Direct.pipe(Schema.encodeKeys({ filter: "q" })),
       Schema.Struct({ filters: Schema.Array(Inner) }),
       Wrapped,
@@ -717,49 +716,50 @@ describe("nested aliases replaced during whole construction", () => {
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
   it.effect(
-    "currently retains unsupported parent-union and array default overwrites",
+    "refuses invalid nested input through an unambiguous parent union",
     () =>
       Effect.gen(function* () {
         expect(
-          yield* prepare(
-            Schema.Union([Direct, Schema.Struct({ cursor: Schema.String })]),
-            { filter: { page_size: "many" } },
-            "path",
+          yield* Effect.flip(
+            prepare(
+              Schema.Union([Direct, Schema.Struct({ cursor: Schema.String })]),
+              { filter: { page_size: "many" } },
+              "body",
+            ),
           ),
-        ).toEqual({ filter: { page_size: "25" } });
-        expect(
-          yield* prepare(
-            Schema.Struct({ filters: Schema.Array(Inner) }),
-            { filters: [{ page_size: "many" }] },
-            "body",
-          ),
-        ).toEqual({ filters: [{ page_size: "25" }] });
+        ).toBeInstanceOf(Schema.SchemaError);
       }),
   );
 
-  for (const [name, schema, input] of [
-    [
-      "parent union",
-      Schema.Union([Direct, Schema.Struct({ cursor: Schema.String })]),
-      { filter: { page_size: "many" } },
-    ],
-    [
-      "array ancestor",
-      Schema.Struct({ filters: Schema.Array(Inner) }),
-      { filters: [{ page_size: "many" }] },
-    ],
-  ] as const) {
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-    it.effect.fails(
-      `refuses invalid nested input through an unsupported ${name}`,
-      () =>
-        Effect.gen(function* () {
-          expect(
-            yield* Effect.flip(prepare(schema, input, "body")),
-          ).toBeInstanceOf(Schema.SchemaError);
-        }),
-    );
-  }
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect("currently retains unsupported array default overwrites", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* prepare(
+          Schema.Struct({ filters: Schema.Array(Inner) }),
+          { filters: [{ page_size: "many" }] },
+          "body",
+        ),
+      ).toEqual({ filters: [{ page_size: "25" }] });
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect.fails(
+    "refuses invalid nested input through an unsupported array ancestor",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* Effect.flip(
+            prepare(
+              Schema.Struct({ filters: Schema.Array(Inner) }),
+              { filters: [{ page_size: "many" }] },
+              "body",
+            ),
+          ),
+        ).toBeInstanceOf(Schema.SchemaError);
+      }),
+  );
 
   it("reuses metadata DAGs and shared inputs without copying cyclic extras", () => {
     const schema = Schema.Struct({ left: Direct, right: Direct });

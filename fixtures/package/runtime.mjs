@@ -197,6 +197,29 @@ for (const [schema, wrap] of [
     }),
     (filter) => ({ filter }),
   ],
+  [
+    Schema.Union([
+      Schema.Struct({ filter: nestedDefaultInner }),
+      Schema.Struct({ cursor: Schema.String }),
+    ]),
+    (filter) => ({ filter }),
+  ],
+  [
+    Schema.Struct({
+      wrapper: Schema.Union([
+        Schema.Struct({ filter: nestedDefaultInner }),
+        Schema.Struct({ cursor: Schema.String }),
+      ]),
+    }),
+    (filter) => ({ wrapper: { filter } }),
+  ],
+  [
+    Schema.Union([
+      Schema.Struct({ kind: Schema.Literal("a"), filter: nestedDefaultInner }),
+      Schema.Struct({ kind: Schema.Literal("b"), filter: nestedDefaultInner }),
+    ]),
+    (filter) => ({ kind: "a", filter }),
+  ],
 ]) {
   for (const kind of ["path", "body"]) {
     let rendered;

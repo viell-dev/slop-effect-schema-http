@@ -623,10 +623,16 @@ through whole decoding and the loss checks. Invalid nested text then fails befor
 aliases can also newly refuse beside decoded-only common fields, and shared-type fields take their
 encoded interpretation when whole decoding succeeds. Complete-side cases and omission retain their
 meaning. Whole decoding can repeat schema checks and services, but construction is not replayed.
-[What's in 0.12](../release-notes/0.12.md) gives path and JSON examples and a decoded mapping.
-Parent unions, arrays, opaque/suspended/transformed ancestors and unsupported member/fieldwise
-routes remain outside this extension under #170. A fieldwise property reader may already decode a
-nested alias correctly; it cannot establish this constructor-only proof.
+[What's in 0.12](../release-notes/0.12.md) gives path and JSON examples and a decoded mapping. In
+0.13, finite closed untransformed parent unions can contribute unchanged fields too. Each member
+declaring a field must use the same field schema; missing fields on other closed members do not
+invent ownership. All member names stay in ancestor evidence, while distinct field schemas end that
+path. The original successful initial whole construction, strict output and one stable witness
+remain required. [What's in 0.13](../release-notes/0.13.md) gives the checked parent-union
+migration, including whole-group consequences. Distinct declarations, arrays,
+opaque/suspended/transformed/open parents and unsupported member/fieldwise routes remain under #170.
+A fieldwise property reader may already decode a nested alias correctly; it cannot establish this
+constructor-only proof.
 
 For a nonempty caller group, a decoding default hidden by a rename can still replace a later raw
 edit without refusal. The library does not infer general field correspondence or conflicting-alias
@@ -809,5 +815,5 @@ records without it remain valid and use the earlier selection behavior; the new 
 requires complete evidence.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.12.0/src/http/Request.ts)
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.13.0/src/http/Request.ts)
 for all types and overloads.

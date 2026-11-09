@@ -71,9 +71,17 @@ strict-read failure, valid aliases can newly refuse beside decoded-only common f
 shared-type fields can change interpretation when the whole encoded group succeeds; use a complete
 side or validated decoded mapping. Whole decoding can repeat checks and services; construction is
 not replayed. [What's in 0.12](./release-notes/0.12.md) gives path, JSON and decoded mapping
-examples. Parent unions, arrays, opaque/suspended/transformed ancestors, changing caller objects and
-unsupported member/fieldwise routes remain outside this extension under #170. Supply decoded values
-or a validated decoded mapping there.
+examples.
+
+In 0.13, finite closed untransformed parent unions can also supply unchanged field paths. Every
+member that declares a field must use the same field schema; other closed members may omit it. All
+member names remain in stable ancestor evidence. The original whole construction and strict writer
+still have to succeed, followed by one coherent caller/output witness and whole-schema validation.
+[What's in 0.13](./release-notes/0.13.md) covers the migration, including valid mixed-side refusals
+and shared-type interpretation changes. Distinct field declarations, arrays,
+opaque/suspended/transformed/open parents, changing caller objects and unsupported member/fieldwise
+routes remain outside this extension under #170. Supply decoded values or a validated decoded
+mapping there.
 
 Whole encoded nested shapes retain their static input type in 0.10. Helpers using `Request.Input`
 must handle encoded nested names too, or declare their own decoded input shape; the [0.10
