@@ -311,6 +311,29 @@ describe("whole nested encoded input", () => {
     }),
   );
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect.fails(
+    "refuses invalid nested encoded input instead of replacing it with a default",
+    () =>
+      Effect.gen(function* () {
+        const NestedDefault = Schema.Struct({
+          filter: Schema.Struct({
+            term: Schema.optionalKey(Schema.String),
+            limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+              Schema.withConstructorDefault(Effect.succeed(25)),
+            ),
+          }).pipe(Schema.encodeKeys({ limit: "page_size" })),
+        });
+        const request = bind(
+          NestedDefault,
+          (value) => `/${value.filter.page_size ?? "missing"}`,
+        );
+        const invalid = yield* Effect.flip(
+          Request.compile(request, { path: { filter: { page_size: "many" } } }),
+        );
+        expect(Schema.isSchemaError(invalid)).toBe(true);
+      }),
+  );
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
   it.effect(
     "currently retains nested encoded defaults outside the root proof",
     () =>
