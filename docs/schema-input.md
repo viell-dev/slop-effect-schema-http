@@ -101,7 +101,10 @@ This includes the Undefined/Null members of optional, nullable and nullish objec
 allow-list is String, Number, Boolean, BigInt, Symbol, UniqueSymbol, Literal, Enum, TemplateLiteral,
 Null, Undefined and Never. Void, encoded primitives, primitive encoding intermediates,
 open/opaque/suspended alternatives and array-shaped parent members do not qualify. The object
-members retain the same field-identity and closed-name rules.
+members retain the same field-identity and closed-name rules. An alternative that is itself a
+primitive-only union supplies no object view at either level. A codec's closed object encoding view
+may include the listed primitive alternatives, such as `NullOr(Struct)`; this can establish root or
+terminal evidence too.
 
 ### Initial whole construction
 
@@ -136,16 +139,16 @@ length. Holes and inherited cells supply no witness; an own cell can still estab
 that validates an inherited neighbor. Use actual length for post-rest positions and require every
 selected strict-output array to have matching length and dense own data cells. An own
 Symbol.iterator data property qualifies only when its value is the unchanged native array iterator;
-capture and recheck its descriptor. Accessors, subclasses, custom prototypes/iterators and changing
-paths remain excluded, as do array-shaped parent union members. Metadata and selected-path
-validation have linear reflection gates; capture each ancestor frame once. No schema, default or
-suspension runs to build this metadata. Capture stable own-data paths before callbacks and select
-one coherent caller path and actual strict output write, never independent candidates. Validate
-output correspondence at selection, then retain caller evidence through whole decoding and loss
-checks. Whole decoding can repeat checks and services; do not replay construction. Root fieldwise
-success cannot establish nested ownership because its property reader can already consume that
-alias. Unsupported evidence remains under
-[#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
+the reference is Array.prototype's iterator as installed when the module loaded. Capture and recheck
+its descriptor. Accessors, subclasses, custom prototypes/iterators and changing paths remain
+excluded, as do array-shaped parent union members. Metadata and selected-path validation have linear
+reflection gates; capture each ancestor frame once. No schema, default or suspension runs to build
+this metadata. Capture stable own-data paths before callbacks and select one coherent caller path
+and actual strict output write, never independent candidates. Validate output correspondence at
+selection, then retain caller evidence through whole decoding and loss checks. Whole decoding can
+repeat checks and services; do not replay construction. Root fieldwise success cannot establish
+nested ownership because its property reader can already consume that alias. Unsupported evidence
+remains under [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
 
 ## Preservation and selection
 

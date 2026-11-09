@@ -333,6 +333,103 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
   });
 
   it.effect(
+    "currently substitutes defaults below unsupported primitive-only union members at both levels",
+    () =>
+      Effect.gen(function* () {
+        const primitive = Schema.Union([Schema.String, Schema.Number]);
+        const terminal = Schema.Union([primitive, Filter]);
+        const ancestor = Schema.Struct({
+          cell: Schema.Union([primitive, Schema.Struct({ filter: Filter })]),
+        });
+        expect(encodedInput(terminal.ast)).toBeUndefined();
+        expect(nestedEncodedInput(Schema.Array(terminal).ast)).toBeUndefined();
+        expect(nestedEncodedInput(ancestor.ast)).toBeUndefined();
+        // A closed empty object is an object alternative, even though it declares no fields.
+        expect(
+          nestedEncodedInput(
+            Schema.Struct({
+              cell: Schema.Union([
+                Schema.Struct({}),
+                Schema.Struct({ filter: Filter }),
+              ]),
+            }).ast,
+          ),
+        ).toBeDefined();
+        for (const kind of ["path", "body"] as const)
+          for (const [input, expected] of [
+            [{ page_size: "many" }, "25"],
+            [{ page_size: "05" }, "5"],
+            [{}, "25"],
+          ] as const) {
+            expect(
+              yield* prepare(Schema.Array(terminal), [input], kind),
+            ).toEqual([{ page_size: expected }]);
+            expect(
+              yield* prepare(ancestor, { cell: { filter: input } }, kind),
+            ).toEqual({ cell: { filter: { page_size: expected } } });
+          }
+        const flat = Schema.Struct({
+          cell: Schema.Union([
+            Schema.String,
+            Schema.Number,
+            Schema.Struct({ filter: Filter }),
+          ]),
+        });
+        for (const kind of ["path", "body"] as const)
+          expect(
+            yield* Effect.flip(
+              prepare(flat, { cell: { filter: { page_size: "many" } } }, kind),
+            ),
+          ).toBeInstanceOf(Schema.SchemaError);
+      }),
+  );
+
+  it.effect(
+    "validates an alias through a nullable closed object encoding view",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.NullOr(
+          Schema.Struct({ page_size: Schema.String }),
+        ).pipe(
+          Schema.decodeTo(
+            Schema.Struct({
+              limit: Schema.optionalKey(Schema.Number).pipe(
+                Schema.withConstructorDefault(Effect.succeed(25)),
+              ),
+            }),
+            SchemaTransformation.transformEffect<
+              { readonly limit?: number },
+              { readonly page_size: string } | null
+            >({
+              decode: (value) =>
+                value === null || Number.isNaN(Number(value.page_size))
+                  ? Effect.fail(
+                      new SchemaIssue.InvalidValue({ message: "not a number" }),
+                    )
+                  : Effect.succeed({ limit: Number(value.page_size) }),
+              encode: (value) =>
+                Effect.succeed({ page_size: String(value.limit) }),
+            }),
+          ),
+        );
+        expect(encodedInput(schema.ast)).toBeDefined();
+        for (const kind of ["path", "body"] as const) {
+          expect(
+            yield* Effect.flip(prepare(schema, { page_size: "many" }, kind)),
+          ).toBeInstanceOf(Schema.SchemaError);
+          for (const [input, expected] of [
+            [{ page_size: "05" }, "5"],
+            [{ limit: 5 }, "5"],
+            [{}, "25"],
+          ] as const)
+            expect(yield* prepare(schema, input, kind)).toEqual({
+              page_size: expected,
+            });
+        }
+      }),
+  );
+
+  it.effect(
     "keeps a primitive-only union encoding intermediate outside the object proof",
     () =>
       Effect.gen(function* () {
