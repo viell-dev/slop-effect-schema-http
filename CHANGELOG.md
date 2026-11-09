@@ -12,6 +12,9 @@ array/tuple validation and complete-side/decoded-mapping migration.
 - Whole-array decoding can newly refuse runtime mixed-side input or change shared-text
   interpretation. Checked examples cover complete sides, named decoded mappings and the existing
   distinction between construction defaults and omission during ordinary decoding.
+- Whole encoded reading can also change a neighboring dual-name item's winning value. A typed
+  nonliteral `[{ limit: 1, page_size: "02" }, { page_size: "25" }]` changes from `1/25` to `2/25`.
+  Qualify decoded-name priority by reading route; the broader conflicting-alias limit remains #143.
 - Preserve original constructor/root/strict-success/fieldwise and writer-fallback priorities.
   Metadata executes no schema checks/defaults/thunks; construction is not replayed. Add mutation,
   service/interruption, finite-DAG/cycle, cyclic-extra and linear-reflection checks.

@@ -100,11 +100,26 @@ array input already excludes mixed literals. Construction defaults still do not 
 fields on an ordinary decoding route. [What's in 0.14](./release-notes/0.14.md) gives checked
 path/JSON, prefix/rest/tail, omission and decoded-mapping examples.
 
+An item supplied under both decoded and encoded names can also change which value wins when an
+encoded-only sibling establishes whole-array reading. The typed nonliteral input
+`[{ limit: 1, page_size: "02" }, { page_size: "25" }]` wrote `1/25` on 0.13 and writes `2/25` on
+0.14. Constructor/decoded name preference is not a whole-encoded-reading rule. This remains a
+[conflicting-alias
+limit](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6735302019), not
+a conflict repair or an input statically excluded in every form. Give one complete side or
+validate/map to decoded names.
+
 Sparse/accessor/inherited/subclass/custom-iterator/changing arrays, array-shaped parent union
 members, group transforms, opaque/suspended ancestors and unsupported member/fieldwise routes stay
 outside the added proof under #170. The distinct normalized-declaration defect above also remains
 open; use validated decoded values for affected schemas. No general per-element recovery, alias map
 or arbitrary equality rule is introduced.
+
+An own enumerable `Symbol.iterator` on an array also currently causes a normalization `TypeError`
+([#189](https://github.com/viell-dev/slop-effect-schema-http/issues/189)), even when it is the
+normal Array iterator. This predates the 0.14 extension; use an unadorned array while the separate
+input-key handling defect remains open. Declining an unsupported profile is not a promise of a clean
+schema refusal on every older path.
 
 Whole encoded nested shapes retain their static input type in 0.10. Helpers using `Request.Input`
 must handle encoded nested names too, or declare their own decoded input shape; the [0.10

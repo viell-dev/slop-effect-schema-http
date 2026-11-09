@@ -61,7 +61,8 @@ breaking release. Read [What's in
 `0.13`, because eligible array and tuple positions now validate nested encoded aliases rather than
 accepting their generated defaults. Whole-array decoding can refuse runtime mixed-side values or
 change shared-type interpretation. Complete sides and validated decoded mappings give explicit
-control; constructor defaults and decoding omission remain distinct.
+control; constructor defaults and decoding omission remain distinct. Whole encoded reading can also
+change which name wins when an item supplies both names; give a single side.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
