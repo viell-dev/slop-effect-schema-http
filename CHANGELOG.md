@@ -16,7 +16,9 @@ array-position and symbol-key migration, including newly exposed unsupported def
   write generated defaults. Keep exact current/goal source/package/wire pins and checked migration;
   use validated decoded mappings for unsupported profiles. The constructor proof is not expanded.
 - Preserve constructor/decoder, strict-success/fieldwise/writer-fallback priorities, public types,
-  dependencies and opaque reading. Broader #170/#143 limits remain active.
+  dependencies and opaque reading. Discover hidden/inherited positions only in structural array
+  views without open/opaque alternatives; do not speculate from one Array alternative. Mixed views
+  keep existing enumerable-child normalization. Broader #170/#143 limits remain active.
 
 ## 0.14.0 — 2026-11-09
 

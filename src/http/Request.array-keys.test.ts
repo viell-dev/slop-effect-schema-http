@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Schema } from "effect";
+import { Effect, Exit, Schema, SchemaTransformation } from "effect";
 import * as Body from "./Body.js";
 import * as Request from "./Request.js";
 
@@ -214,6 +214,170 @@ describe("array key normalization during request preparation", () => {
       );
       expect(rendered).toBe(input);
     }),
+  );
+
+  it.effect("keeps opaque union winners' hidden and inherited cells", () =>
+    Effect.gen(function* () {
+      const cellSchema = Schema.Struct({ value: Schema.Number }).pipe(
+        Schema.encodeKeys({ value: "VALUE" }),
+      );
+      const array = Schema.Array(cellSchema);
+      for (const child of [
+        Schema.Union([Schema.Unknown, array]),
+        Schema.Union([Schema.Any, array]),
+        Schema.Union([Schema.ObjectKeyword, array]),
+        Schema.Union([Schema.declare(Array.isArray), array]),
+        Schema.Union([array, Schema.Unknown]),
+      ]) {
+        const parent = Schema.Struct({
+          values: child,
+          count: Schema.FiniteFromString,
+          tag: Schema.optionalKey(Schema.String),
+        }).pipe(Schema.encodeKeys({ tag: "TAG" }));
+        for (const inherited of [false, true]) {
+          const cell = { VALUE: 5, additional: "retain" };
+          const values: Array<object> = [];
+          values.length = 1;
+          if (inherited)
+            Object.setPrototypeOf(
+              values,
+              Object.create(Array.prototype, { "0": { value: cell } }),
+            );
+          else Object.defineProperty(values, "0", { value: cell });
+          const rendered = (yield* prepare(
+            parent,
+            { values, count: "05" },
+            "path",
+          )) as { readonly values: ReadonlyArray<unknown> };
+          expect(rendered.values).toBe(values);
+          expect(rendered.values[0]).toBe(cell);
+        }
+      }
+    }),
+  );
+
+  it.effect(
+    "retains a mixed view's old length-getter boundary during a rewrite",
+    () =>
+      Effect.gen(function* () {
+        const cell = Schema.Struct({ value: Schema.Number }).pipe(
+          Schema.encodeKeys({ value: "VALUE" }),
+        );
+        for (const stray of [false, true]) {
+          let lengthReads = 0;
+          const input = new Proxy(
+            [stray ? { VALUE: 5, extra: "ignored" } : { VALUE: 5 }],
+            {
+              get(target, key, receiver) {
+                if (key === "length") {
+                  lengthReads++;
+                  throw new Error("opaque length inspected");
+                }
+                return Reflect.get(target, key, receiver);
+              },
+            },
+          );
+          const schema = Schema.Struct({
+            values: Schema.Union([Schema.Unknown, Schema.Array(cell)]),
+            count: Schema.FiniteFromString,
+            tag: Schema.optionalKey(Schema.String),
+          }).pipe(Schema.encodeKeys({ tag: "TAG" }));
+          const rendered = (yield* prepare(
+            schema,
+            { values: input, count: "05" },
+            "path",
+          )) as { readonly values: ReadonlyArray<unknown> };
+          if (stray) {
+            expect(rendered.values.length).toBe(1);
+            expect(rendered.values[0]).toEqual({ VALUE: 5 });
+          } else expect(rendered.values).toBe(input);
+          expect(lengthReads).toBe(0);
+        }
+      }),
+  );
+
+  it.effect(
+    "still validates an array after an opaque alternative rejects",
+    () =>
+      Effect.gen(function* () {
+        const cell = Schema.Struct({ value: Schema.Number }).pipe(
+          Schema.encodeKeys({ value: "VALUE" }),
+        );
+        for (const declaration of [false, true]) {
+          let checks = 0;
+          const reject = () => {
+            checks++;
+            return false;
+          };
+          const opaque = declaration
+            ? Schema.declare((_value: unknown): _value is unknown => reject())
+            : Schema.Unknown.check(Schema.makeFilter(reject));
+          const schema = Schema.Struct({
+            values: Schema.Union([opaque, Schema.Array(cell)]),
+            count: Schema.FiniteFromString,
+            tag: Schema.optionalKey(Schema.String),
+          }).pipe(Schema.encodeKeys({ tag: "TAG" }));
+          for (const binding of ["path", "body"] as const) {
+            const valid = [{ VALUE: 5, extra: "ignored" }];
+            Object.defineProperty(valid, "audit", {
+              value: "metadata",
+              enumerable: true,
+            });
+            expect(
+              yield* prepare(schema, { values: valid, count: "05" }, binding),
+            ).toEqual({ values: [{ VALUE: 5 }], count: "5" });
+            const invalid = [{ VALUE: "invalid", extra: "ignored" }];
+            Object.defineProperty(invalid, "audit", {
+              value: "metadata",
+              enumerable: true,
+            });
+            expect(
+              yield* Effect.flip(
+                prepare(schema, { values: invalid, count: "05" }, binding),
+              ),
+            ).toBeInstanceOf(Schema.SchemaError);
+          }
+          expect(checks).toBeGreaterThan(0);
+        }
+      }),
+  );
+
+  it.effect(
+    "does not inspect prototypes through an array-backed declaration",
+    () =>
+      Effect.gen(function* () {
+        type Values = ReadonlyArray<{ readonly value: number }>;
+        const cell = Schema.Struct({ value: Schema.Number }).pipe(
+          Schema.encodeKeys({ value: "VALUE" }),
+        );
+        const child = Schema.Array(cell).pipe(
+          Schema.decodeTo(
+            Schema.declare((value: unknown): value is Values =>
+              Array.isArray(value),
+            ),
+            SchemaTransformation.transform<Values, Values>({
+              decode: (value) => value,
+              encode: () => [{ value: 9 }],
+            }),
+          ),
+        );
+        const target: Array<object> = [];
+        target.length = 2;
+        target[1] = { VALUE: 5 };
+        const values = new Proxy(target, {
+          getPrototypeOf() {
+            throw new Error("opaque prototype inspected");
+          },
+        });
+        const schema = Schema.Struct({
+          values: child,
+          count: Schema.FiniteFromString,
+          tag: Schema.optionalKey(Schema.String),
+        }).pipe(Schema.encodeKeys({ tag: "TAG" }));
+        expect(yield* prepare(schema, { values, count: "05" }, "path")).toEqual(
+          { values: [{ VALUE: 9 }], count: "5" },
+        );
+      }),
   );
 
   it.effect(

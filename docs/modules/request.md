@@ -647,8 +647,10 @@ ordinary decoding omission remain distinct. [What's in 0.14](../release-notes/0.
 complete-side and named decoded-mapping migration.
 
 In 0.15, normalization also keeps actual array positions and length when an inner object is
-rewritten, including holes and readable hidden/inherited cells. Non-index metadata does not become a
-new cell, and symbols retain their identity instead of being numerically coerced. This changes
+rewritten, including holes and readable hidden/inherited cells in structural array views without
+open or opaque alternatives. Mixed views keep their prior enumerable-child normalization; an Array
+alternative alone does not authorize inspecting an opaque value. Non-index metadata does not become
+a new cell, and symbols retain their identity instead of being numerically coerced. This changes
 previously compacted/dropped positions. Removing accidental failures can also uncover existing
 unsupported sparse/own-iterator defaults; [What's in 0.15](../release-notes/0.15.md) gives exact
 cases, current limits and a validated decoded mapping. This does not add constructor evidence for
