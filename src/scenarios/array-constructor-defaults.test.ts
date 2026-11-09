@@ -498,7 +498,7 @@ describe(`array constructor defaults (${lane.name})`, () => {
   }
 
   it.live(
-    "[EXT-44f] currently sparse arrays retain their unsupported default overwrite",
+    "[EXT-44f] sparse own-cell aliases refuse instead of dispatching constructor defaults",
     () =>
       Effect.gen(function* () {
         const backend = yield* start();
@@ -524,17 +524,15 @@ describe(`array constructor defaults (${lane.name})`, () => {
         expect(
           yield* path
             .execute({ path: input })
-            .pipe(Effect.provide(lane.fetchClient)),
-        ).toBe("Not Found");
+            .pipe(Effect.provide(lane.fetchClient), result),
+        ).toMatchObject({ error: { _tag: "SchemaError" } });
         expect(
           yield* body
             .execute({ body: input })
-            .pipe(Effect.provide(lane.fetchClient)),
-        ).toBe("Not Found");
+            .pipe(Effect.provide(lane.fetchClient), result),
+        ).toMatchObject({ error: { _tag: "SchemaError" } });
         const ledger = yield* backend.ledger;
-        expect(ledger).toHaveLength(2);
-        wire(ledger[0]!, pathFor('[null,{"page_size":"25"}]'));
-        wire(ledger[1]!, "/x", '[null,{"page_size":"25"}]');
+        expect(ledger).toEqual([]);
         expect(Object.hasOwn(input, 0)).toBe(false);
       }),
   );
@@ -1049,7 +1047,9 @@ describe(`array constructor defaults (${lane.name})`, () => {
 
     for (const iterator of ["normal", "watched"] as const) {
       it.live(
-        `[EXT-44p] currently ${binding} enumerable ${iterator} array iterator exposes an unsupported default and valid controls`,
+        iterator === "normal"
+          ? `[EXT-44p] ${binding} exact native own iterator refuses invalid aliases and retains valid controls`
+          : `[EXT-44p] currently ${binding} watched own iterator retains its unsupported default and valid controls`,
         () =>
           Effect.gen(function* () {
             const backend = yield* start();
@@ -1069,10 +1069,10 @@ describe(`array constructor defaults (${lane.name})`, () => {
               response,
             );
             let requests = 0;
-            for (const [makeInput, json] of [
-              [() => [{ page_size: "many" }], '[{"page_size":"25"}]'],
-              [() => [{ page_size: "05" }], '[{"page_size":"5"}]'],
-              [() => [{ limit: 5 }], '[{"page_size":"5"}]'],
+            for (const [makeInput, json, invalid] of [
+              [() => [{ page_size: "many" }], '[{"page_size":"25"}]', true],
+              [() => [{ page_size: "05" }], '[{"page_size":"5"}]', false],
+              [() => [{ limit: 5 }], '[{"page_size":"5"}]', false],
             ] as const) {
               const input = makeInput();
               let calls = 0;
@@ -1098,20 +1098,29 @@ describe(`array constructor defaults (${lane.name})`, () => {
                 phase = "effect evaluation";
                 return effect;
               }).pipe(Effect.provide(lane.fetchClient), Effect.exit);
-              // Published14's exact Die(TypeError) baseline is retained before this conversion.
-              // Removing that accidental defect exposes #170's unsupported default route;
-              // ordinary successful output is the current pin, not an invalid-input guarantee.
+              // Exact native data now supplies bounded constructor evidence. The watched
+              // wrapper remains excluded, with its original default and zero invocations.
+              // Earlier TypeError and exposed-default reports remain separate evidence.
               expect(phase).toBe("effect evaluation");
-              expect(Exit.isSuccess(exit)).toBe(true);
-              if (Exit.isSuccess(exit)) expect(exit.value).toBe("Not Found");
               expect(calls).toBe(0);
               const ledger = yield* backend.ledger;
-              expect(ledger).toHaveLength(++requests);
-              wire(
-                ledger[requests - 1]!,
-                binding === "path" ? pathFor(json) : "/x",
-                binding === "path" ? undefined : json,
-              );
+              if (iterator === "normal" && invalid) {
+                expect(Exit.isFailure(exit)).toBe(true);
+                if (Exit.isFailure(exit))
+                  expect(exit.cause.reasons).toMatchObject([
+                    { _tag: "Fail", error: { _tag: "SchemaError" } },
+                  ]);
+                expect(ledger).toHaveLength(requests);
+              } else {
+                expect(Exit.isSuccess(exit)).toBe(true);
+                if (Exit.isSuccess(exit)) expect(exit.value).toBe("Not Found");
+                expect(ledger).toHaveLength(++requests);
+                wire(
+                  ledger[requests - 1]!,
+                  binding === "path" ? pathFor(json) : "/x",
+                  binding === "path" ? undefined : json,
+                );
+              }
             }
           }),
       );
