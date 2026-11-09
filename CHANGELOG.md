@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Use the repaired hostile-suite result gate during release qualification (#199). Selected skipped
+  or failed cases are refused even when a passing control carries the same catalogue ID; dedicated
+  lane selection is unchanged, and its regression fixtures run in the required suite check.
 - Verify the downloaded release checker as well as the package in the final publication check
   (#197). Require the complete pair of checksum records and reject missing, duplicate, malformed,
   extra or mismatched entries. Describe the npm comparison as registry integrity metadata.
