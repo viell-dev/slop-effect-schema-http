@@ -4065,6 +4065,12 @@ platforms, human use, implementation review or release qualification. This evide
 inherited-only, arbitrary-iterator, Void, open-member, normalized-declaration or conflicting-alias
 policy; EXT-44o retains the separate #143 migration pin.
 
+Integration now pins CI to reviewed source `9eea0311fe4dacc3679a3eca0b744d6b7101fde2`.
+The later review correction consistently excludes primitive-only union members at ancestor and
+terminal levels, with source regressions for that boundary and nullable closed object encoding
+views. It does not change these consumer fixtures. The Windows results above remain evidence at
+their stated original source; the pull request records fresh CI against the updated pin.
+
 - **EXT-47a** Dense optional Filter elements, fixed optional tuples, optional object ancestors,
   NullOr/NullishOr ancestors, root NullOr, and object/string or boolean/object alternatives retain
   encoded `"05"` to `"5"`, decoded `5` to `"5"`, and omitted limit to default `"25"` bytes.
