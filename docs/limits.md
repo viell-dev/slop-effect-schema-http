@@ -65,9 +65,12 @@ either binding order; the fieldwise refusal does not add general backtracking.
 In 0.12, the initial whole-constructor proof also follows declared fields through finite closed,
 untransformed direct objects. Stable own-data links must reach the same encoded-only terminal field
 actually written by the original strict writer. Invalid `filter: { page_size: "many" }` then fails
-instead of sending a finite-number default; valid encoded text and omission retain their meaning. A
-closed union can be the terminal child. Whole decoding can repeat checks and services; construction
-is not replayed. [What's in 0.12](./release-notes/0.12.md) gives path, JSON and decoded mapping
+instead of sending a finite-number default; valid encoded text and omission retain their meaning in
+complete-side cases. A closed union can be the terminal child. Where another value forces a
+strict-read failure, valid aliases can newly refuse beside decoded-only common fields, and
+shared-type fields can change interpretation when the whole encoded group succeeds; use a complete
+side or validated decoded mapping. Whole decoding can repeat checks and services; construction is
+not replayed. [What's in 0.12](./release-notes/0.12.md) gives path, JSON and decoded mapping
 examples. Parent unions, arrays, opaque/suspended/transformed ancestors, changing caller objects and
 unsupported member/fieldwise routes remain outside this extension under #170. Supply decoded values
 or a validated decoded mapping there.
