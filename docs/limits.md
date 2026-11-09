@@ -78,9 +78,9 @@ member that declares a field must use the same field schema; other closed member
 member names remain in stable ancestor evidence. The original whole construction and strict writer
 still have to succeed, followed by one coherent caller/output witness and whole-schema validation.
 [What's in 0.13](./release-notes/0.13.md) covers the migration, including valid mixed-side refusals
-and shared-type interpretation changes. Distinct field declarations, arrays,
+and shared-type interpretation changes. At 0.13, distinct field declarations, arrays,
 opaque/suspended/transformed/open parents, changing caller objects and unsupported member/fieldwise
-routes remain outside this extension under #170. Supply decoded values or a validated decoded
+routes remained outside that extension under #170. Supply decoded values or a validated decoded
 mapping there.
 
 The same ambiguity guard now excludes conflicting normalized declarations inside direct objects,
@@ -91,6 +91,20 @@ reproduction](https://github.com/viell-dev/slop-effect-schema-http/issues/170#is
 This newly exposed kept-or-refused defect remains open under #170. Validate and map to decoded names
 before preparation, or supply validated decoded values; default substitution is not an intended
 guarantee.
+
+In 0.14, stable dense array and tuple positions can also establish that same constructor-only proof.
+Own data indices/length, ordinary or null prototype, static element/rest metadata and an unchanged
+original strict-output length keep each position's identity. Frozen and nonenumerable positions are
+supported. Whole decoding can change mixed runtime input or shared-text meaning; whole-side static
+array input already excludes mixed literals. Construction defaults still do not apply to omitted
+fields on an ordinary decoding route. [What's in 0.14](./release-notes/0.14.md) gives checked
+path/JSON, prefix/rest/tail, omission and decoded-mapping examples.
+
+Sparse/accessor/inherited/subclass/custom-iterator/changing arrays, array-shaped parent union
+members, group transforms, opaque/suspended ancestors and unsupported member/fieldwise routes stay
+outside the added proof under #170. The distinct normalized-declaration defect above also remains
+open; use validated decoded values for affected schemas. No general per-element recovery, alias map
+or arbitrary equality rule is introduced.
 
 Whole encoded nested shapes retain their static input type in 0.10. Helpers using `Request.Input`
 must handle encoded nested names too, or declare their own decoded input shape; the [0.10

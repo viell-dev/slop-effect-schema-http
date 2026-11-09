@@ -629,10 +629,23 @@ declaring a field must use the same field schema; missing fields on other closed
 invent ownership. All member names stay in ancestor evidence, while distinct field schemas end that
 path. The original successful initial whole construction, strict output and one stable witness
 remain required. [What's in 0.13](../release-notes/0.13.md) gives the checked parent-union
-migration, including whole-group consequences. Distinct declarations, arrays,
-opaque/suspended/transformed/open parents and unsupported member/fieldwise routes remain under #170.
-A fieldwise property reader may already decode a nested alias correctly; it cannot establish this
-constructor-only proof.
+migration, including whole-group consequences. At 0.13, distinct declarations, arrays,
+opaque/suspended/transformed/open parents and unsupported member/fieldwise routes remained under
+#170. A fieldwise property reader may already decode a nested alias correctly; it cannot establish
+this constructor-only proof.
+
+In 0.14, dense array and tuple ancestors also contribute their declared positions. Stable own data
+indices/length and matching original strict-output length preserve identity for fixed, rest and tail
+elements; ordinary/null-prototype and frozen/nonenumerable cells are supported. One coherent
+caller/path/output proof retains the same constructor-only prerequisites and priority. Whole-array
+decoding can change runtime mixed-side/shared-text behavior, while construction defaults and
+ordinary decoding omission remain distinct. [What's in 0.14](../release-notes/0.14.md) shows the
+complete-side and named decoded-mapping migration.
+
+Sparse/accessor/inherited/subclass/custom-iterator/changing arrays, array-shaped parent union
+members, group transforms and unsupported member/fieldwise phases stay outside this extension under
+#170. Distinct normalized declarations retain the 0.13 default-substitution limit. Actual fieldwise
+consumption cannot establish the constructor-only proof; opaque values keep their schema's reading.
 
 For a nonempty caller group, a decoding default hidden by a rename can still replace a later raw
 edit without refusal. The library does not infer general field correspondence or conflicting-alias
@@ -815,5 +828,5 @@ records without it remain valid and use the earlier selection behavior; the new 
 requires complete evidence.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.13.0/src/http/Request.ts)
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.14.0/src/http/Request.ts)
 for all types and overloads.

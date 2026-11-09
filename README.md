@@ -54,13 +54,14 @@ In an existing Node.js 24 or 26 ESM project with Effect `^4.0.7`, add the librar
 npm install viell-effect-schema-http
 ```
 
-`0.13.0` is the current release. The same package is available as a checksummed [GitHub release
-tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.13.0). This is a
+`0.14.0` is the current release. The same package is available as a checksummed [GitHub release
+tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.14.0). This is a
 breaking release. Read [What's in
-0.13](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.13) before updating from
-`0.12`, because covered parent unions now validate nested encoded aliases before a constructor
-default replaces them. Whole decoding can also refuse valid mixed-side input or change shared-type
-interpretation; complete sides and validated decoded mappings give explicit control.
+0.14](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.14) before updating from
+`0.13`, because eligible array and tuple positions now validate nested encoded aliases rather than
+accepting their generated defaults. Whole-array decoding can refuse runtime mixed-side values or
+change shared-type interpretation. Complete sides and validated decoded mappings give explicit
+control; constructor defaults and decoding omission remain distinct.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
@@ -79,6 +80,7 @@ versions and provider boundaries.
   Operation, Policy, Interaction, UrlEncoding and Transport, from basic use to advanced behavior.
 - [Limits and recovery](https://viell-dev.github.io/slop-effect-schema-http/limits): compatibility,
   where the library's promise stops, failure stages and bug reporting.
+- [What's in 0.14](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.14)
 - [What's in 0.13](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.13)
   introduces the release and how to update, and [What's in
   0.12](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.12), [What's in

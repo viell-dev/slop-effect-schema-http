@@ -1,5 +1,24 @@
 # Change history
 
+## 0.14.0 — 2026-11-09
+
+Read [What's in 0.14](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.14) for
+array/tuple validation and complete-side/decoded-mapping migration.
+
+- **Breaking:** validate nested encoded-only fields through eligible dense array and tuple positions
+  before an actual initial whole constructor replaces them with defaults. Stable own-data indices,
+  unchanged strict-output length and one coherent caller/path/write establish the added whole
+  decoding. Invalid covered values refuse before dispatch.
+- Whole-array decoding can newly refuse runtime mixed-side input or change shared-text
+  interpretation. Checked examples cover complete sides, named decoded mappings and the existing
+  distinction between construction defaults and omission during ordinary decoding.
+- Preserve original constructor/root/strict-success/fieldwise and writer-fallback priorities.
+  Metadata executes no schema checks/defaults/thunks; construction is not replayed. Add mutation,
+  service/interruption, finite-DAG/cycle, cyclic-extra and linear-reflection checks.
+- Sparse/accessor/inherited/subclass/custom-iterator/changing arrays, array-shaped parent union
+  members, transformed groups and unsupported phases remain under #170, alongside distinct
+  declarations. Broader #143 remains separate.
+
 ## 0.13.0 — 2026-11-09
 
 Read [What's in 0.13](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.13) for
