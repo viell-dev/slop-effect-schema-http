@@ -606,8 +606,8 @@ winning root union-member path, after failed whole decoding. Its strict writer m
 actually write the supplied encoded-only name. That ignored caller alias is then refused with the
 original strict failure, without replaying effects or rebuilding encoded input. Valid aliases beside
 mixed common fields can also refuse; supply a whole schema side or validate a decoded mapping.
-[What's in 0.11](../release-notes/0.11.md) gives the checked migration, including path and JSON-body
-controls. Individual property reads do not establish this route.
+[What's in 0.11](../release-notes/0.11.md) gives the checked migration. Individual property reads do
+not establish this route.
 
 This additional proof excludes a supplied decoded-only name, an encoded name used as decoded by
 another member, open/opaque/class/suspended or iterable group shapes, inherited/accessor fields and
