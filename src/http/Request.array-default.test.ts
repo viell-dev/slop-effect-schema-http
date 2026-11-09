@@ -651,6 +651,104 @@ describe("nested aliases below unchanged array positions", () => {
       }),
   );
 
+  const aliasProfiles = [
+    {
+      name: "optional elements",
+      schema: Schema.Array(Schema.optional(Inner)),
+      input: (values: ReadonlyArray<object>) => [...values],
+      sparse: false,
+    },
+    {
+      name: "nullable elements",
+      schema: Schema.Array(Schema.NullOr(Inner)),
+      input: (values: ReadonlyArray<object>) => [...values],
+      sparse: false,
+    },
+    {
+      name: "native own iterator",
+      schema: Schema.Array(Inner),
+      input: (values: ReadonlyArray<object>) =>
+        Object.defineProperty([...values], Symbol.iterator, {
+          value: Array.prototype[Symbol.iterator],
+          enumerable: true,
+        }),
+      sparse: false,
+    },
+    {
+      name: "sparse optional elements",
+      schema: Schema.Array(Schema.optional(Inner)),
+      input: (values: ReadonlyArray<object>) => {
+        const input: object[] = [];
+        input.length = values.length + 1;
+        values.forEach((value, index) => {
+          input[index + 1] = value;
+        });
+        return input;
+      },
+      sparse: true,
+    },
+  ] as const;
+  for (const kind of ["path", "body"] as const)
+    for (const profile of aliasProfiles) {
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6750236968
+      it.effect(
+        `currently ${kind} whole reading changes a conflicting name through ${profile.name}`,
+        () =>
+          Effect.gen(function* () {
+            for (const [input, expected] of [
+              [[{ limit: 1, page_size: "02" }], [{ page_size: "1" }]],
+              [
+                [{ limit: 1, page_size: "02" }, {}],
+                [{ page_size: "1" }, { page_size: "25" }],
+              ],
+              [
+                [{ limit: 1, page_size: "02" }, { limit: 25 }],
+                [{ page_size: "1" }, { page_size: "25" }],
+              ],
+              [
+                [{ limit: 1, page_size: "02" }, { page_size: "25" }],
+                [{ page_size: "2" }, { page_size: "25" }],
+              ],
+              [
+                [{ page_size: "02" }, { page_size: "25" }],
+                [{ page_size: "2" }, { page_size: "25" }],
+              ],
+              [
+                [{ limit: 1 }, { limit: 25 }],
+                [{ page_size: "1" }, { page_size: "25" }],
+              ],
+            ] as const) {
+              expect(
+                yield* prepare(profile.schema, profile.input(input), kind),
+              ).toEqual(
+                profile.sparse
+                  ? [kind === "body" ? null : undefined, ...expected]
+                  : expected,
+              );
+            }
+          }),
+      );
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+      it.effect.fails(
+        `refuses conflicting aliases through ${profile.name} in ${kind}`,
+        () =>
+          Effect.gen(function* () {
+            expect(
+              yield* Effect.flip(
+                prepare(
+                  profile.schema,
+                  profile.input([
+                    { limit: 1, page_size: "02" },
+                    { page_size: "25" },
+                  ]),
+                  kind,
+                ),
+              ),
+            ).toBeInstanceOf(Schema.SchemaError);
+          }),
+      );
+    }
+
   it("declines an array-shaped union ancestor", () => {
     expect(
       nestedEncodedInput(Schema.Union([Schema.Array(Inner), Cursor]).ast),
