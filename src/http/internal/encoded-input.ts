@@ -109,28 +109,32 @@ export const encodedInput = (ast: SchemaAST.AST) => {
       const inherited = () =>
         allNames.some((name) => !Object.hasOwn(input, name) && name in input);
       if (inherited()) return undefined;
-      return {
-        written(output: unknown) {
-          try {
-            if (
-              typeof output !== "object" ||
-              output === null ||
-              Symbol.iterator in output
-            )
+      const witness = (output: unknown): string | symbol | undefined => {
+        try {
+          if (
+            typeof output !== "object" ||
+            output === null ||
+            Symbol.iterator in output
+          )
+            return undefined;
+          return properties.find(([key, property]) => {
+            if (!encodedOnly.has(key) || property.value === undefined)
               return false;
-            return properties.some(([key, property]) => {
-              if (!encodedOnly.has(key) || property.value === undefined)
-                return false;
-              const written = Object.getOwnPropertyDescriptor(output, key);
-              return (
-                written?.enumerable === true &&
-                "value" in written &&
-                written.value !== undefined
-              );
-            });
-          } catch {
-            return false;
-          }
+            const written = Object.getOwnPropertyDescriptor(output, key);
+            return (
+              written?.enumerable === true &&
+              "value" in written &&
+              written.value !== undefined
+            );
+          })?.[0];
+        } catch {
+          return undefined;
+        }
+      };
+      return {
+        witness,
+        written(output: unknown) {
+          return witness(output) !== undefined;
         },
         matches() {
           try {

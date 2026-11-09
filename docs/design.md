@@ -164,8 +164,14 @@ where the current checks apply.
   replacement. Do not observe individual property reads as this route, replay decoding, or rebuild
   encoded input from prepared output. Successful strict reads, writer-failure fallback and other
   constructor or decoder choices keep their paths. Existing defaults/writer effects can precede
-  refusal; construction is not repeated to classify the input. Nested defaults and unsupported
-  evidence remain under [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
+  refusal; construction is not repeated to classify the input. For successful initial whole
+  construction, finite closed untransformed direct-object ancestors can also establish a nested
+  terminal proof. Capture stable own-data paths before callbacks and select one coherent caller path
+  and actual strict output write, never independent candidates. Validate output correspondence at
+  selection, then retain caller evidence through whole decoding and loss checks. Whole decoding can
+  repeat checks and services; do not replay construction. Root fieldwise success cannot establish
+  nested ownership because its property reader can already consume that alias. Unsupported evidence
+  remains under [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
 - **A value that fits the decoded side is read as decoded.** When both sides have the same type, as
   under a schema from `string` to `string` such as `Schema.StringFromBase64`, an already encoded
   value cannot be told apart from a decoded one, so it is encoded again, with no error. Under a
@@ -401,11 +407,12 @@ Some things are outside the check:
 - Invalid encoded aliases can still take optional constructor defaults outside the bounded 0.9 root
   proof ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). An encoded name
   used on any decoded member, a supplied decoded-only name, open/opaque/class/suspended or iterable
-  group shapes, inherited/accessor fields and changing input cannot establish this route. The proof
-  does not reach a renamed field inside an unchanged nested object, which can still take a
-  constructor default for invalid encoded input. Use decoded input for those schemas. The whole
-  encoded-side typing repaired in 0.10 does not change this runtime selection limit; helpers
-  accepting `Request.Input` must account for both shapes.
+  group shapes, inherited/accessor fields and changing input cannot establish this route. The 0.12
+  initial-constructor extension reaches nested aliases through finite closed untransformed direct
+  objects, but stops at parent unions, arrays, opaque/suspended/transformed ancestors and
+  unsupported member/fieldwise routes. Default substitution can remain outside those bounds; use
+  decoded input for those schemas. The whole encoded-side typing repaired in 0.10 does not change
+  this runtime selection limit; helpers accepting `Request.Input` must account for both shapes.
 - A group transformation can hide a default's field correspondence. The strictly empty caller-group
   proof above covers some such calls. With any own caller field, a renamed default can still replace
   a later raw edit without refusal; the library does not guess which alias supplied that output.

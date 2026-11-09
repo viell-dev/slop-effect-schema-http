@@ -62,10 +62,15 @@ beside a cursor held by a separate binding. This pre-existing selection/coverage
 [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6730345959), in
 either binding order; the fieldwise refusal does not add general backtracking.
 
-The additional proof is also limited to root fields. An invalid encoded alias inside an unchanged
-nested object can still take its constructor default: for example, `filter: { page_size: "many" }`
-can send the default finite limit. This is another visible-input #170 defect, separate from opaque
-schema-owned reading. Supply decoded nested names or a decoded input mapping.
+In 0.12, the initial whole-constructor proof also follows declared fields through finite closed,
+untransformed direct objects. Stable own-data links must reach the same encoded-only terminal field
+actually written by the original strict writer. Invalid `filter: { page_size: "many" }` then fails
+instead of sending a finite-number default; valid encoded text and omission retain their meaning. A
+closed union can be the terminal child. Whole decoding can repeat checks and services; construction
+is not replayed. [What's in 0.12](./release-notes/0.12.md) gives path, JSON and decoded mapping
+examples. Parent unions, arrays, opaque/suspended/transformed ancestors, changing caller objects and
+unsupported member/fieldwise routes remain outside this extension under #170. Supply decoded values
+or a validated decoded mapping there.
 
 Whole encoded nested shapes retain their static input type in 0.10. Helpers using `Request.Input`
 must handle encoded nested names too, or declare their own decoded input shape; the [0.10

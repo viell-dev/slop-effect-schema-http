@@ -614,9 +614,18 @@ another member, open/opaque/class/suspended or iterable group shapes, inherited/
 changing input. Later member-constructor choices and unsupported recovery routes can still let an
 invalid alias take a default. The earlier default substitution can remain outside the proof
 ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Supply decoded names or a
-named decoded-input mapping for those cases. The root proof also does not reach a renamed field
-inside an unchanged nested object; invalid nested encoded input can still take its constructor
-default. This remains a visible-input defect, rather than opaque schema-owned reading.
+named decoded-input mapping for those cases.
+
+In 0.12, successful initial whole construction can also establish the encoded check below finite
+closed, untransformed direct objects. Stable own-data links must reach the same encoded-only
+terminal field actually written by the original strict writer. One consistent path witness is kept
+through whole decoding and the loss checks. Invalid nested text then fails before dispatch; valid
+encoded text and omission retain their meaning. Whole decoding can repeat schema checks and
+services, but construction is not replayed. [What's in 0.12](../release-notes/0.12.md) gives path
+and JSON examples and a decoded mapping. Parent unions, arrays, opaque/suspended/transformed
+ancestors and unsupported member/fieldwise routes remain outside this extension under #170. A
+fieldwise property reader may already decode a nested alias correctly; it cannot establish this
+constructor-only proof.
 
 For a nonempty caller group, a decoding default hidden by a rename can still replace a later raw
 edit without refusal. The library does not infer general field correspondence or conflicting-alias
@@ -799,5 +808,5 @@ records without it remain valid and use the earlier selection behavior; the new 
 requires complete evidence.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.11.0/src/http/Request.ts)
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.12.0/src/http/Request.ts)
 for all types and overloads.

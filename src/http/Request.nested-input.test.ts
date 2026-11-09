@@ -311,7 +311,7 @@ describe("whole nested encoded input", () => {
     }),
   );
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect.fails(
+  it.effect(
     "refuses invalid nested encoded input instead of replacing it with a default",
     () =>
       Effect.gen(function* () {
@@ -334,35 +334,32 @@ describe("whole nested encoded input", () => {
       }),
   );
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect(
-    "currently retains nested encoded defaults outside the root proof",
-    () =>
-      Effect.gen(function* () {
-        const NestedDefault = Schema.Struct({
-          filter: Schema.Struct({
-            term: Schema.optionalKey(Schema.String),
-            limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
-              Schema.withConstructorDefault(Effect.succeed(25)),
-            ),
-          }).pipe(Schema.encodeKeys({ limit: "page_size" })),
-        });
-        const request = bind(
-          NestedDefault,
-          (value) => `/${value.filter.page_size ?? "missing"}`,
-        );
-        for (const [filter, expected] of [
-          [{ page_size: "many" }, "25"],
-          [{ page_size: "05" }, "5"],
-          [{ limit: 5 }, "5"],
-          [{}, "25"],
-        ] as const)
-          expect(
-            (yield* Request.compile(request, { path: { filter } })).request.url,
-          ).toBe(`https://api.test/${expected}`);
-        const invalid = yield* Effect.flip(
-          Request.compile(request, { path: { filter: { limit: Number.NaN } } }),
-        );
-        expect(Schema.isSchemaError(invalid)).toBe(true);
-      }),
+  it.effect("keeps valid nested encoded constructor-default controls", () =>
+    Effect.gen(function* () {
+      const NestedDefault = Schema.Struct({
+        filter: Schema.Struct({
+          term: Schema.optionalKey(Schema.String),
+          limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+            Schema.withConstructorDefault(Effect.succeed(25)),
+          ),
+        }).pipe(Schema.encodeKeys({ limit: "page_size" })),
+      });
+      const request = bind(
+        NestedDefault,
+        (value) => `/${value.filter.page_size ?? "missing"}`,
+      );
+      for (const [filter, expected] of [
+        [{ page_size: "05" }, "5"],
+        [{ limit: 5 }, "5"],
+        [{}, "25"],
+      ] as const)
+        expect(
+          (yield* Request.compile(request, { path: { filter } })).request.url,
+        ).toBe(`https://api.test/${expected}`);
+      const invalid = yield* Effect.flip(
+        Request.compile(request, { path: { filter: { limit: Number.NaN } } }),
+      );
+      expect(Schema.isSchemaError(invalid)).toBe(true);
+    }),
   );
 });

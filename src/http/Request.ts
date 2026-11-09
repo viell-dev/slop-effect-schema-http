@@ -100,9 +100,12 @@ export type QueryFields = Readonly<
  * other constructor and decoder choices keep their existing priority.
  * Ambiguous names, open/opaque/class or suspended/iterable groups, inherited/accessor fields and
  * changing input remain outside this proof, as do later member-constructor and unsupported recovery
- * routes. A renamed field inside an unchanged nested object is also outside the root proof
- * (issue #170). Use decoded names or a named input mapping. The Request guide describes the bounds
- * and helper migration.
+ * routes. Successful initial whole construction also permits a nested proof through finite closed,
+ * untransformed direct objects: stable own-data links must reach the same encoded-only field
+ * actually written by the original strict writer. Whole decoding can repeat checks and services;
+ * construction is not replayed. Parent unions, arrays, opaque/suspended/transformed ancestors and
+ * unsupported member/fieldwise paths remain outside this extension (issue #170). Use decoded names
+ * or a validated decoded mapping there. The Request guide describes the bounds and migration.
  *
  * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that
