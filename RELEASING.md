@@ -139,7 +139,7 @@ run for that exact current commit. The workflow downloads the already-tested Lin
 its manifest and checksums, and chooses `rc`/`beta`/`alpha` for a prerelease or `latest` for stable.
 It never rebuilds the package.
 
-Registry verification waits up to three minutes for HTTP 404 visibility delays from the version or
+Registry verification waits up to five minutes for HTTP 404 visibility delays from the version or
 attestation endpoint, sharing one deadline. Requests have a ten-second timeout capped by the
 remaining deadline. Other HTTP failures, malformed responses and integrity/provenance mismatches
 fail immediately. A successful upload followed by a verification failure must never be republished.
