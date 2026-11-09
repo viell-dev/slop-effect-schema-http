@@ -151,10 +151,14 @@ rules and limits below state where the current checks apply.
   numeric cells. Metadata is not an additional element or looked up as an element type. Symbols stay
   symbols in lookup and loss diagnostics; noncanonical index-looking strings stay metadata. Keep an
   unchanged value's identity and do not invoke its iterator to rebuild it. Ordinary processing can
-  still read getters and inspect prototypes. These 0.15 corrections do not extend the bounded
-  constructor-default proof: previously accidental failures can uncover existing unsupported sparse
-  or own-iterator default substitutions under #170. The [0.15 migration](./release-notes/0.15.md)
-  states exact changed outputs and the validated-decoded workaround.
+  still read getters and inspect prototypes. Discover hidden/inherited positions only in structural
+  array views without an open or opaque alternative; a union's Array alternative alone does not
+  justify inspecting another alternative's value. Existing enumerable-child normalization still
+  applies across views and does not select or execute an alternative. These 0.15 corrections do not
+  extend the bounded constructor-default proof: previously accidental failures can uncover existing
+  unsupported sparse or own-iterator default substitutions under #170. The [0.15
+  migration](./release-notes/0.15.md) states exact changed outputs and the validated-decoded
+  workaround.
 - **The decoded side is what the schema's constructor takes.** The library builds the schema's value
   before encoding it, so a plain object works for a `Schema.Class`, and a field with a constructor
   default can be left out. These functions need `Schema.Top`, the bound that has a constructor.

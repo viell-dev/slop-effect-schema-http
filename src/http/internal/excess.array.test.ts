@@ -122,6 +122,96 @@ describe("array positions during input normalization", () => {
     expect(Excess.exposed([Schema.Unknown.ast], input)).toBe(input);
   });
 
+  it("does not discover hidden or inherited cells through an opaque alternative", () => {
+    for (const opaque of [
+      Schema.Unknown,
+      Schema.Any,
+      Schema.ObjectKeyword,
+      Schema.declare(Array.isArray),
+    ]) {
+      const schema = Schema.Union([opaque, List]);
+      for (const inherited of [false, true]) {
+        const cell = { value: "kept", stray: "opaque" };
+        const input: Array<object> = [];
+        input.length = 1;
+        if (inherited)
+          Object.setPrototypeOf(
+            input,
+            Object.create(Array.prototype, { "0": { value: cell } }),
+          );
+        else Object.defineProperty(input, "0", { value: cell });
+        expect(Excess.normalised([schema.ast], input)).toBe(input);
+        expect(Excess.exposed([schema.ast], input)).toBe(input);
+        expect(input[0]).toBe(cell);
+      }
+    }
+  });
+
+  it("does not add array-layout reads to mixed opaque views", () => {
+    for (const opaque of [
+      Schema.Unknown,
+      Schema.Any,
+      Schema.ObjectKeyword,
+      Schema.declare(Array.isArray),
+    ]) {
+      const schema = Schema.Union([opaque, List]);
+      const target: Array<object> = [];
+      target.length = 2;
+      target[1] = { value: "kept" };
+      Object.defineProperty(target, "0", {
+        get() {
+          throw new Error("opaque hidden position inspected");
+        },
+      });
+      const input = new Proxy(target, {
+        get(object, key, receiver) {
+          if (key === "length") throw new Error("opaque length inspected");
+          return Reflect.get(object, key, receiver);
+        },
+        getPrototypeOf() {
+          throw new Error("opaque prototype inspected");
+        },
+      });
+      expect(Excess.normalised([schema.ast], input)).toBe(input);
+      expect(Excess.exposed([schema.ast], input)).toBe(input);
+      expect(Excess.missing([schema.ast], input, input, input)).toEqual([]);
+    }
+  });
+
+  it("does not read a mixed view's length getter when an enumerable child changes", () => {
+    let checks = 0;
+    const opaque = Schema.Unknown.check(
+      Schema.makeFilter(() => {
+        checks++;
+        return false;
+      }),
+    );
+    const schema = Schema.Union([opaque, List]);
+    const input = new Proxy([{ value: "kept", stray: "strip" }], {
+      get(object, key, receiver) {
+        if (key === "length") throw new Error("opaque length inspected");
+        return Reflect.get(object, key, receiver);
+      },
+    });
+    const result = Excess.normalised([schema.ast], input) as Array<unknown>;
+    expect(result.length).toBe(1);
+    expect(result[0]).toEqual({ value: "kept" });
+    expect(checks).toBe(0);
+  });
+
+  it("uses a structural array's readable length rather than its descriptor", () => {
+    const input = new Proxy([{ value: "kept", stray: "strip" }], {
+      get(target, key, receiver) {
+        return key === "length" ? 3 : Reflect.get(target, key, receiver);
+      },
+    });
+    const result = normalised(input);
+    expect(result.length).toBe(3);
+    expect(result[0]).toEqual({ value: "kept" });
+    expect(Object.hasOwn(result, "1")).toBe(false);
+    expect(Object.hasOwn(result, "2")).toBe(false);
+  });
+
   it("does not scan a million absent positions to retain a sparse layout", () => {
     const target: Array<object> = [];
     target.length = 1_000_000;

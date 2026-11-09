@@ -90,6 +90,8 @@ export type QueryFields = Readonly<
  *
  * Array normalization retains actual positions/length, including holes and readable hidden or
  * inherited cells; metadata is not converted into another element. Symbol keys keep their identity.
+ * Hidden/inherited-position discovery requires structural array views without open or opaque
+ * alternatives. Mixed views retain existing enumerable-child normalization, not a general proof.
  * These corrections do not expand constructor-default evidence. Removing an accidental failure can
  * expose an existing default for invalid aliases in sparse or own-iterator arrays (issue #170).
  * Validate and map to decoded names for those unsupported inputs; see the 0.15 migration.

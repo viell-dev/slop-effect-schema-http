@@ -500,6 +500,42 @@ for (const kind of ["path", "body"]) {
   assert.ok(Schema.isSchemaError(failure));
 }
 
+// An alternative array view must not discover cells retained by an opaque union member.
+const opaqueCellSchema = Schema.Struct({ value: Schema.Number }).pipe(
+  Schema.encodeKeys({ value: "VALUE" }),
+);
+for (const opaque of [Schema.Unknown, Schema.declare(Array.isArray)]) {
+  const parent = Schema.Struct({
+    values: Schema.Union([opaque, Schema.Array(opaqueCellSchema)]),
+    count: Schema.FiniteFromString,
+    tag: Schema.optionalKey(Schema.String),
+  }).pipe(Schema.encodeKeys({ tag: "TAG" }));
+  for (const inherited of [false, true]) {
+    const cell = { VALUE: 5, additional: "retain" };
+    const values = [];
+    values.length = 1;
+    if (inherited)
+      Object.setPrototypeOf(
+        values,
+        Object.create(Array.prototype, { 0: { value: cell } }),
+      );
+    else Object.defineProperty(values, "0", { value: cell });
+    let rendered;
+    const request = root.Request.get("/opaque-array").pipe(
+      root.Request.path(parent, (encoded) => {
+        rendered = encoded.values;
+        return "/ok";
+      }),
+    );
+    await Effect.runPromise(
+      root.Request.compile(request, { path: { values, count: "05" } }),
+    );
+    assert.equal(rendered, values);
+    assert.equal(rendered[0], cell);
+    assert.equal(rendered[0].additional, "retain");
+  }
+}
+
 console.log(
   `Packed consumer passed: ${Object.keys(manifest.exports).length} exports, id ${id}.`,
 );

@@ -119,7 +119,11 @@ The 0.15 normalization fixes retain actual array keys/length after an inner rewr
 readable hidden/inherited cells stay in place, metadata is not appended as a cell, and symbols no
 longer cause accidental numeric-conversion TypeErrors (#189/#191). The caller's layout remains
 unchanged. Ordinary getter/prototype processing can still occur; the fixes do not expand the
-constructor-default proof.
+constructor-default proof. Hidden/inherited-position discovery requires a structural array view
+without an open or opaque alternative. A union containing Unknown, Any, ObjectKeyword or a
+declaration does not establish that its Array alternative reads the value. Those mixed views keep
+their prior enumerable-child normalization; this is not a general preservation proof for every
+alternative.
 
 Removing those accidental failures can expose existing unsupported #170 defaults. A length-two
 sparse array with only position one `{ page_size: "many", stray: "ignored" }` previously refused
