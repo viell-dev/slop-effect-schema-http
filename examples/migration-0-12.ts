@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 // #region imports
-import { Effect, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { Body, Request } from "viell-effect-schema-http";
 // #endregion imports
 
@@ -79,4 +79,59 @@ assert.equal((await Effect.runPromise(prepareSearch({}))).request.url, "/25");
 assert.equal(
   (await Effect.runPromise(Effect.flip(prepareSearch({ limit: "many" }))))._tag,
   "SchemaError",
+);
+
+// #region whole-group
+const opaque = Option.some({ keep: "x", extra: "schema-owned" });
+const Mixed = Schema.Struct({
+  filter: Filter,
+  count: Schema.FiniteFromString,
+  opaque: Schema.Option(Schema.Struct({ keep: Schema.String })),
+});
+const mixed = Request.get("").pipe(
+  Request.path(Mixed, ({ filter, count }) => `/${filter.page_size}/${count}`),
+);
+// Even the same text as the default cannot bypass validation of the whole encoded group.
+const mixedInput = Request.compile(mixed, {
+  path: { filter: { page_size: "25" }, count: 3, opaque },
+});
+const mappedInput = Request.compile(mixed, {
+  path: { filter: { limit: 25 }, count: 3, opaque },
+});
+const completeEncodedInput = Request.compile(mixed, {
+  path: { filter: { page_size: "25" }, count: "3", opaque },
+});
+// #endregion whole-group
+
+assert.equal(
+  (await Effect.runPromise(Effect.flip(mixedInput)))._tag,
+  "SchemaError",
+);
+assert.equal((await Effect.runPromise(mappedInput)).request.url, "/25/3");
+assert.equal(
+  (await Effect.runPromise(completeEncodedInput)).request.url,
+  "/25/3",
+);
+
+// #region shared-text
+const Shared = Schema.Struct({
+  filter: Filter,
+  shared: Schema.StringFromBase64,
+  opaque: Schema.Option(Schema.Struct({ keep: Schema.String })),
+});
+const sharedText = Request.get("").pipe(
+  Request.path(Shared, ({ shared }, encode) => `/${encode(shared)}`),
+);
+const encodedGroup = Request.compile(sharedText, {
+  path: { filter: { page_size: "25" }, shared: "eA==", opaque },
+});
+const decodedGroup = Request.compile(sharedText, {
+  path: { filter: { limit: 25 }, shared: "eA==", opaque },
+});
+// #endregion shared-text
+
+assert.equal((await Effect.runPromise(encodedGroup)).request.url, "/eA%3D%3D");
+assert.equal(
+  (await Effect.runPromise(decodedGroup)).request.url,
+  "/ZUE9PQ%3D%3D",
 );

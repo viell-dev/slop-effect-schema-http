@@ -619,13 +619,14 @@ named decoded-input mapping for those cases.
 In 0.12, successful initial whole construction can also establish the encoded check below finite
 closed, untransformed direct objects. Stable own-data links must reach the same encoded-only
 terminal field actually written by the original strict writer. One consistent path witness is kept
-through whole decoding and the loss checks. Invalid nested text then fails before dispatch; valid
-encoded text and omission retain their meaning. Whole decoding can repeat schema checks and
-services, but construction is not replayed. [What's in 0.12](../release-notes/0.12.md) gives path
-and JSON examples and a decoded mapping. Parent unions, arrays, opaque/suspended/transformed
-ancestors and unsupported member/fieldwise routes remain outside this extension under #170. A
-fieldwise property reader may already decode a nested alias correctly; it cannot establish this
-constructor-only proof.
+through whole decoding and the loss checks. Invalid nested text then fails before dispatch. Valid
+aliases can also newly refuse beside decoded-only common fields, and shared-type fields take their
+encoded interpretation when whole decoding succeeds. Complete-side cases and omission retain their
+meaning. Whole decoding can repeat schema checks and services, but construction is not replayed.
+[What's in 0.12](../release-notes/0.12.md) gives path and JSON examples and a decoded mapping.
+Parent unions, arrays, opaque/suspended/transformed ancestors and unsupported member/fieldwise
+routes remain outside this extension under #170. A fieldwise property reader may already decode a
+nested alias correctly; it cannot establish this constructor-only proof.
 
 For a nonempty caller group, a decoding default hidden by a rename can still replace a later raw
 edit without refusal. The library does not infer general field correspondence or conflicting-alias

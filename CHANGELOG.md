@@ -8,7 +8,9 @@ nested encoded-default validation and the decoded-mapping migration.
 - **Breaking:** validate an encoded-only field nested through finite closed, untransformed direct
   object ancestors when the original successful initial whole construction and strict writer would
   replace it with a default. A single stable caller path and actual output write establish whole
-  decoding; invalid supplied input fails before dispatch.
+  decoding; invalid supplied input fails before dispatch. Valid aliases can newly refuse beside
+  decoded-only common fields, or change shared-type fields to encoded interpretation when whole
+  decoding succeeds. The checked migration covers both consequences.
 - Preserve strict successes, existing root/fieldwise priority, writer fallback and loss/sibling
   certificates. Whole decoding can repeat schema checks and services; construction is not replayed.
 - Cover deeper paths, terminal child unions, stable null-prototype/frozen/nonenumerable data,
