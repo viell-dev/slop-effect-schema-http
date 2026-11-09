@@ -322,10 +322,10 @@ describe(`nested encoded input aliases (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-40g] currently, a nested invalid encoded value dispatches its constructor default",
+    "[EXT-40g] a nested invalid encoded value refuses before dispatch and retains valid controls",
     () =>
       Effect.gen(function* () {
-        // Existing visible-input defect, separately tracked in #170; not fixed by #172.
+        // #170's bounded nested constructor repair, distinct from #172's earlier typing repair.
         const DefaultedNested = Schema.Struct({
           filter: Schema.Struct({
             limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
@@ -344,25 +344,47 @@ describe(`nested encoded input aliases (${lane.name})`, () => {
           ),
           response,
         );
-        for (const page_size of ["many", "05"]) {
-          const value = yield* operation
-            .execute({ path: { filter: { page_size } } })
-            .pipe(Effect.provide(lane.fetchClient));
-          expect(value).toBe("Not Found");
-        }
+        const invalid = yield* operation
+          .execute({ path: { filter: { page_size: "many" } } })
+          .pipe(
+            Effect.provide(lane.fetchClient),
+            Effect.match({
+              onFailure: (error) => ({ error }),
+              onSuccess: (value) => ({ value }),
+            }),
+          );
+        const beforeControls = yield* backend.ledger;
+        const encoded = yield* operation
+          .execute({ path: { filter: { page_size: "05" } } })
+          .pipe(Effect.provide(lane.fetchClient));
         const decoded = yield* operation
           .execute({ path: { filter: { limit: 5 } } })
           .pipe(Effect.provide(lane.fetchClient));
         const omitted = yield* operation
           .execute({ path: { filter: {} } })
           .pipe(Effect.provide(lane.fetchClient));
-        expect([decoded, omitted]).toEqual(["Not Found", "Not Found"]);
+        expect([encoded, decoded, omitted]).toEqual([
+          "Not Found",
+          "Not Found",
+          "Not Found",
+        ]);
         const ledger = yield* backend.ledger;
-        expect(ledger).toHaveLength(4);
-        expectWire(ledger[0]!, "GET", "/x/25");
+        expect({
+          invalid,
+          beforeControls: beforeControls.map(({ method, target }) => ({
+            method,
+            target,
+          })),
+          targets: ledger.map(({ target }) => target),
+        }).toMatchObject({
+          invalid: { error: { _tag: "SchemaError" } },
+          beforeControls: [],
+          targets: ["/x/5", "/x/5", "/x/25"],
+        });
+        expect(ledger).toHaveLength(3);
+        expectWire(ledger[0]!, "GET", "/x/5");
         expectWire(ledger[1]!, "GET", "/x/5");
-        expectWire(ledger[2]!, "GET", "/x/5");
-        expectWire(ledger[3]!, "GET", "/x/25");
+        expectWire(ledger[2]!, "GET", "/x/25");
         for (const entry of ledger) expect(entry.body.byteLength).toBe(0);
       }),
   );
