@@ -3460,3 +3460,46 @@ omitted-default and whole-side codec controls preserve their observed bytes.
 - **EXT-39h** Whole encoded headers retain the same Base64 behavior and canonical numeric alias,
   with decoded and ambiguous shared-type controls. Status: tested.
   - `[EXT-39h] whole encoded headers keep shared-type codec decoding priority`
+
+## Nested encoded input aliases
+
+EXT-40 covers the public input typing defect in
+[#172](https://github.com/viell-dev/slop-effect-schema-http/issues/172), independently through
+`src/scenarios/nested-encoded-aliases.test.ts`. The consumer uses the neutral echo probe's
+[public contract](./README.md#the-neutral-echo-probe), Fetch in Node and Chromium, and physical
+socket ledgers. The 0.9.0 source baseline at `66fab8e` rejects nested `page_size` input with
+TypeScript's excess-property error even though the runtime accepts it. Positive `Request.Input`
+assignments and inferred `Operation.execute` calls remain unmasked so the repair must accept them
+without changing bytes. The cases retain complete schema sides, without asserting arbitrary
+recursive field mixing.
+Unevaluated API calls also reject unknown nested names, wrong encoded primitive types, crossed
+discriminated members and a public lookalike of a class with a private field.
+
+- **EXT-40a** A nested partly renamed direct path accepts complete encoded and decoded sides.
+  String `"05"` stays `05`, the unchanged sibling escapes a slash, and omitted optional fields
+  retain the renderer's declared placeholders. Status: tested.
+  - `[EXT-40a] a nested direct path accepts both complete sides and preserves literal text`
+- **EXT-40b** A nested union retains an encoded alias and its decoded-name control, while its
+  cursor alternative keeps a slash inside one path segment. Status: tested.
+  - `[EXT-40b] a nested union path retains encoded aliases and its cursor alternative`
+- **EXT-40c** A nested JSON-body schema accepts complete encoded and decoded sides and writes
+  canonical numeric text `"5"`, UTF-8 sibling bytes and the encoded field name. Empty optional
+  fields remain absent. Status: tested.
+  - `[EXT-40c] a nested JSON body accepts both complete sides and writes canonical numeric text`
+- **EXT-40d** A discriminated JSON-body union accepts its nested encoded alias, retains decoded
+  and cursor-member controls, and keeps the static relationship between its tag and fields.
+  Status: tested.
+  - `[EXT-40d] a discriminated JSON body retains nested aliases and member correlation`
+- **EXT-40e** Nested encoded path text `"many"` fails the finite-number schema. A deliberately
+  type-invalid boolean fails too; both are `SchemaError` with no dispatch. Status: tested.
+  - `[EXT-40e] invalid nested encoded path values still fail before dispatch`
+- **EXT-40f** The JSON-body binding retains the same schema failures and empty ledger for invalid
+  encoded text and a deliberately type-invalid boolean. Status: tested.
+  - `[EXT-40f] invalid nested encoded JSON values still fail before dispatch`
+- **EXT-40g** Currently, a visible nested partly renamed field with a constructor default replaces
+  invalid encoded `"many"` with `25` and dispatches it. Valid encoded `"05"` and decoded `5` send
+  `5`; omission sends `25`. This violates the kept-or-refused promise and remains under
+  [#170's nested-default report](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6729728316),
+  outside #172's type-only repair. The socket ledger pins the observed defect and controls rather
+  than accepting the overwrite as intended behavior. Status: defect.
+  - `[EXT-40g] currently, a nested invalid encoded value dispatches its constructor default`
