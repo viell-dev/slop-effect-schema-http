@@ -579,10 +579,9 @@ describe(`parent union defaults (${lane.name})`, () => {
           Schema.Record(Schema.Literal(1), Other),
           [Schema.Record(Schema.Literal("1"), Leaf)],
         );
-        const schema = Schema.Union([member, Cursor]);
-        const operation = Operation.make(
+        const union = Operation.make(
           Request.get(`${backend.origin}/x`).pipe(
-            Request.path(schema, (value, encode) =>
+            Request.path(Schema.Union([member, Cursor]), (value, encode) =>
               "1" in value
                 ? `/limit/${encode(value["1"].wire ?? "none")}`
                 : `/cursor/${encode(value.cursor)}`,
@@ -590,29 +589,80 @@ describe(`parent union defaults (${lane.name})`, () => {
           ),
           response,
         );
-        // Controls precede the bad value: neither constructor-default input nor decoded input
-        // depends on inferring ownership between the two distinct declarations.
-        expect(
-          yield* operation
-            .execute({ path: { "1": {} } })
-            .pipe(Effect.provide(lane.fetchClient)),
-        ).toBe("Not Found");
-        expect(
-          yield* operation
-            .execute({ path: { "1": { limit: 6 } } })
-            .pipe(Effect.provide(lane.fetchClient)),
-        ).toBe("Not Found");
-        const controls = yield* backend.ledger;
-        expect(controls).toHaveLength(2);
-        wire(controls[0]!, "/x/limit/25");
-        wire(controls[1]!, "/x/limit/6");
-        const bad = yield* operation
-          .execute({ path: { "1": { wire: "many" } } })
-          .pipe(Effect.provide(lane.fetchClient), result);
-        expect(bad).toEqual({ value: "Not Found" });
-        const ledger = yield* backend.ledger;
-        expect(ledger).toHaveLength(3);
-        wire(ledger[2]!, "/x/limit/25");
+        const direct = Operation.make(
+          Request.get(`${backend.origin}/x`).pipe(
+            Request.path(
+              member,
+              (value, encode) => `/limit/${encode(value["1"].wire ?? "none")}`,
+            ),
+          ),
+          response,
+        );
+        const wrapped = Operation.make(
+          Request.get(`${backend.origin}/x`).pipe(
+            Request.path(
+              Schema.Struct({ page: member }),
+              (value, encode) =>
+                `/limit/${encode(value.page["1"].wire ?? "none")}`,
+            ),
+          ),
+          response,
+        );
+        // Direct/wrapped forms newly expose the defect; the union retains its old default.
+        // https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6733524389
+        type FilterInput = { limit?: number; wire?: string };
+        const routes = [
+          {
+            name: "parent union",
+            run: (filter: FilterInput) =>
+              union.execute({ path: { "1": filter } }),
+          },
+          {
+            name: "direct",
+            run: (filter: FilterInput) =>
+              direct.execute({ path: { "1": filter } }),
+          },
+          {
+            name: "wrapped",
+            run: (filter: FilterInput) =>
+              wrapped.execute({ path: { page: { "1": filter } } }),
+          },
+        ];
+        const observations = [];
+        for (const route of routes) {
+          const before = (yield* backend.ledger).length;
+          // Encoded, decoded and omitted controls run before each bad alias.
+          for (const filter of [{ wire: "06" }, { limit: 6 }, {}]) {
+            expect(
+              yield* route.run(filter).pipe(Effect.provide(lane.fetchClient)),
+            ).toBe("Not Found");
+          }
+          const controls = (yield* backend.ledger).slice(before);
+          expect(controls).toHaveLength(3);
+          for (const [index, target] of [
+            "/x/limit/6",
+            "/x/limit/6",
+            "/x/limit/25",
+          ].entries())
+            wire(controls[index]!, target);
+          const bad = yield* route
+            .run({ wire: "many" })
+            .pipe(Effect.provide(lane.fetchClient), result);
+          const ledger = (yield* backend.ledger).slice(before + 3);
+          observations.push({
+            route: route.name,
+            bad,
+            targets: ledger.map((entry) => entry.target),
+          });
+          if (ledger.length === 1) wire(ledger[0]!, "/x/limit/25");
+        }
+        expect(observations).toEqual(
+          routes.map((route) => ({
+            route: route.name,
+            bad: { value: "Not Found" },
+            targets: ["/x/limit/25"],
+          })),
+        );
       }),
   );
 });
