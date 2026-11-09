@@ -385,6 +385,59 @@ describe("remaining group-field recovery", () => {
         if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect);
       }),
     );
+    it.effect(
+      `validates transformed values on the fieldwise ${group} recovery route`,
+      () =>
+        Effect.gen(function* () {
+          const checked: number[] = [];
+          // Both members need decoding. A string-only b would keep its constructor ahead of
+          // the alternate member's decoder, so that fixture never reaches the checked route.
+          const NumericB = Schema.Struct({ b: Schema.FiniteFromString });
+          const schema = Schema.Union([
+            NumericB,
+            Schema.Struct({ a: Schema.FiniteFromString, c: Schema.String }),
+          ]).check(
+            Schema.makeFilter((value) => {
+              if (!("a" in value)) return true;
+              checked.push(value.a);
+              return value.a > 5;
+            }),
+          );
+          const run = (a: string) =>
+            group === "query"
+              ? Request.compile(
+                  Request.get("/x").pipe(
+                    Request.query(schema),
+                    Request.query(NumericB),
+                  ),
+                  { query: { a, b: "7", c: "z" } },
+                )
+              : Request.compile(
+                  Request.get("/x").pipe(
+                    Request.headers(schema),
+                    Request.headers(NumericB),
+                  ),
+                  { headers: { a, b: "7", c: "z" } },
+                );
+          expect(yield* Effect.flip(run("3"))).toBeInstanceOf(
+            Schema.SchemaError,
+          );
+          expect(checked).toContain(3);
+          const compiled = yield* run("9");
+          expect(checked).toContain(9);
+          expect(
+            group === "query" ? compiled.request.url : compiled.headerLines,
+          ).toEqual(
+            group === "query"
+              ? "/x?a=9&c=z&b=7"
+              : [
+                  ["a", "9"],
+                  ["c", "z"],
+                  ["b", "7"],
+                ],
+          );
+        }),
+    );
   }
   for (const [name, schema] of [
     [
