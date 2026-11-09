@@ -689,7 +689,7 @@ describe("nested aliases replaced during whole construction", () => {
     }
   });
 
-  it("does not traverse transformations, arrays, declarations or suspensions", () => {
+  it("does not traverse transformed, open, declared or suspended ancestors", () => {
     class Wrapped extends Schema.Class<Wrapped>("NestedAncestor")({
       filter: Inner,
     }) {}
@@ -700,7 +700,6 @@ describe("nested aliases replaced during whole construction", () => {
     });
     for (const schema of [
       Direct.pipe(Schema.encodeKeys({ filter: "q" })),
-      Schema.Struct({ filters: Schema.Array(Inner) }),
       Wrapped,
       suspended,
       Schema.StructWithRest(Direct, [
@@ -732,33 +731,18 @@ describe("nested aliases replaced during whole construction", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect("currently retains unsupported array default overwrites", () =>
+  it.effect("refuses invalid nested input through a dense array ancestor", () =>
     Effect.gen(function* () {
       expect(
-        yield* prepare(
-          Schema.Struct({ filters: Schema.Array(Inner) }),
-          { filters: [{ page_size: "many" }] },
-          "body",
-        ),
-      ).toEqual({ filters: [{ page_size: "25" }] });
-    }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect.fails(
-    "refuses invalid nested input through an unsupported array ancestor",
-    () =>
-      Effect.gen(function* () {
-        expect(
-          yield* Effect.flip(
-            prepare(
-              Schema.Struct({ filters: Schema.Array(Inner) }),
-              { filters: [{ page_size: "many" }] },
-              "body",
-            ),
+        yield* Effect.flip(
+          prepare(
+            Schema.Struct({ filters: Schema.Array(Inner) }),
+            { filters: [{ page_size: "many" }] },
+            "body",
           ),
-        ).toBeInstanceOf(Schema.SchemaError);
-      }),
+        ),
+      ).toBeInstanceOf(Schema.SchemaError);
+    }),
   );
 
   it("reuses metadata DAGs and shared inputs without copying cyclic extras", () => {
