@@ -6,7 +6,8 @@
 //   nothing.
 // - `node scripts/catalogue.mjs --results <junit.xml>...` (in `npm test` and CI, after the lanes)
 //   reads the JUnit reports of the runs instead. Each report needs at least one passed test, and an
-//   entry marked "tested" needs a passed, not skipped, test carrying its ID in at least one lane.
+//   entry marked "tested" needs a passed test carrying its ID in at least one lane. Every selected
+//   test must pass: a skipped or failed case cannot hide behind a passing same-ID control.
 //
 // An entry whose tests run only in a dedicated lane names it, as `Lane: app.` does for the tests of
 // the built single-page app, which only `npm run app` runs. A results check asks for such an entry
@@ -117,6 +118,10 @@ if (results < 0) {
       `${lane} ${passed} passed, ${skipped} skipped, ${failed} failed`,
     );
     if (passed === 0) problems.push(`${report}: no passed test in this lane`);
+    if (skipped > 0)
+      problems.push(`${report}: unexpected skipped test count: ${skipped}`);
+    if (failed > 0)
+      problems.push(`${report}: unexpected failed test count: ${failed}`);
   }
   // The reports that run each entry's tests: its dedicated lane's, or every other lane's.
   const reportsFor = (id) =>

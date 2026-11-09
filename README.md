@@ -143,6 +143,12 @@ marked tested has a test whose title carries its ID. `npm test` verifies it agai
 results: every entry marked tested has a passed, not skipped, test carrying its ID in at least one
 lane. An entry marked `Lane: app` runs only in the app lane, and only `npm run app` checks it.
 
+Every selected result case must pass. Skipped or failed cases make the catalogue gate fail even
+when another test with the same ID passes. The lane configurations select which files run; an
+excluded file differs from a selected case skipped at runtime. `npm run check` runs
+`scripts/catalogue.test.mjs` against synthetic JUnit reports to hold this distinction and dedicated
+app-lane selection in place.
+
 The gateway's consumer contracts choose a strict UTF-8 text view of pipe replies, including help
 replies: a message containing malformed octets fails as `Response.DecodeError`. The service can
 echo arbitrary request bytes, so this is a consumer policy, not a service encoding guarantee.

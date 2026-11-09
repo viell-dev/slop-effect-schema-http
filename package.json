@@ -21,6 +21,7 @@
     "check:tsc": "tsc --noEmit",
     "check:prettier": "prettier --check .",
     "check:catalogue": "node scripts/catalogue.mjs",
+    "check:catalogue-test": "node --test scripts/catalogue.test.mjs",
     "check:boundaries": "node scripts/boundaries.mjs",
     "check:boundaries-test": "node --test scripts/boundaries.test.mjs",
     "check:authorship-test": "node --test scripts/authorship.test.mjs",
