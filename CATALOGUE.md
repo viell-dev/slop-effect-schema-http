@@ -3503,3 +3503,74 @@ discriminated members and a public lookalike of a class with a private field.
   outside #172's type-only repair. The socket ledger pins the observed defect and controls rather
   than accepting the overwrite as intended behavior. Status: defect.
   - `[EXT-40g] currently, a nested invalid encoded value dispatches its constructor default`
+
+## Encoded aliases lost during fieldwise preparation
+
+EXT-41 covers the bounded breaking refusal subset accepted in
+[#170's fieldwise assessment](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6729802994)
+and its [0.10.0 recheck](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6730270545).
+The independently authored `src/scenarios/fieldwise-alias-loss.test.ts` uses public input types and
+inferred operation calls, the neutral echo probe's
+[public contract](./README.md#the-neutral-echo-probe), Fetch in Node and Chromium, and physical
+socket ledgers. The flat schema renames optional finite-number `limit` to `page_size`, gives it
+constructor default `25`, and requires finite-number `count` and `offset`.
+
+Published 0.10.0 at `ac5822d` dispatches `25` for invalid encoded `"many"` beside mixed common fields
+`count: "07", offset: 9`. Valid `"05"` and same-default `"25"` aliases with those common fields
+are also within the accepted refusal subset, as is invalid `"many"` with entirely encoded common
+fields. These calls require `SchemaError` and an empty ledger. Positive controls retain their
+exact observed bytes. This does not extend the repair to the nested default defect in EXT-40g or
+to general mixed-alias preservation; #170 remains open.
+
+- **EXT-41a** Direct and root-union queries refuse all four supplied-alias cases rather than
+  dispatch a generated `25`. Status: tested.
+  - `[EXT-41a] a ${shape} query refuses supplied aliases lost by fieldwise preparation`
+- **EXT-41b** Direct and root-union headers require the same schema failures and no dispatch.
+  Status: tested.
+  - `[EXT-41b] ${shape} headers refuse supplied aliases lost by fieldwise preparation`
+- **EXT-41c** Direct and root-union queries retain complete encoded and decoded input, supported
+  decoded-name mixing, omission and an explicit undefined encoded alias. The last two generate
+  `25`; the other controls write `5`. Status: tested.
+  - `[EXT-41c] control: a ${shape} query keeps complete sides, decoded-name mixing and defaults`
+- **EXT-41d** The corresponding header controls preserve canonical numeric text, one line per
+  encoded name, empty body and exact request count. Status: tested.
+  - `[EXT-41d] control: ${shape} headers keep complete sides, decoded-name mixing and defaults`
+- **EXT-41e** A direct filter query beside a separate cursor binding refuses the invalid mixed
+  alias, with either binding first. A sibling cannot excuse the overwrite. Status: tested.
+  - `[EXT-41e] query siblings with ${order} cannot excuse the fieldwise alias loss`
+- **EXT-41f** The corresponding header bindings refuse before dispatch in both orders.
+  Status: tested.
+  - `[EXT-41f] header siblings with ${order} cannot excuse the fieldwise alias loss`
+- **EXT-41g** Direct filter and cursor query bindings preserve decoded and supported decoded-name
+  mixed input in both orders, including each binding's exact outgoing fields. Status: tested.
+  - `[EXT-41g] control: query siblings with ${order} retain decoded and mixed decoded-name values`
+- **EXT-41h** The header siblings preserve the same values once each in both orders.
+  Status: tested.
+  - `[EXT-41h] control: header siblings with ${order} retain decoded and mixed decoded-name values`
+- **EXT-41i** An earlier raw query default has no caller alias witness. Without a constructor
+  default, raw `"05"` becomes `5` and raw `"many"` is `InvalidRequest` without dispatch. A
+  constructor default legitimately replaces either raw value with `25`. Status: tested.
+  - `[EXT-41i] control: earlier raw query defaults remain distinct from supplied aliases`
+- **EXT-41j** Earlier raw header defaults preserve the same validation and replacement behavior,
+  with exact physical lines and request counts. Status: tested.
+  - `[EXT-41j] control: earlier raw header defaults remain distinct from supplied aliases`
+- **EXT-41k** A root union of filter and cursor, stacked with cursor, still refuses complete
+  encoded query input in both binding orders. Its `SchemaError` and empty ledger remain a separate
+  selection/certificate limit under [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143).
+  Status: limit.
+  - `[EXT-41k] limit: a root union beside a cursor still refuses whole encoded query input`
+- **EXT-41l** The same root-union/cursor combination retains its whole-encoded header refusal in
+  both orders, outside this repair. Status: limit.
+  - `[EXT-41l] limit: a root union beside a cursor still refuses whole encoded header input`
+- **EXT-41m** Direct and root-union path bindings refuse the flat mixed invalid alias before
+  dispatch. Baseline 0.10.0 instead sends `/x/page/25/7/9`. Status: tested.
+  - `[EXT-41m] a ${shape} path refuses a supplied alias lost by fieldwise preparation`
+- **EXT-41n** Direct and root-union JSON-body bindings refuse the same flat input before dispatch.
+  Baseline 0.10.0 instead writes `{"page_size":"25","count":"7","offset":"9"}`. Status: tested.
+  - `[EXT-41n] a ${shape} JSON body refuses a supplied alias lost by fieldwise preparation`
+- **EXT-41o** Complete encoded and decoded path input retains canonical `/x/page/5/7/9`, with
+  empty body and exact request count. Status: tested.
+  - `[EXT-41o] control: a ${shape} path retains complete encoded and decoded values`
+- **EXT-41p** Complete encoded and decoded JSON-body input retains its canonical bytes, JSON
+  content type, method, target and request count. Status: tested.
+  - `[EXT-41p] control: a ${shape} JSON body retains complete encoded and decoded values`
