@@ -83,6 +83,15 @@ opaque/suspended/transformed/open parents, changing caller objects and unsupport
 routes remain outside this extension under #170. Supply decoded values or a validated decoded
 mapping there.
 
+The same ambiguity guard now excludes conflicting normalized declarations inside direct objects,
+including numeric `1` and string `"1"`. This can weaken a 0.12 refusal into a generated default in
+0.13, directly or below another unchanged field. Supplied `wire: "many"` can therefore produce
+`/limit/25` in the [typed
+reproduction](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6733524389).
+This newly exposed kept-or-refused defect remains open under #170. Validate and map to decoded names
+before preparation, or supply validated decoded values; default substitution is not an intended
+guarantee.
+
 Whole encoded nested shapes retain their static input type in 0.10. Helpers using `Request.Input`
 must handle encoded nested names too, or declare their own decoded input shape; the [0.10
 migration](./release-notes/0.10.md) gives a checked example. This changes no runtime route. Inside
