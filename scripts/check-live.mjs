@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL, URL } from "node:url";
+import { isDocumentationSource } from "./documentation-scope.mjs";
 
 // Compare what is published with this checkout, and the published surfaces with each other. It
 // only reads: GitHub through an authenticated gh, npm and the deployed site over the network.
@@ -306,8 +307,16 @@ export async function reconcile({ read, testFiles, github, fetch }) {
     );
     const outside = (comparison?.files ?? [])
       .flatMap((file) => [file.filename, file.previous_filename])
-      .filter((path) => path && !path.startsWith("docs/"));
-    if (comparison?.status === "ahead" && outside.length === 0)
+      .filter((path) => path && !isDocumentationSource(path));
+    // GitHub truncates comparison file lists at 300. A missing or potentially truncated list
+    // cannot prove that every changed file is documentation.
+    if (
+      comparison?.status === "ahead" &&
+      Array.isArray(comparison.files) &&
+      comparison.files.length > 0 &&
+      comparison.files.length < 300 &&
+      outside.length === 0
+    )
       add("ok", `deployed site's commit corrects the docs of ${version}`);
     else
       add(

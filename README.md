@@ -83,21 +83,8 @@ versions and provider boundaries.
   where the library's promise stops, failure stages and bug reporting.
 - [What's in 0.15](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.15): the
   current release, array positions, symbol keys and the remaining default limits.
-- Earlier release articles:
-  [0.14](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.14),
-  [0.13](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.13),
-  [0.12](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.12),
-  [0.11](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.11),
-  [0.10](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.10),
-  [0.9](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.9),
-  [0.8](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.8),
-  [0.7](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.7),
-  [0.6](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.6),
-  [0.5](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.5),
-  [0.4](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.4),
-  [0.3](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.3),
-  [0.2](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.2) and
-  [0.1](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.1).
+- [Release history](https://viell-dev.github.io/slop-effect-schema-http/release-notes/): earlier
+  articles and a comparison of the related schema-input repairs.
 - [Versions](https://viell-dev.github.io/slop-effect-schema-http/versions): updates and
   compatibility policy. [CHANGELOG.md](./CHANGELOG.md) records the detailed history.
 

@@ -3,9 +3,10 @@
 This guide takes a version from preparation to publication. `VERSION` stands for the exact version
 being released, without a `v`, and `X.Y` for its first two numbers.
 
-Compatible fixes raise the patch number and breaking changes raise the minor number. A breaking
-release needs migration guidance in its release article. Tags have no `v` prefix. A version normally
-goes straight to stable; [use a prerelease](#use-a-prerelease) when a build has to be tried first.
+While the package remains `0.x`, compatible fixes raise the patch number and breaking changes raise
+the minor number. A breaking release needs migration guidance in its release article. Tags have no
+`v` prefix. A version normally goes straight to stable; [use a prerelease](#use-a-prerelease) when a
+build has to be tried first.
 
 Routine CI and release qualification publish nothing; publication is a separate, authorized step. A
 release runs in this order:
@@ -15,6 +16,22 @@ release runs in this order:
 3. [Publish the same bytes to npm](#publish-to-npm), which [deploys its
    documentation](#release-documentation-and-corrections) by itself.
 4. [Check the published state](#check-the-published-state).
+
+## Choose a release unit
+
+Group related fixes around a consumer outcome, rather than publishing each newly supported internal
+route as another minor version. Assess an input-hardening batch before version preparation: name the
+accepted cases, completion checks and retained limits in its issue. Separate implementation PRs and
+proof reviews are useful and do not each require a package release. Reproduce all cases in the
+accepted batch before deciding it is ready; do not extend the batch every time exploration finds
+another case. Record newly found work separately with its disposition.
+
+Choose the version from the combined consumer-visible behavior. A compatible fix uses a patch; a
+changed successful result, newly refused supported call or widened public input type can require a
+breaking `0.x` minor even when the change is small. Do not publish documentation, tooling or
+repository maintenance as a breaking package release by itself. Current-release docs can deploy
+through the correction route. The [release-history comparison](./docs/release-notes/index.md)
+explains the earlier related repairs without claiming they complete every schema case.
 
 ## Prepare a candidate
 
@@ -27,10 +44,14 @@ release runs in this order:
    - **`CHANGELOG.md`:** turn `## Unreleased` into `## VERSION — DATE`, and link the release article
      from that entry. `npm run release:prepare` refuses a version with no matching heading.
    - **`docs/release-notes/X.Y.md`:** for a new minor release, write or update the article with the
-     capabilities and changes consumers will notice, examples and migration steps for every breaking
-     change. Patch releases update it when they change the consumer experience. Keep maintenance
-     details in the changelog. Do not publish a draft as a completed release.
-   - **`docs/.vitepress/config.ts`:** add a new article to the sidebar.
+     consumer-visible delta first: previous result, changed input/action and decisive new condition.
+     Distinguish typing-only changes, extensions of an existing defect repair and separate fixes.
+     Then give examples and migration steps for every breaking change. Patch releases update it when
+     they change the consumer experience. Keep maintenance details in the changelog. Do not publish
+     a draft as a completed release.
+   - **Release navigation:** keep the current article visible in `docs/.vitepress/config.ts`; move
+     its predecessor into the collapsed history group and update `docs/release-notes/index.md`.
+     README and Versions link to that index rather than growing their own older-release lists.
    - **Release status:** README, including its list of documents, `docs/index.md`, `docs/api.md`,
      `docs/versions.md` and the release article. Remove any wording that says this release is not
      published yet, which the checks cannot find. Update the tarball names, download links and
@@ -234,12 +255,20 @@ Dispatch `pages.yml` by hand on `main` with `tag=VERSION` to recover from a fail
 the newest candidate before the first stable release. It accepts only the newest stable GitHub
 release, or newest candidate before stable.
 
-For a current-release documentation error, create a task branch from its tag and change only
-`docs/`. Deliver it through a PR into a protected `site-VERSION` branch rooted at the tag. Keep the
-same package version, preserve the correction on main as appropriate, then dispatch `pages.yml` with
-that release tag and the full correction commit in `correction`. The workflow requires tag ancestry
-and refuses changed paths outside `docs/`. Record the deployed commit without moving the software
-tag. Use the same procedure for another correction; the next release deploys its own docs.
+For a current-release documentation error, create a task branch from its tag and change only `docs/`
+and the embedded TypeScript example modules allowed by
+[`scripts/documentation-scope.mjs`](./scripts/documentation-scope.mjs). The allowlist covers the
+introductory, module, recipe and migration snippets; it excludes example runners, the distributed
+`examples/release-check.mjs`, production source, manifests and publication code. New snippet sources
+need a separately reviewed policy update on main, with their execution path checked. Deliver the
+correction through a PR into a protected `site-VERSION` branch rooted at the tag. Keep the same
+package version, preserve the correction on main as appropriate, then dispatch `pages.yml` with that
+release tag and the full correction commit in `correction`. The main-branch policy verifies tag
+ancestry and both sides of renames before the workflow checks out the correction. Reconciliation
+uses the same path classifier; published package and release-asset bytes remain unchanged. Build and
+execute the examples against the unchanged release source before deployment. Record the deployed
+commit without moving the software tag. Use the same procedure for another correction; the next
+release deploys its own docs.
 
 ## Check the published state
 

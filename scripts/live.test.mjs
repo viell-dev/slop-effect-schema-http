@@ -400,6 +400,34 @@ test("a documentation-only correction of the release is accepted", async () => {
   assert.deepEqual(findings(await check(published)), []);
 });
 
+test("an embedded example correction is accepted, but release assets and renamed production sources are not", async () => {
+  for (const [files, expected] of [
+    [[{ filename: "examples/quickstart.ts" }], []],
+    [[{ filename: "examples/release-check.mjs" }], ["DIFFERS"]],
+    [
+      [{ filename: "docs/example.md", previous_filename: "src/main.ts" }],
+      ["DIFFERS"],
+    ],
+    [[{ filename: "examples/guides.mjs" }], ["DIFFERS"]],
+    [undefined, ["DIFFERS"]],
+    [
+      Array.from({ length: 300 }, (_, i) => ({ filename: `docs/${i}.md` })),
+      ["DIFFERS"],
+    ],
+  ]) {
+    const published = world();
+    const corrected = "b".repeat(40);
+    published.web[published.manifest.homepage] = new Response(
+      site("1.2.3", corrected),
+    );
+    published.api[`repos/${repository}/compare/${commit}...${corrected}`] = {
+      status: "ahead",
+      files,
+    };
+    assert.deepEqual(findings(await check(published)), expected);
+  }
+});
+
 test("a surface that cannot be read is neither agreement nor pending", async () => {
   const published = world();
   published.api[`repos/${repository}/labels`] = new Error("HTTP 500");
