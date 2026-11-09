@@ -97,10 +97,43 @@ const isPlain = (value: unknown): value is Record<PropertyKey, unknown> => {
   return prototype === Object.prototype || prototype === null;
 };
 
-const keysOf = (value: object): ReadonlyArray<PropertyKey> =>
-  Reflect.ownKeys(value).filter((key) =>
-    Object.prototype.propertyIsEnumerable.call(value, key),
+/** An actual array position, rather than a property whose spelling merely converts to a number. */
+const arrayIndex = (key: PropertyKey): number | undefined => {
+  if (typeof key === "symbol") return undefined;
+  const index = Number(key);
+  return Number.isInteger(index) &&
+    index >= 0 &&
+    index < 0xffff_ffff &&
+    String(index) === String(key)
+    ? index
+    : undefined;
+};
+
+const keysOf = (value: object): ReadonlyArray<PropertyKey> => {
+  const list = Array.isArray(value);
+  const keys = new Set(
+    Reflect.ownKeys(value).filter(
+      (key) =>
+        Object.prototype.propertyIsEnumerable.call(value, key) ||
+        (list && arrayIndex(key) !== undefined),
+    ),
   );
+  if (list) {
+    // Array schemas also read hidden or inherited positions. Materialize those cells if another
+    // cell needs rewriting; copying an enumerable-key list would compact or drop them.
+    const visited = new Set<object>();
+    let prototype: object | null = Object.getPrototypeOf(value);
+    while (prototype !== null && !visited.has(prototype)) {
+      visited.add(prototype);
+      for (const key of Reflect.ownKeys(prototype)) {
+        const index = arrayIndex(key);
+        if (index !== undefined && index < value.length) keys.add(key);
+      }
+      prototype = Object.getPrototypeOf(prototype);
+    }
+  }
+  return [...keys];
+};
 
 /** Whether a side only holds literals, and this value is none of them. */
 const refuses = (side: Ast, value: unknown): boolean =>
@@ -181,7 +214,9 @@ const typesAt = (
 ): ReadonlyArray<Ast> =>
   sides.flatMap((side) => {
     if (side._tag === "Arrays") {
-      const element = side.elements[Number(key)];
+      const index = arrayIndex(key);
+      if (index === undefined) return [];
+      const element = side.elements[index];
       return element === undefined ? side.rest : [element];
     }
     return side._tag === "Objects"
@@ -263,11 +298,18 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
       hidden.length === 0 &&
       entries.length === keys.length &&
       entries.every(([key, item]) => item === value[key]);
-    return same
-      ? value
-      : isList
-        ? entries.map(([, item]) => item)
-        : Object.fromEntries(entries);
+    if (same) return value;
+    if (!isList) return Object.fromEntries(entries);
+    const output: Array<unknown> = [];
+    output.length = value.length;
+    for (const [key, item] of entries)
+      Object.defineProperty(output, key, {
+        value: item,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    return output;
   };
   return rewrite;
 };
@@ -329,7 +371,10 @@ export const missing = (
       !decoded.has(String(key)) ||
       Equal.equals(at(output, key), given[key]));
   return keysOf(given).flatMap((key) => {
-    const here = [...path, Array.isArray(given) ? Number(key) : key];
+    const here = [
+      ...path,
+      Array.isArray(given) ? (arrayIndex(key) ?? key) : key,
+    ];
     return given[key] === undefined || has(value, key) || holdsAsWritten(key)
       ? missing(
           typesAt(sides, key),
