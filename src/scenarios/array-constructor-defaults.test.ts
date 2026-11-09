@@ -1049,7 +1049,7 @@ describe(`array constructor defaults (${lane.name})`, () => {
 
     for (const iterator of ["normal", "watched"] as const) {
       it.live(
-        `[EXT-44p] currently ${binding} enumerable ${iterator} array iterator produces an Effect TypeError defect without dispatch`,
+        `[EXT-44p] currently ${binding} enumerable ${iterator} array iterator exposes an unsupported default and valid controls`,
         () =>
           Effect.gen(function* () {
             const backend = yield* start();
@@ -1068,11 +1068,12 @@ describe(`array constructor defaults (${lane.name})`, () => {
               ),
               response,
             );
-            for (const makeInput of [
-              () => [{ page_size: "many" }],
-              () => [{ page_size: "05" }],
-              () => [{ limit: 5 }],
-            ]) {
+            let requests = 0;
+            for (const [makeInput, json] of [
+              [() => [{ page_size: "many" }], '[{"page_size":"25"}]'],
+              [() => [{ page_size: "05" }], '[{"page_size":"5"}]'],
+              [() => [{ limit: 5 }], '[{"page_size":"5"}]'],
+            ] as const) {
               const input = makeInput();
               let calls = 0;
               // Ordinary assignment creates an own enumerable property; no hostile iterator
@@ -1097,23 +1098,20 @@ describe(`array constructor defaults (${lane.name})`, () => {
                 phase = "effect evaluation";
                 return effect;
               }).pipe(Effect.provide(lane.fetchClient), Effect.exit);
-              // Distinguish a defect during evaluation from a synchronous execute-call throw,
-              // a typed SchemaError, interruption, or transport failure. This pins #189 only.
+              // Published14's exact Die(TypeError) baseline is retained before this conversion.
+              // Removing that accidental defect exposes #170's unsupported default route;
+              // ordinary successful output is the current pin, not an invalid-input guarantee.
               expect(phase).toBe("effect evaluation");
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                expect(exit.cause.reasons).toHaveLength(1);
-                const reason = exit.cause.reasons[0];
-                expect(reason?._tag).toBe("Die");
-                if (reason?._tag === "Die") {
-                  expect(reason.defect).toBeInstanceOf(TypeError);
-                  expect((reason.defect as TypeError).message).toBe(
-                    "Cannot convert a Symbol value to a number",
-                  );
-                }
-              }
+              expect(Exit.isSuccess(exit)).toBe(true);
+              if (Exit.isSuccess(exit)) expect(exit.value).toBe("Not Found");
               expect(calls).toBe(0);
-              expect(yield* backend.ledger).toEqual([]);
+              const ledger = yield* backend.ledger;
+              expect(ledger).toHaveLength(++requests);
+              wire(
+                ledger[requests - 1]!,
+                binding === "path" ? pathFor(json) : "/x",
+                binding === "path" ? undefined : json,
+              );
             }
           }),
       );
