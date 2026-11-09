@@ -1,6 +1,7 @@
 import { Effect, Schema, SchemaAST } from "effect";
 import { encodedInput } from "./encoded-input.js";
 import * as Excess from "./excess.js";
+import { nestedEncodedInput } from "./nested-input.js";
 import { snapshotter } from "./snapshot.js";
 
 /** What a schema's constructor takes. This is the one place that names the `~`-prefixed key. */
@@ -230,7 +231,8 @@ export const reader = <S extends Schema.Top, A, R>(
     );
   const ast = contract.ast;
   const encoded = encodedInput(ast);
-  const decode = encoded && Schema.decodeUnknownEffect(contract);
+  const nested = nestedEncodedInput(ast);
+  const decode = (encoded || nested) && Schema.decodeUnknownEffect(contract);
   const recoverable =
     ast._tag === "Objects" &&
     ast.encoding === undefined &&
@@ -299,6 +301,7 @@ export const reader = <S extends Schema.Top, A, R>(
     R | S["DecodingServices"]
   > => {
     const encodedEvidence = encoded?.(input);
+    const nestedEvidence = nested?.(input);
     const captured = snapshot?.(input);
     const given = Excess.normalised([contract.ast], input);
     // A strict read cannot see a field outside a value's keys, so it may not fall back on `input`.
@@ -315,7 +318,11 @@ export const reader = <S extends Schema.Top, A, R>(
             })),
           ),
       ({ failure, reading }) => {
-        if (!reading || decode === undefined || !encodedEvidence?.matches())
+        if (
+          !reading ||
+          decode === undefined ||
+          (!encodedEvidence?.matches() && nestedEvidence === undefined)
+        )
           return compared(input, given);
         return Effect.suspend(() => {
           let constructed = false;
@@ -341,26 +348,38 @@ export const reader = <S extends Schema.Top, A, R>(
               if (
                 (!constructed && !fieldwise) ||
                 !strictWrite ||
-                !encodedEvidence.matches() ||
-                !encodedEvidence.written(constructedResult.output) ||
-                !encodedEvidence.matches()
+                (!constructed && !encodedEvidence)
               )
+                return Effect.succeed(constructedResult);
+              const rootWitness =
+                encodedEvidence?.matches() &&
+                encodedEvidence.written(constructedResult.output) &&
+                encodedEvidence.matches()
+                  ? encodedEvidence
+                  : undefined;
+              const witness =
+                rootWitness ??
+                (constructed
+                  ? nestedEvidence?.select(constructedResult.output)
+                  : undefined);
+              if (witness === undefined)
                 return Effect.succeed(constructedResult);
               // This winning fieldwise route followed a failed whole decode and never read the
               // encoded-only caller name. Refuse its generated replacement without replaying effects.
-              if (fieldwise) return Effect.fail(failure);
+              if (fieldwise && rootWitness !== undefined)
+                return Effect.fail(failure);
               const encodedRead = (current: Input<S>) =>
                 Effect.flatMap(
                   Effect.mapError(decode(current), () => failure),
                   (value) =>
-                    encodedEvidence.matches()
+                    witness.matches()
                       ? Effect.succeed(value)
                       : Effect.fail(failure),
                 );
               return Effect.flatMap(
                 compared(input, given, encodedRead),
                 (result) =>
-                  encodedEvidence.matches()
+                  witness.matches()
                     ? Effect.succeed(result)
                     : Effect.fail(failure),
               );

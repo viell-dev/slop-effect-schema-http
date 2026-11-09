@@ -1,5 +1,20 @@
 # Change history
 
+## 0.12.0 — 2026-11-09
+
+Read [What's in 0.12](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.12) for
+nested encoded-default validation and the decoded-mapping migration.
+
+- **Breaking:** validate an encoded-only field nested through finite closed, untransformed direct
+  object ancestors when the original successful initial whole construction and strict writer would
+  replace it with a default. A single stable caller path and actual output write establish whole
+  decoding; invalid supplied input fails before dispatch.
+- Preserve strict successes, existing root/fieldwise priority, writer fallback and loss/sibling
+  certificates. Whole decoding can repeat schema checks and services; construction is not replayed.
+- Cover deeper paths, terminal child unions, stable null-prototype/frozen/nonenumerable data,
+  mutation, services and linear path-evidence validation. Parent unions, arrays and other
+  unsupported proof routes remain tracked under #170.
+
 ## 0.11.0 — 2026-11-09
 
 Read [What's in 0.11](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.11) for

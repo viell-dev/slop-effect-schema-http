@@ -177,6 +177,76 @@ for (const schema of [
     }
   }
 }
+const nestedDefaultInner = Schema.Struct({
+  limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+    Schema.withConstructorDefault(Effect.succeed(25)),
+  ),
+}).pipe(Schema.encodeKeys({ limit: "page_size" }));
+for (const [schema, wrap] of [
+  [Schema.Struct({ filter: nestedDefaultInner }), (filter) => ({ filter })],
+  [
+    Schema.Struct({ wrapper: Schema.Struct({ filter: nestedDefaultInner }) }),
+    (filter) => ({ wrapper: { filter } }),
+  ],
+  [
+    Schema.Struct({
+      filter: Schema.Union([
+        nestedDefaultInner,
+        Schema.Struct({ cursor: Schema.String }),
+      ]),
+    }),
+    (filter) => ({ filter }),
+  ],
+]) {
+  for (const kind of ["path", "body"]) {
+    let rendered;
+    const request =
+      kind === "path"
+        ? root.Request.get("https://api.test/nested-default").pipe(
+            root.Request.path(schema, (value) => {
+              rendered = value;
+              return "/ok";
+            }),
+          )
+        : root.Request.post("https://api.test/nested-default").pipe(
+            root.Request.body(root.Body.jsonSchema(schema)),
+          );
+    const operation = root.Operation.make(
+      request,
+      root.Response.status(204, root.Body.empty),
+    );
+    const error = await Effect.runPromise(
+      Effect.flip(
+        operation
+          .execute({ [kind]: wrap({ page_size: "many" }) })
+          .pipe(Effect.provideService(HttpClient.HttpClient, client)),
+      ),
+    );
+    assert.equal(error._tag, "SchemaError");
+    assert.match(error.message, /filter.*page_size/);
+    assert.equal(dispatches, 1);
+    for (const [filter, expected] of [
+      [{ page_size: "05" }, "5"],
+      [{ limit: 5 }, "5"],
+      [{}, "25"],
+    ]) {
+      const prepared = await Effect.runPromise(
+        root.Request.compile(request, { [kind]: wrap(filter) }),
+      );
+      if (kind === "path")
+        assert.deepEqual(rendered, wrap({ page_size: expected }));
+      else {
+        assert.equal(prepared.request.body._tag, "Uint8Array");
+        assert.deepEqual(
+          JSON.parse(
+            new globalThis.TextDecoder().decode(prepared.request.body.body),
+          ),
+          wrap({ page_size: expected }),
+        );
+      }
+    }
+  }
+}
 for (const [compile, expected] of [
   [compileNestedEncoded, "/05"],
   [compileNestedDecoded, "/05"],
