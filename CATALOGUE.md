@@ -3496,13 +3496,13 @@ discriminated members and a public lookalike of a class with a private field.
 - **EXT-40f** The JSON-body binding retains the same schema failures and empty ledger for invalid
   encoded text and a deliberately type-invalid boolean. Status: tested.
   - `[EXT-40f] invalid nested encoded JSON values still fail before dispatch`
-- **EXT-40g** Currently, a visible nested partly renamed field with a constructor default replaces
-  invalid encoded `"many"` with `25` and dispatches it. Valid encoded `"05"` and decoded `5` send
-  `5`; omission sends `25`. This violates the kept-or-refused promise and remains under
-  [#170's nested-default report](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6729728316),
-  outside #172's type-only repair. The socket ledger pins the observed defect and controls rather
-  than accepting the overwrite as intended behavior. Status: defect.
-  - `[EXT-40g] currently, a nested invalid encoded value dispatches its constructor default`
+- **EXT-40g** A visible nested partly renamed field with a constructor default refuses invalid
+  encoded `"many"` with `SchemaError` before dispatch. Valid encoded `"05"` and decoded `5` send
+  `5`; omission sends `25`. This covers the original
+  [#170 nested-default report](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6729728316)
+  under the bounded constructor repair of EXT-42, distinct from #172's earlier type-only change.
+  The original 0.11.0 bad-dispatch baseline is retained separately. Status: tested.
+  - `[EXT-40g] a nested invalid encoded value refuses before dispatch and retains valid controls`
 
 ## Encoded aliases lost during fieldwise preparation
 
@@ -3519,7 +3519,7 @@ Published 0.10.0 at `ac5822d` dispatches `25` for invalid encoded `"many"` besid
 `count: "07", offset: 9`. Valid `"05"` and same-default `"25"` aliases with those common fields
 are also within the accepted refusal subset, as is invalid `"many"` with entirely encoded common
 fields. These calls require `SchemaError` and an empty ledger. Positive controls retain their
-exact observed bytes. This does not extend the repair to the nested default defect in EXT-40g or
+exact observed bytes. This does not extend its proof to the nested constructor case in EXT-40g or
 to general mixed-alias preservation; #170 remains open.
 
 - **EXT-41a** Direct and root-union queries refuse all four supplied-alias cases rather than
@@ -3574,3 +3574,82 @@ to general mixed-alias preservation; #170 remains open.
 - **EXT-41p** Complete encoded and decoded JSON-body input retains its canonical bytes, JSON
   content type, method, target and request count. Status: tested.
   - `[EXT-41p] control: a ${shape} JSON body retains complete encoded and decoded values`
+
+## Nested constructor-default aliases through transparent objects
+
+EXT-42 covers the bounded constructor-only subset accepted in
+[#170's nested assessment](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6730758484).
+The independently authored `src/scenarios/nested-constructor-defaults.test.ts` uses only public
+schemas and operation inputs, the neutral echo probe's
+[public contract](./README.md#the-neutral-echo-probe), Fetch in Node and Chromium, and socket
+ledgers. Published 0.11.0 at `8ae8fb3` substitutes `25` for nested `"many"` and `null` under direct,
+deeper transparent-object and terminal child-union shapes. Covered calls require `SchemaError`
+without dispatch; encoded `"05"`, decoded `5` and omitted defaults retain their actual bytes.
+The cases preserve whole-constructor priority and require one stable input path with an actual
+corresponding terminal output write. They do not assert general recursive fieldwise recovery.
+
+- **EXT-42a** A required unchanged outer `filter` contains a direct or child-union terminal schema
+  with a renamed optional finite-number limit and constructor default. Invalid aliases refuse on
+  paths, including ordinary/null-prototype/frozen objects and nonenumerable own-data ancestor or
+  alias properties. Explicit null is a deliberate runtime-negative input. Status: tested.
+  - `[EXT-42a] ${shape} nested path aliases refuse invalid values in stable own-data inputs`
+- **EXT-42b** The same terminal shapes and own-data profiles refuse before JSON-body dispatch.
+  Status: tested.
+  - `[EXT-42b] ${shape} nested JSON aliases refuse invalid values in stable own-data inputs`
+- **EXT-42c** Encoded and decoded path controls retain `5`, omission retains `25`, and supplying
+  the decoded name still wins beside its encoded twin. The unchanged text sibling escapes a slash.
+  Status: tested.
+  - `[EXT-42c] control: ${shape} nested path input retains encoded, decoded and omitted values`
+- **EXT-42d** JSON-body controls retain the same values, exact field names, JSON content type,
+  body bytes and request count. Status: tested.
+  - `[EXT-42d] control: ${shape} nested JSON input retains encoded, decoded and omitted values`
+- **EXT-42e** Several finite explicit object fields lead to the invalid terminal path alias.
+  Frozen ancestors and explicit null remain covered. Status: tested.
+  - `[EXT-42e] transparent object ancestors retain the nested path refusal`
+- **EXT-42f** The corresponding deeper JSON input refuses without dispatch. Status: tested.
+  - `[EXT-42f] transparent object ancestors retain the nested JSON refusal`
+- **EXT-42g** Deeper path controls preserve complete encoded/decoded input and omitted defaults.
+  Status: tested.
+  - `[EXT-42g] control: transparent ancestors preserve complete encoded and decoded paths`
+- **EXT-42h** Deeper JSON controls preserve the complete encoded structure and canonical bytes.
+  Status: tested.
+  - `[EXT-42h] control: transparent ancestors preserve complete encoded and decoded JSON`
+- **EXT-42i** An omitted optional outer field remains absent; a defaulted outer field uses its
+  declared decoded value. Supplying an empty inner object invokes only its normal default. None
+  creates an encoded caller witness. Status: tested.
+  - `[EXT-42i] control: absent optional and defaulted outer path fields invent no caller witness`
+- **EXT-42j** The same outer-omission cases retain their distinct JSON outputs. Status: tested.
+  - `[EXT-42j] control: absent optional and defaulted outer JSON fields invent no caller witness`
+- **EXT-42k** Root fieldwise preparation genuinely decodes nested `page_size: "05"` and
+  `gate: "03"` beside mixed outer numbers and an opaque Option with a stray field. The path keeps
+  `5` and `3`; shared Base64 text retains its prior decoded-string interpretation and writes
+  `YUdrPQ==`. The actual baseline callback order stays exact. Status: tested.
+  - `[EXT-42k] control: actual fieldwise nested decoding retains path meaning and callback order`
+- **EXT-42l** The same counterexample preserves JSON bytes, normalized Option output and the
+  same baseline callback sequence. It cannot authorize the new constructor-only proof.
+  Status: tested.
+  - `[EXT-42l] control: actual fieldwise nested decoding retains JSON meaning and callback order`
+- **EXT-42m** A constructor callback replaces an ancestor, changes its descriptor or prototype,
+  or changes the terminal alias. These unstable inputs retain their original `25` output and
+  callback sequence; the new proof adds no decoding attempt. Status: tested.
+  - `[EXT-42m] control: ${mutation} changes during construction cannot authorize new nested decoding`
+- **EXT-42n** Replacing an ancestor while a constructor default is awaiting a Deferred retains
+  the baseline route and exact callbacks. Synchronization uses no sleep. Status: tested.
+  - `[EXT-42n] control: an ancestor replaced while a default waits retains the baseline route`
+- **EXT-42o** An actual field encoder replaces the left caller object and writes its field, while
+  a deliberately one-way right encoder omits its still-stable field. The original right-field loss
+  remains a `SchemaError` with no dispatch and the exact baseline callback sequence: separate
+  stable and written candidates cannot authorize another whole decoder. The right codec's reverse
+  explicitly fails. Status: tested.
+  - `[EXT-42o] control: stale written left and stable unwritten right are not one witness`
+- **EXT-42p** Currently, a parent-union ancestor still replaces the invalid nested alias with
+  `25`. This visible-input defect is outside the transparent-object proof and remains under #170.
+  Status: defect.
+  - `[EXT-42p] currently, a parent union retains its separately unproved nested replacement`
+- **EXT-42q** Currently, an array ancestor retains the same pre-existing replacement, separately
+  unproved under #170. Its observed output is a defect pin, not an intended schema guarantee.
+  Status: defect.
+  - `[EXT-42q] currently, an array ancestor retains its separately unproved nested replacement`
+- **EXT-42r** A terminal child union preserves its cursor alternative in both path and JSON-body
+  input, including slash escaping, exact bytes and request count. Status: tested.
+  - `[EXT-42r] control: a terminal child union preserves its cursor alternative on path and body`
