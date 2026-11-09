@@ -3192,9 +3192,14 @@ aliases and the opaque-value pins remain unchanged.
   input relied on that name's certificate. The old false refusal is preserved rather than silently
   losing the mapped caller value. Status: tested.
   - `[EXT-34j] recovery cannot withdraw generated credit already used after mapInput`
-- **EXT-34k** Parent checks leave a union outside the bounded recovery route. Its original false
-  refusal remains a stated limit. Status: limit.
-  - `[EXT-34k] control: parent checks keep the bounded union recovery unavailable`
+- **EXT-34k** A passing parent check retains `per_page=2`, `name=hidden-edit` and `page=1` exactly,
+  matching the same checked union defined wider-first. Each uses its own real socket backend;
+  the exact method, target, header values, empty body, filtered empty result and one-request
+  count are checked. This replaces the old parent-check refusal pin under the accepted
+  [parent-validation extension](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6753221271).
+  Plain baseline evidence retains the successful direct definition before the recovery goal's
+  `SchemaError` and empty ledger. Status: tested.
+  - `[EXT-34k] a passing parent check keeps the same complete query as its wider-first control`
 
 ## Visible fields beside opaque neighbors
 
@@ -3306,8 +3311,28 @@ EXT-36 covers the annotation-only extension to bounded whole-union recovery acce
 The neutral echo probe's [contract](./README.md#the-neutral-echo-probe), Fetch in Node and Chromium,
 and socket ledgers establish the decoded response, exact target, empty body, physical header lines
 and request count. Published `0.6.1` refuses eight intended successful calls solely because their
-union has annotations; twelve controls pass. Existing parent-behavior and member-shape limits
-remain separate from this extension.
+union has annotations; twelve controls pass. The later parent-validation extension below changes
+the original parent-behavior exclusion while retaining the member-shape limits.
+
+The [parent-validation extension](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6753221271)
+was independently consumer-authored from the public API, Effect's public Schema/SchemaAST, the
+accepted contract, the catalogue and echo's README contract. No product implementation, backend
+or conformance source informed it. Cast-free public inputs and inferred calls pass the source and
+strict packed declaration checks. On main `1b6e6c3a97e27576d2ee8fd2ee47390aefe2bf18`, twelve intended
+successes refuse with `SchemaError` and empty ledgers while 36 controls pass in each source lane.
+Plain logs remain under `artifacts/parent-validation-main-typed-*`, with source/catalogue hashes in
+`artifacts/parent-validation-authored-sha256.json`. The later EXT-34k scope extension separately
+retains its baseline refusal and successful reordered control under
+`artifacts/parent-validation-ext34k-main-*`, with a separate authored-hash manifest.
+
+Full verification of candidate `b7ba51a1483d89e81f3b101e006f16306500b7ba` passes Node (2,250 ordinary
+cases), Chromium (1,425), packed runtime (2,263) and app (3). Source and packed lanes each retain
+fourteen existing expected failures; all lanes have zero skips. All 48 EXT-36 cases pass ordinarily
+in Node, Chromium and packed mode. Checks, lint, strict packed declarations and all three catalogue
+gates pass. Full logs and copied JUnit reports use `artifacts/parent-validation-b7ba51a-*-final.*`;
+the initial full-suite failure of the obsolete EXT-34k pin remains separately retained. Evidence
+uses Windows, Node 24.22.2, Chromium 158.0.8127.18, Effect 4.1.2 and TypeScript 6.0.3. These synthetic
+checks do not establish other peers, platforms or human use.
 
 - **EXT-36a** Title, description and combined annotations retain all supplied query/header fields
   under the narrower-first union stacked with an actual sibling holder. Both binding orders are
@@ -3334,18 +3359,38 @@ remain separate from this extension.
   value the only wider member rejects; the redacted `SchemaError` leaves the ledger empty.
   Status: tested.
   - `[EXT-36g] a rejected member value is not excused by an annotation or sibling`
-- **EXT-36h** A parent check leaves the union outside bounded recovery even when it always passes.
-  Its original refusal remains. Status: limit.
-  - `[EXT-36h] limit: a parent check still keeps annotated recovery unavailable`
-- **EXT-36i** A constructor default on the union is parent context, not descriptive metadata.
-  Recovery remains unavailable and the supplied input does not evaluate the default. Status: limit.
-  - `[EXT-36i] limit: a parent constructor default is not descriptive metadata`
+- **EXT-36h** A passing parent check retains all supplied query fields under the accepted
+  [parent-validation extension](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6753221271).
+  The former refusal is retained in the plain baseline evidence. Status: tested.
+  - `[EXT-36h] a passing parent check retains every supplied query field`
+- **EXT-36i** A constructor default on the union retains all supplied query fields without
+  evaluating the default. Its former refusal is retained in baseline evidence. Status: tested.
+  - `[EXT-36i] a parent constructor default retains supplied query fields without running`
 - **EXT-36j** An annotated `oneOf` union still refuses an input that also supplies the sibling's
   fields. Its constraint is not converted to `anyOf`, and nothing is sent. Status: tested.
   - `[EXT-36j] control: an annotated oneOf union remains a refusal with no dispatch`
 - **EXT-36k** A member with a group rename remains outside bounded recovery. An annotation does
   not expand recovery to arbitrary transformed members. Status: limit.
   - `[EXT-36k] limit: annotated transformed members stay outside bounded recovery`
+- **EXT-36l** Query and headers retain every supplied field under passing decoded checks,
+  encoding-only checks, root context metadata, a root constructor default, or combined parent
+  metadata. All five profiles keep defaults uncalled for supplied input. Public `Request.Input`
+  assignments and inferred operation calls compile without casts. Status: tested.
+  - `[EXT-36l] ${group}: ${metadata} parent metadata preserves all supplied fields`
+- **EXT-36m** Directly reordered wider-first definitions preserve their existing exact target,
+  physical header values, empty body and one-request count for every parent metadata profile in
+  both groups. No root default runs. Status: tested.
+  - `[EXT-36m] control: ${group} wider-first ${metadata} metadata retains its successful wire output`
+- **EXT-36n** A decoded or encoding-only parent check requires `b` on the complete parent value.
+  Its initial narrow reading passes; the wider candidate lacking `b` remains refused before
+  dispatch, even though the separate sibling binding holds `b`. Status: tested.
+  - `[EXT-36n] ${group}: the ${side} parent check still rejects the wider candidate missing its sibling`
+- **EXT-36o** A decoded or encoding-only check rejects the initial ordinary narrow reading while
+  accepting the wider shape. This retains the original `SchemaError` and empty ledger in query
+  and headers; initial validation failure does not authorize general recovery. Whole-group
+  transforms, oneOf, nested losses and joint backtracking remain outside this extension.
+  Status: limit.
+  - `[EXT-36o] limit: ${group} initial ${side} validation failure does not authorize recovery`
 
 ## Generated fields through closed request unions
 

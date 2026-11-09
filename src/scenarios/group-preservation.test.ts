@@ -534,16 +534,53 @@ describe(`bounded group preservation (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-34k] control: parent checks keep the bounded union recovery unavailable",
+    "[EXT-34k] a passing parent check keeps the same complete query as its wider-first control",
     () =>
       Effect.gen(function* () {
-        const Query = NarrowFirst.check(Schema.makeFilter(() => true));
-        const result = yield* refused(
-          (origin) =>
-            at(origin).pipe(Request.query(Query), Request.query(Page)),
-          { query: { page: 1, per_page: 2, name: "hidden-edit" } },
-        );
-        expectRefusal(result, "SchemaError", "per_page");
+        for (const [definition, Query] of [
+          [
+            "wider-first control",
+            Schema.Union([Wide, Page]).check(Schema.makeFilter(() => true)),
+          ],
+          [
+            "narrower-first recovery",
+            NarrowFirst.check(Schema.makeFilter(() => true)),
+          ],
+        ] as const) {
+          const backend = yield* start();
+          const input: Request.Input<typeof Query> &
+            Request.Input<typeof Page> = {
+            page: 1,
+            per_page: 2,
+            name: "hidden-edit",
+          };
+          const result = yield* Operation.make(
+            at(backend.origin).pipe(Request.query(Query), Request.query(Page)),
+            response,
+          )
+            .execute({ query: input })
+            .pipe(
+              Effect.provide(lane.fetchClient),
+              Effect.match({
+                onFailure: (error) => ({ error: String(error) }),
+                onSuccess: (value) => ({
+                  names: value.customers.map(({ name }) => name),
+                }),
+              }),
+            );
+          const ledger = yield* backend.ledger;
+          if ("error" in result) {
+            expect(ledger).toEqual([]);
+            console.info(
+              `${definition}: ${result.error}\nSocket ledger: ${JSON.stringify(ledger)}`,
+            );
+          }
+          expect(result, definition).toEqual({ names: [] });
+          const target = "/v1/customers?per_page=2&name=hidden-edit&page=1";
+          expectWire(ledger, target);
+          expect(ledger[0]!.head).toContain(`GET ${target} HTTP/1.1\r\n`);
+          expect(headerValues(ledger[0]!.lines, "content-type")).toEqual([]);
+        }
       }),
   );
 });

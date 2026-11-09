@@ -1,10 +1,11 @@
 /**
  * EXT-36: independently authored wire coverage for annotated whole-union recovery.
  * Public acceptance: https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6726559103
+ * Parent-validation extension: https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6753221271
  * Uses the README's neutral echo contract; no backend or library implementation knowledge.
  */
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Effect, Schema, SchemaAST } from "effect";
 import { lane } from "#lane";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 import { bodyText, headerValues, type Recorded } from "../harness/lane.js";
@@ -25,8 +26,20 @@ const Choice = Schema.Union([B, AC]);
 const HeaderB = Schema.Struct({ "X-B": Schema.String });
 const HeaderAC = Schema.Struct({ "X-A": Schema.String, "X-C": Schema.String });
 const HeaderChoice = Schema.Union([HeaderB, HeaderAC]);
-const queryInput = { query: { a: "x /+", b: "y", c: "z" } };
-const headerInput = { headers: { "X-A": "x /+", "X-B": "y", "X-C": "z" } };
+// Public inputs compile without a cast, including the separately bound sibling.
+const completeQuery: Request.Input<typeof Choice> & Request.Input<typeof B> = {
+  a: "x /+",
+  b: "y",
+  c: "z",
+};
+const completeHeaders: Request.Input<typeof HeaderChoice> &
+  Request.Input<typeof HeaderB> = {
+  "X-A": "x /+",
+  "X-B": "y",
+  "X-C": "z",
+};
+const queryInput = { query: completeQuery };
+const headerInput = { headers: completeHeaders };
 const combined = {
   title: "Customer filters",
   description: "The application may combine account and category filters.",
@@ -50,9 +63,9 @@ const build = (
     : at(origin).pipe(Request.headers(HeaderB), Request.headers(choice));
 };
 
-const sent = <E>(
-  request: (origin: string) => Request.Request<never, E>,
-  input: unknown,
+const sentTyped = <I, E>(
+  request: (origin: string) => Request.Request<I, E>,
+  input: I,
 ) =>
   Effect.gen(function* () {
     const backend = yield* lane.backend("echo", undefined, {
@@ -62,12 +75,16 @@ const sent = <E>(
       request(backend.origin),
       Response.status(404, Body.text),
     )
-      .execute(input as never)
+      .execute(input)
       .pipe(
         Effect.provide(lane.fetchClient),
-        Effect.tapError(() =>
+        Effect.tapError((error) =>
           Effect.gen(function* () {
-            expect(yield* backend.ledger).toEqual([]);
+            const ledger = yield* backend.ledger;
+            expect(ledger).toEqual([]);
+            console.info(
+              `Pre-dispatch refusal: ${String(error)}\nSocket ledger: ${JSON.stringify(ledger)}`,
+            );
           }),
         ),
       );
@@ -75,9 +92,9 @@ const sent = <E>(
     return yield* backend.ledger;
   });
 
-const refused = <E>(
-  request: (origin: string) => Request.Request<never, E>,
-  input: unknown,
+const refusedTyped = <I, E>(
+  request: (origin: string) => Request.Request<I, E>,
+  input: I,
 ) =>
   Effect.gen(function* () {
     const backend = yield* lane.backend("echo", undefined, {
@@ -87,7 +104,7 @@ const refused = <E>(
       request(backend.origin),
       Response.status(404, Body.text),
     )
-      .execute(input as never)
+      .execute(input)
       .pipe(
         Effect.provide(lane.fetchClient),
         Effect.match({
@@ -111,6 +128,16 @@ const refused = <E>(
     expect(String(result)).not.toContain(secret);
     return String(result);
   });
+
+// Historical scenarios deliberately erase the varying group schema in build().
+const sent = <E>(
+  request: (origin: string) => Request.Request<never, E>,
+  input: unknown,
+) => sentTyped(request, input as never);
+const refused = <E>(
+  request: (origin: string) => Request.Request<never, E>,
+  input: unknown,
+) => refusedTyped(request, input as never);
 
 const expectWire = (
   ledger: ReadonlyArray<Recorded>,
@@ -139,6 +166,84 @@ const expectWire = (
     expect(headerValues(entry.lines, "x-c")).toEqual(["z"]);
   }
 };
+
+type ParentMetadata =
+  "decoded" | "encoded" | "context" | "default" | "combined";
+type ParentSchema = Schema.Codec<
+  (typeof Choice)["Type"] | (typeof HeaderChoice)["Type"],
+  (typeof Choice)["Encoded"] | (typeof HeaderChoice)["Encoded"]
+>;
+const parentChoice = <S extends Schema.Top & { readonly ast: SchemaAST.Union }>(
+  choice: S,
+  metadata: ParentMetadata,
+  onDefault: () => void,
+  accepts: (value: unknown) => boolean = () => true,
+) => {
+  const ast = choice.ast;
+  const check = Schema.makeFilter(accepts, {
+    expected: "a valid complete parent choice",
+  });
+  // Effect's public AST constructor exposes encoding-only checks without adding
+  // a group transform. Retain the complete union and all its parent metadata.
+  return Schema.make<Schema.Codec<S["Type"], S["Encoded"]>>(
+    new SchemaAST.Union(
+      ast.types,
+      ast.options,
+      combined,
+      metadata === "decoded" || metadata === "combined" ? [check] : undefined,
+      undefined,
+      metadata === "context" ||
+        metadata === "default" ||
+        metadata === "combined"
+        ? new SchemaAST.Context(
+            false,
+            false,
+            metadata === "context"
+              ? undefined
+              : Effect.sync(() => {
+                  onDefault();
+                  return { b: "default", "X-B": "default" };
+                }),
+            { title: "Application filter group" },
+          )
+        : undefined,
+      metadata === "encoded" || metadata === "combined" ? [check] : undefined,
+    ),
+  );
+};
+const hasSibling = (value: unknown) =>
+  typeof value === "object" &&
+  value !== null &&
+  ("b" in value || "X-B" in value);
+const hasWideField = (value: unknown) =>
+  typeof value === "object" &&
+  value !== null &&
+  ("a" in value || "X-A" in value);
+
+// Keep the new acceptance matrix on inferred operations, independently of the
+// broad GroupSchema adapter used by the historical annotation tests above.
+const parentSent = (group: Group, choice: ParentSchema) =>
+  group === "query"
+    ? sentTyped(
+        (origin) => at(origin).pipe(Request.query(choice), Request.query(B)),
+        queryInput,
+      )
+    : sentTyped(
+        (origin) =>
+          at(origin).pipe(Request.headers(choice), Request.headers(HeaderB)),
+        headerInput,
+      );
+const parentRefused = (group: Group, choice: ParentSchema) =>
+  group === "query"
+    ? refusedTyped(
+        (origin) => at(origin).pipe(Request.query(choice), Request.query(B)),
+        queryInput,
+      )
+    : refusedTyped(
+        (origin) =>
+          at(origin).pipe(Request.headers(choice), Request.headers(HeaderB)),
+        headerInput,
+      );
 
 describe(`annotations on request unions (${lane.name})`, () => {
   for (const group of ["query", "headers"] as const) {
@@ -290,22 +395,22 @@ describe(`annotations on request unions (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-36h] limit: a parent check still keeps annotated recovery unavailable",
+    "[EXT-36h] a passing parent check retains every supplied query field",
     () =>
       Effect.gen(function* () {
         const choice = Choice.check(Schema.makeFilter(() => true)).annotate(
           combined,
         );
-        const error = yield* refused(
+        const ledger = yield* sent(
           (origin) => build(origin, "query", choice, "union first"),
-          { query: { a: secret, b: "y", c: "z" } },
+          queryInput,
         );
-        expect(error).toContain('"a"');
+        expectWire(ledger, "query", "union first");
       }),
   );
 
   it.live(
-    "[EXT-36i] limit: a parent constructor default is not descriptive metadata",
+    "[EXT-36i] a parent constructor default retains supplied query fields without running",
     () =>
       Effect.gen(function* () {
         let defaults = 0;
@@ -317,11 +422,11 @@ describe(`annotations on request unions (${lane.name})`, () => {
             }),
           ),
         ).annotate(combined);
-        const error = yield* refused(
+        const ledger = yield* sent(
           (origin) => build(origin, "query", choice, "sibling first"),
-          { query: { a: secret, b: "y", c: "z" } },
+          queryInput,
         );
-        expect(error).toContain('"a"');
+        expectWire(ledger, "query", "sibling first");
         expect(defaults).toBe(0);
       }),
   );
@@ -353,4 +458,96 @@ describe(`annotations on request unions (${lane.name})`, () => {
         expect(error).toContain('"a"');
       }),
   );
+
+  for (const group of ["query", "headers"] as const) {
+    for (const metadata of [
+      "decoded",
+      "encoded",
+      "context",
+      "default",
+      "combined",
+    ] as const) {
+      it.live(
+        `[EXT-36l] ${group}: ${metadata} parent metadata preserves all supplied fields`,
+        () =>
+          Effect.gen(function* () {
+            let defaults = 0;
+            let checks = 0;
+            const choice = parentChoice(
+              group === "query" ? Choice : HeaderChoice,
+              metadata,
+              () => defaults++,
+              () => {
+                checks++;
+                return true;
+              },
+            );
+            const ledger = yield* parentSent(group, choice).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  expect(defaults).toBe(0);
+                }),
+              ),
+            );
+            expectWire(ledger, group, "union first");
+            if (
+              metadata === "decoded" ||
+              metadata === "encoded" ||
+              metadata === "combined"
+            )
+              expect(checks).toBeGreaterThan(0);
+          }),
+      );
+
+      it.live(
+        `[EXT-36m] control: ${group} wider-first ${metadata} metadata retains its successful wire output`,
+        () =>
+          Effect.gen(function* () {
+            let defaults = 0;
+            const reordered =
+              group === "query"
+                ? Schema.Union([AC, B])
+                : Schema.Union([HeaderAC, HeaderB]);
+            const choice = parentChoice(reordered, metadata, () => defaults++);
+            const ledger = yield* parentSent(group, choice);
+            expectWire(ledger, group, "union first");
+            expect(defaults).toBe(0);
+          }),
+      );
+    }
+
+    for (const side of ["decoded", "encoded"] as const) {
+      it.live(
+        `[EXT-36n] ${group}: the ${side} parent check still rejects the wider candidate missing its sibling`,
+        () =>
+          Effect.gen(function* () {
+            const choice = parentChoice(
+              group === "query" ? Choice : HeaderChoice,
+              side,
+              () => {
+                throw new Error("a supplied parent must not need a default");
+              },
+              hasSibling,
+            );
+            yield* parentRefused(group, choice);
+          }),
+      );
+
+      it.live(
+        `[EXT-36o] limit: ${group} initial ${side} validation failure does not authorize recovery`,
+        () =>
+          Effect.gen(function* () {
+            const choice = parentChoice(
+              group === "query" ? Choice : HeaderChoice,
+              side,
+              () => {
+                throw new Error("a supplied parent must not need a default");
+              },
+              hasWideField,
+            );
+            yield* parentRefused(group, choice);
+          }),
+      );
+    }
+  }
 });
