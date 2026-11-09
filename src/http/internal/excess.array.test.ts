@@ -90,6 +90,92 @@ describe("array positions during input normalization", () => {
     expect(normalised(input)).toBe(input);
     expect(Excess.exposed([List.ast], input)).toBe(input);
   });
+
+  it("does not inspect prototypes when every position is own", () => {
+    for (const stray of [false, true]) {
+      const cell = stray
+        ? { value: "kept", stray: "strip" }
+        : { value: "kept" };
+      const input = new Proxy([cell], {
+        getPrototypeOf() {
+          throw new Error("unnecessary prototype inspection");
+        },
+      });
+      const result = normalised(input);
+      expect(result.length).toBe(1);
+      expect(result[0]).toEqual({ value: "kept" });
+      if (!stray) expect(result).toBe(input);
+    }
+  });
+
+  it("does not inspect array layout behind an opaque schema", () => {
+    const input = new Proxy([{ value: "kept", stray: "opaque" }], {
+      get(target, key, receiver) {
+        if (key === "length") throw new Error("opaque length inspected");
+        return Reflect.get(target, key, receiver);
+      },
+      getPrototypeOf() {
+        throw new Error("opaque prototype inspected");
+      },
+    });
+    expect(Excess.normalised([Schema.Unknown.ast], input)).toBe(input);
+    expect(Excess.exposed([Schema.Unknown.ast], input)).toBe(input);
+  });
+
+  it("does not scan a million absent positions to retain a sparse layout", () => {
+    const target: Array<object> = [];
+    target.length = 1_000_000;
+    target[500_000] = { value: "kept", stray: "strip" };
+    let reads = 0;
+    let enumerations = 0;
+    const input = new Proxy(target, {
+      get(object, key, receiver) {
+        reads++;
+        return Reflect.get(object, key, receiver);
+      },
+      has(object, key) {
+        reads++;
+        return Reflect.has(object, key);
+      },
+      ownKeys(object) {
+        enumerations++;
+        return Reflect.ownKeys(object);
+      },
+    });
+    const result = normalised(input);
+    expect(result).toHaveLength(1_000_000);
+    expect(Object.hasOwn(result, "499999")).toBe(false);
+    expect(Object.hasOwn(result, "500001")).toBe(false);
+    expect(result[500_000]).toEqual({ value: "kept" });
+    expect(reads).toBeLessThanOrEqual(12);
+    expect(enumerations).toBeLessThanOrEqual(3);
+    expect(target[500_000]).toHaveProperty("stray", "strip");
+  });
+
+  it("does not enlarge an incoherent proxy's array view", () => {
+    const ghost = { value: "metadata" };
+    const input = new Proxy([{ value: "kept", stray: "strip" }], {
+      ownKeys(target) {
+        return [...Reflect.ownKeys(target), "1000"];
+      },
+      getOwnPropertyDescriptor(target, key) {
+        return key === "1000"
+          ? {
+              value: ghost,
+              enumerable: true,
+              configurable: true,
+              writable: true,
+            }
+          : Reflect.getOwnPropertyDescriptor(target, key);
+      },
+      get(target, key, receiver) {
+        return key === "1000" ? ghost : Reflect.get(target, key, receiver);
+      },
+    });
+    expect(normalised(input)).toBe(input);
+    expect(input.length).toBe(1);
+    expect(Reflect.ownKeys(input)).toContain("1000");
+  });
 });
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/189

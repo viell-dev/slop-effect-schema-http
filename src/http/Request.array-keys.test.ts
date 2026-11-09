@@ -167,6 +167,88 @@ describe("array key normalization during request preparation", () => {
     }),
   );
 
+  it.effect("keeps dense proxy input whose prototype inspection fails", () =>
+    Effect.gen(function* () {
+      for (const binding of ["path", "body"] as const)
+        for (const stray of [false, true]) {
+          const leaf = stray
+            ? { page_size: "05", stray: "ignored" }
+            : { page_size: "05" };
+          const input = new Proxy([leaf], {
+            getPrototypeOf() {
+              throw new Error("prototype inspection failed");
+            },
+          });
+          expect(yield* prepare(Schema.Array(Filter), input, binding)).toEqual([
+            { page_size: "5" },
+          ]);
+        }
+    }),
+  );
+
+  it.effect("leaves an opaque array's layout to its schema", () =>
+    Effect.gen(function* () {
+      const input = new Proxy(["opaque"], {
+        get(target, key, receiver) {
+          if (key === "length") throw new Error("opaque length inspected");
+          return Reflect.get(target, key, receiver);
+        },
+        getPrototypeOf() {
+          throw new Error("opaque prototype inspected");
+        },
+      });
+      const schema = Schema.Struct({
+        values: Schema.Unknown,
+        count: Schema.FiniteFromString,
+        tag: Schema.optionalKey(Schema.String),
+      }).pipe(Schema.encodeKeys({ tag: "TAG" }));
+      let rendered: unknown;
+      yield* Request.compile(
+        Request.get("/opaque").pipe(
+          Request.path(schema, (value) => {
+            rendered = value.values;
+            return "/ok";
+          }),
+        ),
+        { path: { values: input, count: "05" } },
+      );
+      expect(rendered).toBe(input);
+    }),
+  );
+
+  it.effect(
+    "refuses an incoherent virtual position instead of enlarging input",
+    () =>
+      Effect.gen(function* () {
+        const ghost = { page_size: "07" };
+        const input = new Proxy([{ page_size: "05", stray: "ignored" }], {
+          ownKeys(target) {
+            return [...Reflect.ownKeys(target), "1000"];
+          },
+          getOwnPropertyDescriptor(target, key) {
+            return key === "1000"
+              ? {
+                  value: ghost,
+                  enumerable: true,
+                  configurable: true,
+                  writable: true,
+                }
+              : Reflect.getOwnPropertyDescriptor(target, key);
+          },
+          get(target, key, receiver) {
+            return key === "1000" ? ghost : Reflect.get(target, key, receiver);
+          },
+        });
+        for (const binding of ["path", "body"] as const)
+          expect(
+            yield* Effect.flip(
+              prepare(Schema.Array(Schema.optional(Filter)), input, binding),
+            ),
+          ).toBeInstanceOf(Schema.SchemaError);
+        expect(input.length).toBe(1);
+      }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6736960353
   it.effect(
     "currently exposes the sparse default after correcting compaction",

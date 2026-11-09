@@ -1,5 +1,23 @@
 # Change history
 
+## 0.15.0 — 2026-11-09
+
+Read [What's in 0.15](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.15) for
+array-position and symbol-key migration, including newly exposed unsupported defaults.
+
+- **Breaking:** retain actual array keys/length during input normalization. Inner field removal no
+  longer compacts holes, drops hidden/inherited numeric cells or appends metadata as a phantom cell
+  (#191). Successful sparse/hidden layouts can therefore change their encoded positions.
+- Handle symbol and noncanonical index-looking metadata without numeric coercion (#189). Preserve
+  ordinary object symbol identities and original string/symbol diagnostic paths; rebuilding does not
+  invoke a caller iterator. Unchanged values retain identity.
+- Removing accidental refusals/TypeErrors can expose existing #170 constructor-default losses:
+  sparse invalid aliases with an inner stray and own-enumerable-iterator invalid aliases can now
+  write generated defaults. Keep exact current/goal source/package/wire pins and checked migration;
+  use validated decoded mappings for unsupported profiles. The constructor proof is not expanded.
+- Preserve constructor/decoder, strict-success/fieldwise/writer-fallback priorities, public types,
+  dependencies and opaque reading. Broader #170/#143 limits remain active.
+
 ## 0.14.0 — 2026-11-09
 
 Read [What's in 0.14](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.14) for

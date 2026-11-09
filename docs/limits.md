@@ -115,11 +115,19 @@ outside the added proof under #170. The distinct normalized-declaration defect a
 open; use validated decoded values for affected schemas. No general per-element recovery, alias map
 or arbitrary equality rule is introduced.
 
-An own enumerable `Symbol.iterator` on an array also currently causes a normalization `TypeError`
-([#189](https://github.com/viell-dev/slop-effect-schema-http/issues/189)), even when it is the
-normal Array iterator. This predates the 0.14 extension; use an unadorned array while the separate
-input-key handling defect remains open. Declining an unsupported profile is not a promise of a clean
-schema refusal on every older path.
+The 0.15 normalization fixes retain actual array keys/length after an inner rewrite: holes and
+readable hidden/inherited cells stay in place, metadata is not appended as a cell, and symbols no
+longer cause accidental numeric-conversion TypeErrors (#189/#191). The caller's layout remains
+unchanged. Ordinary getter/prototype processing can still occur; the fixes do not expand the
+constructor-default proof.
+
+Removing those accidental failures can expose existing unsupported #170 defaults. A length-two
+sparse array with only position one `{ page_size: "many", stray: "ignored" }` previously refused
+after compaction; it can now write `[null,{"page_size":"25"}]`. An own enumerable iterator's invalid
+alias can change TypeError to generated `25`, even with the normal Array iterator. These are actual
+preservation defects, not intended validation. [What's in 0.15](./release-notes/0.15.md) provides
+checked examples and a named validated mapping to decoded values. Use that explicit route for
+unsupported profiles; declining their constructor evidence does not guarantee clean refusal.
 
 Whole encoded nested shapes retain their static input type in 0.10. Helpers using `Request.Input`
 must handle encoded nested names too, or declare their own decoded input shape; the [0.10

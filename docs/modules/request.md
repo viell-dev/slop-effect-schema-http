@@ -383,12 +383,12 @@ actual decoded and encoded alternatives. A decoded-only helper declares its own 
 named mapping can supply decoded request input. [What's in 0.10](../release-notes/0.10.md) shows the
 nested filter and helper migration.
 
-Both routes validate, so text cannot get past a schema. The check is as strict as the schema,
-though. `Schema.NumberFromString` turns `"many"` into `NaN`, so `{ limit: "many" }` goes out as
-`limit=NaN` under that schema. Choose `Schema.FiniteFromString` when that matters. A string where a
-number was expected compiles, so the failure appears when the request is prepared. An input can need
-the schema's decoding services as well as its encoding services, so a binding adds both to the
-request.
+Both routes validate the values they consume; the constructor-default limits below can still ignore
+a supplied alias. The check is also as strict as the schema. `Schema.NumberFromString` turns
+`"many"` into `NaN`, so `{ limit: "many" }` goes out as `limit=NaN` under that schema. Choose
+`Schema.FiniteFromString` when that matters. A string where a number was expected compiles, so the
+failure appears when the request is prepared. An input can need the schema's decoding services as
+well as its encoding services, so a binding adds both to the request.
 
 #### What the library promises
 
@@ -646,6 +646,14 @@ decoding can change runtime mixed-side/shared-text behavior, while construction 
 ordinary decoding omission remain distinct. [What's in 0.14](../release-notes/0.14.md) shows the
 complete-side and named decoded-mapping migration.
 
+In 0.15, normalization also keeps actual array positions and length when an inner object is
+rewritten, including holes and readable hidden/inherited cells. Non-index metadata does not become a
+new cell, and symbols retain their identity instead of being numerically coerced. This changes
+previously compacted/dropped positions. Removing accidental failures can also uncover existing
+unsupported sparse/own-iterator defaults; [What's in 0.15](../release-notes/0.15.md) gives exact
+cases, current limits and a validated decoded mapping. This does not add constructor evidence for
+those profiles.
+
 Sparse/accessor/inherited/subclass/custom-iterator/changing arrays, array-shaped parent union
 members, group transforms and unsupported member/fieldwise phases stay outside this extension under
 #170. Distinct normalized declarations retain the 0.13 default-substitution limit. Actual fieldwise
@@ -832,5 +840,5 @@ records without it remain valid and use the earlier selection behavior; the new 
 requires complete evidence.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.14.0/src/http/Request.ts)
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.15.0/src/http/Request.ts)
 for all types and overloads.

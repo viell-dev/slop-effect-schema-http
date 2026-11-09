@@ -109,16 +109,24 @@ const arrayIndex = (key: PropertyKey): number | undefined => {
     : undefined;
 };
 
-const keysOf = (value: object): ReadonlyArray<PropertyKey> => {
-  const list = Array.isArray(value);
+const keysOf = (value: object, arrays = false): ReadonlyArray<PropertyKey> => {
+  const list = arrays && Array.isArray(value);
+  const length = list ? value.length : 0;
+  const own = Reflect.ownKeys(value);
   const keys = new Set(
-    Reflect.ownKeys(value).filter(
+    own.filter(
       (key) =>
         Object.prototype.propertyIsEnumerable.call(value, key) ||
         (list && arrayIndex(key) !== undefined),
     ),
   );
-  if (list) {
+  const positions = list
+    ? own.filter((key) => {
+        const index = arrayIndex(key);
+        return index !== undefined && index < length;
+      }).length
+    : 0;
+  if (list && positions < length) {
     // Array schemas also read hidden or inherited positions. Materialize those cells if another
     // cell needs rewriting; copying an enumerable-key list would compact or drop them.
     const visited = new Set<object>();
@@ -127,7 +135,7 @@ const keysOf = (value: object): ReadonlyArray<PropertyKey> => {
       visited.add(prototype);
       for (const key of Reflect.ownKeys(prototype)) {
         const index = arrayIndex(key);
-        if (index !== undefined && index < value.length) keys.add(key);
+        if (index !== undefined && index < length) keys.add(key);
       }
       prototype = Object.getPrototypeOf(prototype);
     }
@@ -283,7 +291,13 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     const plain = isPlain(value);
     const asStruct = !plain && readAsStruct(sides, open);
     const isList = Array.isArray(value);
-    const keys = [...keysOf(value), ...hidden];
+    const keys = [
+      ...keysOf(
+        value,
+        sides.some(({ _tag }) => _tag === "Arrays"),
+      ),
+      ...hidden,
+    ];
     const entries = keys.flatMap((key) => {
       const item = value[key];
       const inner = typesAt(sides, key);
@@ -300,8 +314,18 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
       entries.every(([key, item]) => item === value[key]);
     if (same) return value;
     if (!isList) return Object.fromEntries(entries);
+    const length = value.length;
+    // A proxy can report an own index beyond its length. A native array cannot retain both;
+    // leave that incoherent frame to ordinary reading instead of manufacturing a larger view.
+    if (
+      entries.some(([key]) => {
+        const index = arrayIndex(key);
+        return index !== undefined && index >= length;
+      })
+    )
+      return value;
     const output: Array<unknown> = [];
-    output.length = value.length;
+    output.length = length;
     for (const [key, item] of entries)
       Object.defineProperty(output, key, {
         value: item,
@@ -370,7 +394,10 @@ export const missing = (
     (!isObject(value) ||
       !decoded.has(String(key)) ||
       Equal.equals(at(output, key), given[key]));
-  return keysOf(given).flatMap((key) => {
+  return keysOf(
+    given,
+    sides.some(({ _tag }) => _tag === "Arrays"),
+  ).flatMap((key) => {
     const here = [
       ...path,
       Array.isArray(given) ? (arrayIndex(key) ?? key) : key,

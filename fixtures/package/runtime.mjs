@@ -386,6 +386,120 @@ for (const kind of ["path", "body"]) {
   }
 }
 
+// Array-key fixes preserve physical positions; unsupported constructor defaults remain #170.
+const rewrittenLeaf = { page_size: "05", stray: "ignored" };
+const metadataArray = [rewrittenLeaf];
+Object.defineProperty(metadataArray, "audit", { value: 7, enumerable: true });
+const sparseArray = [];
+sparseArray.length = 2;
+sparseArray[1] = rewrittenLeaf;
+const hiddenArray = [{ page_size: "07" }, rewrittenLeaf];
+Object.defineProperty(hiddenArray, "0", { enumerable: false });
+const inheritedArray = [];
+inheritedArray.length = 2;
+inheritedArray[1] = rewrittenLeaf;
+Object.setPrototypeOf(
+  inheritedArray,
+  Object.create(Array.prototype, {
+    0: { value: { page_size: "07" } },
+  }),
+);
+let arrayIteratorCalls = 0;
+const iteratorArray = [rewrittenLeaf];
+Object.defineProperty(iteratorArray, Symbol.iterator, {
+  enumerable: true,
+  value: function* () {
+    arrayIteratorCalls++;
+    yield { page_size: "99" };
+  },
+});
+const ordinarySymbol = Symbol("audit");
+const symbolArray = [rewrittenLeaf];
+Object.defineProperty(symbolArray, ordinarySymbol, {
+  value: 7,
+  enumerable: true,
+});
+const sparseInvalid = [];
+sparseInvalid.length = 2;
+sparseInvalid[1] = { page_size: "many", stray: "ignored" };
+const iteratorInvalid = [{ page_size: "many" }];
+iteratorInvalid[Symbol.iterator] = Array.prototype[Symbol.iterator];
+for (const [schema, input, expected] of [
+  [arrayAliasSchema, metadataArray, '[{"page_size":"5"}]'],
+  [
+    Schema.Array(Schema.optional(nestedDefaultInner)),
+    sparseArray,
+    '[null,{"page_size":"5"}]',
+  ],
+  [arrayAliasSchema, hiddenArray, '[{"page_size":"7"},{"page_size":"5"}]'],
+  [arrayAliasSchema, inheritedArray, '[{"page_size":"7"},{"page_size":"5"}]'],
+  [arrayAliasSchema, iteratorArray, '[{"page_size":"5"}]'],
+  [arrayAliasSchema, symbolArray, '[{"page_size":"5"}]'],
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6736960353
+  [
+    Schema.Array(Schema.optional(nestedDefaultInner)),
+    sparseInvalid,
+    '[null,{"page_size":"25"}]',
+  ],
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6737040870
+  [arrayAliasSchema, iteratorInvalid, '[{"page_size":"25"}]'],
+])
+  for (const kind of ["path", "body"]) {
+    let rendered;
+    const request =
+      kind === "path"
+        ? root.Request.get("/array-keys").pipe(
+            root.Request.path(schema, (value) => {
+              rendered = value;
+              return "/ok";
+            }),
+          )
+        : root.Request.post("/array-keys").pipe(
+            root.Request.body(root.Body.jsonSchema(schema)),
+          );
+    const prepared = await Effect.runPromise(
+      root.Request.compile(request, { [kind]: input }),
+    );
+    if (kind === "path") assert.equal(JSON.stringify(rendered), expected);
+    else {
+      assert.equal(prepared.request.body._tag, "Uint8Array");
+      assert.equal(
+        new globalThis.TextDecoder().decode(prepared.request.body.body),
+        expected,
+      );
+    }
+  }
+assert.equal(arrayIteratorCalls, 0);
+assert.equal(sparseArray.length, 2);
+assert.equal(Object.hasOwn(sparseArray, "0"), false);
+assert.equal(
+  Object.getOwnPropertyDescriptor(hiddenArray, "0").enumerable,
+  false,
+);
+assert.equal(
+  Object.getOwnPropertyDescriptor(symbolArray, ordinarySymbol).value,
+  7,
+);
+for (const kind of ["path", "body"]) {
+  const invalid = [{ page_size: "many" }];
+  Object.defineProperty(invalid, ordinarySymbol, {
+    value: 7,
+    enumerable: true,
+  });
+  const request =
+    kind === "path"
+      ? root.Request.get("/array-keys").pipe(
+          root.Request.path(arrayAliasSchema, () => "/unexpected"),
+        )
+      : root.Request.post("/array-keys").pipe(
+          root.Request.body(root.Body.jsonSchema(arrayAliasSchema)),
+        );
+  const failure = await Effect.runPromise(
+    Effect.flip(root.Request.compile(request, { [kind]: invalid })),
+  );
+  assert.ok(Schema.isSchemaError(failure));
+}
+
 console.log(
   `Packed consumer passed: ${Object.keys(manifest.exports).length} exports, id ${id}.`,
 );

@@ -303,5 +303,5 @@ At Effect's default log level they are silent. The [diagnostics contract](../des
 lists the events.
 
 See the [execution contract](../design.md#execution) and [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.14.0/src/http/Operation.ts)
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.15.0/src/http/Operation.ts)
 for detailed types and resource guarantees.
