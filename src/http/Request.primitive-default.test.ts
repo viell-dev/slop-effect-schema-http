@@ -332,6 +332,7 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
     ).toBeUndefined();
   });
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
   it.effect(
     "currently substitutes defaults below unsupported primitive-only union members at both levels",
     () =>
