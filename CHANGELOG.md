@@ -1,5 +1,12 @@
 # Change history
 
+## Unreleased
+
+- Honor an empty result from a custom query renderer without calling it again with empty input
+  (#196). Truly empty queries still receive one empty-input call; written query text and the order
+  of separate generated runs remain unchanged. This is a compatible correction to the documented
+  callback contract.
+
 ## 0.15.0 — 2026-11-09
 
 Read [What's in 0.15](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.15) for

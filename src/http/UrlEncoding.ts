@@ -80,7 +80,8 @@ export interface Service {
    * stands between other entries, each run of them is rendered by a separate call, keeping the
    * order of the query. A request with no entries gets one call with an empty array, and a query
    * made only of written text gets no call, so add a fixed entry with `Request.setQuery` in a
-   * shared transform rather than here.
+   * shared transform rather than here. Returning `""` omits that run; it does not ask the renderer
+   * again with empty input.
    */
   readonly query: (entries: Query) => string;
   /**

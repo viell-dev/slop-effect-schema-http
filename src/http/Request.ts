@@ -1656,6 +1656,8 @@ const initialDraft = (declaration: Declaration): Draft => {
  * goes through the encoder. With no entries at all, the encoder still has its say.
  */
 const renderQuery = (draft: Draft, encoding: UrlEncoding.Service): string => {
+  const params = draft.request.urlParams.params;
+  if (params.length === 0) return encoding.query([]);
   const parts: Array<string> = [];
   let run: Array<readonly [string, string | null]> = [];
   const endRun = () => {
@@ -1663,7 +1665,7 @@ const renderQuery = (draft: Draft, encoding: UrlEncoding.Service): string => {
     if (rendered !== "") parts.push(rendered);
     run = [];
   };
-  for (const param of draft.request.urlParams.params) {
+  for (const param of params) {
     const written = draft.queryText.get(param);
     if (written !== undefined) {
       endRun();
@@ -1673,7 +1675,7 @@ const renderQuery = (draft: Draft, encoding: UrlEncoding.Service): string => {
     }
   }
   endRun();
-  return parts.length === 0 ? encoding.query([]) : parts.join("&");
+  return parts.join("&");
 };
 
 const finalize = (
