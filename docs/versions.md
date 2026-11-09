@@ -7,15 +7,9 @@ started](./getting-started.md) adds the current stable package to your Effect pr
 0.15](./release-notes/0.15.md) covers updating from `0.14`: normalization retains actual array
 positions/length and handles symbol keys without numeric coercion. Formerly successful layouts can
 change, and removing accidental failures exposes some existing unsupported constructor defaults. The
-migration gives checked cases and a validated decoded mapping. [What's in
-0.14](./release-notes/0.14.md) explains the earlier bounded dense-array proof and whole-reading
-consequences. [What's in 0.13](./release-notes/0.13.md), [What's in 0.12](./release-notes/0.12.md),
-[What's in 0.11](./release-notes/0.11.md), [What's in 0.10](./release-notes/0.10.md), [What's in
-0.9](./release-notes/0.9.md), [What's in 0.8](./release-notes/0.8.md), [What's in
-0.7](./release-notes/0.7.md), [What's in 0.6](./release-notes/0.6.md), [What's in
-0.5](./release-notes/0.5.md), [What's in 0.4](./release-notes/0.4.md), [What's in
-0.3](./release-notes/0.3.md), [What's in 0.2](./release-notes/0.2.md) and [What's in
-0.1](./release-notes/0.1.md) introduce the earlier releases.
+migration gives checked cases and a validated decoded mapping. [Release
+history](./release-notes/index.md) compares earlier changes and links every migration article. Use
+the [current input reference](./schema-input.md) for today's supported behavior.
 
 The npm `latest` tag selects the stable release, so ordinary install commands need no version
 suffix. The `rc` tag still identifies `0.1.0-rc.1`; use an explicit prerelease version when
@@ -103,9 +97,12 @@ npm install ./viell-effect-schema-http-0.15.0.tgz
 
 The supported API covers finite-body HTTP contracts, ESM, Node 24 or 26 on Windows/Linux and
 Chromium Fetch with Effect 4. [Limits and recovery](./limits.md#compatibility-and-scope) separates
-application requirements from tested configurations. Compatible fixes raise the patch number and
-breaking changes raise the minor number, so `1.2.3` would be followed by `1.2.4` or `1.3.0`. A
-breaking change comes with migration guidance in its release article.
+application requirements from tested configurations. While the package remains `0.x`, compatible
+fixes raise the patch number and incompatible changes raise the minor number: `0.15.0` becomes
+`0.15.1` for a compatible fix or `0.16.0` for an incompatible change. After `1.0`, an incompatible
+public API change would require a major bump under [Semantic
+Versioning](https://semver.org/spec/v2.0.0.html). A breaking change comes with migration guidance in
+its release article.
 
 ## Which version the documentation describes
 
