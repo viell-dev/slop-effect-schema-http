@@ -4152,3 +4152,56 @@ their stated original source; the pull request records fresh CI against the upda
   carries the accepted Array.prototype neighbor case without global mutation in wire scenarios.
   Input ownership, cell identity and descriptors remain unchanged. Status: defect.
   - `[EXT-47s] currently ${binding} a private array prototype with own and inherited aliases retains defaults`
+
+## Conflicting aliases in newly covered containers (EXT-48)
+
+Consumer-authored from the public
+[#143 acceptance](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6750236968),
+the [0.16 migration](https://github.com/viell-dev/slop-effect-schema-http/blob/9eea0311fe4dacc3679a3eca0b744d6b7101fde2/docs/release-notes/0.16.md#account-for-conflicting-names),
+and the README's [neutral echo contract](./README.md#the-neutral-echo-probe). No product
+implementation, source tests, backend or conformance code informed this context. The new
+`src/scenarios/constructor-alias-conflicts.test.ts` executes real path and JSON-body operations
+through Fetch in Node, Chromium and packed mode. It checks exact targets, JSON bytes, method,
+relevant headers and request counts, plus caller prototypes, own descriptors, cells and holes.
+
+All observations use source `9eea0311fe4dacc3679a3eca0b744d6b7101fde2`, Effect 4.1.2, Node 24.22.2
+and Chromium 158 on Windows. The nonliteral `{ limit: 1, page_size: "02" }` item typechecks without
+a cast. It writes `1` alone or beside a decoded/defaulted neighbor, and `2` beside encoded-only
+`{ page_size: "25" }`. Complete encoded and decoded controls each retain `1/25`. Sparse layouts
+keep a real hole after the first cell, represented by null on the wire; no position is compacted.
+These current-output pins disclose the existing #143 limit rather than establish alias agreement
+or a conflict-selection policy.
+
+Separate contradictory-alias refusal goals require `SchemaError` and zero requests for all four
+conflicting inputs per layout/binding. Before marking them expected failures, both plain source
+lanes produced exactly twelve current-pin passes and twelve intended goal failures, with zero
+skips. Reports remain under `artifacts/constructor-conflict-9eea031-plain-*`.
+EXT-48 adds twelve expected failures per consumer lane, alongside the two
+existing watched-iterator goals. This is consumer evidence only: no new conflict repair, other
+Effect peer/platform, profile-specific built-app behavior, human use or release qualification is
+established.
+
+Full verification on 2026-11-09 passes Node (2,222 ordinary cases), Chromium (1,397), packed
+(2,235) and app (3). Each source/packed lane has fourteen expected failures: twelve EXT-48d cases
+and the two prior watched-iterator goals. Every lane has zero skips and no unexpected failures.
+The source, packed and app catalogue gates, source checks/lint and strict packed declarations pass.
+Full logs and copied JUnit reports use `artifacts/constructor-conflict-9eea031-*`; earlier evidence
+remains intact. The app run is general installed-package compatibility evidence.
+
+- **EXT-48a** Optional and nullable element arrays retain both complete-side controls and the
+  dual-name item's `1` versus neighboring-encoded-input `2` interpretation. Each binding receives
+  exactly six requests with full wire assertions and unchanged caller data. Status: limit.
+  - `[EXT-48a] currently ${binding} ${fixture.name} changes a dual-name item only beside an encoded-only neighbor`
+- **EXT-48b** An exact enumerable own native Array iterator retains the same six current outputs.
+  Its function reference and descriptor flags remain unchanged; no wrapper substitutes for native
+  data. Status: limit.
+  - `[EXT-48b] currently ${binding} exact native own iterator changes a dual-name item only beside an encoded-only neighbor`
+- **EXT-48c** Ordinary, hidden-own-cell and null-prototype sparse optional arrays preserve the
+  actual null padding, length, cell identities and descriptors across all six controls. The
+  conflicting first cell changes from `1` to `2` only beside the encoded-only neighbor.
+  Status: limit.
+  - `[EXT-48c] currently ${binding} ${fixture.name} changes a dual-name item only beside an encoded-only neighbor`
+- **EXT-48d** Distinct expected-failure #143 goals retain the intended contradictory-alias
+  refusal for all six layouts and both bindings. Each checks all four conflicting inputs and
+  requires an empty ledger. Current success remains independently pinned above. Status: defect.
+  - `[EXT-48d] goal ${binding} ${fixture.name} contradictory aliases refuse before dispatch`
