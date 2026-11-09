@@ -245,17 +245,25 @@ describe("nested aliases below unchanged parent unions", () => {
     "currently retains the default for conflicting normalized numeric declarations",
     () =>
       Effect.gen(function* () {
-        expect(
-          yield* prepare(
-            NumericConflict,
-            { "1": { page_size: "many" } },
-            "path",
-          ),
-        ).toEqual({ "1": { page_size: "25" } });
-        for (const value of [{ page_size: "05" }, { limit: 5 }])
+        for (const { schema, wrap } of [
+          {
+            schema: NumericConflict,
+            wrap: (value: object) => ({ "1": value }),
+          },
+          { schema: NumericMember, wrap: (value: object) => ({ "1": value }) },
+          {
+            schema: Schema.Struct({ page: NumericMember }),
+            wrap: (value: object) => ({ page: { "1": value } }),
+          },
+        ]) {
           expect(
-            yield* prepare(NumericConflict, { "1": value }, "path"),
-          ).toEqual({ "1": { page_size: "5" } });
+            yield* prepare(schema, wrap({ page_size: "many" }), "path"),
+          ).toEqual(wrap({ page_size: "25" }));
+          for (const value of [{ page_size: "05" }, { limit: 5 }])
+            expect(yield* prepare(schema, wrap(value), "path")).toEqual(
+              wrap({ page_size: "5" }),
+            );
+        }
       }),
   );
 

@@ -14,6 +14,11 @@ parent-union nested validation and the whole-side/decoded-mapping migration.
   loss/sibling checks. Metadata runs no checks or thunks; whole decoding can repeat schema services
   and effects. Distinct declarations, arrays and other unsupported paths remain under #170.
 
+- **Breaking:** exclude conflicting normalized field declarations inside direct object ancestors
+  from the same proof. A 0.12 refusal can become a generated default again in 0.13, including
+  numeric `1` / string `"1"` literal-Record declarations. This newly exposed kept-or-refused defect
+  remains under #170; use validated decoded values or a validated decoded-name mapping.
+
 - Allow five shared minutes for npm version/attestation visibility after measured propagation
   delays. Only HTTP 404 is retried; request caps, terminal verification failures, provenance guards
   and the one-upload rule are unchanged. Read-only recovery remains available.
