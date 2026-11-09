@@ -127,6 +127,15 @@ const ownData = (input: unknown, names: ReadonlyArray<Key>) => {
  */
 export const nestedEncodedInput = (ast: SchemaAST.AST) => {
   type Fields = ReadonlyMap<Key, SchemaAST.AST | undefined>;
+  const mergeField = (
+    fields: Map<Key, SchemaAST.AST | undefined>,
+    name: PropertyKey,
+    type: SchemaAST.AST | undefined,
+  ) => {
+    const key = keyOf(name);
+    if (!fields.has(key)) fields.set(key, type);
+    else if (fields.get(key) !== type) fields.set(key, undefined);
+  };
   const views = new Map<SchemaAST.AST, Fields | undefined>();
   const viewing = new Set<SchemaAST.AST>();
   let cyclic = false;
@@ -146,9 +155,9 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
       return undefined;
     }
     if (part._tag === "Objects") {
-      const fields = new Map(
-        part.propertySignatures.map(({ name, type }) => [keyOf(name), type]),
-      );
+      const fields = new Map<Key, SchemaAST.AST | undefined>();
+      for (const { name, type } of part.propertySignatures)
+        mergeField(fields, name, type);
       views.set(part, fields);
       return fields;
     }
@@ -165,10 +174,7 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
         views.set(part, undefined);
         return undefined;
       }
-      for (const [name, type] of declared) {
-        if (!fields.has(name)) fields.set(name, type);
-        else if (fields.get(name) !== type) fields.set(name, undefined);
-      }
+      for (const [name, type] of declared) mergeField(fields, name, type);
     }
     viewing.delete(part);
     views.set(part, fields);

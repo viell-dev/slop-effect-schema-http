@@ -168,8 +168,10 @@ where the current checks apply.
   construction, finite closed untransformed object/union ancestors can also establish a nested
   terminal proof. A parent union retains all member names, but follows a field only when every
   declaring member has the identical field AST type; missing fields on other closed members do not
-  supply ownership. Distinct declarations remain names in ancestor evidence but end that path. No
-  schema, default or suspension runs to build this metadata. Capture stable own-data paths before
+  supply ownership. Normalize and merge declarations inside objects with the same guard, including
+  numeric/string collisions for one JavaScript key. A conflicting type stays ambiguous after later
+  repeated declarations. Distinct declarations remain names in ancestor evidence but end that path.
+  No schema, default or suspension runs to build this metadata. Capture stable own-data paths before
   callbacks and select one coherent caller path and actual strict output write, never independent
   candidates. Validate output correspondence at selection, then retain caller evidence through whole
   decoding and loss checks. Whole decoding can repeat checks and services; do not replay

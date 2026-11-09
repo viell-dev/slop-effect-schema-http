@@ -34,6 +34,15 @@ const Distinct = Schema.Union([
   Direct,
   Schema.Struct({ filter: AlternateInner }),
 ]);
+const NumericOther = Schema.Struct({
+  limit: Schema.optionalKey(Schema.Number),
+  page_size: Schema.optionalKey(Schema.String),
+});
+const NumericMember = Schema.StructWithRest(
+  Schema.Record(Schema.Literal(1), NumericOther),
+  [Schema.Record(Schema.Literal("1"), Inner)],
+);
+const NumericConflict = Schema.Union([NumericMember, Cursor]);
 const Tagged = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("a"), filter: Inner }),
   Schema.Struct({ kind: Schema.Literal("b"), filter: Inner }),
@@ -183,6 +192,85 @@ describe("nested aliases below unchanged parent unions", () => {
       expect(nestedEncodedInput(schema.ast)).toBeUndefined();
     }
   });
+
+  it("does not merge duplicate normalized declarations inside one parent member", () => {
+    const decoded = Schema.Struct({
+      limit: Schema.optionalKey(Schema.Number),
+      page_size: Schema.optionalKey(Schema.String),
+    });
+    const symbol = Symbol("field");
+    for (const names of [
+      [1, "1"],
+      ["filter", "filter"],
+      [symbol, symbol],
+    ] as const) {
+      for (const types of [
+        [decoded.ast, Inner.ast],
+        [Inner.ast, decoded.ast],
+        [Inner.ast, decoded.ast, Inner.ast],
+      ]) {
+        const member = new SchemaAST.Objects(
+          types.map(
+            (type, index) =>
+              new SchemaAST.PropertySignature(names[index === 0 ? 0 : 1], type),
+          ),
+          [],
+        );
+        expect(
+          nestedEncodedInput(new SchemaAST.Union([member, Cursor.ast])),
+        ).toBeUndefined();
+      }
+      const member = new SchemaAST.Objects(
+        names.map((name) => new SchemaAST.PropertySignature(name, Inner.ast)),
+        [],
+      );
+      const capture = nestedEncodedInput(
+        new SchemaAST.Union([member, Cursor.ast]),
+      )!;
+      const field = names[0];
+      expect(
+        capture({ [field]: { page_size: "many" } })
+          ?.select({ [field]: { page_size: "25" } })
+          ?.matches(),
+      ).toBe(true);
+    }
+  });
+
+  it("declines conflicting StructWithRest numeric/string field schemas", () => {
+    expect(nestedEncodedInput(NumericConflict.ast)).toBeUndefined();
+  });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect(
+    "currently retains the default for conflicting normalized numeric declarations",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* prepare(
+            NumericConflict,
+            { "1": { page_size: "many" } },
+            "path",
+          ),
+        ).toEqual({ "1": { page_size: "25" } });
+        for (const value of [{ page_size: "05" }, { limit: 5 }])
+          expect(
+            yield* prepare(NumericConflict, { "1": value }, "path"),
+          ).toEqual({ "1": { page_size: "5" } });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect.fails(
+    "refuses invalid input under conflicting normalized numeric declarations",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* Effect.flip(
+            prepare(NumericConflict, { "1": { page_size: "many" } }, "path"),
+          ),
+        ).toBeInstanceOf(Schema.SchemaError);
+      }),
+  );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
   it.effect(
