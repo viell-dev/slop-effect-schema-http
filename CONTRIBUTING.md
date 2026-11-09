@@ -103,6 +103,22 @@ records each dispatch (request, composed URL, header lines, abort signal), and a
 `it.effect` with `TestClock` for retry delays and timeouts. Use deferreds or explicit start signals,
 not sleeps, to order concurrent work.
 
+Keep core construction, compilation and combinator cases in `Request.test.ts` and
+`Operation.test.ts`. Use the neighboring behavior files for focused work:
+
+- Request URL, raw/header/query fields, path and body cases belong in `Request.url.test.ts`,
+  `Request.fields.test.ts`, `Request.path.test.ts` and `Request.body.test.ts`.
+- Request schema-side selection, caller fields under unions and group settlement belong in
+  `Request.schema-input.test.ts`, `Request.union-input.test.ts` and `Request.groups.test.ts`.
+  Existing focused default, preservation and recovery regression files retain their specific scope.
+- Operation retry/timeout/attempt behavior, logging, mapping and variants belong in
+  `Operation.policy.test.ts`, `Operation.logging.test.ts`, `Operation.mapping.test.ts` and
+  `Operation.variants.test.ts`. Real transport cases stay in `Operation.socket.test.ts`.
+
+Choose the closest existing behavior file before adding another. Keep fixtures local when one file
+uses them; helpers shared across these files live in `test/request.ts` and `test/operation.ts`. The
+shared synthetic transport remains in `test/support.ts`.
+
 Write tests against documented intent: the doc comments in the source and
 [docs/design.md](./docs/design.md). A change to a design decision updates that page in the same pull
 request. Behavior the code happens to have is not a promise. A test that records it without design
