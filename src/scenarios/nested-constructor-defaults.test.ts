@@ -1,7 +1,7 @@
 /**
  * EXT-42: bounded nested constructor-default validation under #170.
  * Consumer-authored from the public acceptance and the README's neutral echo contract.
- * Parent-union/array routes and unstable evidence remain outside this constructor-only subset.
+ * Array routes and unstable evidence remain outside this constructor-only subset.
  */
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -883,7 +883,7 @@ describe(`nested constructor defaults (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-42p] currently, a parent union retains its separately unproved nested replacement",
+    "[EXT-42p] a closed parent union refuses its invalid nested alias",
     () =>
       Effect.gen(function* () {
         const backend = yield* start();
@@ -900,11 +900,9 @@ describe(`nested constructor defaults (${lane.name})`, () => {
         expect(
           yield* operation
             .execute({ body: { filter: { page_size: "many" } } })
-            .pipe(Effect.provide(lane.fetchClient)),
-        ).toBe("Not Found");
-        const ledger = yield* backend.ledger;
-        expect(ledger).toHaveLength(1);
-        expectEntry(ledger[0]!, "/x", '{"filter":{"page_size":"25"}}');
+            .pipe(Effect.provide(lane.fetchClient), outcome),
+        ).toMatchObject({ kind: "failure", error: { _tag: "SchemaError" } });
+        expect(yield* backend.ledger).toEqual([]);
       }),
   );
 

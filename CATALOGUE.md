@@ -3642,10 +3642,10 @@ corresponding terminal output write. They do not assert general recursive fieldw
   stable and written candidates cannot authorize another whole decoder. The right codec's reverse
   explicitly fails. Status: tested.
   - `[EXT-42o] control: stale written left and stable unwritten right are not one witness`
-- **EXT-42p** Currently, a parent-union ancestor still replaces the invalid nested alias with
-  `25`. This visible-input defect is outside the transparent-object proof and remains under #170.
-  Status: defect.
-  - `[EXT-42p] currently, a parent union retains its separately unproved nested replacement`
+- **EXT-42p** A finite closed parent union refuses an invalid nested alias before dispatch.
+  Published 0.12 baseline overwrote it with `25`; retained Node/Chromium reports reproduce that
+  defect before this assertion changed. Status: tested.
+  - `[EXT-42p] a closed parent union refuses its invalid nested alias`
 - **EXT-42q** Currently, an array ancestor retains the same pre-existing replacement, separately
   unproved under #170. Its observed output is a defect pin, not an intended schema guarantee.
   Status: defect.
@@ -3653,3 +3653,64 @@ corresponding terminal output write. They do not assert general recursive fieldw
 - **EXT-42r** A terminal child union preserves its cursor alternative in both path and JSON-body
   input, including slash escaping, exact bytes and request count. Status: tested.
   - `[EXT-42r] control: a terminal child union preserves its cursor alternative on path and body`
+
+## Closed parent-union constructor defaults (EXT-43)
+
+Consumer-authored from the accepted [#170 parent-union subset](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6732380757)
+and the README's neutral echo contract. All exchanges use its real socket listener. Published
+0.12 baseline reports are retained under `artifacts/parent-union-012-*`; desired refusals fail
+on that baseline. These checks do not establish general parent ownership or fieldwise recovery.
+
+- **EXT-43a** Root, reversed and exact shared-field parent unions refuse invalid text/null path
+  aliases in ordinary, frozen, null-prototype and nonenumerable own-data inputs, with no dispatch.
+  Status: tested.
+  - `[EXT-43a] ${name} parent union refuses invalid stable path aliases`
+- **EXT-43b** The same independent matrix checks JSON-body refusal and empty ledgers.
+  Status: tested.
+  - `[EXT-43b] ${name} parent union refuses invalid stable JSON aliases`
+- **EXT-43c** Encoded, decoded, omitted and decoded-name-priority inputs retain canonical JSON
+  bytes, headers, method, target and exact request counts. Status: tested.
+  - `[EXT-43c] ${name} preserves encoded decoded default and alternate inputs`
+- **EXT-43d** Parent unions at two deeper positions retain the invalid-alias refusal.
+  Status: tested.
+  - `[EXT-43d] nested parent unions refuse invalid aliases without dispatch`
+- **EXT-43e** Cursor, deeper alternate and complete encoded inputs keep exact path escaping,
+  JSON bytes, headers and counts. Missing filter declarations invent no ownership. Status: tested.
+  - `[EXT-43e] parent cursor and deeper other branches preserve wire bytes`
+- **EXT-43f** Distinct finite/default filter declarations still overwrite invalid text with 25.
+  This is a current #170 defect pin, not an intended guarantee; revisit with a broader proof.
+  Status: defect.
+  - `[EXT-43f] currently distinct filter declarations retain the ambiguous default overwrite`
+- **EXT-43g** Required inner gate forces genuine nested decoding during member fieldwise
+  preparation beside mixed outer fields and an opaque Option. The alias keeps 8 while shared
+  Base64 text keeps its prior decoded-text meaning; callbacks and full wire bytes are checked.
+  Status: tested.
+  - `[EXT-43g] member fieldwise consumption keeps callback and shared text interpretation`
+- **EXT-43h** Whole parent decoding newly refuses a valid alias beside decoded numeric input
+  and reads shared Base64 text on its encoded side. Complete decoded inputs retain prior meaning.
+  This intentional migration consequence is asserted independently of invalid-alias checks.
+  Status: tested.
+  - `[EXT-43h] whole parent decoding refuses valid mixed aliases and reads shared text on its encoded side`
+- **EXT-43i** A suspended parent retains the current invalid-alias overwrite. This is an
+  unsupported #170 defect pin, not a schema guarantee. Status: defect.
+  - `[EXT-43i] currently a suspended parent retains its unsupported overwrite`
+- **EXT-43j** Distinct symbols with the same description declare different parent fields.
+  Invalid nested aliases refuse without dispatch; a valid alias and the other symbol's member
+  retain canonical and slash-escaped paths. Status: tested.
+  - `[EXT-43j] equal symbol descriptions retain distinct parent field identities`
+- **EXT-43k** A numeric-looking declared field carries the parent-union witness without losing
+  field identity. Invalid input refuses; encoded, decoded and omitted controls keep exact paths,
+  headers, empty body bytes and counts. Status: tested.
+  - `[EXT-43k] numeric parent field preserves invalid valid and default paths`
+- **EXT-43l** An unknown cyclic nested extra does not hide invalid aliases or prevent a valid
+  alias path. The renderer reads only declared encoded output; the caller graph is neither cloned
+  nor serialized, and its cycle and object identities remain intact. Status: tested.
+  - `[EXT-43l] unknown cyclic nested extras neither hide invalid aliases nor prevent valid paths`
+- **EXT-43m** Ordinary `StructWithRest` declares numeric `1` and string `"1"` with different
+  field schemas inside one parent-union member. Their shared JavaScript property identity does
+  not establish unambiguous ownership. Default/decoded controls precede the current invalid-text
+  overwrite pin and assert exact path, headers, empty body and counts. This remains a #170 defect,
+  not an intended guarantee; [P2's scope-admission report](https://github.com/viell-dev/slop-effect-schema-http/pull/186#issuecomment-6733312132)
+  requires preserving this prior route until a broader proof is accepted. The public path API
+  avoids Effect JSON-codec conversion's rejection of numeric AST field names. Status: defect.
+  - `[EXT-43m] currently normalized numeric and string declarations retain their unproved overwrite`
