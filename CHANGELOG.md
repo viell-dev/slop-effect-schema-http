@@ -1,13 +1,14 @@
 # Change history
 
-## Unreleased
+## 0.16.0 — 2026-11-09
+
+Read [What's in 0.16](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.16) for
+the grouped constructor-alias repair and checked complete-side/decoded-mapping migration.
 
 - **Breaking:** validate constructor aliases through eligible optional/nullable object alternatives,
   sparse own cells and exact native own iterator data (#170). Invalid aliases refuse before
   dispatch; valid encoded/decoded values and isolated omissions retain their controls. Whole
   decoding can newly refuse mixed-side values or change shared-text/conflicting-name selection.
-  Group these cases into one [0.16
-  migration](https://github.com/viell-dev/slop-effect-schema-http/blob/main/docs/release-notes/0.16.md).
   Distinct normalized declarations, arbitrary iterators and broader #143/#170 limits remain open.
 - Keep unrelated release tooling locked during the full Effect peer-floor check (#193). Save the
   exact floor selections, reject any other manifest/lockfile change, then install the generated

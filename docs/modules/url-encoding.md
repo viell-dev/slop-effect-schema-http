@@ -88,5 +88,5 @@ addition deliberately.
 
 See the [URL contract](../design.md#urls-are-made-sendable-not-normalized), [wire
 representations](../design.md#wire-representations-stay-distinct), and [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.15.0/src/http/UrlEncoding.ts)
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.16.0/src/http/UrlEncoding.ts)
 for exact rules and types.
