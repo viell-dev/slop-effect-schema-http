@@ -51,9 +51,17 @@ and the migration. The earlier [0.8 helper migration](./release-notes/0.8.md) st
 initial whole constructor fails and member/fieldwise recovery succeeds, this additional check does
 not run; an invalid alias beside mixed encoded/decoded numeric fields can still take a default.
 
-A nested renamed field can still lose its encoded alias from the static input type when outer field
-names match ([#172](https://github.com/viell-dev/slop-effect-schema-http/issues/172)). Use decoded
-nested names or a named decoded-input mapping pending that separate repair.
+The additional proof is also limited to root fields. An invalid encoded alias inside an unchanged
+nested object can still take its constructor default: for example, `filter: { page_size: "many" }`
+can send the default finite limit. This is another visible-input #170 defect, separate from opaque
+schema-owned reading. Supply decoded nested names or a decoded input mapping.
+
+Whole encoded nested shapes retain their static input type in 0.10. Helpers using `Request.Input`
+must handle encoded nested names too, or declare their own decoded input shape; the [0.10
+migration](./release-notes/0.10.md) gives a checked example. This changes no runtime route. Inside
+opaque values such as `Schema.ReadonlyMap`, the schema's own reading still applies, and accepted
+encoded contents do not force whole decoding. A map's constructor can accept a nested renamed object
+by losing its alias; supply decoded map contents for a predictable decoded route.
 
 Effect can also refuse some omitted prototype-named fields, including `constructor` and an
 encode-only `toString` default. The [dependency

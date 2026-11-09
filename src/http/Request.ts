@@ -80,24 +80,26 @@ export type QueryFields = Readonly<
  *
  * A value that fits the decoded side is read as decoded. Under a schema whose two sides share a
  * type, such as one from text to text, an already encoded value fits the decoded side, so it is
- * encoded again, with no error. A mix is one level deep in the type. Renamed fields take their
- * encoded names only when the whole value is on the encoded side, and a value on that side stays
- * there, even if it would fit the decoded side by losing them.
+ * encoded again, with no error. The type retains whole constructor and encoded input shapes,
+ * including nested aliases in objects, lists, tuples and classes. Mixing by field stays one level
+ * deep in the type; it does not recursively rebuild nested fields.
  * When both names of a renamed field are supplied, the decoded name still wins; give one name.
  *
- * Outer-object and union-member aliases retain their encoded input type. A helper accepting
- * `Input` must handle both shapes; a helper meant for decoded names only should declare that input
- * shape explicitly.
- * Nested renamed fields can still lose their encoded input type when outer names match (issue
- * #172); use decoded nested names or a decoded input mapping pending that separate repair.
+ * A helper accepting `Input` must handle both shapes, including nested encoded names. A helper
+ * meant for decoded names only should declare that input shape explicitly and can supply it through
+ * a named input mapping. Retaining an opaque value's encoded type does not force encoded reading
+ * of its contents: the schema's own reading and constructor priority still apply. Decoded contents
+ * give an opaque value such as a `Schema.ReadonlyMap` a predictable decoded route.
+ *
  * Stable plain root data, finite closed object/union names, a successful whole constructor and
  * strict encoding can establish an encoded-only field overwritten by a default after a typed
- * strict read failure. Additional whole decoding then validates that input. Initial constructor/default and
- * writer effects can run first; other constructor choices keep priority. Ambiguous names,
- * open/opaque/class or suspended/iterable groups, inherited/accessor fields and changing input
- * remain outside this proof, as does constructor failure recovered memberwise or fieldwise (issue
- * #170). Use decoded names or a named input mapping. The Request guide describes the bounds and
- * helper migration.
+ * strict read failure. Additional whole decoding then validates that input. Initial
+ * constructor/default and writer effects can run first; other constructor choices keep priority.
+ * Ambiguous names, open/opaque/class or suspended/iterable groups, inherited/accessor fields and
+ * changing input remain outside this proof, as does constructor failure recovered memberwise or
+ * fieldwise. A renamed field inside an unchanged nested object is also outside the root proof
+ * (issue #170). Use decoded names or a named input mapping. The Request guide describes the bounds
+ * and helper migration.
  *
  * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that
@@ -107,8 +109,8 @@ export type QueryFields = Readonly<
  * out before its fields go; a constructor default is not guessed to make that choice.
  * A key set to `undefined` is no field, and an accessor on a class is one, as it is to a struct. In a
  * header or query group, a field a schema stacked with the union takes is not lost. Inside text given
- * as text, a `Schema.Map`, a `Schema.Option` or a declaration with no struct behind it, the schema's
- * own reading applies.
+ * as text, a `Schema.ReadonlyMap`, a `Schema.Option` or a declaration with no struct behind it, the
+ * schema's own reading applies.
  *
  * A direct closed struct can recover an otherwise-refused nested field through constructor-only
  * validation beside an opaque declaration. The original parent and output remain strictly

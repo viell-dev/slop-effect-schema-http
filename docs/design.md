@@ -196,8 +196,8 @@ where the current checks apply.
   case. Only a real loss counts: a field another schema in the group takes is not lost, as the rule
   on stacked schemas below says.
 - **An opaque value is the schema's own reading.** A value is opaque when neither side of its schema
-  states an object for it: text given as text, and what a `Schema.Map`, a `Schema.Option` or a
-  declaration with no struct behind it holds. Nothing here can reach inside, so nothing is refused
+  states an object for it: text given as text, and what a `Schema.ReadonlyMap`, a `Schema.Option` or
+  a declaration with no struct behind it holds. Nothing here can reach inside, so nothing is refused
   for what happens there, and a union in one reads as Effect reads it. Either side counts, so an
   object given to a field that holds JSON is not opaque, and nor is the value in
   `Schema.OptionFromNullOr`, whose encoded side states it: a union there keeps or refuses as any
@@ -226,11 +226,22 @@ where the current checks apply.
   property of the definition, and the library does not try to correct it.
 
 The type of an input is `Request.Input<S>`, and the type of a whole request's input is
-`Request.InputOf<R>`. A mix is one level deep in the type, and a renamed field takes its encoded
-name only when the whole value is on the encoded side. A plain value in a branded field compiles,
-because it is on the encoded side, and it goes through the schema's checks. The compiler therefore
-checks less than it would for the decoded side alone: a string where a number was expected compiles,
-and fails when the request is prepared if the schema refuses it.
+`Request.InputOf<R>`. Whole constructor and encoded input shapes remain available through nested
+objects, lists, tuples, classes and union members. Mixing by field remains one level deep in the
+type; it does not recursively rebuild nested fields. Identical sides are elided using a compiler
+type-identity comparison. Mutual assignability or equal outer keys alone cannot establish matching
+nested names, so distinct mutually assignable sides remain whole and keep nominal identity and
+discriminated alternatives. A plain value in a branded field compiles, because it is on the encoded
+side, and it goes through the schema's checks. The compiler therefore checks less than it would for
+the decoded side alone: a string where a number was expected compiles, and fails when the request is
+prepared if the schema refuses it.
+
+A helper using `Request.Input` must handle the actual alternatives, including encoded nested names.
+Decoded-only helpers declare their own input shape or supply it through a named mapping; the [0.10
+migration](./release-notes/0.10.md) shows both. This type repair changes neither constructor
+priority nor schema reading. An opaque `Schema.ReadonlyMap` can read encoded inner aliases as
+decoded contents and lose them according to its constructor. Supply decoded contents for a
+predictable decoded route.
 
 #### A last constructor attempt
 
@@ -386,12 +397,11 @@ Some things are outside the check:
 - Invalid encoded aliases can still take optional constructor defaults outside the bounded 0.9 root
   proof ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). An encoded name
   used on any decoded member, a supplied decoded-only name, open/opaque/class/suspended or iterable
-  group shapes, inherited/accessor fields and changing input cannot establish this route. Use
-  decoded input for those schemas. Outer-object/member alias typing is repaired in 0.8; helpers
+  group shapes, inherited/accessor fields and changing input cannot establish this route. The proof
+  does not reach a renamed field inside an unchanged nested object, which can still take a
+  constructor default for invalid encoded input. Use decoded input for those schemas. The whole
+  encoded-side typing repaired in 0.10 does not change this runtime selection limit; helpers
   accepting `Request.Input` must account for both shapes.
-- Nested renamed fields can still lose their encoded input type when outer names match
-  ([#172](https://github.com/viell-dev/slop-effect-schema-http/issues/172)). Use decoded nested
-  names or an input mapping; the whole encoded side executes, but the static refusal remains.
 - A group transformation can hide a default's field correspondence. The strictly empty caller-group
   proof above covers some such calls. With any own caller field, a renamed default can still replace
   a later raw edit without refusal; the library does not guess which alias supplied that output.

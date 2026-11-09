@@ -27,32 +27,26 @@ const Required = Schema.Struct({
 // https://github.com/viell-dev/slop-effect-schema-http/issues/169
 describe("encoded input names beside unchanged fields", () => {
   // https://github.com/viell-dev/slop-effect-schema-http/issues/172
-  it.effect(
-    "currently rejects nested encoded types while their whole value executes",
-    () =>
-      Effect.gen(function* () {
-        const Nested = Schema.Struct({
-          filter: Schema.Struct({
-            term: Schema.optionalKey(Schema.String),
-            limit: Schema.optionalKey(Schema.String),
-          }).pipe(Schema.encodeKeys({ limit: "page_size" })),
-        });
-        const input: Request.Input<typeof Nested> = {
-          filter: {
-            // @ts-expect-error: unchanged outer names still hide the nested encoded alias
-            page_size: "05",
-          },
-        };
-        const request = Request.get("").pipe(
-          Request.path(
-            Nested,
-            (encoded) => `/${encoded.filter.page_size ?? ""}`,
-          ),
-        );
-        expect(
-          (yield* Request.compile(request, { path: input })).request.url,
-        ).toBe("/05");
-      }),
+  it.effect("accepts nested encoded types and executes their whole value", () =>
+    Effect.gen(function* () {
+      const Nested = Schema.Struct({
+        filter: Schema.Struct({
+          term: Schema.optionalKey(Schema.String),
+          limit: Schema.optionalKey(Schema.String),
+        }).pipe(Schema.encodeKeys({ limit: "page_size" })),
+      });
+      const input: Request.Input<typeof Nested> = {
+        filter: {
+          page_size: "05",
+        },
+      };
+      const request = Request.get("").pipe(
+        Request.path(Nested, (encoded) => `/${encoded.filter.page_size ?? ""}`),
+      );
+      expect(
+        (yield* Request.compile(request, { path: input })).request.url,
+      ).toBe("/05");
+    }),
   );
 
   it.effect("accepts either side of a partly renamed defaulted query", () =>

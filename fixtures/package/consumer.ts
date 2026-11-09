@@ -1,4 +1,4 @@
-import { Effect, Schema, SchemaTransformation } from "effect";
+import { Context, Effect, Schema, SchemaTransformation } from "effect";
 import {
   Body,
   Operation,
@@ -98,6 +98,147 @@ const TokenCodec = WireToken.pipe(
 );
 export const nominalInput: Request.Input<typeof TokenCodec> = new Token();
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/172
+const NestedFields = Schema.Struct({
+  term: Schema.optionalKey(Schema.String),
+  limit: Schema.optionalKey(Schema.String),
+}).pipe(Schema.encodeKeys({ limit: "page_size" }));
+const Nested = Schema.Struct({ filter: NestedFields });
+export const nestedRequest = Request.get("https://api.test/nested").pipe(
+  Request.path(Nested, (value) => `/${value.filter.page_size ?? ""}`),
+);
+export const nestedInput: Request.Input<typeof Nested> = {
+  filter: { page_size: "05" },
+};
+export const compileNestedEncoded = () =>
+  Request.compile(nestedRequest, { path: nestedInput });
+export const compileNestedDecoded = () =>
+  Request.compile(nestedRequest, { path: { filter: { limit: "05" } } });
+export const compileNestedBody = () =>
+  Request.compile(
+    Request.post("https://api.test/nested").pipe(
+      Request.body(Body.jsonSchema(Nested)),
+    ),
+    { body: { filter: { page_size: "05" } } },
+  );
+const nestedList = Request.get("https://api.test/nested").pipe(
+  Request.path(
+    Schema.Array(NestedFields),
+    (value) => `/${value[0]?.page_size}`,
+  ),
+);
+export const compileNestedList = () =>
+  Request.compile(nestedList, { path: [{ page_size: "05" }] });
+const nestedTuple = Request.get("https://api.test/nested").pipe(
+  Request.path(
+    Schema.Tuple([NestedFields, Schema.String]),
+    (value) => `/${value[0].page_size}/${value[1]}`,
+  ),
+);
+export const compileNestedTuple = () =>
+  Request.compile(nestedTuple, { path: [{ page_size: "05" }, "x"] });
+class NestedClass extends Schema.Class<NestedClass>("PackedNestedClass")({
+  filter: NestedFields,
+}) {}
+class BrandedNestedClass extends Schema.Class<
+  BrandedNestedClass,
+  { readonly PackedNested: unique symbol }
+>("PackedBrandedNestedClass")({ filter: NestedFields }) {}
+export const compileNestedClass = () =>
+  Request.compile(
+    Request.get("https://api.test/nested").pipe(
+      Request.path(BrandedNestedClass, (value) => `/${value.filter.page_size}`),
+    ),
+    { path: { filter: { page_size: "05" } } },
+  );
+export const nestedClassConstructor: Request.Input<typeof NestedClass> = {
+  filter: { limit: "05" },
+};
+const NestedToken = Schema.Struct({ token: TokenCodec });
+export const nestedNominalInput: Request.Input<typeof NestedToken> = {
+  token: new Token(),
+};
+const nestedMap = Request.get("https://api.test/nested").pipe(
+  Request.path(
+    Schema.Struct({ options: Schema.ReadonlyMap(Schema.String, NestedFields) }),
+    (value) => `/${value.options.get("page")?.page_size}`,
+  ),
+);
+export const nestedMapEncoded: Request.InputOf<typeof nestedMap> = {
+  path: { options: new Map([["page", { term: "x", page_size: "05" }]]) },
+};
+export const compileNestedMap = () =>
+  Request.compile(nestedMap, {
+    path: { options: new Map([["page", { term: "x", limit: "05" }]]) },
+  });
+const correlatedFields = {
+  common: Schema.optionalKey(Schema.String),
+  term: Schema.optionalKey(Schema.String),
+  limit: Schema.optionalKey(Schema.String),
+};
+const CorrelatedNested = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("a"),
+    filter: Schema.Struct(correlatedFields).pipe(
+      Schema.encodeKeys({ term: "search_a", limit: "page_size" }),
+    ),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("b"),
+    filter: Schema.Struct(correlatedFields).pipe(
+      Schema.encodeKeys({ term: "search_b", limit: "page_size" }),
+    ),
+  }),
+]);
+const correlatedNested = Request.get("https://api.test/nested").pipe(
+  Request.path(CorrelatedNested, (value) =>
+    value.kind === "a"
+      ? `/a/${value.filter.search_a}`
+      : `/b/${value.filter.search_b}`,
+  ),
+);
+export const compileCorrelatedNested = () =>
+  Request.compile(correlatedNested, {
+    path: { kind: "a", filter: { search_a: "x", page_size: "05" } },
+  });
+
+export const bindNested = <S extends Schema.Top>(schema: S) =>
+  Request.get("https://api.test/nested").pipe(
+    Request.path(schema, () => "/generic"),
+  );
+export const compileGenericNested = () =>
+  Request.compile(bindNested(Nested), {
+    path: { filter: { page_size: "05" } },
+  });
+class NestedDecode extends Context.Service<NestedDecode, string>()(
+  "packed/NestedDecode",
+) {}
+class NestedEncode extends Context.Service<NestedEncode, string>()(
+  "packed/NestedEncode",
+) {}
+const ServiceText = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transformEffect({
+      decode: (value) => Effect.as(NestedDecode, value),
+      encode: (value) => Effect.as(NestedEncode, value),
+    }),
+  ),
+);
+const ServiceNested = Schema.Struct({
+  filter: Schema.Struct({
+    term: Schema.optionalKey(Schema.String),
+    limit: Schema.optionalKey(ServiceText),
+  }).pipe(Schema.encodeKeys({ limit: "page_size" })),
+});
+export const compileNestedWithServices = () =>
+  Request.compile(bindNested(ServiceNested), {
+    path: { filter: { page_size: "05" } },
+  }).pipe(
+    Effect.provideService(NestedDecode, "decode"),
+    Effect.provideService(NestedEncode, "encode"),
+  );
+
 // A consumer must retain a path value's type after declaration emit.
 // @ts-expect-error The path value requires a string.
 getItem.execute({ path: { id: 123 } });
@@ -148,6 +289,24 @@ export const listText = countNames.pipe(
 
 // Never called: the compiler refuses each of these through the emitted declarations.
 export const refused = () => {
+  // @ts-expect-error Nested encoded values retain their value type.
+  Request.compile(nestedRequest, { path: { filter: { page_size: 5 } } });
+  // @ts-expect-error Unknown nested names remain a compile error.
+  Request.compile(nestedRequest, { path: { filter: { absent: "05" } } });
+  // @ts-expect-error A nested alias does not make its containing field optional.
+  Request.compile(nestedRequest, { path: {} });
+  // @ts-expect-error Nested tuple input retains its second member.
+  Request.compile(nestedTuple, { path: [{ page_size: "05" }] });
+  const mismatched: Request.Input<typeof CorrelatedNested> = {
+    kind: "a",
+    // @ts-expect-error The discriminant preserves the nested encoded alias's member.
+    filter: { search_b: "x", page_size: "05" },
+  };
+  const nestedForged: Request.Input<typeof NestedToken> = {
+    // @ts-expect-error Whole-side retention cannot erase a nested private identity.
+    token: { read: () => "forged" },
+  };
+  void [mismatched, nestedForged];
   // @ts-expect-error Opaque sides retain their private class identity.
   const forged: Request.Input<typeof TokenCodec> = { read: () => "forged" };
   void forged;
