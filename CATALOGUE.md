@@ -3646,10 +3646,10 @@ corresponding terminal output write. They do not assert general recursive fieldw
   Published 0.12 baseline overwrote it with `25`; retained Node/Chromium reports reproduce that
   defect before this assertion changed. Status: tested.
   - `[EXT-42p] a closed parent union refuses its invalid nested alias`
-- **EXT-42q** Currently, an array ancestor retains the same pre-existing replacement, separately
-  unproved under #170. Its observed output is a defect pin, not an intended schema guarantee.
-  Status: defect.
-  - `[EXT-42q] currently, an array ancestor retains its separately unproved nested replacement`
+- **EXT-42q** A stable dense array ancestor refuses its invalid nested alias under the later
+  accepted EXT-44 extension. The original 0.13 default-overwrite pin passed in both lanes before
+  conversion; reports remain under `artifacts/array-default-013-ext42q-*`. Status: tested.
+  - `[EXT-42q] a stable dense array ancestor refuses its invalid nested alias`
 - **EXT-42r** A terminal child union preserves its cursor alternative in both path and JSON-body
   input, including slash escaping, exact bytes and request count. Status: tested.
   - `[EXT-42r] control: a terminal child union preserves its cursor alternative on path and body`
@@ -3718,3 +3718,99 @@ on that baseline. These checks do not establish general parent ownership or fiel
   Baseline and candidate reports are retained as `artifacts/parent-union-p2-direct-*`.
   Status: defect.
   - `[EXT-43m] currently normalized numeric and string declarations retain their unproved overwrite`
+
+## Stable dense array and tuple constructor defaults (EXT-44)
+
+Consumer-authored from the accepted [#170 array/tuple subset](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6734230849),
+the public 0.13 design, request guide, limits and migration, existing consumer fixtures, and the
+README's [neutral echo contract](./README.md#the-neutral-echo-probe). No backend, conformance,
+library implementation or private design evidence informed this authorship. The tests use public
+schemas and operation execution through Fetch over real neutral echo sockets in Node and Chromium.
+These synthetic agent checks do not establish human expectations or human use.
+
+Published 0.13.0 at `d66a70fcc6b3d37e7bc169ccb4a2dfd06b389911` substitutes constructor defaults
+for covered invalid array aliases. Reports under `artifacts/array-default-013-*` preserve passing
+complete-side/default/alternate controls before desired refusals, the original EXT-42q pin, and
+exploratory failures. Exact method, target, relevant header lines, body bytes and counts are asserted.
+Covered invalid text/null requires `SchemaError` and no additional dispatch. This constructor-only
+extension does not establish general per-element recovery, array-shaped union ancestry,
+transformed-group ownership, or unsupported member/final-fieldwise repairs.
+
+- **EXT-44a** Root, last index, double and wrapped arrays; forward/reversed object unions;
+  terminal element unions; fixed, prefix, homogeneous-rest and post-rest tuples with zero/two
+  rest positions; and an optional tuple position retain complete encoded/decoded, inner default
+  and decoded-name-priority controls on path and JSON. Multi-element fixtures choose complete-side
+  companion values explicitly. Status: tested.
+  - `[EXT-44a] ${fixture.name} controls preserve encoded decoded default and priority bytes`
+- **EXT-44b** Every EXT-44a shape first dispatches a complete encoded control through the same
+  operation, then refuses text/null in ordinary, null-prototype, frozen, nonenumerable-position and
+  nonenumerable-alias own-data profiles without further dispatch. Failure evidence includes the
+  original received method, target, header lines and body. Status: tested.
+  - `[EXT-44b] ${fixture.name} ${binding} refuses invalid stable aliases without dispatch`
+- **EXT-44c** Stable profiles preserve a valid alias; terminal cursor and parent cursor alternatives
+  retain slash escaping, exact JSON and counts. Status: tested.
+  - `[EXT-44c] stable profiles retain valid aliases and terminal or parent alternatives`
+- **EXT-44d** An absent optional tuple position remains absent, a supplied empty terminal gets its
+  constructor default, and an encoded companion forcing ordinary whole decoding leaves another
+  omitted limit absent. These routes have distinct existing bytes. Status: tested.
+  - `[EXT-44d] omitted optional positions and whole encoded omission retain distinct meanings`
+- **EXT-44e** Accessor, inherited-index, subclass and custom-iterator arrays retain their current
+  invalid-alias default overwrite on path and JSON. The custom iterator is never invoked; accessor
+  reads belong to existing schema execution. These are unsupported defect pins, not intended
+  guarantees. Status: defect.
+  - `[EXT-44e] currently ${shape} arrays retain their unsupported default overwrite`
+- **EXT-44f** A sparse array with optional elements retains a hole and the existing invalid-alias
+  overwrite; JSON writes the hole as null. The caller still lacks own index zero. This is an
+  unsupported defect pin. Status: defect.
+  - `[EXT-44f] currently sparse arrays retain their unsupported default overwrite`
+- **EXT-44g** A union containing an array-shaped ancestor retains its unproved default overwrite;
+  the object cursor alternative retains exact path and JSON. Status: defect.
+  - `[EXT-44g] currently an array-shaped union ancestor retains its unproved overwrite`
+- **EXT-44h** A tail constructor default appends a position or swaps earlier booleans. The length
+  change retains the existing schema/loss refusal without dispatch; the order change retains the
+  pre-existing default output. Each performs exactly one default callback. Status: tested.
+  - `[EXT-44h] ${mutation} changes during a tail default retain their original constructor route`
+- **EXT-44i** Unknown cyclic terminal extras neither prevent a valid path nor hide a covered
+  invalid alias. Caller references and the cycle remain intact; rendering sees only the schema's
+  encoded result. Status: tested.
+  - `[EXT-44i] unknown cyclic extras preserve caller identity and cannot hide covered aliases`
+- **EXT-44j** Required inner gates force real member-fieldwise decoding of an array beside mixed
+  common fields and an opaque Option. Aliases retain 8/2, shared Base64 text retains its decoded
+  meaning, and the existing callback sequence and normalized JSON remain exact. Status: tested.
+  - `[EXT-44j] actual member fieldwise array consumption preserves shared decoded text`
+- **EXT-44k** Added whole-group validation can refuse an otherwise valid default-valued alias
+  beside decoded numeric input. Complete decoded values and a named mapping validated by Schema
+  retain prior text meaning; invalid mapping input refuses before dispatch. Status: tested.
+  - `[EXT-44k] whole array decoding refuses valid mixed input while complete sides and named mapping retain meaning`
+- **EXT-44l** Actual whole construction performs its default once before validation selects shared
+  Base64 text's encoded-side meaning. Complete decoded input retains double encoding. Status: tested.
+  - `[EXT-44l] whole array decoding selects encoded shared text after its actual constructor`
+- **EXT-44m** Mixed array members previously sent 2/25 for supplied decoded 2 and encoded `"05"`.
+  Complete encoded and decoded controls retain 2/5; the added whole-group check refuses the mixed
+  runtime probe. Whole-side array input types already exclude this particular mixed literal.
+  Status: tested.
+  - `[EXT-44m] mixed array members refuse instead of replacing valid encoded text`
+- **EXT-44n** A nonempty identity group transformation between explicitly decoded array schemas
+  retains its current invalid-alias default overwrite. This is an unsupported defect pin, not
+  permission to infer correspondence through the transformation. Status: defect.
+  - `[EXT-44n] currently transformed array groups retain their unsupported overwrite`
+- **EXT-44o** The [public dual-name reproduction](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6735302019)
+  uses a nonliteral array input that typechecks without a cast:
+  `[{ limit: 1, page_size: "02" }, { page_size: "25" }]`. Published 0.13 sends 1/25 on both path and
+  JSON; the added whole encoded read sends 2/25. Five controls retain their exact bytes first:
+  complete encoded/decoded input, one dual-name member, and a dual-name member with a decoded or
+  omitted/default sibling. Each operation dispatches six requests with exact method, target,
+  relevant headers and body bytes. This migration pin records a changed choice within #143's open
+  conflicting-alias limit; it does not establish conflict refusal, equality, or a solved gap.
+  Paired reports remain under `artifacts/array-default-{013,ccca2c1}-p2-*`. Status: limit.
+  - `[EXT-44o] currently ${binding} whole array decoding changes a typed neighboring dual-name choice`
+- **EXT-44p** An own enumerable `Symbol.iterator`, created by assigning the normal Array iterator,
+  produces the pre-existing [#189 defect](https://github.com/viell-dev/slop-effect-schema-http/issues/189)
+  on both published 0.13 and the candidate. Path/JSON cases cover invalid encoded, valid encoded and
+  decoded cells, with both the normal iterator and a watched delegate. `execute` returns normally;
+  effect evaluation fails with exactly one `Die(TypeError)` whose message is
+  `Cannot convert a Symbol value to a number`. The watched iterator is never called and the physical
+  backend ledger stays empty. The existing nonenumerable iterator case remains separate. This pins
+  the current defect without prescribing its later repair. Paired reports use the EXT-44o prefix.
+  Status: defect.
+  - `[EXT-44p] currently ${binding} enumerable ${iterator} array iterator produces an Effect TypeError defect without dispatch`
