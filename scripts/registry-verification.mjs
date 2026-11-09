@@ -11,7 +11,7 @@ export async function verifyRegistry(
     fetch = globalThis.fetch,
     sleep = setTimeout,
     now = () => performance.now(),
-    timeoutMs = 180_000,
+    timeoutMs = 300_000,
     intervalMs = 5_000,
   } = {},
 ) {

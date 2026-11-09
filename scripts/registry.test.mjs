@@ -92,6 +92,93 @@ function harness(responses) {
     },
   };
 }
+test("#184 later attestations can follow metadata that consumed about 161 seconds", async () => {
+  const h = harness([
+    ...Array.from({ length: 31 }, () => new Response(null, { status: 404 })),
+    {
+      status: 200,
+      json: async () => {
+        h.advance(5_853);
+        return published;
+      },
+    },
+    ...Array.from({ length: 7 }, () => new Response(null, { status: 404 })),
+    Response.json(attest(statement)),
+  ]);
+  await verifyRegistry(manifest, {
+    ...h.options,
+    timeoutMs: undefined,
+    intervalMs: undefined,
+  });
+  assert.equal(h.options.now(), 195_853);
+  assert.equal(h.calls.length, 40);
+  assert.equal(h.delays.length, 38);
+  assert.ok(h.delays.every((delay) => delay === 5_000));
+});
+
+test("#184 the default five-minute deadline is shared, with no extra request", async () => {
+  const h = harness([
+    ...Array.from({ length: 32 }, () => new Response(null, { status: 404 })),
+    {
+      status: 200,
+      json: async () => {
+        h.advance(853);
+        return published;
+      },
+    },
+    ...Array.from({ length: 60 }, () => new Response(null, { status: 404 })),
+  ]);
+  await assert.rejects(
+    verifyRegistry(manifest, {
+      ...h.options,
+      timeoutMs: undefined,
+      intervalMs: undefined,
+    }),
+    (error) => {
+      assert.match(
+        error.message,
+        /attestations: 28 attempts, last HTTP 404, 139147ms/,
+      );
+      assert.match(
+        error.message,
+        /shared 300000\/300000ms elapsed, 0ms remaining/,
+      );
+      return true;
+    },
+  );
+  assert.equal(h.calls.length, 61);
+  assert.equal(h.options.now(), 300_000);
+  assert.equal(h.delays.at(-1), 4_147);
+});
+
+test("#184 default requests keep the ten-second and remaining-budget caps", async (t) => {
+  const timeouts = [];
+  t.mock.method(AbortSignal, "timeout", (duration) => {
+    timeouts.push(duration);
+    return new globalThis.AbortController().signal;
+  });
+  const h = harness([
+    ...Array.from({ length: 59 }, () => new Response(null, { status: 404 })),
+    {
+      status: 200,
+      json: async () => {
+        h.advance(1_500);
+        return published;
+      },
+    },
+    Response.json(attest(statement)),
+  ]);
+  await verifyRegistry(manifest, {
+    ...h.options,
+    timeoutMs: undefined,
+    intervalMs: undefined,
+  });
+  assert.equal(h.options.now(), 296_500);
+  assert.equal(h.calls.length, 61);
+  assert.ok(timeouts.slice(0, -2).every((duration) => duration === 10_000));
+  assert.deepEqual(timeouts.slice(-2), [5_000, 3_500]);
+});
+
 test("#78 waits for version and attestation visibility within one deadline", async () => {
   const h = harness([
     new Response(null, { status: 404 }),

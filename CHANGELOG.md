@@ -1,5 +1,11 @@
 # Change history
 
+## Unreleased
+
+- Allow five shared minutes for npm version/attestation visibility after measured propagation
+  delays. Only HTTP 404 is retried; request caps, terminal verification failures, provenance guards
+  and the one-upload rule are unchanged. Read-only recovery remains available.
+
 ## 0.12.0 — 2026-11-09
 
 Read [What's in 0.12](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.12) for
