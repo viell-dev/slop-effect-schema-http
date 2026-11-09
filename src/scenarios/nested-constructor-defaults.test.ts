@@ -1,7 +1,7 @@
 /**
  * EXT-42: bounded nested constructor-default validation under #170.
  * Consumer-authored from the public acceptance and the README's neutral echo contract.
- * Array routes and unstable evidence remain outside this constructor-only subset.
+ * EXT-44 covers the later array extension; unstable evidence remains outside the added proof.
  */
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -907,7 +907,7 @@ describe(`nested constructor defaults (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-42q] currently, an array ancestor retains its separately unproved nested replacement",
+    "[EXT-42q] a stable dense array ancestor refuses its invalid nested alias",
     () =>
       Effect.gen(function* () {
         const backend = yield* start();
@@ -918,14 +918,15 @@ describe(`nested constructor defaults (${lane.name})`, () => {
           ),
           response,
         );
-        expect(
-          yield* operation
-            .execute({ body: { filters: [{ page_size: "many" }] } })
-            .pipe(Effect.provide(lane.fetchClient)),
-        ).toBe("Not Found");
-        const ledger = yield* backend.ledger;
-        expect(ledger).toHaveLength(1);
-        expectEntry(ledger[0]!, "/x", '{"filters":[{"page_size":"25"}]}');
+        // Original 0.13 default-overwrite evidence is retained in the independent baseline
+        // reports before converting this pin to the accepted stable-dense-array refusal.
+        const invalid = yield* operation
+          .execute({ body: { filters: [{ page_size: "many" }] } })
+          .pipe(Effect.provide(lane.fetchClient), outcome);
+        expect({ invalid, ledger: yield* backend.ledger }).toMatchObject({
+          invalid: { kind: "failure", error: { _tag: "SchemaError" } },
+          ledger: [],
+        });
       }),
   );
   it.live(
