@@ -3805,12 +3805,211 @@ transformed-group ownership, or unsupported member/final-fieldwise repairs.
   Paired reports remain under `artifacts/array-default-{013,ccca2c1}-p2-*`. Status: limit.
   - `[EXT-44o] currently ${binding} whole array decoding changes a typed neighboring dual-name choice`
 - **EXT-44p** An own enumerable `Symbol.iterator`, created by assigning the normal Array iterator,
-  produces the pre-existing [#189 defect](https://github.com/viell-dev/slop-effect-schema-http/issues/189)
-  on both published 0.13 and the candidate. Path/JSON cases cover invalid encoded, valid encoded and
-  decoded cells, with both the normal iterator and a watched delegate. `execute` returns normally;
-  effect evaluation fails with exactly one `Die(TypeError)` whose message is
-  `Cannot convert a Symbol value to a number`. The watched iterator is never called and the physical
-  backend ledger stays empty. The existing nonenumerable iterator case remains separate. This pins
-  the current defect without prescribing its later repair. Paired reports use the EXT-44o prefix.
+  produced the [#189 normalization defect](https://github.com/viell-dev/slop-effect-schema-http/issues/189)
+  on published 0.13/0.14: evaluation-time `Die(TypeError)`, zero calls and no dispatch. Those exact
+  baselines remain in `artifacts/array-default-*-p2-*` and `artifacts/array-key-014-existing-*`.
+  Following the [public disposition](https://github.com/viell-dev/slop-effect-schema-http/issues/189#issuecomment-6737041284),
+  the unreleased key repair exposes the existing unsupported #170 default 25 for invalid text;
+  the original valid encoded/decoded controls each write 5. Native/watched iterator and path/JSON
+  cases retain all three old inputs, now asserting three exact received requests and zero calls.
+  This current-output pin does not establish invalid-alias preservation; EXT-45p keeps that goal.
   Status: defect.
-  - `[EXT-44p] currently ${binding} enumerable ${iterator} array iterator produces an Effect TypeError defect without dispatch`
+  - `[EXT-44p] currently ${binding} enumerable ${iterator} array iterator exposes an unsupported default and valid controls`
+
+## Array keys and normalization layout (EXT-45)
+
+Independent consumer authorship from public [#189](https://github.com/viell-dev/slop-effect-schema-http/issues/189),
+its [published 0.14 scope record](https://github.com/viell-dev/slop-effect-schema-http/issues/189#issuecomment-6736766714),
+[#191](https://github.com/viell-dev/slop-effect-schema-http/issues/191), published 0.14 design/limits/version
+documentation, existing consumer fixtures and the README's
+[neutral echo contract](./README.md#the-neutral-echo-probe). No library implementation, unit tests,
+backend, conformance, lead probes or private design evidence informed this context. These synthetic
+agent observations are not human expectations or human use.
+
+Published 0.14.0 at `829c09c7bc2e8f5fad91c4771f3a7aa77a7db669` supplies the retained baseline
+under `artifacts/array-key-014-*`. Before new work, all 61 EXT-44 tests, including the four original
+EXT-44p TypeError pins, passed in both lanes. Those baselines remain intact; the four EXT-44p pins
+were later converted only for the documented failure-channel change. Physical Fetch
+requests use exact method, target, relevant header lines, body bytes and counts in Node and Chromium.
+Caller lengths, own keys, descriptors, data-cell identities and holes are checked without cloning
+the graph or invoking getters during those checks. No new constructor-default proof is assumed.
+The [paired public disposition](https://github.com/viell-dev/slop-effect-schema-http/issues/191#issuecomment-6736959994)
+authorizes the unreleased layout correction and explicitly retains the exposed sparse and iterable
+#170 default losses. Original tests were run unchanged against checkpoint `e95c7aa`: both lanes
+had exactly 12 current-pin failures and 122 passes, including all 48 formerly failing repair goals.
+Only then were the documented pins converted. Final checkpoints are not published releases.
+The later public proxy-boundary extension under EXT-45r–u retains separate 0.14 and first-checkpoint
+reports. Prepared source `8a3083edea2f7292bee381192ed2ddd0dddeacac` passes 149 ordinary cases plus
+the same four expected #170 failures in each source lane (153 focused cases). Packing and complete
+suite/release qualification remain separate.
+Fresh public review later rejected that 8a checkpoint for a mixed opaque/array boundary outside
+those inputs. EXT-45v–z and EXT-46 retain the
+[finding](https://github.com/viell-dev/slop-effect-schema-http/issues/191#issuecomment-6738794582)
+and the [bounded follow-up contract](https://github.com/viell-dev/slop-effect-schema-http/issues/191#issuecomment-6739062465)
+through separate published-0.14/8a observations before pairing the next frozen source. The four
+existing #170 expected goals and all earlier evidence remain unchanged.
+Frozen follow-up `dbfd8a48bc2845d3f3d0c053bfb770dc0176745f` passes all 176 ordinary plus the same
+four expected #170 cases in each source lane (180 focused cases), including the 27 mixed-boundary
+and length additions. This remains consumer source evidence; final pin, packing, complete suite
+qualification and publication are separate.
+
+- **EXT-45a** Plain encoded, decoded, encoded/decoded inner-stray, omitted-default and empty arrays
+  retain their ordinary wire bytes on both bindings. Status: tested.
+  - `[EXT-45a] ${binding} complete-side and omission controls retain ordinary array bytes`
+- **EXT-45b** Without an inner rewrite, ordinary `audit` metadata is ignored, sparse optional
+  position zero remains a JSON null, and a readable own nonenumerable cell remains present.
+  These exact #191 controls retain caller identity and layout. Status: tested.
+  - `[EXT-45b] ${binding} ${layout} layout without an inner rewrite preserves actual cells`
+- **EXT-45c** Inner rewriting preserves the valid #191 caller layout: metadata adds no cell,
+  sparse input sends null/5, and an own nonenumerable prefix sends 7/5. The original 0.14 phantom
+  `[1]` refusal and compacted/dropped `[5]` pins were preserved before conversion. Original EXT-45c
+  and EXT-45d used identical fixtures; six shared tests now retain both IDs and the full caller and
+  wire assertions. No distinct input or control was removed. Status: tested.
+  - `[EXT-45c] [EXT-45d] ${binding} ${layout} inner rewriting preserves real layout without phantom cells`
+- **EXT-45d** The original baseline-failing valid-layout goals are now the same six shared tests
+  as EXT-45c. Exact outputs, request counts, caller identity, descriptors, lengths and holes remain
+  checked; the separate no-inner-rewrite controls remain under EXT-45b. Status: tested.
+  - `[EXT-45c] [EXT-45d] ${binding} ${layout} inner rewriting preserves real layout without phantom cells`
+- **EXT-45e** Valid complete encoded and decoded inner-stray inputs with enumerable normal/watched
+  iterators, ordinary symbols, `Symbol.toStringTag`, undefined-valued symbols, hidden symbols and
+  two distinct symbols with equal descriptions follow ordinary schema reading. Root arrays cover
+  every profile; fixed/prefix/rest/tail tuples cover normal iterators and ordinary symbols. Symbols
+  and descriptors retain their identities and watched iterators stay uncalled. On 0.14 only the
+  hidden-symbol profile passes; other selected profiles show the symbol-coercion defect.
+  Status: tested.
+  - `[EXT-45e] ${binding} ${position.name} ${shape} valid input follows ordinary schema reading`
+- **EXT-45f** Valid encoded/decoded array and fixed/prefix/rest/tail input must never append string
+  metadata as an element during inner normalization. Root arrays also cover non-index names `01`,
+  `-1`, `1.0` and `4294967295`; none changes the caller's length. Status: tested.
+  - `[EXT-45f] ${binding} ${position.name} string metadata cannot become an extra tuple cell`
+- **EXT-45g** Cyclic non-index metadata remains outside actual cells. The 0.14 phantom-cell
+  refusal is retained as failure evidence; the repair goal requires only the valid declared cell
+  on the wire and preserves the cycle and caller references. Status: tested.
+  - `[EXT-45g] ${binding} cyclic non-index metadata stays outside the real cells`
+- **EXT-45h** Dense ordinary arrays with ordinary own-data symbols or `Symbol.toStringTag` metadata
+  and invalid text/null aliases refuse with `SchemaError` and no dispatch. Published 0.14 produces a
+  TypeError defect; this adds no custom-iterator or sparse constructor proof. Status: tested.
+  - `[EXT-45h] ${binding} covered invalid aliases with non-iterator symbol metadata refuse without dispatch`
+- **EXT-45i** A hidden custom iterator retains the separately unsupported #170 invalid-alias
+  default 25 with zero calls. Its descriptor and caller data remain intact. This current limit is
+  separate from valid enumerable-iterator goals and original EXT-44p pins. Status: defect.
+  - `[EXT-45i] currently ${binding} hidden iterators retain their unsupported default meaning`
+- **EXT-45j** Sparse invalid text now sends null/25 both with and without inner stray. Published
+  0.14 refused the inner-stray call after faulty compaction; that exact report is retained. The
+  [public #170 disposition](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6736960353)
+  identifies this refusal-to-default consequence as an exposed unsupported route, not repaired
+  input preservation or a sparse constructor proof. Two received requests, exact bytes and caller
+  hole/identity checks pin current output. EXT-45q retains the separate preservation goal.
+  Status: defect.
+  - `[EXT-45j] currently ${binding} sparse invalid aliases take defaults with and without inner rewriting`
+- **EXT-45k** A plain text-array schema without reader-choice normalization preserves bytes and
+  leaves an enumerable symbol-metadata getter uncalled. This is an observed narrow control,
+  not a general no-getter promise. Status: tested.
+  - `[EXT-45k] ${binding} plain text arrays bypass rewriting and retain metadata access observations`
+- **EXT-45l** Two declared object symbols with the same description remain distinct. The path
+  consumes each declared field correctly, and invalid input's actual schema issue path contains
+  the first symbol itself, neither the second symbol nor a stringified symbol name. This path-only
+  control does not claim canonical JSON support for declared symbol fields. Status: tested.
+  - `[EXT-45l] declared object symbols retain identity in path reading and error locations`
+- **EXT-45m** A real numeric position containing an invalid element remains a `SchemaError` at
+  position one with no dispatch. A metadata correction must not discard actual index cells.
+  Status: tested.
+  - `[EXT-45m] ${binding} a real numeric cell remains subject to its element schema`
+- **EXT-45n** Valid encoded/decoded inherited numeric prefix cells remain readable with and without
+  an inner rewrite. The wire retains 7/5 while the caller keeps its prototype, length, inherited
+  ownership and both cell identities. This validates ordinary schema reading, not inherited-array
+  constructor-default evidence. Status: tested.
+  - `[EXT-45n] ${binding} valid inherited numeric cells remain readable with and without rewriting`
+- **EXT-45o** Native/watched enumerable iterators on arrays, fixed tuples and post-rest tuples
+  expose current unsupported default 25 for invalid text/null, with and without inner stray data.
+  Each current pin checks four exact requests, zero iterator calls and unchanged caller descriptors.
+  The [public finding](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6737040870)
+  records the earlier TypeError-to-default change; EXT-45p is the separate goal. Status: defect.
+  - `[EXT-45o] currently ${binding} ${position.name} ${shape} invalid aliases expose unsupported defaults`
+- **EXT-45p** Expected-failure #170 preservation goal for the exact enumerable-iterator fixtures
+  pinned ordinarily under EXT-45o. Invalid finite aliases require typed refusal without dispatch;
+  current output remains generated 25. This known failing goal is not a new constructor proof or
+  a release claim. Plain failing candidate evidence is retained before marking it expected-failure.
+  Status: defect.
+  - `[EXT-45p] goal ${binding} invalid enumerable iterator aliases are kept or refused`
+- **EXT-45q** Expected-failure #170 goal for the exact sparse invalid aliases pinned under EXT-45j,
+  with and without inner rewriting. Current `[null,25]` behavior remains visible alongside the
+  future kept-or-refused goal; correcting positions does not establish sparse alias preservation.
+  Plain failing candidate evidence is retained before marking it expected-failure. Status: defect.
+  - `[EXT-45q] goal ${binding} invalid sparse aliases are kept or refused with and without rewriting`
+- **EXT-45r** A fully own dense `Array(Filter)` proxy whose `getPrototypeOf` throws retains valid
+  encoded 5, with and without inner stray data, on path and JSON. Published 0.14 succeeds; first
+  checkpoint `e95c7aa` adds an unnecessary failing walk. The
+  [public follow-up](https://github.com/viell-dev/slop-effect-schema-http/issues/191#issuecomment-6738312287)
+  restores the old result. Tests assert exact requests and caller length/cell/descriptor identities,
+  without deep-matching the throwing proxy or promising a total reflection count. Status: tested.
+  - `[EXT-45r] ${binding} fully own dense proxy arrays retain valid alias reading when prototype reflection throws`
+- **EXT-45s** An opaque proxy array behind `Schema.Unknown` retains its identity inside a parent
+  with an actual key rename and encoded finite count. Its length/prototype traps throw if read;
+  neither is inspected. The path renderer reads only encoded count 5 and confirms the opaque
+  reference, with exact `/x/count/5` wire evidence. This path-only control exercises normalization;
+  it does not claim JSON can serialize a throwing array. Status: tested.
+  - `[EXT-45s] an opaque throwing array retains identity behind a parent rename and encoded count`
+- **EXT-45t** A legal proxy reports own index `1000` while its actual array length remains one,
+  with coherent key/descriptor/get/has traps apart from that explicit contradiction. The no-stray
+  control keeps one real cell. With inner stray, the follow-up refuses with `SchemaError` before
+  render/dispatch; old 0.14 manufactured two cells and `e95c7aa` manufactured 1001. Reports retain
+  received bytes and delivered lengths/positions, and the caller remains unchanged. Real native
+  indices remain subject to EXT-45m. Status: tested.
+  - `[EXT-45t] ${binding} a virtual own index beyond array length keeps its control and refuses incoherent rewriting`
+- **EXT-45u** A length-two sparse proxy with own valid position one and inner stray throws its
+  original Error from `getPrototypeOf`. The necessary prototype walk propagates that same object
+  as one evaluation-time `Die`, with no rendering or dispatch; `execute` itself returns normally.
+  Published 0.14 instead dispatched after faulty compaction. This explicit sparse-reflection bound
+  is distinct from typed schema refusal, dense/opaque controls and constructor-default evidence.
+  Paired proxy reports use `artifacts/array-key-{014,e95c7aa}-proxy-*`. Status: tested.
+  - `[EXT-45u] ${binding} sparse proxy prototype failure propagates its original evaluation defect`
+- **EXT-45v** Unknown, Any, ObjectKeyword, accepting Declaration and a rejected-array-first union
+  preserve ordinary hidden/inherited cells through the actual opaque alternative. A meaningful
+  renamed parent with encoded finite count exercises normalization. Both array/cell identities and
+  `additional: "retain"` reach the renderer and exact HTTP path; the caller also remains intact.
+  Published 0.14 retains those ten observations, while 8a loses the field and identities.
+  Status: tested.
+  - `[EXT-45v] ${name} keeps ${profile} opaque array cells and extras before reading another alternative`
+- **EXT-45w** The same five mixed views already normalize enumerable cells on published 0.14.
+  Their normalized clones omit the extra and retain encoded VALUE 5. Exact identities, caller
+  preservation and wire bytes pin that existing interpretation, rather than promising a general
+  opaque bypass. Status: tested.
+  - `[EXT-45w] control ${name} enumerable mixed cells retain their existing normalized interpretation`
+- **EXT-45x** Rejecting checked-Unknown and Declaration alternatives do not prevent subsequent
+  visible-array reading. Complete encoded/decoded dense cells with inner extras and audit metadata
+  succeed; invalid numeric cells refuse with `SchemaError` and no extra dispatch. Predicate calls
+  are observed without a brittle exact count. Closed-array controls isolate the same layout
+  correction. Unknown/closed cases cover path and JSON; the Declaration uses the path API directly.
+  Status: tested.
+  - `[EXT-45x] ${binding} ${opaque} rejection still permits valid dense array reading and rejects invalid cells`
+- **EXT-45y** An accepting opaque alternative in a mixed view keeps prior success without reading
+  throwing length, hidden-cell or prototype traps. Hidden profiles retain original array identity;
+  the prototype profile contains an enumerable rewriting cell and retains its existing normalized
+  clone. The initial over-broad identity assertion and failed 0.14 observation are preserved before
+  that fixture assertion was corrected under the public enumerable-control rule. Renderers consume
+  only count, avoiding serialization or deep comparison of the throwing proxy. Status: tested.
+  - `[EXT-45y] an accepting opaque alternative avoids ${reflection} reflection through a mixed array view`
+- **EXT-45z** A Declaration backed by an encoded unknown-element array retains ordinary reading
+  when a sparse proxy throws on prototype inspection. The declaration's identity mapping has a
+  direct public-Schema round-trip and invalid non-array control. The HTTP path consumes only the
+  parent's encoded count and preserves caller layout. Published 0.14 passes; 8a newly dies.
+  Status: tested.
+  - `[EXT-45z] an encoded-array-backed Declaration keeps ordinary reading without unnecessary prototype reflection`
+
+## Mixed-view clone and readable-length controls (EXT-46)
+
+These are additional physical-wire controls from the same public mixed-view follow-up. They do not
+establish broader opaque/array correspondence or a constructor-default proof.
+
+- **EXT-46a** A mixed opaque array with an enumerable child must retain prior success without a
+  new length-getter read, both without and with an actual child rewrite. Original versus normalized
+  identity remains true/false respectively; the backing array/cell stay intact. The count-only path
+  avoids serializing the opaque value. Status: tested.
+  - `[EXT-46a] mixed opaque enumerable rewriting avoids adding a length getter read`
+- **EXT-46b** A structural optional-cell array proxy reports readable length three while its native
+  own length descriptor remains one. A child rewrite must preserve the readable three positions,
+  encoding VALUE 5 followed by two nulls on path and JSON, rather than 0.14's compacted one cell.
+  Caller readable/native lengths, holes, descriptors and cell identity remain unchanged.
+  Status: tested.
+  - `[EXT-46b] ${binding} structural array reading preserves readable length beyond its native descriptor`
