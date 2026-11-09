@@ -33,6 +33,11 @@ jobs:
       - run: npm run test:package
       - run: npm run docs:examples
       - run: npm run docs:build
+      # Exercise the release floor procedure after all current-peer checks have passed (#193).
+      - run: npm install --save-dev --save-exact effect@4.0.7 @effect/vitest@4.0.7
+      - run: node scripts/check-effect-floor.mjs
+      - run: npm ci
+      - run: npm test
 
   node-26:
     runs-on: ubuntu-latest

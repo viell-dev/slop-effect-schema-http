@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep unrelated release tooling locked during the full Effect peer-floor check (#193). Save the
+  exact floor selections, reject any other manifest/lockfile change, then install the generated
+  lockfile with `npm ci`. Exercise the procedure in required CI as well as release qualification.
 - Use the repaired hostile-suite result gate during release qualification (#199). Selected skipped
   or failed cases are refused even when a passing control carries the same catalogue ID; dedicated
   lane selection is unchanged, and its regression fixtures run in the required suite check.
