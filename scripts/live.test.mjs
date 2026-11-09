@@ -19,8 +19,13 @@ const repository = "example/library";
 const commit = "a".repeat(40);
 const tarball = "library-1.2.3.tgz";
 const bytes = Buffer.from("the qualified package");
+const checker = Buffer.from("the qualified release checker");
 const digest = (name, encoding) =>
   createHash(name).update(bytes).digest(encoding);
+const checksumLines = [
+  `${digest("sha256", "hex")}  ${tarball}`,
+  `${createHash("sha256").update(checker).digest("hex")}  release-check.mjs`,
+];
 const integrity = `sha512-${digest("sha512", "base64")}`;
 const label = { name: "Type: Bug", color: "d73a4a", description: "Wrong." };
 const pinned = `// https://github.com/${repository}/issues/7\nit("currently keeps it", () => {});\n`;
@@ -77,9 +82,8 @@ function world() {
     },
     web: {
       [assetUrl(tarball)]: new Response(bytes),
-      [assetUrl("SHA256SUMS")]: new Response(
-        `${digest("sha256", "hex")}  ${tarball}\n`,
-      ),
+      [assetUrl("release-check.mjs")]: new Response(checker),
+      [assetUrl("SHA256SUMS")]: new Response(`${checksumLines.join("\n")}\n`),
       [assetUrl("manifest.json")]: Response.json({
         version: "1.2.3",
         sourceCommit: commit,
@@ -135,9 +139,98 @@ async function expectOne(change, state, pattern) {
 }
 
 test("a fully published release agrees with itself", async () => {
-  const report = await check(world());
+  const published = world();
+  const report = await check(published);
   assert.deepEqual(findings(report), []);
   assert.equal(exitCodeOf(report), 0);
+  assert.equal(published.web[assetUrl("release-check.mjs")].bodyUsed, true);
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/197
+for (const [name, change] of [
+  [
+    "corrupted release checker bytes",
+    (w) => {
+      w.web[assetUrl("release-check.mjs")] = new Response("corrupted checker");
+    },
+  ],
+  [
+    "a missing checker checksum",
+    (w) => {
+      w.web[assetUrl("SHA256SUMS")] = new Response(`${checksumLines[0]}\n`);
+    },
+  ],
+  [
+    "a missing package checksum",
+    (w) => {
+      w.web[assetUrl("SHA256SUMS")] = new Response(`${checksumLines[1]}\n`);
+    },
+  ],
+  [
+    "duplicate checksum entries",
+    (w) => {
+      w.web[assetUrl("SHA256SUMS")] = new Response(
+        `${checksumLines.join("\n")}\n${checksumLines[0]}\n`,
+      );
+    },
+  ],
+  [
+    "a malformed checker checksum",
+    (w) => {
+      w.web[assetUrl("SHA256SUMS")] = new Response(
+        `${checksumLines[0]}\nshort  release-check.mjs\n`,
+      );
+    },
+  ],
+  [
+    "a mismatched checker checksum",
+    (w) => {
+      w.web[assetUrl("SHA256SUMS")] = new Response(
+        `${checksumLines[0]}\n${"0".repeat(64)}  release-check.mjs\n`,
+      );
+    },
+  ],
+  [
+    "an unexpected checksum entry",
+    (w) => {
+      w.web[assetUrl("SHA256SUMS")] = new Response(
+        `${checksumLines.join("\n")}\n${"0".repeat(64)}  other.mjs\n`,
+      );
+    },
+  ],
+  [
+    "an extra blank checksum row",
+    (w) => {
+      w.web[assetUrl("SHA256SUMS")] = new Response(
+        `${checksumLines.join("\n")}\n\n`,
+      );
+    },
+  ],
+]) {
+  test(`release verification refuses ${name}`, async () => {
+    await expectOne(change, "DIFFERS", /SHA256SUMS of 1\.2\.3/);
+  });
+}
+
+test("release verification cannot complete when its listed checker cannot be downloaded", async () => {
+  await expectOne(
+    (w) => {
+      delete w.web[assetUrl("release-check.mjs")];
+    },
+    "UNREAD",
+    /HTTP 404.*release-check\.mjs/,
+  );
+});
+
+test("complete checksums permit either row order, CRLF and an optional final newline", async () => {
+  for (const text of [
+    checksumLines.join("\n"),
+    `${checksumLines.toReversed().join("\r\n")}\r\n`,
+  ]) {
+    const published = world();
+    published.web[assetUrl("SHA256SUMS")] = new Response(text);
+    assert.deepEqual(findings(await check(published)), []);
+  }
 });
 
 test("a surface behind the newest version is not yet published", async () => {
@@ -263,7 +356,7 @@ test("published surfaces that contradict each other disagree", async () => {
           dist: { integrity: "sha512-other" },
         });
       },
-      /npm bytes of 1\.2\.3/,
+      /npm integrity metadata of 1\.2\.3/,
     ],
     [
       (w) => {
