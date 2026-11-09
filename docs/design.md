@@ -165,13 +165,17 @@ where the current checks apply.
   encoded input from prepared output. Successful strict reads, writer-failure fallback and other
   constructor or decoder choices keep their paths. Existing defaults/writer effects can precede
   refusal; construction is not repeated to classify the input. For successful initial whole
-  construction, finite closed untransformed direct-object ancestors can also establish a nested
-  terminal proof. Capture stable own-data paths before callbacks and select one coherent caller path
-  and actual strict output write, never independent candidates. Validate output correspondence at
-  selection, then retain caller evidence through whole decoding and loss checks. Whole decoding can
-  repeat checks and services; do not replay construction. Root fieldwise success cannot establish
-  nested ownership because its property reader can already consume that alias. Unsupported evidence
-  remains under [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
+  construction, finite closed untransformed object/union ancestors can also establish a nested
+  terminal proof. A parent union retains all member names, but follows a field only when every
+  declaring member has the identical field AST type; missing fields on other closed members do not
+  supply ownership. Distinct declarations remain names in ancestor evidence but end that path. No
+  schema, default or suspension runs to build this metadata. Capture stable own-data paths before
+  callbacks and select one coherent caller path and actual strict output write, never independent
+  candidates. Validate output correspondence at selection, then retain caller evidence through whole
+  decoding and loss checks. Whole decoding can repeat checks and services; do not replay
+  construction. Root fieldwise success cannot establish nested ownership because its property reader
+  can already consume that alias. Unsupported evidence remains under
+  [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
 - **A value that fits the decoded side is read as decoded.** When both sides have the same type, as
   under a schema from `string` to `string` such as `Schema.StringFromBase64`, an already encoded
   value cannot be told apart from a decoded one, so it is encoded again, with no error. Under a
@@ -409,8 +413,9 @@ Some things are outside the check:
   used on any decoded member, a supplied decoded-only name, open/opaque/class/suspended or iterable
   group shapes, inherited/accessor fields and changing input cannot establish this route. The 0.12
   initial-constructor extension reaches nested aliases through finite closed untransformed direct
-  objects, but stops at parent unions, arrays, opaque/suspended/transformed ancestors and
-  unsupported member/fieldwise routes. Default substitution can remain outside those bounds; use
+  objects; 0.13 also reaches eligible closed untransformed parent unions with shared field schemas.
+  Distinct field declarations, arrays, opaque/suspended/transformed/open parents and unsupported
+  member/fieldwise routes remain outside the proof. Default substitution can remain there; use
   decoded input for those schemas. The whole encoded-side typing repaired in 0.10 does not change
   this runtime selection limit; helpers accepting `Request.Input` must account for both shapes.
 - A group transformation can hide a default's field correspondence. The strictly empty caller-group

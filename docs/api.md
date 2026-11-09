@@ -1,6 +1,6 @@
 # Modules
 
-The guides below describe the public API of `0.12.0`. Start with the four modules that make one HTTP
+The guides below describe the public API of `0.13.0`. Start with the four modules that make one HTTP
 operation: `Request` describes what to send, `Body` reads and writes its payload, `Response`
 describes the answers, and `Operation` executes them together.
 

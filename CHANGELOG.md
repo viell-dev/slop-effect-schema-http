@@ -1,6 +1,18 @@
 # Change history
 
-## Unreleased
+## 0.13.0 — 2026-11-09
+
+Read [What's in 0.13](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.13) for
+parent-union nested validation and the whole-side/decoded-mapping migration.
+
+- **Breaking:** validate nested encoded-only fields through finite closed untransformed parent
+  unions when each declaring member uses the same field schema. Successful initial whole
+  construction, original strict writing and one stable caller/output path establish whole decoding.
+  Invalid supplied values fail before dispatch; valid mixed-side calls can newly refuse or acquire
+  encoded interpretation for shared-type fields. Checked examples cover both consequences.
+- Preserve the original schema, strict-success/root/fieldwise priorities, writer fallback and
+  loss/sibling checks. Metadata runs no checks or thunks; whole decoding can repeat schema services
+  and effects. Distinct declarations, arrays and other unsupported paths remain under #170.
 
 - Allow five shared minutes for npm version/attestation visibility after measured propagation
   delays. Only HTTP 404 is retried; request caps, terminal verification failures, provenance guards
