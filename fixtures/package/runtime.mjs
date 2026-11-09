@@ -386,7 +386,7 @@ for (const kind of ["path", "body"]) {
   }
 }
 
-// Array-key fixes preserve physical positions; unsupported constructor defaults remain #170.
+// Array-key fixes preserve physical positions; accepted constructor profiles now refuse (#170).
 const rewrittenLeaf = { page_size: "05", stray: "ignored" };
 const metadataArray = [rewrittenLeaf];
 Object.defineProperty(metadataArray, "audit", { value: 7, enumerable: true });
@@ -435,14 +435,19 @@ for (const [schema, input, expected] of [
   [arrayAliasSchema, inheritedArray, '[{"page_size":"7"},{"page_size":"5"}]'],
   [arrayAliasSchema, iteratorArray, '[{"page_size":"5"}]'],
   [arrayAliasSchema, symbolArray, '[{"page_size":"5"}]'],
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6736960353
   [
     Schema.Array(Schema.optional(nestedDefaultInner)),
-    sparseInvalid,
-    '[null,{"page_size":"25"}]',
+    [{ page_size: "many" }],
+    undefined,
   ],
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6737040870
-  [arrayAliasSchema, iteratorInvalid, '[{"page_size":"25"}]'],
+  [
+    Schema.Array(Schema.NullOr(nestedDefaultInner)),
+    [{ page_size: "many" }],
+    undefined,
+  ],
+  // Previously successful substitutions are now typed refusals before the path callback runs.
+  [Schema.Array(Schema.optional(nestedDefaultInner)), sparseInvalid, undefined],
+  [arrayAliasSchema, iteratorInvalid, undefined],
 ])
   for (const kind of ["path", "body"]) {
     let rendered;
@@ -457,9 +462,14 @@ for (const [schema, input, expected] of [
         : root.Request.post("/array-keys").pipe(
             root.Request.body(root.Body.jsonSchema(schema)),
           );
-    const prepared = await Effect.runPromise(
-      root.Request.compile(request, { [kind]: input }),
-    );
+    const pending = root.Request.compile(request, { [kind]: input });
+    if (expected === undefined) {
+      const failure = await Effect.runPromise(Effect.flip(pending));
+      assert.ok(Schema.isSchemaError(failure));
+      assert.equal(rendered, undefined);
+      continue;
+    }
+    const prepared = await Effect.runPromise(pending);
     if (kind === "path") assert.equal(JSON.stringify(rendered), expected);
     else {
       assert.equal(prepared.request.body._tag, "Uint8Array");

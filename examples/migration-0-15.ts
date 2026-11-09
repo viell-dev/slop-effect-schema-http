@@ -83,14 +83,12 @@ const invalidIterator = [{ page_size: "many" }];
 invalidIterator[Symbol.iterator] = Array.prototype[Symbol.iterator];
 const iteratorDefault = Request.compile(submit, { body: invalidIterator });
 // #endregion unsupported-defaults
-assert.equal(
-  jsonText(await Effect.runPromise(sparseDefault)),
-  '[null,{"page_size":"25"}]',
-);
-assert.equal(
-  jsonText(await Effect.runPromise(iteratorDefault)),
-  '[{"page_size":"25"}]',
-);
+// The article retains 0.15's exact outputs; 0.16 extends validation for these two profiles.
+for (const pending of [sparseDefault, iteratorDefault])
+  assert.equal(
+    (await Effect.runPromise(Effect.flip(pending)))._tag,
+    "SchemaError",
+  );
 
 // #region validated-mapping
 interface FilterForm {

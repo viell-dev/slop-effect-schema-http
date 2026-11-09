@@ -64,6 +64,11 @@ Removing accidental failures can expose existing unsupported sparse/custom-itera
 defaults; the migration gives exact cases and a validated decoded mapping. The broader default and
 alias-preservation limits remain active.
 
+Unreleased work groups optional/nullable object alternatives, sparse own cells and exact native own
+iterators into one constructor-default repair. The [0.16
+migration](https://github.com/viell-dev/slop-effect-schema-http/blob/main/docs/release-notes/0.16.md)
+describes the candidate's refusals, changed whole-reading results and retained limits.
+
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
 limits](https://viell-dev.github.io/slop-effect-schema-http/limits) for tested Effect/compiler

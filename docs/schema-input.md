@@ -6,6 +6,9 @@ syntax, start with [Request](./modules/request.md#bind-application-input) or
 stacked query/header bindings. Use the rules below to choose an input form and check its
 preservation limits.
 
+The constructor-default extensions in the [0.16 migration](./release-notes/0.16.md) are unreleased.
+The published 0.15 package retains the limitations recorded in its migration article.
+
 ## Choose an input form
 
 | You have                                         | What to supply                              | Important limit                                                                        |
@@ -65,10 +68,9 @@ iterator to rebuild it. Ordinary processing can still read getters and inspect p
 hidden/inherited positions only in structural array views without an open or opaque alternative; a
 union's Array alternative alone does not justify inspecting another alternative's value. Existing
 enumerable-child normalization still applies across views and does not select or execute an
-alternative. These 0.15 corrections do not extend the bounded constructor-default proof: previously
-accidental failures can uncover existing unsupported sparse or own-iterator default substitutions
-under #170. The [0.15 migration](./release-notes/0.15.md) states exact changed outputs and the
-validated-decoded workaround.
+alternative. The [0.15 migration](./release-notes/0.15.md) states the normalization changes and
+exposed default substitutions. The [0.16 batch](./release-notes/0.16.md) extends the separate
+constructor-default proof to the bounded profiles below.
 
 ### The decoded side is what the schema's constructor takes
 
@@ -82,17 +84,24 @@ part of preparation; neither step is skipped.
 Every additional check below requires stable caller evidence and successful actual strict output.
 Eligibility is not a promise that every schema or value in the listed container is safe.
 
-| Actual route/container                                               | Added validation                                               | Retained limit                                                                    |
-| -------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Initial whole construction at the root                               | Decode the supplied encoded-only input as a whole              | No decoded-only or ambiguous witness names                                        |
-| Final fieldwise construction at the root                             | Retain the original strict refusal after failed whole decoding | No decoder replay or nested ownership inferred from property reads                |
-| Initial whole construction below direct objects/closed parent unions | Follow stable unchanged declared fields                        | Every declaring member must share the same field schema                           |
-| Initial whole construction below dense arrays/tuples                 | Follow own data positions with matching output length          | Optional-element union routes and sparse/iterator profiles can still lose aliases |
+| Actual route/container                                               | Added validation                                               | Retained limit                                                                   |
+| -------------------------------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Initial whole construction at the root                               | Decode the supplied encoded-only input as a whole              | No decoded-only or ambiguous witness names                                       |
+| Final fieldwise construction at the root                             | Retain the original strict refusal after failed whole decoding | No decoder replay or nested ownership inferred from property reads               |
+| Initial whole construction below direct objects/closed parent unions | Follow stable unchanged declared fields                        | Every declaring member must share the same field schema                          |
+| Initial whole construction below arrays/tuples                       | Follow own data positions with matching output length          | Holes/inherited cells supply no witness; arbitrary own iterators remain excluded |
 
 Preparation tries the decoded side first, then the decoder as a whole, then the decoder field by
 field. If all fail, it reports the decoded side's error, a `SchemaError` before dispatch. After a
 typed strict read failure, stable plain root input can establish an additional encoded check from
 finite closed object/union names: it supplies an encoded-only name and no decoded-only name.
+
+Unencoded primitive alternatives that cannot consume an object contribute no object fields or names.
+This includes the Undefined/Null members of optional, nullable and nullish object schemas. The
+allow-list is String, Number, Boolean, BigInt, Symbol, UniqueSymbol, Literal, Enum, TemplateLiteral,
+Null, Undefined and Never. Void, encoded primitives, primitive encoding intermediates,
+open/opaque/suspended alternatives and array-shaped parent members do not qualify. The object
+members retain the same field-identity and closed-name rules.
 
 ### Initial whole construction
 
@@ -120,18 +129,22 @@ members do not supply ownership. Normalize and merge declarations inside objects
 guard, including numeric/string collisions for one JavaScript key. A conflicting type stays
 ambiguous after later repeated declarations. Distinct declarations remain names in ancestor evidence
 but end that path. Untransformed array nodes also contribute explicit element/rest positions.
-Capture stable dense own-data arrays of ordinary/null prototype, including nonenumerable/frozen
-cells. Record all own keys/descriptors/identities and known positional absences, without invoking
-iterators or cloning values. Use actual length for post-rest positions and require every selected
-array's strict-output length to match. Reject
-sparse/accessor/inherited/subclass/custom-iterator/changing profiles and array-shaped parent union
-members for this extension. Metadata and selected-path validation have linear reflection gates;
-capture each ancestor frame once. No schema, default or suspension runs to build this metadata.
-Capture stable own-data paths before callbacks and select one coherent caller path and actual strict
-output write, never independent candidates. Validate output correspondence at selection, then retain
-caller evidence through whole decoding and loss checks. Whole decoding can repeat checks and
-services; do not replay construction. Root fieldwise success cannot establish nested ownership
-because its property reader can already consume that alias. Unsupported evidence remains under
+Capture stable own-data arrays of ordinary/null prototype, including sparse and nonenumerable/frozen
+cells. Record all own keys/descriptors/identities and known fixed positional absences, without
+invoking caller iterators/getters or cloning values. Visit own keys rather than allocating by
+length. Holes and inherited cells supply no witness; an own cell can still establish a whole read
+that validates an inherited neighbor. Use actual length for post-rest positions and require every
+selected strict-output array to have matching length and dense own data cells. An own
+Symbol.iterator data property qualifies only when its value is the unchanged native array iterator;
+capture and recheck its descriptor. Accessors, subclasses, custom prototypes/iterators and changing
+paths remain excluded, as do array-shaped parent union members. Metadata and selected-path
+validation have linear reflection gates; capture each ancestor frame once. No schema, default or
+suspension runs to build this metadata. Capture stable own-data paths before callbacks and select
+one coherent caller path and actual strict output write, never independent candidates. Validate
+output correspondence at selection, then retain caller evidence through whole decoding and loss
+checks. Whole decoding can repeat checks and services; do not replay construction. Root fieldwise
+success cannot establish nested ownership because its property reader can already consume that
+alias. Unsupported evidence remains under
 [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
 
 ## Preservation and selection
@@ -313,13 +326,15 @@ a guarantee that preparation refuses safely.
 - Conflicting normalized declarations, including numeric 1 and string "1" for the same JavaScript
   key, cannot establish an unchanged nested path. The ambiguity guard can therefore leave a supplied
   invalid alias replaced by a generated default.
-- A dense array of optional elements can still lose an invalid alias: wrapping the direct element
-  schema in `Schema.optional` takes an unsupported union/member constructor route even without holes
-  or metadata. Use a validated decoded mapping for this profile too.
-- Sparse or own-iterator arrays can still replace invalid aliases with defaults. Preserving
-  positions removed accidental failures without fixing that loss: a sparse invalid item can write
-  `[null,{"page_size":"25"}]`. The [0.15 migration](./release-notes/0.15.md) retains exact controls
-  and an executable validated decoded mapping.
+- Unsupported object alternatives and construction phases can still lose aliases. Optional,
+  nullable/nullish and the listed primitive alternatives extend the bounded proof; Void,
+  open/opaque/suspended members and encoded primitives do not. A successful actual member-fieldwise
+  reading is not reclassified as initial whole construction.
+- Inherited cells, accessors, subclasses, custom prototypes/iterators and changing paths do not
+  establish the new array proof. Sparse own cells and exact native own iterator data do qualify. The
+  [0.16 migration](./release-notes/0.16.md) covers newly refused aliases, whole-reading changes and
+  an executable validated decoded mapping; the [0.15 article](./release-notes/0.15.md) retains the
+  earlier substitutions as historical evidence.
 - Opaque contents use their schema's own reading. A `ReadonlyMap` containing
   `{ term: "x", page_size: "05" }` can lose the alias through construction. Use decoded contents
   such as `{ term: "x", limit: "05" }` for a predictable decoded route.
