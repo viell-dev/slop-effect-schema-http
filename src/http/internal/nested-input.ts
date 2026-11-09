@@ -229,6 +229,7 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
     }
     viewing.add(part);
     const fields = new Map<Key, SchemaAST.AST | undefined>();
+    let hasObjectMember = false;
     for (const member of part.types) {
       if (isNonObjectAlternative(member)) continue;
       const declared = fieldsOf(member);
@@ -237,11 +238,14 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
         views.set(part, undefined);
         return undefined;
       }
+      hasObjectMember = true;
       for (const [name, type] of declared) mergeField(fields, name, type);
     }
     viewing.delete(part);
-    views.set(part, fields);
-    return fields;
+    // Match the terminal view: a primitive-only union never becomes an empty object view.
+    const view = hasObjectMember ? fields : undefined;
+    views.set(part, view);
+    return view;
   };
   const known = new Map<SchemaAST.AST, Node | undefined>();
   const active = new Set<SchemaAST.AST>();

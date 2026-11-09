@@ -89,7 +89,8 @@ export type QueryFields = Readonly<
  * Conflicting values are not generally refused; give one side's name or validate a decoded mapping.
  *
  * Constructor-default validation is bounded: unsupported aliases can still be ignored in favor of
- * defaults, including sparse/custom-iterator arrays and opaque or ambiguous paths (issue #170).
+ * defaults, including inherited-only cells, arbitrary iterators and opaque or ambiguous paths
+ * (issue #170). Stable sparse own cells and exact native own iterator data can qualify.
  * Array normalization preserves positions and symbol identity but does not expand that proof.
  * Supply one decoded shape, validated and mapped explicitly when needed, for unsupported inputs.
  * Whole encoded reading can refuse mixed-side input or change a shared-type field's interpretation;
