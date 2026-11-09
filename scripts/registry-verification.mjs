@@ -15,32 +15,67 @@ export async function verifyRegistry(
     intervalMs = 5_000,
   } = {},
 ) {
-  const deadline = now() + timeoutMs;
-  async function visibleJson(url) {
+  const started = now();
+  const deadline = started + timeoutMs;
+  const phases = [];
+  const context = () => {
+    const current = now();
+    const elapsed = Math.round(current - started);
+    const history = phases.map(
+      (phase) =>
+        `${phase.name}: ${phase.attempts} attempt${phase.attempts === 1 ? "" : "s"}, last HTTP ${phase.status ?? "none"}, ${Math.round((phase.finished ?? current) - phase.started)}ms`,
+    );
+    return `${history.join("; ")}; shared ${elapsed}/${timeoutMs}ms elapsed, ${Math.max(0, Math.floor(deadline - current))}ms remaining`;
+  };
+  const expired = () =>
+    `Registry visibility deadline expired; rerun verification without republishing (${context()})`;
+  async function visibleJson(url, name) {
+    const phase = {
+      name,
+      started: now(),
+      attempts: 0,
+      status: undefined,
+      finished: undefined,
+    };
+    phases.push(phase);
     while (true) {
       const remaining = deadline - now();
-      assert.ok(
-        remaining > 0,
-        "Registry visibility deadline expired; rerun verification without republishing",
-      );
-      const response = await fetch(url, {
-        signal: globalThis.AbortSignal.timeout(
-          Math.max(1, Math.min(10_000, Math.ceil(remaining))),
-        ),
-      });
-      if (response.status === 200) return response.json();
-      await response.body?.cancel();
-      assert.equal(response.status, 404, `Registry request failed: ${url}`);
+      if (!(remaining > 0)) assert.fail(expired());
+      phase.attempts++;
+      let response;
+      try {
+        response = await fetch(url, {
+          signal: globalThis.AbortSignal.timeout(
+            Math.max(1, Math.min(10_000, Math.ceil(remaining))),
+          ),
+        });
+        phase.status = response.status;
+        if (response.status === 200) {
+          const value = await response.json();
+          phase.finished = now();
+          return value;
+        }
+        await response.body?.cancel();
+      } catch (cause) {
+        throw new Error(
+          `Registry ${name} request failed: ${url} (${context()})`,
+          { cause },
+        );
+      }
+      if (response.status !== 404)
+        assert.equal(
+          response.status,
+          404,
+          `Registry request failed: ${url} (${context()})`,
+        );
       const delay = Math.min(intervalMs, deadline - now());
-      assert.ok(
-        delay > 0,
-        "Registry visibility deadline expired; rerun verification without republishing",
-      );
+      if (!(delay > 0)) assert.fail(expired());
       await sleep(delay);
     }
   }
   const published = await visibleJson(
     `https://registry.npmjs.org/${encodeURIComponent(manifest.name)}/${manifest.version}`,
+    "version metadata",
   );
   assert.equal(published.dist.integrity, manifest.integrity);
   assert.equal(published.dist.shasum, manifest.shasum);
@@ -48,7 +83,10 @@ export async function verifyRegistry(
     assert.ok(repository, "Missing GitHub repository");
     assert.ok(published.dist.attestations?.url, "Missing npm provenance");
     // Cryptographic verification is separately required via npm audit signatures.
-    const attestations = await visibleJson(published.dist.attestations.url);
+    const attestations = await visibleJson(
+      published.dist.attestations.url,
+      "attestations",
+    );
     const provenance = attestations.attestations.find(
       (entry) => entry.predicateType === "https://slsa.dev/provenance/v1",
     );

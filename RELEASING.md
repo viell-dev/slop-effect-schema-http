@@ -144,6 +144,12 @@ attestation endpoint, sharing one deadline. Requests have a ten-second timeout c
 remaining deadline. Other HTTP failures, malformed responses and integrity/provenance mismatches
 fail immediately. A successful upload followed by a verification failure must never be republished.
 
+Visibility and request failures report each phase's attempts, last HTTP status and elapsed time,
+plus the shared elapsed/remaining budget. An attestation phase with zero attempts can mean version
+visibility consumed the budget first. Request or response-body failures retain their original cause.
+Use that context to diagnose the delay, then follow the read-only recovery below; an expired budget
+does not authorize a repeated upload or a weaker provenance check.
+
 First dispatch with `publish=false` to verify the producer and dry-run publication. This publishes
 nothing and does not prove that OIDC authentication works. An existing version may be rejected even
 in npm's dry run; never treat that as permission to replace it.
