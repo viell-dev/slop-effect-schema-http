@@ -376,6 +376,13 @@ and a field with a constructor default can be left out. Preparation tries the de
 then the decoder as a whole, then the decoder field by field, and reports the decoded side's error
 if all fail. The type of such an input is `Request.Input<S>`.
 
+The type retains the whole encoded shape through nested objects, lists, tuples and classes, even
+when outer names match the decoded side. Mixing by field remains one level deep in the type; it does
+not recursively combine every nested field. A helper accepting `Request.Input` must account for the
+actual decoded and encoded alternatives. A decoded-only helper declares its own input shape, and a
+named mapping can supply decoded request input. [What's in 0.10](../release-notes/0.10.md) shows the
+nested filter and helper migration.
+
 Both routes validate, so text cannot get past a schema. The check is as strict as the schema,
 though. `Schema.NumberFromString` turns `"many"` into `NaN`, so `{ limit: "many" }` goes out as
 `limit=NaN` under that schema. Choose `Schema.FiniteFromString` when that matters. A string where a
@@ -388,13 +395,20 @@ request.
 For a value it can see, a field the caller gave is kept, or the request is refused. It can see plain
 objects, lists, tuples, classes and unions of those, at any depth, on either side of a schema. So it
 sees an object given to a field that holds JSON, and the value in `Schema.OptionFromNullOr`. Inside
-an opaque value, which is text given as text, a `Schema.Map`, a `Schema.Option` or a declaration
-with no struct behind it, the schema's own reading applies, and nothing is refused for what happens
-there. A stray key inside an opaque value can make a union beside it read loosely. A direct closed
-struct can recover some otherwise-refused nested fields through constructor-only validation, as the
-[0.6.1 example](../release-notes/0.6.md#since-0-6-1-keep-visible-fields-beside-an-opaque-value)
-shows. Encoded-side/text cases and input without stable field evidence retain this limit. To choose
-a union member for certain, bind that member directly.
+an opaque value, which is text given as text, a `Schema.ReadonlyMap`, a `Schema.Option` or a
+declaration with no struct behind it, the schema's own reading applies, and nothing is refused for
+what happens there. A stray key inside an opaque value can make a union beside it read loosely. A
+direct closed struct can recover some otherwise-refused nested fields through constructor-only
+validation, as the [0.6.1
+example](../release-notes/0.6.md#since-0-6-1-keep-visible-fields-beside-an-opaque-value) shows.
+Encoded-side/text cases and input without stable field evidence retain this limit. To choose a union
+member for certain, bind that member directly.
+
+Retaining an opaque value's encoded type does not force its contents through the encoded route. For
+example, a `ReadonlyMap` holding `{ term: "x", page_size: "05" }` can fit its schema's decoded
+constructor by losing the inner alias. Supply decoded map contents such as
+`{ term: "x", limit: "05" }` when you want the decoded route. The type repair changes neither this
+priority nor the schema's own reading.
 
 A union first chooses before it knows what a stacked schema took. Eligible unions can then [recover
 that choice](#recover-a-stacked-union-s-choice): `Union([{ b }, { a, c }])` stacked with `{ b }` can
@@ -574,14 +588,10 @@ remain outside it. An absent, non-enumerable, accessor or `undefined` output pro
 generated value, and iterable output uses the entries it yields. Other schema/default and lost-field
 checks still apply.
 
-Renamed fields at the outer object, including union members, retain both decoded and encoded input
-types. A helper using `Request.Input` must account for either shape; a helper intended to accept
-decoded names only should declare that input explicitly. [What's in 0.8](../release-notes/0.8.md)
-gives the helper migration.
-
-Nested renamed fields can still lose their encoded aliases from the static input type when the outer
-names are unchanged ([#172](https://github.com/viell-dev/slop-effect-schema-http/issues/172)). Use
-decoded nested names or a named decoded-input mapping until that separate repair is delivered.
+Renamed fields, including nested fields and union members, retain their whole encoded input shape. A
+helper using `Request.Input` must account for either side; a helper intended to accept decoded names
+only should declare that input explicitly. [What's in 0.10](../release-notes/0.10.md) gives the
+nested helper migration; [What's in 0.8](../release-notes/0.8.md) covers outer aliases.
 
 For stable plain root data under finite closed object/union group shapes, a supplied encoded-only
 name, a successful whole constructor and its strict encoding can establish an additional whole
@@ -597,7 +607,9 @@ changing input. It also excludes an initial constructor failure recovered member
 mixed encoded/decoded numeric fields can still let an invalid alias take a default. The earlier
 default substitution can remain outside it
 ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Supply decoded names or a
-named decoded-input mapping for those cases.
+named decoded-input mapping for those cases. The root proof also does not reach a renamed field
+inside an unchanged nested object; invalid nested encoded input can still take its constructor
+default. This remains a visible-input defect, rather than opaque schema-owned reading.
 
 For a nonempty caller group, a decoding default hidden by a rename can still replace a later raw
 edit without refusal. The library does not infer general field correspondence or conflicting-alias
@@ -780,5 +792,5 @@ records without it remain valid and use the earlier selection behavior; the new 
 requires complete evidence.
 
 See the [request contract](../design.md#requests) for exact guarantees and the [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.9.0/src/http/Request.ts) for
-all types and overloads.
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.10.0/src/http/Request.ts)
+for all types and overloads.

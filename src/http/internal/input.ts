@@ -43,10 +43,15 @@ type Merged<Sides, Mix> = [Sides] extends [Mix]
     : Sides | Mix
   : Sides | Mix;
 
-// Every key must exist in every opposite member, not just somewhere in its union.
-// Keep other mutually assignable sides whole so fieldwise mixing cannot erase nominal identity.
+/** Elide identical types without mistaking mutual assignability for matching nested input names. */
+type Identical<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+    ? true
+    : false;
+
+// Different mutually assignable sides stay whole so their nested names and nominal identity survive.
 type EitherSide<A, B> = [A, B] extends [B, A]
-  ? [KeysOf<A>, KeysOf<B>] extends [keyof B, keyof A]
+  ? Identical<A, B> extends true
     ? A
     : A | B
   : Merged<A | B, Fieldwise<A, B>>;

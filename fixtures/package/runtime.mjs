@@ -10,11 +10,23 @@ import {
   compileExchangedFirst,
   compileExchangedSecond,
   compileInvalidEncodedFilters,
+  compileCorrelatedNested,
+  compileGenericNested,
+  compileNestedBody,
+  compileNestedClass,
+  compileNestedDecoded,
+  compileNestedEncoded,
+  compileNestedList,
+  compileNestedMap,
+  compileNestedTuple,
+  compileNestedWithServices,
   compileOmittedFilters,
   compileStackedEncodedFilters,
   countFewNames,
   getItemId,
   nominalInput,
+  nestedNominalInput,
+  nestedRequest,
 } from "./dist/consumer.js";
 
 for (const subpath of Object.keys(manifest.exports)) {
@@ -96,6 +108,41 @@ assert.equal(
   "https://api.test/exchanged?kind=b&limit=07",
 );
 assert.equal(nominalInput.read(), "token");
+assert.equal(nestedNominalInput.token.read(), "token");
+for (const [compile, expected] of [
+  [compileNestedEncoded, "/05"],
+  [compileNestedDecoded, "/05"],
+  [compileNestedClass, "/05"],
+  [compileNestedList, "/05"],
+  [compileNestedTuple, "/05/x"],
+  [compileNestedMap, "/05"],
+  [compileCorrelatedNested, "/a/x"],
+  [compileGenericNested, "/generic"],
+  [compileNestedWithServices, "/generic"],
+]) {
+  assert.equal(
+    (await Effect.runPromise(compile())).request.url,
+    `https://api.test/nested${expected}`,
+  );
+}
+const nestedBody = (await Effect.runPromise(compileNestedBody())).request.body;
+assert.equal(nestedBody._tag, "Uint8Array");
+assert.equal(
+  new globalThis.TextDecoder().decode(nestedBody.body),
+  '{"filter":{"page_size":"05"}}',
+);
+assert.equal(
+  (
+    await Effect.runPromise(
+      Effect.flip(
+        root.Request.compile(nestedRequest, {
+          path: { filter: { page_size: 5 } },
+        }),
+      ),
+    )
+  )._tag,
+  "SchemaError",
+);
 
 console.log(
   `Packed consumer passed: ${Object.keys(manifest.exports).length} exports, id ${id}.`,

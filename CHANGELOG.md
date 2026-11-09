@@ -1,5 +1,21 @@
 # Change history
 
+## 0.10.0 — 2026-11-09
+
+Read [What's in 0.10](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.10) for
+nested encoded input and the migration for helpers that assumed decoded nested names.
+
+- **Breaking:** retain the whole encoded input shape when unchanged outer names hide nested renamed
+  fields, including through lists, tuples, classes and generic bindings. Helpers using
+  `Request.Input` must account for those encoded alternatives. Identical sides keep their existing
+  concrete type; constructor input, nominal identity and discriminated alternatives are preserved.
+  One-level field mixing, schema reading, validation and request bytes are unchanged
+  ([#172](https://github.com/viell-dev/slop-effect-schema-http/issues/172)).
+- Report registry verification phase attempts, last HTTP status and shared elapsed/remaining budget
+  when visibility or requests fail, preserving the original cause and read-only recovery procedure.
+  Verification deadlines, retries and integrity/provenance checks are unchanged
+  ([#177](https://github.com/viell-dev/slop-effect-schema-http/pull/177)).
+
 ## 0.9.0 — 2026-11-09
 
 Read [What's in 0.9](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.9) for the
