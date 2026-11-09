@@ -157,11 +157,15 @@ where the current checks apply.
   The initial whole constructor still runs first, followed by existing strict-first writing. Only a
   successful strict write that actually writes that supplied encoded-only name permits whole
   decoding to replace the constructor result. The additional check retains loss/sibling certificates
-  and preserves the original strict refusal if decoding fails. An ordinary decoder/member/fieldwise
-  success is not reinterpreted; fieldwise recovery can still default an invalid alias beside mixed
-  encoded/decoded numeric fields. Successful strict reads, writer-failure fallback and other
-  constructor choices keep their paths. Initial default/writer effects can precede refusal;
-  construction is not repeated to classify the input.
+  and preserves the original strict refusal if decoding fails. If the actual winning route instead
+  ends in fieldwise construction, at the root or through root union members, its preceding whole
+  decoder has already failed. Under the same stable caller/output proof and successful strict write,
+  retain the original strict refusal rather than accepting the ignored alias's generated
+  replacement. Do not observe individual property reads as this route, replay decoding, or rebuild
+  encoded input from prepared output. Successful strict reads, writer-failure fallback and other
+  constructor or decoder choices keep their paths. Existing defaults/writer effects can precede
+  refusal; construction is not repeated to classify the input. Nested defaults and unsupported
+  evidence remain under [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
 - **A value that fits the decoded side is read as decoded.** When both sides have the same type, as
   under a schema from `string` to `string` such as `Schema.StringFromBase64`, an already encoded
   value cannot be told apart from a decoded one, so it is encoded again, with no error. Under a

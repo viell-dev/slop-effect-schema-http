@@ -1,5 +1,18 @@
 # Change history
 
+## 0.11.0 — 2026-11-09
+
+Read [What's in 0.11](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.11) for
+fieldwise-default refusals and the whole-side/decoded-mapping migration.
+
+- **Breaking:** refuse a supplied encoded-only root field lost to an optional constructor default by
+  an actual successful final fieldwise route, including winning root union-member routes, after
+  typed strict read failure and successful strict output under the existing stable closed-root
+  proof. Retain the original refusal without replaying schema effects or reconstructing input. Valid
+  aliases beside mixed common fields can also refuse. Existing whole/member routes, raw defaults,
+  writer fallback and sibling coverage retain their behavior; nested and unsupported proof shapes
+  remain separate limits ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)).
+
 ## 0.10.0 — 2026-11-09
 
 Read [What's in 0.10](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.10) for

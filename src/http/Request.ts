@@ -93,11 +93,14 @@ export type QueryFields = Readonly<
  *
  * Stable plain root data, finite closed object/union names, a successful whole constructor and
  * strict encoding can establish an encoded-only field overwritten by a default after a typed
- * strict read failure. Additional whole decoding then validates that input. Initial
- * constructor/default and writer effects can run first; other constructor choices keep priority.
+ * strict read failure. Additional whole decoding then validates that input. If the actual winning
+ * route instead ends in fieldwise construction after failed whole decoding, at the root or through
+ * root union members, the same successful strict output proof retains the original refusal. This
+ * does not replay decoding or reconstruct input. Default and writer effects can run before refusal;
+ * other constructor and decoder choices keep their existing priority.
  * Ambiguous names, open/opaque/class or suspended/iterable groups, inherited/accessor fields and
- * changing input remain outside this proof, as does constructor failure recovered memberwise or
- * fieldwise. A renamed field inside an unchanged nested object is also outside the root proof
+ * changing input remain outside this proof, as do later member-constructor and unsupported recovery
+ * routes. A renamed field inside an unchanged nested object is also outside the root proof
  * (issue #170). Use decoded names or a named input mapping. The Request guide describes the bounds
  * and helper migration.
  *

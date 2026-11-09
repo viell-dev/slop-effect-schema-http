@@ -122,5 +122,5 @@ validate the application shape, or `Body.empty` for a response with no useful bo
 Bodies are finite; streaming is outside the supported API. Even discarding an unmatched body can
 wait forever if the server never ends it. Set a [timeout](./policy.md#bound-execution-time) when
 completion is not guaranteed. See the [body contract](../design.md#bodies) and [source
-signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.10.0/src/http/Body.ts) for
+signatures](https://github.com/viell-dev/slop-effect-schema-http/blob/0.11.0/src/http/Body.ts) for
 precise behavior and generic types.
