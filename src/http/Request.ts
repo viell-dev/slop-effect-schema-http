@@ -88,40 +88,20 @@ export type QueryFields = Readonly<
  * encoded read uses the encoded name instead, including after the added whole-group validation.
  * Conflicting values are not generally refused; give one side's name or validate a decoded mapping.
  *
- * Array normalization retains actual positions/length, including holes and readable hidden or
- * inherited cells; metadata is not converted into another element. Symbol keys keep their identity.
- * Hidden/inherited-position discovery requires structural array views without open or opaque
- * alternatives. Mixed views retain existing enumerable-child normalization, not a general proof.
- * These corrections do not expand constructor-default evidence. Removing an accidental failure can
- * expose an existing default for invalid aliases in sparse or own-iterator arrays (issue #170).
- * Validate and map to decoded names for those unsupported inputs; see the 0.15 migration.
+ * Constructor-default validation is bounded: unsupported aliases can still be ignored in favor of
+ * defaults, including sparse/custom-iterator arrays and opaque or ambiguous paths (issue #170).
+ * Array normalization preserves positions and symbol identity but does not expand that proof.
+ * Supply one decoded shape, validated and mapped explicitly when needed, for unsupported inputs.
+ * Whole encoded reading can refuse mixed-side input or change a shared-type field's interpretation;
+ * schema checks and services can run more than once.
  *
- * A helper accepting `Input` must handle both shapes, including nested encoded names. A helper
- * meant for decoded names only should declare that input shape explicitly and can supply it through
- * a named input mapping. Retaining an opaque value's encoded type does not force encoded reading
- * of its contents: the schema's own reading and constructor priority still apply. Decoded contents
- * give an opaque value such as a `Schema.ReadonlyMap` a predictable decoded route.
+ * A helper accepting `Input` must handle nested encoded alternatives too, or declare its own
+ * decoded-only input shape. Opaque values use their schema's own reading; supply decoded contents
+ * when constructor priority would otherwise lose an inner alias.
  *
- * Stable plain root data, finite closed object/union names, a successful whole constructor and
- * strict encoding can establish an encoded-only field overwritten by a default after a typed
- * strict read failure. Additional whole decoding then validates that input. If the actual winning
- * route instead ends in fieldwise construction after failed whole decoding, at the root or through
- * root union members, the same successful strict output proof retains the original refusal. This
- * does not replay decoding or reconstruct input. Default and writer effects can run before refusal;
- * other constructor and decoder choices keep their existing priority.
- * Ambiguous names, open/opaque/class or suspended/iterable groups, inherited/accessor fields and
- * changing input remain outside this proof, as do later member-constructor and unsupported recovery
- * routes. Successful initial whole construction also permits a nested proof through finite closed,
- * untransformed objects, parent unions and dense array/tuple positions. Array indices/length must
- * be stable own data with ordinary/null prototype and matching original strict-output length.
- * Every declaring parent member must use the same field
- * schema; stable own-data links must reach the same encoded-only field actually written by the
- * original strict writer. Whole decoding can repeat checks/services, refuse valid mixed-side input
- * or give shared-type fields their encoded meaning. Construction is not replayed. Distinct field
- * declarations, sparse/accessor/inherited/subclass/custom-iterator/changing arrays, array-shaped
- * parent union members, opaque/suspended/transformed parents and unsupported member/fieldwise paths
- * remain outside this extension (issue #170). Use decoded names
- * or a validated decoded mapping there. The Request guide describes the bounds and migration.
+ * See https://viell-dev.github.io/slop-effect-schema-http/schema-input for the complete current
+ * reading order, preservation/default boundaries and recovery.
+ * https://viell-dev.github.io/slop-effect-schema-http/schema-groups covers raw defaults and stacking.
  *
  * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that

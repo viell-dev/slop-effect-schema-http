@@ -224,10 +224,23 @@ exercise the installed API. The build retains these comments in TypeScript decla
 help. Keep source comments, module guides, README, examples and the design contract consistent;
 changing a comment does not silently change the API's promised behavior.
 
+Document ownership follows the reader's task: Request/Body teach ordinary bindings;
+`docs/schema-input.md` owns detailed constructor/encoded reading and preservation/default bounds;
+`docs/schema-groups.md` owns declaration/default/stacking rules; Limits owns runtime compatibility
+and recovery; Design owns architectural invariants; release articles own chronological deltas. Keep
+editor docblocks self-contained for the common rule and material failure caveats, then link the
+reference instead of repeating every proof condition. When a rule changes, review its owning
+reference, affected task example, editor comment, active caveat and migration together. Preserve
+existing URLs/anchors with short onward links when moving details.
+
 README provides purpose, a small example, installation and navigation. The site describes the
 behavior of the version it documents. Release articles under `docs/release-notes/` explain what
-changes for consumers, with examples and migration links where useful. `CHANGELOG.md` records the
-complete history, including maintenance, and `docs/changelog.md` includes that one source. Keep
+changes for consumers, with examples and migration links where useful. Start with what input or
+action changes, its previous result and the decisive new condition. Identify a typing-only repair,
+an extension of an existing runtime repair, or a separate defect before explaining proof mechanics.
+A shared running example must name what changed between releases. Keep the current article visible,
+and put older articles in the collapsed archive and release-history index. `CHANGELOG.md` records
+the complete history, including maintenance, and `docs/changelog.md` includes that one source. Keep
 compatibility requirements and versioned install commands where readers need them. This guide owns
 development and verification procedures; RELEASING owns publication and deployment; issues and PRs
 own investigations and delivery evidence. Do not copy those procedures or progress narratives into
@@ -273,7 +286,11 @@ published tag or a documentation-only descendant, builds it, and deploys through
 Each page contains `documentation-commit` and `library-version` meta tags. Local dirty builds carry
 `-dirty`; CI rejects that marker. Record and verify the deployed commit and Actions run. Keep
 software tags in place when correcting documentation. No package publication occurs in this
-workflow.
+workflow. Current-release corrections may include the embedded TypeScript example modules allowed by
+[`scripts/documentation-scope.mjs`](./scripts/documentation-scope.mjs), with the examples checked
+against the unchanged library release. Example runners, distributed release assets and production
+source remain outside this route; [RELEASING](./RELEASING.md#release-documentation-and-corrections)
+owns the procedure.
 
 ## Pull requests
 
@@ -303,9 +320,10 @@ depends on the answer. Blocked work links its dependency. The catalog in
 
 ## Before a release
 
-Follow [RELEASING.md](./RELEASING.md). Compatible fixes raise the patch number and breaking changes
-raise the minor number, with migration guidance in the release article. Every publication needs its
-own qualification; a publishable package does not establish release readiness.
+Follow [RELEASING.md](./RELEASING.md). While the package remains `0.x`, compatible fixes raise the
+patch number and breaking changes raise the minor number, with migration guidance in the release
+article. Every publication needs its own qualification; a publishable package does not establish
+release readiness.
 
 Every release needs exact-commit checks, isolated installation, all hostile lanes, an independent
 deep review, verified artifacts and public documentation. A release may use prior review evidence

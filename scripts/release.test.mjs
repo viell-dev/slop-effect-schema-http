@@ -18,6 +18,10 @@ import { test } from "node:test";
 import { fileURLToPath, URL } from "node:url";
 import { githubWith } from "./check-live.mjs";
 import {
+  assertDocumentationPaths,
+  verifyDocumentationCorrection,
+} from "./documentation-scope.mjs";
+import {
   selectPublishedRelease,
   verifiedStep,
 } from "./select-published-release.mjs";
@@ -380,4 +384,85 @@ test("qualification has the history the Playwright comparison reads", () => {
     workflowFile("release.yml"),
     /candidate:(?:(?!\n {2}\w)[^])*?fetch-depth: 0(?:(?!\n {2}\w)[^])*?npm run release:prepare/,
   );
+});
+
+test("a release correction permits embedded examples but refuses software and publication changes", () => {
+  const root = mkdtempSync(join(temporaryRoot, "schema-http-docs-correction-"));
+  const git = (args) =>
+    execFileSync("git", args, { cwd: root, encoding: "utf8" });
+  const commit = () => {
+    git(["add", "."]);
+    git([
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.test",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "Synthetic correction fixture",
+    ]);
+    return git(["rev-parse", "HEAD"]).trim();
+  };
+  try {
+    git(["init", "--initial-branch=main"]);
+    mkdirSync(join(root, "examples"));
+    mkdirSync(join(root, "docs"));
+    writeFileSync(
+      join(root, "examples/quickstart.ts"),
+      "// Original snippet\n",
+    );
+    writeFileSync(join(root, "docs/guide.md"), "Original prose\n");
+    commit();
+    git(["tag", "0.15.0"]);
+    writeFileSync(
+      join(root, "examples/quickstart.ts"),
+      "// Corrected snippet\n",
+    );
+    const correction = commit();
+    assert.doesNotThrow(() =>
+      verifyDocumentationCorrection("0.15.0", correction, git),
+    );
+    writeFileSync(
+      join(root, "examples/release-check.mjs"),
+      "// Changed release asset\n",
+    );
+    const assetChange = commit();
+    assert.throws(
+      () => verifyDocumentationCorrection("0.15.0", assetChange, git),
+      /release-check/,
+    );
+    for (const path of [
+      "src/http/Request.ts",
+      "package.json",
+      ".github/workflows/pages.yml",
+      "examples/guides.mjs",
+      "examples/not-embedded.ts",
+      "docs/../package.json",
+    ]) {
+      assert.throws(
+        () => assertDocumentationPaths([path]),
+        /Non-documentation change/,
+      );
+    }
+    assert.throws(
+      () => verifyDocumentationCorrection("0.15.0", "main", git),
+      /complete commit SHA/,
+    );
+    assert.throws(() =>
+      verifyDocumentationCorrection("1.0.0", correction, git),
+    );
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("Pages checks correction paths from main before checking out the correction", () => {
+  const pages = workflowFile("pages.yml");
+  const [resolveJob, buildJob] = pages.split("\n  build:\n");
+  assert.match(resolveJob, /fetch-depth: 0/);
+  assert.match(resolveJob, /run: node scripts\/documentation-scope\.mjs/);
+  assert.doesNotMatch(buildJob, /path\.startsWith/);
+  assert.match(buildJob, /ref: \$\{\{ needs\.resolve\.outputs\.ref \}\}/);
 });

@@ -376,298 +376,57 @@ and a field with a constructor default can be left out. Preparation tries the de
 then the decoder as a whole, then the decoder field by field, and reports the decoded side's error
 if all fail. The type of such an input is `Request.Input<S>`.
 
-The type retains the whole encoded shape through nested objects, lists, tuples and classes, even
-when outer names match the decoded side. Mixing by field remains one level deep in the type; it does
-not recursively combine every nested field. A helper accepting `Request.Input` must account for the
-actual decoded and encoded alternatives. A decoded-only helper declares its own input shape, and a
-named mapping can supply decoded request input. [What's in 0.10](../release-notes/0.10.md) shows the
-nested filter and helper migration.
-
-Both routes validate the values they consume; the constructor-default limits below can still ignore
-a supplied alias. The check is also as strict as the schema. `Schema.NumberFromString` turns
-`"many"` into `NaN`, so `{ limit: "many" }` goes out as `limit=NaN` under that schema. Choose
-`Schema.FiniteFromString` when that matters. A string where a number was expected compiles, so the
-failure appears when the request is prepared. An input can need the schema's decoding services as
-well as its encoding services, so a binding adds both to the request.
+The type keeps whole constructor and encoded shapes, including nested aliases. Mixing by field is
+one level deep in the type. A helper that accepts `Request.Input` must handle both sides, or declare
+a decoded-only argument explicitly. The [input reference](../schema-input.md) owns the complete
+reading order, preservation rules and constructor-default boundaries.
 
 #### What the library promises
 
-For a value it can see, a field the caller gave is kept, or the request is refused. It can see plain
-objects, lists, tuples, classes and unions of those, at any depth, on either side of a schema. So it
-sees an object given to a field that holds JSON, and the value in `Schema.OptionFromNullOr`. Inside
-an opaque value, which is text given as text, a `Schema.ReadonlyMap`, a `Schema.Option` or a
-declaration with no struct behind it, the schema's own reading applies, and nothing is refused for
-what happens there. A stray key inside an opaque value can make a union beside it read loosely. A
-direct closed struct can recover some otherwise-refused nested fields through constructor-only
-validation, as the [0.6.1
-example](../release-notes/0.6.md#since-0-6-1-keep-visible-fields-beside-an-opaque-value) shows.
-Encoded-side/text cases and input without stable field evidence retain this limit. To choose a union
-member for certain, bind that member directly.
-
-Retaining an opaque value's encoded type does not force its contents through the encoded route. For
-example, a `ReadonlyMap` holding `{ term: "x", page_size: "05" }` can fit its schema's decoded
-constructor by losing the inner alias. Supply decoded map contents such as
-`{ term: "x", limit: "05" }` when you want the decoded route. The type repair changes neither this
-priority nor the schema's own reading.
-
-A union first chooses before it knows what a stacked schema took. Eligible unions can then [recover
-that choice](#recover-a-stacked-union-s-choice): `Union([{ b }, { a, c }])` stacked with `{ b }` can
-keep `{ a, b, c }`. Bind the member directly to choose it without recovery attempts:
-
-```ts
-import { Schema } from "effect";
-import { Request } from "viell-effect-schema-http";
-
-const search = Request.get("https://api.example.test/things").pipe(
-  Request.query(Schema.Struct({ a: Schema.String, c: Schema.String })),
-  Request.query(Schema.Struct({ b: Schema.String })),
-);
-// Input: { query: { a: "x", b: "y", c: "z" } }; URL query: ?a=x&c=z&b=y
-```
-
-Known preservation gaps remain in
-[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). Give a renamed field under
-one side's name: a constructor/decoded read prefers the decoded name, while a whole encoded read
-uses the encoded name. Added whole-group validation can change that choice when another value
-establishes the route; one supplied value can go silently. The [0.14
-migration](../release-notes/0.14.md#account-for-both-names) shows a typed nonliteral array example.
-This is not general conflicting-alias refusal; validate a decoded mapping when names may conflict.
-Generated fields outside the same-name or strictly empty closed-group proofs have [raw-edit
-limits](#a-schema-states-the-shape-of-its-group).
+Visible caller fields should be kept or the request refused. Known violations remain: conflicting
+aliases can lose a value, and unsupported constructor-default paths can substitute a default. Opaque
+contents retain their schema's own reading. See the [active limits and
+recovery](../schema-input.md#active-limits-and-recovery) before relying on those cases; use
+validated decoded input or bind a specific union member when needed.
 
 #### When both sides share a type
 
-A value that fits the decoded side is read as decoded, which is the one rule for a case that cannot
-be told apart. Under a schema from text to text, such as `Schema.StringFromBase64`, an already
-encoded value fits the decoded side, so it is encoded again, with no error:
+A value fitting the decoded side is read as decoded. A text-to-text schema therefore encodes already
+encoded text again; whole encoded group reading can change that interpretation.
 
 <<< ../../examples/modules/request.ts#same-type
 
-Under such a schema, pass the decoded value. Where a group has other fields, a group that only fits
-on the encoded side goes through the decoder as a whole, so `{ token: "aGVsbG8=", limit: "5" }`
-reads `token` as encoded.
-
 #### When the two sides state different names
 
-A value on the encoded side stays there, even if it would fit the decoded side by losing names, so a
-renamed optional field keeps its value and a constructor default does not take its place:
-
-```ts
-import { Schema } from "effect";
-import { Request } from "viell-effect-schema-http";
-
-const Renamed = Schema.Struct({ a: Schema.optionalKey(Schema.String) }).pipe(
-  Schema.encodeKeys({ a: "A" }),
-);
-const search = Request.get("https://api.example.test/things").pipe(
-  Request.query(Renamed),
-);
-// Input: { query: { A: "x" } }; URL query: ?A=x
-```
-
-This applies at any depth and to a transformation between objects. Every renamed struct takes this
-strict pass, which costs more than a plain struct's read. A value takes its names from one side, so
-`{ a: "x", B: "y" }`, which mixes the names of two renamed fields, is a `SchemaError` that names
-`B`.
+Renamed fields accept complete encoded shapes, but mixing renamed names or supplying both aliases
+has limits. The [input reference](../schema-input.md#preservation-and-selection) explains strict
+reading and the remaining conflict cases.
 
 #### Under a union
 
-Effect takes the first union member that fits and strips what that member does not state. An input
-looks for a member that keeps everything first, so the order of the members does not cost a field:
-
-```ts
-import { Schema } from "effect";
-import { Request } from "viell-effect-schema-http";
-
-const Either = Schema.Union([
-  Schema.Struct({ a: Schema.String }),
-  Schema.Struct({ a: Schema.String, b: Schema.String }),
-]);
-const search = Request.get("https://api.example.test/things").pipe(
-  Request.query(Either),
-);
-// Input: { query: { a: "x", b: "y" } }; URL query: ?a=x&b=y
-```
-
-This applies to both sides of the schema and a mix by field, and at any depth of a body. A field no
-member can keep beside the others is a `SchemaError` before dispatch, which names the field. Under a
-union of `{ a }` and `{ b }`, `{ a, b }` is refused, because either member would lose a field the
-schema states. Add a member that holds both, or send one of them.
-
-A key no member states is stripped, as a struct strips it. So is a key only a member with another
-tag states: where only the `"a"` member has `x`, `{ kind: "b", x }` goes out as `{ kind: "b" }`. The
-tag can choose by either its decoded or encoded name. Both views must rule a member out before its
-fields go; a constructor default is not run to guess a tag. The types refuse unstated fields in a
-literal. Under such a schema a key set to `undefined` is no field, so `{ a, b: undefined, c }` reads
-as `{ a, c }`. A field need not be a key: an accessor on a class and an inherited field count, as
-they do for a struct, and a class instance only a struct can read reads as a plain object.
-
-Stacked schemas read one input, and a field stays with the schema that took it. A union takes a
-sibling's field for a key it does not state, and a field it would lose is not lost if a stacked
-schema took it: a union of `{ a }` and `{ b }` stacked with `{ b }`, in either order, sends
-`{ a, b }` whole. If the initial selection leaves an uncovered root field, an eligible union can
-[recover another selection](#recover-a-stacked-union-s-choice) using actual sibling claims. For
-example, a union of `{ b }` and `{ a, c }` stacked with `{ b }` can keep `{ a, b, c }`. Two unions
-can also recover complementary members, but a field no resulting selection holds is still refused.
-Annotations are retained. Union-parent checks, context/defaults or encoding, nested losses and joint
-backtracking remain outside this recovery. Put the intended member first or bind it directly when
-its choice must not depend on recovery.
-
-Two members can state one field under different wire names. A union of `{ c }` and `{ c }` renamed
-to `C` takes the first member that fits, so `{ C: "s" }` goes out as `?c=s`, with no error. Bind the
-member you mean directly when the name on the wire matters.
+A member that keeps all visible fields is preferred to one that strips a stated field. Unstated keys
+can still be stripped, and literal tags can rule members out. A union that cannot keep the fields
+together refuses the request. [Preservation and
+selection](../schema-input.md#preservation-and-selection) explains opaque boundaries and literal-tag
+rules.
 
 ### A schema states the shape of its group
 
-In plain terms, once any schema is bound to headers or query, every header or query field the
-request declares must be a name some schema allows.
-
-A header or query group is a dictionary of names, and each edit produces a new one. A schema states
-what that dictionary may hold, and whatever the request ends up declaring has to fit. A request that
-does not fit fails with `Request.InvalidRequest` before anything is sent, whichever comes first, the
-schema or the raw value. Path and body bindings add their own input properties.
+Once any schema is bound to query or headers, every declared field must be a name some schema
+allows. A raw value under an allowed name is a default: the schema validates it, and what the schema
+writes replaces it. A raw name outside the shape or a later edit of an always-written field fails
+with `Request.InvalidRequest` before dispatch.
 
 <<< ../../examples/modules/request.ts#shape
 
-Each rule below applies to query entries, including those written in the constructor, and to
-headers:
+A default and the caller's fields must fit together. For example, a shared `?page=1` under a union
+of `{ page, size? }` and `{ cursor }` refuses `{ cursor }`; remove `page` in a variant when using
+the cursor. Omission of an optional field retains its raw default.
 
-| The request declares                                          | What happens                                              |
-| ------------------------------------------------------------- | --------------------------------------------------------- |
-| A raw value under a name a schema allows                      | A default: what the schema writes replaces it             |
-| The same, and the caller leaves that optional field out       | The default stays, and goes through the schema            |
-| A raw value that does not fit the schema                      | `InvalidRequest`                                          |
-| A default and a caller's field no union member holds together | `InvalidRequest`, naming the field that would be lost     |
-| A raw value under a name no schema allows                     | `InvalidRequest`, an incompatible shape                   |
-| A raw edit of a required field, after the schema              | `InvalidRequest`, because it could never reach the client |
-
-A default goes through the schema with the rest of the group, and the request carries what the
-schema writes. `?page=02` under a number field goes out as `page=2`, and order and header spelling
-follow the schema. A check is only as strict as the schema, so `Schema.NumberFromString` accepts
-`"two"` as `NaN` and `Schema.FiniteFromString` refuses it.
-
-Under a union, the defaults and the caller's fields have to fit one member together. A union of
-`{ page, size? }` and `{ cursor }` on a request with `?page=1` takes `{ page: 2 }` and refuses
-`{ cursor }`, because no member holds both. Leave `page` out of the request, or give the caller a
-variant with `Request.removeQuery("page")`.
-
-A default under a field that encodes to a `Date` is read from its text, so `?from=2026-11-07` goes
-out as `from=2026-11-07T00%3A00%3A00.000Z`, and `?from=soon` is an `InvalidRequest`. It is read as
-`Schema.DateFromString` reads it, which is `new Date(text)`. Write ISO text with a `Z` or an offset:
-JavaScript reads other forms by the engine's rules, and text with no offset in the time zone of
-whatever runs the request.
-
-"Required" means the schema always writes the name. A required field with
-`Schema.withConstructorDefault` needs no input and still cannot be removed. A field with a decoding
-default such as `Schema.withDecodingDefaultKey` is required too: the caller can leave it out, and
-the schema writes it all the same. With `encodingStrategy: "omit"` it never writes it, so a raw
-value there is refused too, as a field that would be lost. To give a required field a value without
-asking the caller, use `Request.mapInput`. A value the schema supplies itself, from a constructor or
-decoding default, counts as written, so it replaces a raw default.
-
-An optional field of a direct struct, or a finite closed union with no group encoding, can also
-refuse a raw edit after its binding. Before preparation, the caller must have left it absent
-throughout its prototype chain, or supplied an own data property containing `undefined`. If
-successful ordinary non-iterable output then holds an own enumerable non-`undefined` data value
-under that same name, setting, appending or removing it would be replaced, so the request fails with
-`InvalidRequest`. The field can come from construction, decoding, fieldwise input or encoding.
-Earlier raw defaults and explicit caller values still work. The check reads the successful output
-without evaluating a default, transformation, getter or iterator again. [What's in
-0.5](../release-notes/0.5.md) shows how to choose the value through input.
-
-A strictly empty caller group permits another proof through a group transformation, including
-`Schema.encodeKeys`. All decoded and encoded group shapes must be closed objects or finite unions of
-closed objects, and the caller must be an ordinary or null-prototype object with no own keys at all.
-For the union extension, every intermediate group encoding step must also have one of those closed
-shapes; the earlier direct-object proof continues to check its two endpoints. Every declared name on
-both sides, including symbols, must also be absent through its prototype chain. This eligibility is
-snapshotted before preparation. Successful non-iterable output can then prove that a later raw edit
-of an encoded name would disappear, without inferring which field maps to which name or evaluating
-any callback again. [What's in 0.7](../release-notes/0.7.md) shows the union migration; [What's in
-0.6](../release-notes/0.6.md) covers the earlier direct transformed-group change.
-
-Any supplied own field disables this additional proof, even an unrelated, non-enumerable or symbol
-key. Classes, declarations, suspended groups, open/unknown alternatives and inherited/accessor input
-remain outside it. An absent, non-enumerable, accessor or `undefined` output property proves no
-generated value, and iterable output uses the entries it yields. Other schema/default and lost-field
-checks still apply.
-
-Renamed fields, including nested fields and union members, retain their whole encoded input shape. A
-helper using `Request.Input` must account for either side; a helper intended to accept decoded names
-only should declare that input explicitly. [What's in 0.10](../release-notes/0.10.md) gives the
-nested helper migration; [What's in 0.8](../release-notes/0.8.md) covers outer aliases.
-
-For stable plain root data under finite closed object/union group shapes, a supplied encoded-only
-name, a successful whole constructor and its strict encoding can establish an additional whole
-encoded check after a typed strict read failure. Invalid encoded input then fails instead of taking
-an optional constructor default; valid stacked input can keep fields held by another binding. Other
-constructor choices and their existing failures keep priority. The initial default/writer can run
-before the additional validation. [What's in 0.9](../release-notes/0.9.md) gives the example and
-migration.
-
-The same root proof now covers an actual successful final fieldwise construction, including a
-winning root union-member path, after failed whole decoding. Its strict writer must succeed and
-actually write the supplied encoded-only name. That ignored caller alias is then refused with the
-original strict failure, without replaying effects or rebuilding encoded input. Valid aliases beside
-mixed common fields can also refuse; supply a whole schema side or validate a decoded mapping.
-[What's in 0.11](../release-notes/0.11.md) gives the checked migration. Individual property reads do
-not establish this route.
-
-This additional proof excludes a supplied decoded-only name, an encoded name used as decoded by
-another member, open/opaque/class/suspended or iterable group shapes, inherited/accessor fields and
-changing input. Later member-constructor choices and unsupported recovery routes can still let an
-invalid alias take a default. The earlier default substitution can remain outside the proof
-([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). Supply decoded names or a
-named decoded-input mapping for those cases.
-
-In 0.12, successful initial whole construction can also establish the encoded check below finite
-closed, untransformed direct objects. Stable own-data links must reach the same encoded-only
-terminal field actually written by the original strict writer. One consistent path witness is kept
-through whole decoding and the loss checks. Invalid nested text then fails before dispatch. Valid
-aliases can also newly refuse beside decoded-only common fields, and shared-type fields take their
-encoded interpretation when whole decoding succeeds. Complete-side cases and omission retain their
-meaning. Whole decoding can repeat schema checks and services, but construction is not replayed.
-[What's in 0.12](../release-notes/0.12.md) gives path and JSON examples and a decoded mapping. In
-0.13, finite closed untransformed parent unions can contribute unchanged fields too. Each member
-declaring a field must use the same field schema; missing fields on other closed members do not
-invent ownership. All member names stay in ancestor evidence, while distinct field schemas end that
-path. The original successful initial whole construction, strict output and one stable witness
-remain required. [What's in 0.13](../release-notes/0.13.md) gives the checked parent-union
-migration, including whole-group consequences. At 0.13, distinct declarations, arrays,
-opaque/suspended/transformed/open parents and unsupported member/fieldwise routes remained under
-#170. A fieldwise property reader may already decode a nested alias correctly; it cannot establish
-this constructor-only proof.
-
-In 0.14, dense array and tuple ancestors also contribute their declared positions. Stable own data
-indices/length and matching original strict-output length preserve identity for fixed, rest and tail
-elements; ordinary/null-prototype and frozen/nonenumerable cells are supported. One coherent
-caller/path/output proof retains the same constructor-only prerequisites and priority. Whole-array
-decoding can change runtime mixed-side/shared-text behavior, while construction defaults and
-ordinary decoding omission remain distinct. [What's in 0.14](../release-notes/0.14.md) shows the
-complete-side and named decoded-mapping migration.
-
-In 0.15, normalization also keeps actual array positions and length when an inner object is
-rewritten, including holes and readable hidden/inherited cells in structural array views without
-open or opaque alternatives. Mixed views keep their prior enumerable-child normalization; an Array
-alternative alone does not authorize inspecting an opaque value. Non-index metadata does not become
-a new cell, and symbols retain their identity instead of being numerically coerced. This changes
-previously compacted/dropped positions. Removing accidental failures can also uncover existing
-unsupported sparse/own-iterator defaults; [What's in 0.15](../release-notes/0.15.md) gives exact
-cases, current limits and a validated decoded mapping. This does not add constructor evidence for
-those profiles.
-
-Sparse/accessor/inherited/subclass/custom-iterator/changing arrays, array-shaped parent union
-members, group transforms and unsupported member/fieldwise phases stay outside this extension under
-#170. Distinct normalized declarations retain the 0.13 default-substitution limit. Actual fieldwise
-consumption cannot establish the constructor-only proof; opaque values keep their schema's reading.
-
-For a nonempty caller group, a decoding default hidden by a rename can still replace a later raw
-edit without refusal. The library does not infer general field correspondence or conflicting-alias
-equality. Choose the value through input or an input mapping. The error names the fields and leaves
-out their values, because a default may be a credential. The check runs when the request is
-prepared, so a mismatch compiles and then fails during preparation. It does not see what
-`Request.mapEffect` edits on the native request, what `transformClient` or a client layer does
-afterwards, or text in the URL, such as a `?` in a base URL.
+The [group reference](../schema-groups.md) owns the precise raw-edit, required-field, date-text
+conversion and generated-default rules. It also records limits where nonempty transformed groups can
+still replace a raw edit without refusal. Choose such values through input or `Request.mapInput`.
+The check sees declarations, not native edits in `Request.mapEffect` or client middleware.
 
 #### Stack schemas
 

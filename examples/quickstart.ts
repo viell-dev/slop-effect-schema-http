@@ -16,6 +16,7 @@ const createUser = Operation.make(
 // #endregion contract
 
 // #region synthetic
+// This client returns an in-memory response; it never calls fetch or contacts the example URL.
 const synthetic = HttpClient.make((request) =>
   Effect.succeed(
     HttpClientResponse.fromWeb(
