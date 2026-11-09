@@ -400,9 +400,9 @@ export const reader = <S extends Schema.Top, A, R>(
 };
 
 /**
- * Whole-union alternatives for an anyOf group without parent behavior. Preserve every member and
+ * Whole-union alternatives for an anyOf group without group encoding. Preserve every member and
  * the whole input: trying one member alone would move its decoder ahead of another's constructor.
- * Keep annotations unchanged; parent checks, encoding and context remain excluded.
+ * Keep parent validation, context and annotations unchanged on every attempt.
  */
 export const reorderedReaders = <S extends Schema.Top>(contract: S) => {
   const ast = contract.ast;
@@ -410,9 +410,6 @@ export const reorderedReaders = <S extends Schema.Top>(contract: S) => {
     ast._tag !== "Union" ||
     (ast.options?.mode ?? "anyOf") !== "anyOf" ||
     ast.encoding !== undefined ||
-    ast.context !== undefined ||
-    ast.checks !== undefined ||
-    ast.encodingChecks !== undefined ||
     !ast.types.every(
       (member) =>
         member._tag === "Objects" &&
@@ -430,6 +427,10 @@ export const reorderedReaders = <S extends Schema.Top>(contract: S) => {
         [member, ...ast.types.filter((_, position) => position !== index)],
         ast.options,
         ast.annotations,
+        ast.checks,
+        undefined,
+        ast.context,
+        ast.encodingChecks,
       ),
     );
     return reader(reordered, Schema.encodeEffect(reordered));

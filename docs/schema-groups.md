@@ -73,16 +73,18 @@ an error: `Request.InvalidRequest` before anything is sent.
 - **A union may recover an initial refusal.** If normal preparation would refuse uncovered
   group-level fields, an eligible top-level anyOf union retries the whole schema with each other
   member moved to the front, keeping every member and the original full input. Its members must be
-  closed direct structs without group transformations or iterable representation; parent behavior
-  such as checks, context/defaults or encoding, and nested losses exclude this recovery. Annotations
-  are retained unchanged, including unfamiliar metadata. This preserves whole-union
+  closed direct structs without group transformations or iterable representation. Parent checks,
+  encoding checks, context/defaults and annotations are retained unchanged, including unfamiliar
+  metadata. Each candidate runs its validation; a previous passing answer cannot approve a new
+  member. Group encoding and nested losses exclude this recovery. This preserves whole-union
   constructor/decoder/fieldwise priority and each field's custom schema. A candidate must cover both
   original and new loss obligations, and its certificate replaces only this applied binding's claim.
   Aggregate coverage of previously certified names cannot decrease, so earlier successful checks
   stay justified. Reused binding factories get distinct identities per application. If none
   qualifies, the original refusal remains. These new attempts can evaluate schemas again or fail;
   already successful calls never enter recovery. This is a bounded search, with no joint
-  backtracking between bindings.
+  backtracking between bindings. If normal reading and writing still fail after their usual fallback
+  routes, this search does not run: they must succeed before an uncovered field loss can trigger it.
 - **A schema can allow other names.** A record or `Schema.StructWithRest` allows any name, and
   values are still checked. Callers can then pass any name as well.
 - **`Request.unbind` removes bindings.** `Request.unbind(group)` makes earlier bindings of that group
@@ -154,10 +156,12 @@ Some things are outside the check:
   yielded entries, so own string properties prove nothing about what it sends. An absent,
   non-enumerable, accessor or `undefined` output property supplies no generated-field evidence.
   Ordinary schema/default and lost-field checks still apply.
-- A union outside the recovery guard keeps its initial selection. For example, a group-level check
-  prevents recovery for the union of `{ b }` and `{ a, c }` stacked with `{ b }`, so `{ a, b, c }`
-  can still be refused. Recovery also declines a candidate that would withdraw an earlier field
-  certificate, and it does not jointly backtrack several choices.
+- A union outside the recovery guard keeps its initial selection. For example, the union of `{ b }`
+  and `{ a, c }` stacked with `{ b }` can still refuse `{ a, b, c }` if its parent check rejects the
+  initial `{ b }` read, because that failure precedes field-loss recovery. If the initial read and
+  write pass, candidates must still satisfy the same parent checks. Recovery also declines a
+  candidate that would withdraw an earlier field certificate, and it does not jointly backtrack
+  several choices.
 - Two members can state one field under different wire names. A union of `{ c }` and `{ c }` renamed
   to `C` takes the first member that fits, so `{ C: "s" }` goes out as `?c=s`. The value arrives,
   under the other member's name, with no error. Bind the member you mean directly.

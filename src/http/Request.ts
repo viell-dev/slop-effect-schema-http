@@ -956,9 +956,10 @@ const prepareGroup = <
  *
  * If an eligible anyOf union would otherwise refuse uncovered root fields, it can retry the whole
  * union with each member first, using the complete original input. Recovery needs actual sibling
- * claims for remaining losses and preserves every previously certified name. Annotations are kept;
- * union-parent checks, context and encoding, transformed/open/iterable members, nested losses and
- * joint backtracking are excluded. Successful reads do not retry. Recovery adds at most one
+ * claims for remaining losses and preserves every previously certified name. Parent checks,
+ * encoding checks, context/defaults and annotations are retained. Group encoding,
+ * transformed/open/iterable members, nested losses and joint backtracking are excluded. A final
+ * read/write error does not start recovery. Successful reads do not retry. Recovery adds at most one
  * whole-union read per other member; those attempts can repeat schema effects and can fail.
  *
  * A field the schema produces wins over an automatic `Accept`, `Content-Type` or `Content-Length`,
@@ -1099,9 +1100,10 @@ export const headers = <
  *
  * If an eligible anyOf union would otherwise refuse uncovered root fields, it can retry the whole
  * union with each member first, using the complete original input. Recovery needs actual sibling
- * claims for remaining losses and preserves every previously certified name. Annotations are kept;
- * union-parent checks, context and encoding, transformed/open/iterable members, nested losses and
- * joint backtracking are excluded. Successful reads do not retry. Recovery adds at most one
+ * claims for remaining losses and preserves every previously certified name. Parent checks,
+ * encoding checks, context/defaults and annotations are retained. Group encoding,
+ * transformed/open/iterable members, nested losses and joint backtracking are excluded. A final
+ * read/write error does not start recovery. Successful reads do not retry. Recovery adds at most one
  * whole-union read per other member; those attempts can repeat schema effects and can fail.
  */
 export const query = <

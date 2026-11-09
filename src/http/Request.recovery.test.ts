@@ -240,9 +240,153 @@ describe("remaining group-field recovery", () => {
   );
 
   const bare = Schema.Union([B, AC]);
-  const checked = bare.check(Schema.makeFilter(() => true));
+  for (const group of ["query", "headers"] as const) {
+    const compile = (schema: typeof bare) =>
+      group === "query"
+        ? Request.compile(
+            Request.get("/x").pipe(Request.query(schema), Request.query(B)),
+            input,
+          )
+        : Request.compile(
+            Request.get("/x").pipe(Request.headers(schema), Request.headers(B)),
+            { headers: input.query },
+          );
+    for (const metadata of [
+      "checks",
+      "encoding checks",
+      "context",
+      "constructor default",
+      "combined",
+    ] as const) {
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+      it.effect(`recovers ${group} while retaining parent ${metadata}`, () =>
+        Effect.gen(function* () {
+          const marker = Symbol("parent metadata");
+          const annotations = { title: "validated choice", [marker]: {} };
+          let defaults = 0;
+          const context =
+            metadata === "context" ||
+            metadata === "constructor default" ||
+            metadata === "combined"
+              ? new SchemaAST.Context(
+                  false,
+                  false,
+                  metadata === "context"
+                    ? undefined
+                    : Effect.sync(() => {
+                        defaults++;
+                        return { b: "default" };
+                      }),
+                  { title: "parent context" },
+                )
+              : undefined;
+          const trace: string[] = [];
+          const check = (side: string) =>
+            Schema.makeFilter<typeof bare.Type>((value, ast) => {
+              expect(ast.annotations).toBe(annotations);
+              expect(ast.context).toBe(context);
+              trace.push(`${side}:${Object.keys(value).join(",")}`);
+              return true;
+            });
+          const schema = Schema.make<typeof bare>(
+            new SchemaAST.Union(
+              bare.ast.types,
+              bare.ast.options,
+              annotations,
+              metadata === "checks" || metadata === "combined"
+                ? [check("decoded")]
+                : undefined,
+              undefined,
+              context,
+              metadata === "encoding checks" || metadata === "combined"
+                ? [check("encoded")]
+                : undefined,
+            ),
+          );
+          const compiled = yield* compile(schema);
+          expect(
+            group === "query" ? compiled.request.url : compiled.headerLines,
+          ).toEqual(
+            group === "query"
+              ? "/x?a=x&c=z&b=y"
+              : [
+                  ["a", "x"],
+                  ["c", "z"],
+                  ["b", "y"],
+                ],
+          );
+          if (metadata === "checks" || metadata === "combined")
+            expect(trace).toContain("decoded:a,c");
+          if (metadata === "encoding checks" || metadata === "combined")
+            expect(trace).toContain("encoded:a,c");
+          expect(defaults).toBe(0);
+        }),
+      );
+    }
+    for (const side of ["decoded", "encoded"] as const) {
+      it.effect(
+        `honors rejecting ${side} parent checks during ${group} recovery`,
+        () =>
+          Effect.gen(function* () {
+            const trace: string[] = [];
+            const guard = Schema.makeFilter<typeof bare.Type>((value) => {
+              trace.push(Object.keys(value).join(","));
+              return "b" in value;
+            });
+            const schema = Schema.make<typeof bare>(
+              new SchemaAST.Union(
+                bare.ast.types,
+                undefined,
+                undefined,
+                side === "decoded" ? [guard] : undefined,
+                undefined,
+                undefined,
+                side === "encoded" ? [guard] : undefined,
+              ),
+            );
+            const failure = yield* Effect.flip(compile(schema));
+            expect(failure).toBeInstanceOf(Schema.SchemaError);
+            expect(failure.message).toContain('["a"]');
+            expect(failure.message).toContain('["c"]');
+            expect(trace).toContain("b");
+            expect(trace).toContain("a,c");
+          }),
+      );
+    }
+    it.effect(
+      `does not start ${group} recovery after initial parent validation fails`,
+      () =>
+        Effect.gen(function* () {
+          const trace: string[] = [];
+          const schema = bare.check(
+            Schema.makeFilter((value) => {
+              trace.push(Object.keys(value).join(","));
+              return "a" in value;
+            }),
+          );
+          expect(yield* Effect.flip(compile(schema))).toBeInstanceOf(
+            Schema.SchemaError,
+          );
+          expect(trace.length).toBeGreaterThan(0);
+          expect(trace.every((keys) => keys === "b")).toBe(true);
+        }),
+    );
+    it.effect(`propagates a parent-check defect during ${group} recovery`, () =>
+      Effect.gen(function* () {
+        const defect = new Error("parent recovery defect");
+        const schema = bare.check(
+          Schema.makeFilter((value) => {
+            if ("a" in value) throw defect;
+            return true;
+          }),
+        );
+        const exit = yield* Effect.exit(compile(schema));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect);
+      }),
+    );
+  }
   for (const [name, schema] of [
-    ["parent check", checked],
     [
       "group transformation",
       bare.pipe(
@@ -259,19 +403,6 @@ describe("remaining group-field recovery", () => {
       "oneOf",
       Schema.make<typeof bare>(
         new SchemaAST.Union(bare.ast.types, { mode: "oneOf" }),
-      ),
-    ],
-    [
-      "parent context",
-      Schema.make<typeof bare>(
-        new SchemaAST.Union(
-          bare.ast.types,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          new SchemaAST.Context(false, false, undefined, undefined),
-        ),
       ),
     ],
     [
@@ -306,18 +437,25 @@ describe("remaining group-field recovery", () => {
   }
 
   it.effect(
-    "retains the checked-parent refusal with a reordered positive control",
+    "keeps a checked-parent success in the already fitting member order",
     () =>
       Effect.gen(function* () {
+        const trace: string[] = [];
         const request = Request.get("/x").pipe(
           Request.query(
-            Schema.Union([AC, B]).check(Schema.makeFilter(() => true)),
+            Schema.Union([AC, B]).check(
+              Schema.makeFilter((value) => {
+                trace.push(Object.keys(value).join(","));
+                return true;
+              }),
+            ),
           ),
           Request.query(B),
         );
         expect((yield* Request.compile(request, input)).request.url).toBe(
           "/x?a=x&c=z&b=y",
         );
+        expect(trace).toEqual(["a,c", "a,c"]);
       }),
   );
 
@@ -516,31 +654,35 @@ describe("remaining group-field recovery", () => {
             ),
           }),
         );
-        const request = Request.get("/x").pipe(
-          Request.query(
-            Schema.Union([B, Schema.Struct({ a, c: Schema.String })]),
-          ),
-          Request.query(B),
-        );
-        const results = yield* Effect.all(
-          ["one", "bad", "two"].map((tenant) =>
-            Effect.result(Request.compile(request, input)).pipe(
-              Effect.provideService(Tenant, tenant),
+        const union = Schema.Union([B, Schema.Struct({ a, c: Schema.String })]);
+        for (const schema of [
+          union,
+          union.check(Schema.makeFilter(() => true)),
+        ]) {
+          const request = Request.get("/x").pipe(
+            Request.query(schema),
+            Request.query(B),
+          );
+          const results = yield* Effect.all(
+            ["one", "bad", "two"].map((tenant) =>
+              Effect.result(Request.compile(request, input)).pipe(
+                Effect.provideService(Tenant, tenant),
+              ),
             ),
-          ),
-          { concurrency: "unbounded" },
-        );
-        expect(results.map((result) => result._tag)).toEqual([
-          "Success",
-          "Failure",
-          "Success",
-        ]);
-        expect(results[0]).toMatchObject({
-          success: { request: { url: "/x?a=x-one&c=z&b=y" } },
-        });
-        expect(results[2]).toMatchObject({
-          success: { request: { url: "/x?a=x-two&c=z&b=y" } },
-        });
+            { concurrency: "unbounded" },
+          );
+          expect(results.map((result) => result._tag)).toEqual([
+            "Success",
+            "Failure",
+            "Success",
+          ]);
+          expect(results[0]).toMatchObject({
+            success: { request: { url: "/x?a=x-one&c=z&b=y" } },
+          });
+          expect(results[2]).toMatchObject({
+            success: { request: { url: "/x?a=x-two&c=z&b=y" } },
+          });
+        }
       }),
   );
 
@@ -590,19 +732,7 @@ describe("remaining group-field recovery", () => {
       }),
   );
 
-  it("excludes parent encoding checks, transformed members, open members and iterable members", () => {
-    const guard = Schema.makeFilter(() => true);
-    const checkedEncoding = Schema.make<typeof bare>(
-      new SchemaAST.Union(
-        bare.ast.types,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        [guard],
-      ),
-    );
+  it("excludes transformed members, open members and iterable members", () => {
     const transformedMember = Schema.Union([
       B,
       AC.pipe(Schema.encodeKeys({ a: "a" })),
@@ -618,7 +748,7 @@ describe("remaining group-field recovery", () => {
         [Symbol.iterator]: Schema.optionalKey(Schema.Unknown),
       }),
     ]);
-    for (const schema of [checkedEncoding, transformedMember, open, iterable])
+    for (const schema of [transformedMember, open, iterable])
       expect(Inputs.reorderedReaders(schema)).toEqual([]);
   });
 

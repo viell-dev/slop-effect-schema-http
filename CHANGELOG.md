@@ -1,5 +1,13 @@
 # Change history
 
+## Unreleased
+
+- Retain parent checks, encoding checks and context/default metadata during bounded stacked-union
+  field-loss recovery (#143). Eligible query/header calls can recover a member that keeps the
+  remaining fields without dropping validation. Read/write errors, group transforms, unsupported
+  members and joint backtracking stay outside this search. Existing successes do not retry; newly
+  recovered calls can repeat schema validation and effects.
+
 ## 0.16.0 — 2026-11-09
 
 Read [What's in 0.16](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.16) for
