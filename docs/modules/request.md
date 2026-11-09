@@ -427,9 +427,13 @@ const search = Request.get("https://api.example.test/things").pipe(
 
 Known preservation gaps remain in
 [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). Give a renamed field under
-one side's name: if both names are supplied, the decoded name still wins and the other value can go
-silently. Generated fields outside the same-name or strictly empty closed-group proofs have
-[raw-edit limits](#a-schema-states-the-shape-of-its-group).
+one side's name: a constructor/decoded read prefers the decoded name, while a whole encoded read
+uses the encoded name. Added whole-group validation can change that choice when another value
+establishes the route; one supplied value can go silently. The [0.14
+migration](../release-notes/0.14.md#account-for-both-names) shows a typed nonliteral array example.
+This is not general conflicting-alias refusal; validate a decoded mapping when names may conflict.
+Generated fields outside the same-name or strictly empty closed-group proofs have [raw-edit
+limits](#a-schema-states-the-shape-of-its-group).
 
 #### When both sides share a type
 

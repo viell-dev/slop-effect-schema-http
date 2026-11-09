@@ -353,6 +353,39 @@ assert.equal(
   "SchemaError",
 );
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6735302019
+// Pin the disclosed whole-group interpretation, not a general alias-conflict repair.
+const arrayAliasSchema = Schema.Array(nestedDefaultInner);
+for (const kind of ["path", "body"]) {
+  let rendered;
+  const request =
+    kind === "path"
+      ? root.Request.get("/array-aliases").pipe(
+          root.Request.path(arrayAliasSchema, (value) => {
+            rendered = value;
+            return "/ok";
+          }),
+        )
+      : root.Request.post("/array-aliases").pipe(
+          root.Request.body(root.Body.jsonSchema(arrayAliasSchema)),
+        );
+  const input = [{ limit: 1, page_size: "02" }, { page_size: "25" }];
+  const prepared = await Effect.runPromise(
+    root.Request.compile(request, { [kind]: input }),
+  );
+  if (kind === "path")
+    assert.deepEqual(rendered, [{ page_size: "2" }, { page_size: "25" }]);
+  else {
+    assert.equal(prepared.request.body._tag, "Uint8Array");
+    assert.deepEqual(
+      JSON.parse(
+        new globalThis.TextDecoder().decode(prepared.request.body.body),
+      ),
+      [{ page_size: "2" }, { page_size: "25" }],
+    );
+  }
+}
+
 console.log(
   `Packed consumer passed: ${Object.keys(manifest.exports).length} exports, id ${id}.`,
 );

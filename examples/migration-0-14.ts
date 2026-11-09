@@ -118,6 +118,23 @@ assert.equal(
   "/ZUE9PQ%3D%3D",
 );
 
+// #region dual-names
+const bothNames = [{ limit: 1, page_size: "02" }, { page_size: "25" }];
+const typedBothNames: Request.Input<typeof Filters> = bothNames;
+const wholeEncodedChoice = Request.compile(lookup, { path: typedBothNames });
+// #endregion dual-names
+
+assert.equal(
+  (await Effect.runPromise(wholeEncodedChoice)).request.url,
+  "/pages/2/25",
+);
+const oneBothNames = [{ limit: 1, page_size: "02" }];
+assert.equal(
+  (await Effect.runPromise(Request.compile(lookup, { path: oneBothNames })))
+    .request.url,
+  "/pages/1",
+);
+
 // #region decoded-mapping
 interface FilterForm {
   readonly limit?: string;

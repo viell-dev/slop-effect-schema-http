@@ -141,9 +141,10 @@ choose a union member for certain, bind that member directly.
 
 Known violations of this rule remain in
 [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). In particular, giving a
-renamed field under both names still lets the decoded name win, and defaults hidden by group
-transformations or fallback routes can still replace raw edits. The rules and limits below state
-where the current checks apply.
+renamed field under both names can lose one value: a constructor/decoded read prefers the decoded
+name, while a whole encoded read uses the encoded name. Added whole-group validation can change that
+choice. Defaults hidden by group transformations or fallback routes can still replace raw edits. The
+rules and limits below state where the current checks apply.
 
 - **The decoded side is what the schema's constructor takes.** The library builds the schema's value
   before encoding it, so a plain object works for a `Schema.Class`, and a field with a constructor
@@ -242,8 +243,10 @@ where the current checks apply.
   go. A missing tag with a constructor default leaves that view possible; its default is not run to
   guess a member. A key set to `undefined` is no field at all, so `{ a, b: undefined, c }` reads as
   `{ a, c }`, and a member that states `b` cannot take the value from one that states `c`. An
-  encoded name beside its decoded twin is stripped too, under a union as under a struct: the whole
-  value is not on the encoded side, so the decoded name is the field.
+  encoded name beside its decoded twin can be stripped on a constructor/decoded route, under a union
+  as under a struct. A whole encoded read instead uses the encoded name, including when an ignored
+  alias elsewhere establishes the added validation route. Name selection does not prove that
+  supplied values agree; general conflicting-alias refusal remains under #143.
 - **A weak schema lets more through.** `Schema.NumberFromString` turns `"many"` into `NaN`, so
   `{ limit: "many" }` goes out as `limit=NaN`, and `Schema.FiniteFromString` refuses it. That is a
   property of the definition, and the library does not try to correct it.

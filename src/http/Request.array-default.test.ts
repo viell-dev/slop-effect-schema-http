@@ -604,6 +604,57 @@ describe("nested aliases below unchanged array positions", () => {
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "currently uses encoded names after a sibling enables whole array decoding",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Array(Inner);
+        for (const kind of ["path", "body"] as const)
+          for (const [input, output] of [
+            [[{ limit: 1, page_size: "02" }], [{ page_size: "1" }]],
+            [
+              [{ limit: 1, page_size: "02" }, {}],
+              [{ page_size: "1" }, { page_size: "25" }],
+            ],
+            [
+              [{ limit: 1, page_size: "02" }, { limit: 25 }],
+              [{ page_size: "1" }, { page_size: "25" }],
+            ],
+            [
+              [{ limit: 1, page_size: "02" }, { page_size: "25" }],
+              [{ page_size: "2" }, { page_size: "25" }],
+            ],
+            [
+              [{ page_size: "02" }, { page_size: "25" }],
+              [{ page_size: "2" }, { page_size: "25" }],
+            ],
+            [
+              [{ limit: 1 }, { limit: 25 }],
+              [{ page_size: "1" }, { page_size: "25" }],
+            ],
+          ])
+            expect(yield* prepare(schema, input, kind)).toEqual(output);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect.fails(
+    "refuses conflicting aliases beside an encoded-only array item",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* Effect.flip(
+            prepare(
+              Schema.Array(Inner),
+              [{ limit: 1, page_size: "02" }, { page_size: "25" }],
+              "path",
+            ),
+          ),
+        ).toBeInstanceOf(Schema.SchemaError);
+      }),
+  );
+
   it("declines an array-shaped union ancestor", () => {
     expect(
       nestedEncodedInput(Schema.Union([Schema.Array(Inner), Cursor]).ast),

@@ -83,7 +83,9 @@ export type QueryFields = Readonly<
  * encoded again, with no error. The type retains whole constructor and encoded input shapes,
  * including nested aliases in objects, lists, tuples and classes. Mixing by field stays one level
  * deep in the type; it does not recursively rebuild nested fields.
- * When both names of a renamed field are supplied, the decoded name still wins; give one name.
+ * When both names are supplied, a constructor/decoded read prefers the decoded name. A whole
+ * encoded read uses the encoded name instead, including after the added whole-group validation.
+ * Conflicting values are not generally refused; give one side's name or validate a decoded mapping.
  *
  * A helper accepting `Input` must handle both shapes, including nested encoded names. A helper
  * meant for decoded names only should declare that input shape explicitly and can supply it through
