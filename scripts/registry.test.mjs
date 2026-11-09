@@ -15,7 +15,7 @@ import { test } from "node:test";
 import { fileURLToPath, URL } from "node:url";
 import { verifyRegistry } from "./registry-verification.mjs";
 
-const { AbortSignal, Response, structuredClone } = globalThis;
+const { AbortSignal, DOMException, Response, structuredClone } = globalThis;
 
 const manifest = {
   name: "viell-effect-schema-http",
@@ -70,6 +70,9 @@ function harness(responses) {
   return {
     calls,
     delays,
+    advance: (duration) => {
+      elapsed += duration;
+    },
     options: {
       repository: "example/library",
       timeoutMs: 12,
@@ -118,6 +121,153 @@ test("#78 attestation retries use the time left after version propagation", asyn
   await assert.rejects(verifyRegistry(manifest, h.options), /deadline expired/);
   assert.deepEqual(h.delays, [5, 5, 2]);
   assert.equal(h.calls.length, 4);
+});
+
+test("#176 a version visibility deadline identifies attempts and consumed budget", async () => {
+  const h = harness(
+    Array.from({ length: 3 }, () => new Response(null, { status: 404 })),
+  );
+  await assert.rejects(verifyRegistry(manifest, h.options), (error) => {
+    assert.match(error.message, /Registry visibility deadline expired/);
+    assert.match(
+      error.message,
+      /version metadata: 3 attempts, last HTTP 404, 12ms/,
+    );
+    assert.match(error.message, /shared 12\/12ms elapsed, 0ms remaining/);
+    assert.doesNotMatch(error.message, /attestations:/);
+    return true;
+  });
+  assert.deepEqual(h.delays, [5, 5, 2]);
+  assert.equal(h.calls.length, 3);
+});
+
+test("#176 an attestation deadline distinguishes time spent waiting for the version", async () => {
+  const h = harness([
+    new Response(null, { status: 404 }),
+    Response.json(published),
+    new Response(null, { status: 404 }),
+    new Response(null, { status: 404 }),
+  ]);
+  await assert.rejects(verifyRegistry(manifest, h.options), (error) => {
+    assert.match(
+      error.message,
+      /version metadata: 2 attempts, last HTTP 200, 5ms/,
+    );
+    assert.match(error.message, /attestations: 2 attempts, last HTTP 404, 7ms/);
+    assert.match(error.message, /shared 12\/12ms elapsed, 0ms remaining/);
+    return true;
+  });
+  assert.deepEqual(h.delays, [5, 5, 2]);
+  assert.equal(h.calls.length, 4);
+});
+
+test("#176 the version response can consume the budget before attestations start", async () => {
+  const h = harness([
+    {
+      status: 200,
+      json: async () => {
+        h.advance(12);
+        return published;
+      },
+    },
+  ]);
+  await assert.rejects(verifyRegistry(manifest, h.options), (error) => {
+    assert.match(
+      error.message,
+      /version metadata: 1 attempt, last HTTP 200, 12ms/,
+    );
+    assert.match(
+      error.message,
+      /attestations: 0 attempts, last HTTP none, 0ms/,
+    );
+    assert.match(error.message, /shared 12\/12ms elapsed, 0ms remaining/);
+    return true;
+  });
+  assert.equal(h.calls.length, 1);
+  assert.deepEqual(h.delays, []);
+});
+
+test("#176 request and response-body timeouts retain their cause without retrying", async () => {
+  for (const phase of ["version metadata", "attestations"]) {
+    const cause = new DOMException("fixture timed out", "TimeoutError");
+    const h = harness(
+      phase === "attestations"
+        ? [
+            Response.json(published),
+            {
+              status: 200,
+              json: async () => {
+                h.advance(7);
+                throw cause;
+              },
+            },
+          ]
+        : [],
+    );
+    if (phase === "version metadata")
+      h.options.fetch = async (url) => {
+        h.calls.push(url);
+        h.advance(7);
+        throw cause;
+      };
+    await assert.rejects(verifyRegistry(manifest, h.options), (error) => {
+      assert.equal(error.cause, cause);
+      assert.match(
+        error.message,
+        new RegExp(`Registry ${phase} request failed`),
+      );
+      assert.match(error.message, /shared 7\/12ms elapsed, 5ms remaining/);
+      assert.match(
+        error.message,
+        phase === "attestations"
+          ? /attestations: 1 attempt, last HTTP 200, 7ms/
+          : /version metadata: 1 attempt, last HTTP none, 7ms/,
+      );
+      return true;
+    });
+    assert.equal(h.calls.length, phase === "attestations" ? 2 : 1);
+    assert.deepEqual(h.delays, []);
+  }
+});
+
+test("#176 a non-visibility HTTP failure includes its phase and stays terminal", async () => {
+  const h = harness([
+    Response.json(published),
+    new Response(null, { status: 503 }),
+  ]);
+  await assert.rejects(verifyRegistry(manifest, h.options), (error) => {
+    assert.match(error.message, /Registry request failed/);
+    assert.match(error.message, /attestations: 1 attempt, last HTTP 503, 0ms/);
+    return true;
+  });
+  assert.equal(h.calls.length, 2);
+  assert.deepEqual(h.delays, []);
+});
+
+test("#176 discarding a response can fail without losing request context", async () => {
+  const cause = new DOMException("discard interrupted", "AbortError");
+  const h = harness([
+    {
+      status: 404,
+      body: {
+        cancel: async () => {
+          h.advance(4);
+          throw cause;
+        },
+      },
+    },
+  ]);
+  await assert.rejects(verifyRegistry(manifest, h.options), (error) => {
+    assert.equal(error.cause, cause);
+    assert.match(
+      error.message,
+      /version metadata: 1 attempt, last HTTP 404, 4ms/,
+    );
+    assert.match(error.message, /shared 4\/12ms elapsed, 8ms remaining/);
+    return true;
+  });
+  assert.equal(h.calls.length, 1);
+  assert.deepEqual(h.delays, []);
 });
 test("#78 failures other than visibility never trigger retries", async () => {
   const wrongWorkflow = structuredClone(statement);
