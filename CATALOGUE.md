@@ -3707,10 +3707,14 @@ on that baseline. These checks do not establish general parent ownership or fiel
   nor serialized, and its cycle and object identities remain intact. Status: tested.
   - `[EXT-43l] unknown cyclic nested extras neither hide invalid aliases nor prevent valid paths`
 - **EXT-43m** Ordinary `StructWithRest` declares numeric `1` and string `"1"` with different
-  field schemas inside one parent-union member. Their shared JavaScript property identity does
-  not establish unambiguous ownership. Default/decoded controls precede the current invalid-text
-  overwrite pin and assert exact path, headers, empty body and counts. This remains a #170 defect,
-  not an intended guarantee; [P2's scope-admission report](https://github.com/viell-dev/slop-effect-schema-http/pull/186#issuecomment-6733312132)
-  requires preserving this prior route until a broader proof is accepted. The public path API
-  avoids Effect JSON-codec conversion's rejection of numeric AST field names. Status: defect.
+  field schemas. The combined test covers that member directly, under `Struct({ page: member })`,
+  and in a parent union. Each route first checks encoded/decoded/default controls and exact path,
+  headers, empty body and counts. Published 0.12 refuses bad `wire: "many"` in direct/wrapped forms;
+  candidate `1fe92e4` newly sends generated `25`. The parent union already substituted `25` on 0.12.
+  This is a newly exposed kept-or-refused defect under #170, not unchanged or intended behavior.
+  The [public disposition](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6733524389)
+  accepts excluding ambiguous declarations from the proof and retains broader correspondence work.
+  The public path API avoids Effect JSON-codec conversion's rejection of numeric AST field names.
+  Baseline and candidate reports are retained as `artifacts/parent-union-p2-direct-*`.
+  Status: defect.
   - `[EXT-43m] currently normalized numeric and string declarations retain their unproved overwrite`
