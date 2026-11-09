@@ -8,6 +8,10 @@ interface Node {
   readonly terminal?: CaptureTerminal;
   readonly names: ReadonlyArray<Key>;
   readonly fields: ReadonlyArray<readonly [Key, Node]>;
+  readonly array?: {
+    readonly elements: ReadonlyArray<Node | undefined>;
+    readonly rest: ReadonlyArray<Node | undefined>;
+  };
 }
 
 /** A selected path and write, never another candidate on a later check. */
@@ -28,11 +32,11 @@ const keyOf = (name: PropertyKey): Key =>
   typeof name === "number" ? String(name) : name;
 
 /** Retain the actual enumerable output link or write, including its object identity. */
-const writtenData = (output: unknown, key: Key) => {
+const writtenData = (output: unknown, key: Key, array = false) => {
   if (
     typeof output !== "object" ||
     output === null ||
-    Symbol.iterator in output
+    (array ? !Array.isArray(output) : Symbol.iterator in output)
   )
     return undefined;
   const prototype: unknown = Object.getPrototypeOf(output);
@@ -50,7 +54,7 @@ const writtenData = (output: unknown, key: Key) => {
         const current = Object.getOwnPropertyDescriptor(output, key);
         return (
           Object.getPrototypeOf(output) === prototype &&
-          !(Symbol.iterator in output) &&
+          (array ? Array.isArray(output) : !(Symbol.iterator in output)) &&
           current?.enumerable === true &&
           "value" in current &&
           Object.is(property.value, current.value) &&
@@ -65,12 +69,13 @@ const writtenData = (output: unknown, key: Key) => {
 };
 
 /** Data only; capture each shared ancestor prefix once, without copying the caller's values. */
-const ownData = (input: unknown, names: ReadonlyArray<Key>) => {
+const ownData = (input: unknown, names: ReadonlyArray<Key>, array = false) => {
   if (typeof input !== "object" || input === null) return undefined;
   const prototype: unknown = Object.getPrototypeOf(input);
   if (
-    (prototype !== Object.prototype && prototype !== null) ||
-    Symbol.iterator in input
+    (prototype !== (array ? Array.prototype : Object.prototype) &&
+      prototype !== null) ||
+    (array ? !Array.isArray(input) : Symbol.iterator in input)
   )
     return undefined;
   const keys = Reflect.ownKeys(input);
@@ -85,15 +90,36 @@ const ownData = (input: unknown, names: ReadonlyArray<Key>) => {
     )
   )
     return undefined;
+  const length: unknown = array ? properties.get("length")?.value : undefined;
+  if (
+    array &&
+    (typeof length !== "number" ||
+      !Number.isInteger(length) ||
+      length < 0 ||
+      length > 0xffff_ffff ||
+      properties.has(Symbol.iterator) ||
+      keys.filter((key) => {
+        if (typeof key !== "string") return false;
+        const index = Number(key);
+        return (
+          Number.isInteger(index) &&
+          index >= 0 &&
+          index < length &&
+          String(index) === key
+        );
+      }).length !== length)
+  )
+    return undefined;
   const absent = names.filter((name) => !properties.has(name));
   if (absent.some((name) => name in input)) return undefined;
   return {
     properties,
+    length: length as number | undefined,
     matches() {
       try {
         if (
           Object.getPrototypeOf(input) !== prototype ||
-          Symbol.iterator in input ||
+          (array ? !Array.isArray(input) : Symbol.iterator in input) ||
           absent.some((name) => name in input)
         )
           return false;
@@ -122,8 +148,9 @@ const ownData = (input: unknown, names: ReadonlyArray<Key>) => {
 };
 
 /**
- * Nested encoded-only evidence through unchanged closed object/union fields. A parent union
- * contributes a field only when every declaring member uses the same schema. No schema or thunk runs.
+ * Nested encoded-only evidence through unchanged object/union fields and dense array positions.
+ * A parent union contributes a field only when every declaring member uses the same schema.
+ * No schema or thunk runs.
  */
 export const nestedEncodedInput = (ast: SchemaAST.AST) => {
   type Fields = ReadonlyMap<Key, SchemaAST.AST | undefined>;
@@ -180,7 +207,6 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
     views.set(part, fields);
     return fields;
   };
-  if (fieldsOf(ast) === undefined) return undefined;
   const known = new Map<SchemaAST.AST, Node | undefined>();
   const active = new Set<SchemaAST.AST>();
   const nodeOf = (part: SchemaAST.AST, root = false): Node | undefined => {
@@ -192,6 +218,26 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
     const terminal = root ? undefined : encodedInput(part);
     if (terminal !== undefined) {
       const node = { terminal, names: [], fields: [] };
+      known.set(part, node);
+      return node;
+    }
+    if (part._tag === "Arrays" && part.encoding === undefined) {
+      active.add(part);
+      const elements = part.elements.map((element) => nodeOf(element));
+      const rest = part.rest.map((element) => nodeOf(element));
+      active.delete(part);
+      const node =
+        elements.every((element) => element === undefined) &&
+        rest.every((element) => element === undefined)
+          ? undefined
+          : {
+              names: Array.from(
+                { length: elements.length + Math.max(0, rest.length - 1) },
+                (_, index) => String(index),
+              ),
+              fields: [],
+              array: { elements, rest },
+            };
       known.set(part, node);
       return node;
     }
@@ -239,9 +285,25 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
         },
       };
     }
-    const data = ownData(input, node.names);
+    const positions = node.array;
+    const data = ownData(input, node.names, positions !== undefined);
     if (data === undefined) return undefined;
-    const children = node.fields.flatMap(([name, child]) => {
+    const fields = positions
+      ? Array.from({ length: data.length! }, (_, index) => {
+          const tail = Math.max(
+            positions.elements.length,
+            data.length! - Math.max(0, positions.rest.length - 1),
+          );
+          const child =
+            index < positions.elements.length
+              ? positions.elements[index]
+              : index >= tail
+                ? positions.rest[index - tail + 1]
+                : positions.rest[0];
+          return child === undefined ? [] : [[String(index), child] as const];
+        }).flat()
+      : node.fields;
+    const children = fields.flatMap(([name, child]) => {
       const property = data.properties.get(name);
       const captured =
         property === undefined ? undefined : capture(child, property.value);
@@ -255,11 +317,19 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
             !data.matches() ||
             typeof output !== "object" ||
             output === null ||
-            Symbol.iterator in output
+            (positions ? !Array.isArray(output) : Symbol.iterator in output)
+          )
+            return undefined;
+          const arrayOutput = positions
+            ? ownData(output, node.names, true)
+            : undefined;
+          if (
+            positions &&
+            (arrayOutput === undefined || arrayOutput.length !== data.length)
           )
             return undefined;
           for (const [name, child] of children) {
-            const written = writtenData(output, name);
+            const written = writtenData(output, name, positions !== undefined);
             if (written === undefined) continue;
             const selected = child.select(written.value);
             if (selected !== undefined) {
@@ -267,7 +337,10 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
                 key: selected.key,
                 matches: () => selected.matches() && data.matches(),
                 // Descendant reflection runs before rechecking the earlier links it may change.
-                written: () => selected.written() && written.matches(),
+                written: () =>
+                  selected.written() &&
+                  written.matches() &&
+                  (arrayOutput === undefined || arrayOutput.matches()),
               };
             }
           }
