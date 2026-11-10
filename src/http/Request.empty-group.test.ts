@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   Effect,
+  Option,
   Schema,
   SchemaGetter,
   SchemaIssue,
@@ -192,9 +193,9 @@ describe("preparation proof from a strictly empty transformed group", () => {
           toString: Schema.optionalKey(Schema.String).pipe(
             Schema.decodeTo(Schema.optionalKey(Schema.Unknown), {
               decode: SchemaGetter.passthrough(),
-              encode: SchemaGetter.transform((value) => {
+              encode: SchemaGetter.transformOptional((value) => {
                 encodes++;
-                return String(value);
+                return Option.some(String(Option.getOrUndefined(value)));
               }),
             }),
           ),
@@ -212,24 +213,14 @@ describe("preparation proof from a strictly empty transformed group", () => {
           "function toString()",
         );
         expect(encodes).toBe(baseline);
-        // Effect 4.1.3 omits this absent builtin name; older peers encode String(undefined).
-        // Only an actual generated field can contradict its raw removal.
-        const written = yield* Schema.encodeEffect(Inherited)(
-          Object.create(null),
-        );
-        const removed = Request.compile(
-          base.pipe(Request.removeQuery("page_size")),
-          { query: Object.create(null) },
-        );
-        if (Object.hasOwn(written, "page_size")) {
-          expect(written.page_size).toBe("undefined");
-          expect(yield* Effect.flip(removed)).toBeInstanceOf(
-            Request.InvalidRequest,
-          );
-        } else {
-          expect(written).toEqual({});
-          expect((yield* removed).request.url).toBe("/x");
-        }
+        // The getter explicitly writes String(undefined) for a missing value on every peer.
+        expect(
+          yield* Effect.flip(
+            Request.compile(base.pipe(Request.removeQuery("page_size")), {
+              query: Object.create(null),
+            }),
+          ),
+        ).toBeInstanceOf(Request.InvalidRequest);
       }),
   );
 
