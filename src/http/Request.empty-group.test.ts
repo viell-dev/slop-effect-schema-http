@@ -214,8 +214,9 @@ describe("preparation proof from a strictly empty transformed group", () => {
         expect(encodes).toBe(baseline);
         // Effect 4.1.3 omits this absent builtin name; older peers encode String(undefined).
         // Only an actual generated field can contradict its raw removal.
-        const absent = yield* Inherited.makeEffect(Object.create(null));
-        const written = yield* Schema.encodeEffect(Inherited)(absent);
+        const written = yield* Schema.encodeEffect(Inherited)(
+          Object.create(null),
+        );
         const removed = Request.compile(
           base.pipe(Request.removeQuery("page_size")),
           { query: Object.create(null) },
