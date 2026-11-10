@@ -1,5 +1,12 @@
 # Change history
 
+## Unreleased
+
+- Verify Effect 4.1.3 and its test helpers in development and the hostile suite (#142). Redirected
+  responses rejected unread now release before failure classification on that peer; Effect 4.1.2
+  retains the dependency limit. This is dependency verification and documentation maintenance, with
+  no change to the library runtime, public API or supported 4.0.7 peer floor.
+
 ## 0.16.1 — 2026-11-10
 
 Read [What's in
