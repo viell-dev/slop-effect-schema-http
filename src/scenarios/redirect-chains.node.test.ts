@@ -4,12 +4,10 @@
  * gives an opaque answer with no `Location`.
  *
  * The library promises that no live response crosses a failure boundary, because the attempt's scope
- * closes first. Effect keeps that with an abort controller tied to the request an attempt starts
- * with, and `followRedirects` makes a new request for each hop without carrying it over. A decoder
- * or client middleware that refuses the last hop's answer without reading it therefore leaves that
- * request running. A server cannot show this in a bounded time, since the response is released when
- * it is garbage collected, so these read each request's own abort signal at the moment the outcome
- * is classified, which is when the design says it is already over.
+ * closes first. Effect 4.1.3 attaches every executed request to that scope, including redirect hops.
+ * These check each abort signal when the outcome is classified, then require the last hop's socket
+ * to close before test cleanup. On Effect 4.1.2 the redirected signal stayed false and the connection
+ * remained open; the retained baseline is tracked in issue #142.
  */
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schedule } from "effect";
@@ -102,7 +100,7 @@ describe("what an attempt releases after a redirect (node)", () => {
   );
 
   it.live(
-    "[EXT-25h] currently, a redirected answer refused unread is still running when its outcome is classified, against the design's promise",
+    "[EXT-25h] a redirected answer refused unread is aborted before its outcome is classified",
     () =>
       Effect.gen(function* () {
         const backend = yield* lane.backend("bookings", chain);
@@ -121,12 +119,17 @@ describe("what an attempt releases after a redirect (node)", () => {
           kind: "DecodeError",
           status: 200,
         });
-        expect(seen).toEqual([[true, false]]);
+        expect(seen).toEqual([[true, true]]);
+        yield* Bookings.aborted(backend, 1);
+        expect((yield* backend.ledger).map(({ target }) => target)).toEqual([
+          "/v1/reports/today",
+          "/v1/manifest",
+        ]);
       }),
   );
 
   it.live(
-    "[EXT-25h] currently, so is one that filterStatusOk rejects after a redirect, the same thing through ordinary middleware",
+    "[EXT-25h] filterStatusOk releases a rejected redirected answer before its outcome is classified",
     () =>
       Effect.gen(function* () {
         const backend = yield* lane.backend("bookings", chain);
@@ -146,12 +149,17 @@ describe("what an attempt releases after a redirect (node)", () => {
           ),
         );
         expect(Bookings.described(error)).toEqual({ kind: "StatusCodeError" });
-        expect(seen).toEqual([[true, false]]);
+        expect(seen).toEqual([[true, true]]);
+        yield* Bookings.aborted(backend, 1);
+        expect((yield* backend.ledger).map(({ target }) => target)).toEqual([
+          "/v1/gone",
+          "/v1/bookings/missing",
+        ]);
       }),
   );
 
   it.live(
-    "[EXT-25h] currently, Effect alone does the same: withScope over followRedirects does not abort the last hop when its scope closes",
+    "[EXT-25h] Effect alone releases every redirect hop when withScope closes",
     () =>
       Effect.gen(function* () {
         const backend = yield* lane.backend("bookings", chain);
@@ -169,7 +177,12 @@ describe("what an attempt releases after a redirect (node)", () => {
             }),
           ),
         );
-        expect(watched.aborted()).toEqual([true, false]);
+        expect(watched.aborted()).toEqual([true, true]);
+        yield* Bookings.aborted(backend, 1);
+        expect((yield* backend.ledger).map(({ target }) => target)).toEqual([
+          "/v1/reports/today",
+          "/v1/manifest",
+        ]);
       }),
   );
 
