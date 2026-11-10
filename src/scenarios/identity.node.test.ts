@@ -105,9 +105,9 @@ describe(`identity provider (${lane.name} only)`, () => {
           expect(granted.value.session).toEqual(
             Option.map(session, (cookie) => cookie.value),
           );
-          // Effect's normalized map keeps one Set-Cookie value; only the parsed cookies are whole.
+          // Effect 4.1.3 keeps both values in its normalized map; parse the original cookie lines.
           expect(headers["set-cookie"]).toBe(
-            "IDPLB=node-3; Path=/; Expires=Fri, 01 Jan 2038 00:00:00 GMT",
+            `IDPSESSION=${Option.getOrThrow(session).value}; Path=/; HttpOnly; SameSite=Lax, IDPLB=node-3; Path=/; Expires=Fri, 01 Jan 2038 00:00:00 GMT`,
           );
           expect(
             Option.map(

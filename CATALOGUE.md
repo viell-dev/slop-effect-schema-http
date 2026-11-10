@@ -79,8 +79,9 @@ request`
   - `[HDR-1] refuses a scope containing a comma before dispatch`
   - Node-only: `[HDR-1] the line-preserving provider sends one scope per line and reads four
 granted lines`, `[HDR-1] parses each Set-Cookie line separately in Node, through both
-providers`. Observed: Effect's normalized `headers["set-cookie"]` keeps only the last line,
-    while `cookies` holds both.
+providers`. On Effect 4.1.3, normalized `headers["set-cookie"]` comma-joins both values instead of
+    keeping only the last line; `cookies` still parses the separate lines, including the comma in
+    `Expires`.
 - **PAY-9** A form-encoded grant beside a JSON grant, 415 when the wrong one is sent, and every
   response value a string, including the expiry. Status: tested.
   - `[PAY-9] sends grants form-encoded and decodes string values, including the expiry`
@@ -2647,21 +2648,18 @@ does to a booking shows in `GET /v1/bookings`.
   the chain of EXT-25g, with a decoder that refuses the last hop's answer without reading it, and
   `HttpClient.filterStatusOk` rejecting a 404 at the end of a chain. Library: no live response crosses
   a failure, because the attempt's scope closes and releases it before the outcome is classified.
-  That holds with no redirect: the request's abort signal is set when `while` runs, and the arrival
-  ends `aborted`. After a redirect it does not. The signals read `[true, false]` at that moment, so
-  the last hop's request is still running, the arrival still showed `aborted` false and its connection
-  open 1.5 seconds later, and only garbage collection or the end of the body releases it. The cause
-  is Effect's: `withScope` ties an abort controller to the request an attempt starts with, and
-  `followRedirects` makes a new request for each hop without carrying that controller over, as
-  `withCookiesRef` does. The last test shows it with no library at all, as
-  `HttpClient.withScope(HttpClient.followRedirects(client))`. An attempt timeout and an interruption
-  still end the body, because they reach it directly, so what stays open is an answer nothing is
-  reading. A suspected defect, tracked in
-  [#142](https://github.com/viell-dev/slop-effect-schema-http/issues/142). Status: defect.
+  Effect 4.1.3 attaches every executed request to the scope, including redirect hops. Both signals
+  read `[true, true]` when `while` runs, and the last hop's arrival ends `aborted` before test cleanup.
+  Exact ledger targets prove that the chain was followed. The Effect-only control also releases both
+  hops through `HttpClient.withScope(HttpClient.followRedirects(client))`; direct refusal and attempt
+  timeout remain controls. On Effect 4.1.2 the redirected signal stayed false and the connection
+  remained open. [#142](https://github.com/viell-dev/slop-effect-schema-http/issues/142) retains that
+  baseline and the upstream fix. This suite's assertions apply to its pinned 4.1.3 peer, not the
+  library's older supported peers. Status: tested.
   - `[EXT-25h] with no redirect a refused answer's request is aborted by the time its outcome is classified`
-  - `[EXT-25h] currently, a redirected answer refused unread is still running when its outcome is classified, against the design's promise`
-  - `[EXT-25h] currently, so is one that filterStatusOk rejects after a redirect, the same thing through ordinary middleware`
-  - `[EXT-25h] currently, Effect alone does the same: withScope over followRedirects does not abort the last hop when its scope closes`
+  - `[EXT-25h] a redirected answer refused unread is aborted before its outcome is classified`
+  - `[EXT-25h] filterStatusOk releases a rejected redirected answer before its outcome is classified`
+  - `[EXT-25h] Effect alone releases every redirect hop when withScope closes`
   - `[EXT-25h] an attempt timeout still ends a redirected answer, because interruption reaches its body`
 
 #### Failures that threaten later calls
