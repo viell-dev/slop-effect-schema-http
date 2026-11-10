@@ -212,14 +212,23 @@ describe("preparation proof from a strictly empty transformed group", () => {
           "function toString()",
         );
         expect(encodes).toBe(baseline);
-        // This encoder writes String(undefined) for the absent null-prototype value: generated output.
-        expect(
-          yield* Effect.flip(
-            Request.compile(base.pipe(Request.removeQuery("page_size")), {
-              query: Object.create(null),
-            }),
-          ),
-        ).toBeInstanceOf(Request.InvalidRequest);
+        // Effect 4.1.3 omits this absent builtin name; older peers encode String(undefined).
+        // Only an actual generated field can contradict its raw removal.
+        const absent = yield* Inherited.makeEffect(Object.create(null));
+        const written = yield* Schema.encodeEffect(Inherited)(absent);
+        const removed = Request.compile(
+          base.pipe(Request.removeQuery("page_size")),
+          { query: Object.create(null) },
+        );
+        if (Object.hasOwn(written, "page_size")) {
+          expect(written.page_size).toBe("undefined");
+          expect(yield* Effect.flip(removed)).toBeInstanceOf(
+            Request.InvalidRequest,
+          );
+        } else {
+          expect(written).toEqual({});
+          expect((yield* removed).request.url).toBe("/x");
+        }
       }),
   );
 
