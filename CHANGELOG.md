@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Develop and test against Effect 4.1.4 and its test helper. None of its changes touches the Schema
+  or HTTP code the library reads, and the supported 4.0.7 peer floor is unchanged.
 - Verify Effect 4.1.3 and its test helpers in development and the hostile suite (#142). Redirected
   responses rejected unread now release before failure classification on that peer; Effect 4.1.2
   retains the dependency limit. This is dependency verification and documentation maintenance, with
