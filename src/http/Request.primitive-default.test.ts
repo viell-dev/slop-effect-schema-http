@@ -1,5 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Schema, SchemaIssue, SchemaTransformation } from "effect";
+import {
+  Effect,
+  Schema,
+  SchemaAST,
+  SchemaIssue,
+  SchemaTransformation,
+} from "effect";
 import * as Body from "./Body.js";
 import { encodedInput } from "./internal/encoded-input.js";
 import { nestedEncodedInput } from "./internal/nested-input.js";
@@ -332,56 +338,184 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
     ).toBeUndefined();
   });
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  // Effect's own Literals, NullOr and NullishOr build these nested unions.
+  const nestedPrimitives = [
+    ["Union(String, Number)", Schema.Union([Schema.String, Schema.Number])],
+    ["Literals", Schema.Literals(["all", "none"])],
+    ["NullOr(String)", Schema.NullOr(Schema.String)],
+    ["NullishOr(Number)", Schema.NullishOr(Schema.Number)],
+    [
+      "doubly nested",
+      Schema.Union([Schema.Literals(["all"]), Schema.NullOr(Schema.Boolean)]),
+    ],
+  ] as const;
+  for (const [name, primitive] of nestedPrimitives) {
+    const terminal = Schema.Array(Schema.Union([primitive, Filter]));
+    const ancestor = Schema.Struct({
+      cell: Schema.Union([primitive, Schema.Struct({ filter: Filter })]),
+    });
+    for (const kind of ["path", "body"] as const) {
+      it.effect(
+        `${kind} refuses invalid aliases beside a nested ${name} alternative at both levels`,
+        () =>
+          Effect.gen(function* () {
+            for (const page_size of ["many", null]) {
+              expect(
+                yield* Effect.flip(prepare(terminal, [{ page_size }], kind)),
+              ).toBeInstanceOf(Schema.SchemaError);
+              expect(
+                yield* Effect.flip(
+                  prepare(ancestor, { cell: { filter: { page_size } } }, kind),
+                ),
+              ).toBeInstanceOf(Schema.SchemaError);
+            }
+          }),
+      );
+      it.effect(
+        `${kind} keeps controls beside a nested ${name} alternative at both levels`,
+        () =>
+          Effect.gen(function* () {
+            for (const [leaf, expected] of [
+              [{ page_size: "05" }, "5"],
+              [{ limit: 5 }, "5"],
+              [{}, "25"],
+            ] as const) {
+              expect(yield* prepare(terminal, [leaf], kind)).toEqual([
+                { page_size: expected },
+              ]);
+              expect(
+                yield* prepare(ancestor, { cell: { filter: leaf } }, kind),
+              ).toEqual({ cell: { filter: { page_size: expected } } });
+            }
+          }),
+      );
+    }
+  }
+
   it.effect(
-    "currently substitutes defaults below unsupported primitive-only union members at both levels",
+    "keeps scalar values of a nested primitive alternative unchanged",
     () =>
       Effect.gen(function* () {
-        const primitive = Schema.Union([Schema.String, Schema.Number]);
-        const terminal = Schema.Union([primitive, Filter]);
-        const ancestor = Schema.Struct({
-          cell: Schema.Union([primitive, Schema.Struct({ filter: Filter })]),
-        });
-        expect(encodedInput(terminal.ast)).toBeUndefined();
-        expect(nestedEncodedInput(Schema.Array(terminal).ast)).toBeUndefined();
-        expect(nestedEncodedInput(ancestor.ast)).toBeUndefined();
-        // A closed empty object is an object alternative, even though it declares no fields.
-        expect(
-          nestedEncodedInput(
-            Schema.Struct({
-              cell: Schema.Union([
-                Schema.Struct({}),
-                Schema.Struct({ filter: Filter }),
-              ]),
-            }).ast,
-          ),
-        ).toBeDefined();
-        for (const kind of ["path", "body"] as const)
-          for (const [input, expected] of [
-            [{ page_size: "many" }, "25"],
-            [{ page_size: "05" }, "5"],
-            [{}, "25"],
-          ] as const) {
-            expect(
-              yield* prepare(Schema.Array(terminal), [input], kind),
-            ).toEqual([{ page_size: expected }]);
-            expect(
-              yield* prepare(ancestor, { cell: { filter: input } }, kind),
-            ).toEqual({ cell: { filter: { page_size: expected } } });
-          }
-        const flat = Schema.Struct({
-          cell: Schema.Union([
-            Schema.String,
-            Schema.Number,
-            Schema.Struct({ filter: Filter }),
-          ]),
-        });
+        const schema = Schema.Array(
+          Schema.Union([Schema.Literals(["all", "none"]), Filter]),
+        );
         for (const kind of ["path", "body"] as const)
           expect(
-            yield* Effect.flip(
-              prepare(flat, { cell: { filter: { page_size: "many" } } }, kind),
-            ),
-          ).toBeInstanceOf(Schema.SchemaError);
+            yield* prepare(schema, ["all", { page_size: "05" }, "none"], kind),
+          ).toEqual(["all", { page_size: "5" }, "none"]);
+        expect(
+          yield* prepare(
+            Schema.Array(Schema.Union([Schema.NullOr(Schema.String), Filter])),
+            [null, "x", {}],
+            "path",
+          ),
+        ).toEqual([null, "x", { page_size: "25" }]);
+      }),
+  );
+
+  it("keeps a nested union outside the rule unless every member qualifies unencoded", () => {
+    const ObjectToText = Schema.Struct({ page_size: Schema.String }).pipe(
+      Schema.decodeTo(
+        Schema.NullOr(Schema.String),
+        SchemaTransformation.transform<
+          string | null,
+          { readonly page_size: string }
+        >({
+          decode: (value) => value.page_size,
+          encode: (value) => ({ page_size: value ?? "" }),
+        }),
+      ),
+    );
+    const TextToText = Schema.String.pipe(
+      Schema.decodeTo(
+        Schema.NullOr(Schema.String),
+        SchemaTransformation.transform<string | null, string>({
+          decode: (value) => (value === "" ? null : value),
+          encode: (value) => value ?? "",
+        }),
+      ),
+    );
+    for (const other of [
+      Schema.Union([Schema.String, Schema.Void]),
+      Schema.Union([Schema.String, Schema.FiniteFromString]),
+      Schema.NullOr(Schema.Unknown),
+      Schema.Union([Schema.String, Schema.suspend(() => Schema.Number)]),
+      // An encoded union can read an object on its encoded side, so encoding alone excludes it.
+      ObjectToText,
+      TextToText,
+    ]) {
+      const schema = Schema.Union([Filter, other]);
+      expect(encodedInput(schema.ast)).toBeUndefined();
+      expect(nestedEncodedInput(Schema.Array(schema).ast)).toBeUndefined();
+    }
+    for (const primitive of nestedPrimitives.map(([, schema]) => schema)) {
+      // A union of primitives alone is still no object view at either level.
+      expect(encodedInput(primitive.ast)).toBeUndefined();
+      expect(
+        encodedInput(Schema.Union([primitive, Schema.Null]).ast),
+      ).toBeUndefined();
+      expect(
+        nestedEncodedInput(Schema.Array(Schema.Union([primitive])).ast),
+      ).toBeUndefined();
+    }
+    // A closed empty object is an object alternative, even though it declares no fields.
+    expect(
+      nestedEncodedInput(
+        Schema.Struct({
+          cell: Schema.Union([
+            Schema.Struct({}),
+            Schema.Struct({ filter: Filter }),
+          ]),
+        }).ast,
+      ),
+    ).toBeDefined();
+  });
+
+  it("declines a mutated primitive union cycle and visits shared members once", () => {
+    const loop = new SchemaAST.Union([Schema.String.ast]);
+    Object.assign(loop, { types: [Schema.String.ast, loop] });
+    expect(
+      encodedInput(new SchemaAST.Union([Filter.ast, loop])),
+    ).toBeUndefined();
+    expect(
+      nestedEncodedInput(
+        new SchemaAST.Union([Schema.Struct({ filter: Filter }).ast, loop]),
+      ),
+    ).toBeUndefined();
+    // Forty levels of shared members would take 2^40 visits without the memo.
+    let shared: SchemaAST.AST = Schema.Literal("x").ast;
+    for (let level = 0; level < 40; level++)
+      shared = new SchemaAST.Union([shared, Schema.Null.ast, shared]);
+    expect(
+      encodedInput(new SchemaAST.Union([Filter.ast, shared])),
+    ).toBeDefined();
+  });
+
+  it.effect(
+    "substitutes the default beside an object-reading encoded union alternative as before",
+    () =>
+      Effect.gen(function* () {
+        // The second member reads { page_size } on its encoded side, so neither member owns the
+        // alias and the proof stays unavailable; the outcome is unchanged from earlier releases.
+        const ObjectToText = Schema.Struct({ page_size: Schema.String }).pipe(
+          Schema.decodeTo(
+            Schema.NullOr(Schema.String),
+            SchemaTransformation.transform<
+              string | null,
+              { readonly page_size: string }
+            >({
+              decode: (value) => value.page_size,
+              encode: (value) => ({ page_size: value ?? "" }),
+            }),
+          ),
+        );
+        expect(
+          yield* prepare(
+            Schema.Array(Schema.Union([Filter, ObjectToText])),
+            [{ page_size: "05" }],
+            "path",
+          ),
+        ).toEqual([{ page_size: "5" }]);
       }),
   );
 
