@@ -335,9 +335,9 @@ a guarantee that preparation refuses safely.
   the bounded proof; Void, open/opaque/suspended members, encoded primitives and encoded unions do
   not. A successful actual member-fieldwise reading is not reclassified as initial whole
   construction.
-- A Void member accepts any value on the decoded side, which preparation tries first. Beside an
-  object member it can take a supplied encoded object, even a valid one, and write `undefined`
-  (`null` in JSON). Leave Void out of input schemas, or supply decoded values.
+- A Void member accepts any value on the decoded side, which preparation tries first. Placed after
+  an object member, it can take a supplied encoded object, even a valid one, and write `undefined`
+  (`null` in JSON); placed first, it takes every object. Leave Void out of input schemas.
 - Inherited cells, accessors, subclasses, custom prototypes/iterators and changing paths do not
   establish the new array proof. Sparse own cells and exact native own iterator data do qualify. The
   [0.16 migration](./release-notes/0.16.md) covers newly refused aliases, whole-reading changes and

@@ -54,13 +54,14 @@ In an existing Node.js 24 or 26 ESM project with Effect `^4.0.7`, add the librar
 npm install viell-effect-schema-http
 ```
 
-`0.16.1` is the current release. The same package is available as a checksummed [GitHub release
-tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.16.1). This compatible
-patch lets eligible stacked query/header unions recover while retaining their parent validation.
-Read [What's in 0.16](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.16) for
-the checked example. Updating from `0.15` or earlier still includes 0.16.0's breaking
-constructor-alias validation: formerly accepted input can refuse or change its whole-decoding
-result. The article retains that migration and the broader default/alias-preservation limits.
+`0.17.0` is the current release. The same package is available as a checksummed [GitHub release
+tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.17.0). This is a
+breaking release. Read [What's in
+0.17](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.17) before updating from
+`0.16`: constructor-alias validation now recognises nested primitive alternatives such as
+`Schema.Literals([...])` and `Schema.NullOr(Schema.String)`, so an invalid encoded alias beside one
+refuses before dispatch instead of being replaced by a default. Broader default and
+alias-preservation limits remain active.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
@@ -79,8 +80,8 @@ versions and provider boundaries.
   Operation, Policy, Interaction, UrlEncoding and Transport, from basic use to advanced behavior.
 - [Limits and recovery](https://viell-dev.github.io/slop-effect-schema-http/limits): compatibility,
   where the library's promise stops, failure stages and bug reporting.
-- [What's in 0.16](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.16): the
-  compatible validated-union correction, grouped constructor-alias migration and remaining limits.
+- [What's in 0.17](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.17): nested
+  primitive alternatives in constructor-alias validation, migration and remaining limits.
 - [Release history](https://viell-dev.github.io/slop-effect-schema-http/release-notes/): earlier
   articles and a comparison of the related schema-input repairs.
 - [Versions](https://viell-dev.github.io/slop-effect-schema-http/versions): updates and
