@@ -4249,3 +4249,74 @@ remains intact. The app run is general installed-package compatibility evidence.
   refusal for all six layouts and both bindings. Each checks all four conflicting inputs and
   requires an empty ledger. Current success remains independently pinned above. Status: defect.
   - `[EXT-48d] goal ${binding} ${fixture.name} contradictory aliases refuse before dispatch`
+
+## Nested primitive alternatives (EXT-49)
+
+Independent consumer authorship from the accepted nested primitive alternative scope under
+[#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170), the library's public
+schema-input guide (its paragraph on unencoded primitive alternatives that cannot consume an object)
+and the README's [neutral echo contract](./README.md#the-neutral-echo-probe). No library
+implementation, source tests, backend or conformance code informed this context. The new
+`src/scenarios/nested-primitive-alternatives.test.ts` runs path and JSON-body operations through
+Fetch over real loopback sockets in Node and Chromium, and in packed mode. It checks exact method,
+target, relevant header lines, JSON bytes and request counts, and that caller input is unchanged.
+
+Each nested alternative, `Literals(["all", "none"])`, `NullOr(String)`, `NullishOr(Number)`,
+`Union([String, Number])` and the doubly nested `Union([Literals(["all"]), NullOr(Boolean)])`, sits
+beside EXT-47's `Filter` (decoded `limit`, encoded `page_size`, default `25`), with a flat
+`Literal("all")` reference. Each appears at three levels: the root union, a terminal array element,
+and a union ancestor holding `{ filter }`, in both member orders. EXT-49d to EXT-49f pin observed
+behaviour for members the guide excludes, each beside its flat counterpart.
+
+The baseline is library main `18a48908dca46544e68fe431947788233855c831`, without the change, with
+Effect 4.1.4 and Node 24.22.2 on Windows. There the Node lane fails exactly the 60 nested EXT-49b
+cases: five nested alternatives at three levels, in two orders and two bindings. Each sends the
+default `"25"` in place of the invalid alias. The flat reference refuses, and every EXT-49a,
+EXT-49c and EXT-49d to EXT-49f case passes, so the boundary pins predate the change. The report and
+log remain under `artifacts/nested-primitive-baseline-18a4890-*`.
+
+Verification on 2026-11-16 at `02312b4c09358482a38b2f76a25ee3395d28e2d6`, with Effect 4.1.4,
+Node 24.22.2 and Chromium 158 on Windows, passes all 198 EXT-49 cases ordinarily in Node, Chromium
+and packed mode, with zero skips. The full lanes pass Node (2,448 ordinary cases), Chromium (1,623)
+and packed (2,461), each with the 14 existing expected failures. Source and packed catalogue gates,
+`npm run check`, lint and strict packed declarations pass. Logs and copied JUnit reports remain
+under `artifacts/nested-primitive-02312b4-*`. These synthetic consumer checks do not establish other
+Effect peers or platforms, human use or release qualification.
+
+Integration pins CI to reviewed source `e345e3ef288f14f23ea1f9fd40ff47a61790bbb0`. Its review
+follow-up restructures the cycle guard without changing which unions qualify, and adds source tests
+and documentation; the 198 EXT-49 cases pass there in the Node lane. The pull request records fresh
+CI against this pin.
+
+- **EXT-49a** Every nested alternative and the flat reference, in both orders at all three levels,
+  retains encoded `"05"` to `"5"`, decoded `5` to `"5"` and omitted limit to default `"25"` bytes,
+  with exactly three requests per case. Status: tested.
+  - `[EXT-49a] ${binding} ${level.name} ${alternative.name} ${order} retains encoded decoded and omitted bytes`
+- **EXT-49b** The same shapes refuse invalid aliases `"many"` and `null` with `Schema.SchemaError`
+  before dispatch and leave the ledger empty. Status: tested.
+  - `[EXT-49b] ${binding} ${level.name} ${alternative.name} ${order} refuses invalid aliases before dispatch`
+- **EXT-49c** Each alternative's own values (`"all"`, `"none"`, `null`, `"x"`, `7`, `true`) go out
+  unchanged when interleaved with filter objects in one array, alone at the root and as the
+  ancestor's cell, in both orders. Each array keeps its filters on one side. An array that mixes
+  encoded-only `{ page_size: "05" }` with decoded-only `{ limit: 5 }` is refused with `SchemaError`
+  at the decoded item, for the flat reference too, as the guide's side-mixing limit allows.
+  Status: tested.
+  - `[EXT-49c] ${binding} ${alternative.name} ${order} scalars pass through beside filter objects`
+- **EXT-49d** `Union([Literals(["all"]), Void])` and flat `Void`, in either order at every level,
+  accept invalid aliases instead of refusing them and send what Void writes: in JSON `null`,
+  `[null]` and `{"cell":null}`; on the path `[null]`, `{}` and, through this consumer's JSON
+  template, the root text `undefined`. Placed first, they also take every valid control. The guide
+  excludes Void from the rule; this extends EXT-47l's flat Void-first behaviour. Status: limit.
+  - `[EXT-49d] currently ${binding} ${level.name} ${order} a Void-containing alternative consumes invalid aliases like flat Void`
+- **EXT-49e** Placed after the object, the same Void alternatives still capture a valid encoded
+  alias: `{ page_size: "05" }` is sent as Void's output instead of `"5"`, while decoded
+  `{ limit: 5 }` and omitted `{}` reach `Filter`. The caller's valid value is dropped without a
+  refusal, contrary to the guide's promise that a given field is kept or the request refused.
+  Trying the decoded side first appears to let Void win before the encoded reading is tried. Flat
+  Void does the same, so this does not depend on nesting. Suspected defect. Status: defect.
+  - `[EXT-49e] currently ${binding} ${level.name} a Void-containing alternative after the object captures a valid encoded alias like flat Void`
+- **EXT-49f** `Union([Literals(["all"]), FiniteFromString])` and flat `FiniteFromString` keep the
+  valid controls but let the constructor default replace invalid aliases: `"many"` and `null` go
+  out as `"25"` at every level, in both orders and bindings. The guide excludes encoded primitives
+  from the rule and leaves such ignored aliases as unsupported paths under #170. Status: defect.
+  - `[EXT-49f] currently ${binding} ${level.name} ${order} an encoded-primitive alternative lets the default replace invalid aliases like flat FiniteFromString`
