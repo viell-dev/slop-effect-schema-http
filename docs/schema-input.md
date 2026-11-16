@@ -96,12 +96,15 @@ finite closed object/union names: it supplies an encoded-only name and no decode
 Unencoded primitive alternatives that cannot consume an object contribute no object fields or names.
 This includes the Undefined/Null members of optional, nullable and nullish object schemas. The
 allow-list is String, Number, Boolean, BigInt, Symbol, UniqueSymbol, Literal, Enum, TemplateLiteral,
-Null, Undefined and Never. Void, encoded primitives, primitive encoding intermediates,
-open/opaque/suspended alternatives and array-shaped parent members do not qualify. The object
-members retain the same field-identity and closed-name rules. An alternative that is itself a
-primitive-only union supplies no object view at either level. A codec's closed object encoding view
-may include the listed primitive alternatives, such as `NullOr(Struct)`; this can establish root or
-terminal evidence too.
+Null, Undefined and Never. An unencoded union whose members all qualify counts as one such
+alternative, at any depth. Effect builds `Schema.Literals([...])`, `Schema.NullOr(Schema.String)`
+and `Schema.NullishOr(Schema.Number)` this way, so `Union([Filter, Schema.Literals(["all"])])`
+behaves like the flat `Union([Filter, Schema.Literal("all")])`. Void, encoded primitives, encoded
+unions, unions with any other member, primitive encoding intermediates, open/opaque/suspended
+alternatives and array-shaped parent members do not qualify. The object members retain the same
+field-identity and closed-name rules. A union of primitives alone still supplies no object view at
+either level. A codec's closed object encoding view may include the listed primitive alternatives,
+such as `NullOr(Struct)`; this can establish root or terminal evidence too.
 
 ### Initial whole construction
 
