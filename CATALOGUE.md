@@ -4297,10 +4297,10 @@ CI against this pin.
   - `[EXT-49b] ${binding} ${level.name} ${alternative.name} ${order} refuses invalid aliases before dispatch`
 - **EXT-49c** Each alternative's own values (`"all"`, `"none"`, `null`, `"x"`, `7`, `true`) go out
   unchanged when interleaved with filter objects in one array, alone at the root and as the
-  ancestor's cell, in both orders. Each array keeps its filters on one side. An array that mixes
-  encoded-only `{ page_size: "05" }` with decoded-only `{ limit: 5 }` is refused with `SchemaError`
-  at the decoded item, for the flat reference too, as the guide's side-mixing limit allows.
-  Status: tested.
+  ancestor's cell, in both orders. Each array keeps its filters on one side. An array mixing
+  encoded-only `{ page_size: "05" }` with decoded-only `{ limit: 5 }` was observed to refuse with
+  `SchemaError` at the decoded item, for the flat reference too; these cases do not assert that
+  refusal, which the library's source tests and 0.17 migration example check. Status: tested.
   - `[EXT-49c] ${binding} ${alternative.name} ${order} scalars pass through beside filter objects`
 - **EXT-49d** `Union([Literals(["all"]), Void])` and flat `Void`, in either order at every level,
   accept invalid aliases instead of refusing them and send what Void writes: in JSON `null`,
@@ -4313,7 +4313,9 @@ CI against this pin.
   `{ limit: 5 }` and omitted `{}` reach `Filter`. The caller's valid value is dropped without a
   refusal, contrary to the guide's promise that a given field is kept or the request refused.
   Trying the decoded side first appears to let Void win before the encoded reading is tried. Flat
-  Void does the same, so this does not depend on nesting. Suspected defect. Status: defect.
+  Void does the same, so this does not depend on nesting. The library's schema-input guide lists it
+  as an active limit, and [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6927680569)
+  records its disposition. Status: defect.
   - `[EXT-49e] currently ${binding} ${level.name} a Void-containing alternative after the object captures a valid encoded alias like flat Void`
 - **EXT-49f** `Union([Literals(["all"]), FiniteFromString])` and flat `FiniteFromString` keep the
   valid controls but let the constructor default replace invalid aliases: `"many"` and `null` go
