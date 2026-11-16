@@ -433,6 +433,15 @@ test("a release correction permits embedded examples but refuses software and pu
     assert.doesNotThrow(() =>
       verifyDocumentationCorrection("0.16.0", migrationCorrection, git),
     );
+    git(["tag", "0.17.0"]);
+    writeFileSync(
+      join(root, "examples/migration-0-17.ts"),
+      "// Corrected embedded migration\n",
+    );
+    const nextMigrationCorrection = commit();
+    assert.doesNotThrow(() =>
+      verifyDocumentationCorrection("0.17.0", nextMigrationCorrection, git),
+    );
     writeFileSync(
       join(root, "examples/release-check.mjs"),
       "// Changed release asset\n",
@@ -448,7 +457,7 @@ test("a release correction permits embedded examples but refuses software and pu
       ".github/workflows/pages.yml",
       "examples/guides.mjs",
       "examples/not-embedded.ts",
-      "examples/migration-0-17.ts",
+      "examples/migration-0-18.ts",
       "docs/../package.json",
     ]) {
       assert.throws(

@@ -1,18 +1,23 @@
 # Change history
 
-## Unreleased
+## 0.17.0 — 2026-11-16
+
+Read [What's in 0.17](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.17) for
+the nested primitive alternative migration and remaining limits.
 
 - **Breaking:** treat an unencoded union of primitive alternatives, such as `Schema.Literals([...])`
   or `Schema.NullOr(Schema.String)`, like its flat members when validating constructor aliases,
   including inside a codec's closed object encoding view (#170). An invalid encoded alias beside
   such an alternative now refuses before dispatch instead of being replaced by an optional
-  constructor default. Valid encoded and decoded values, omissions and the alternative's own scalar
-  values keep their results. Encoded unions and unions with any other member stay outside the rule.
+  constructor default. A value mixing encoded-only and decoded-only items there now refuses too; on
+  0.16 a valid alias in it was replaced by the default. Valid values supplied on one side, omissions
+  and the alternative's own scalar values keep their results. Encoded unions and unions with any
+  other member stay outside the rule.
 - Develop and test against Effect 4.1.4 and its test helper. None of its changes touches the Schema
   or HTTP code the library reads, and the supported 4.0.7 peer floor is unchanged.
 - Verify Effect 4.1.3 and its test helpers in development and the hostile suite (#142). Redirected
-  responses rejected unread now release before failure classification on that peer; Effect 4.1.2
-  retains the dependency limit. This is dependency verification and documentation maintenance, with
+  responses rejected unread now release before failure classification on that peer; earlier peers
+  retain the dependency limit. This is dependency verification and documentation maintenance, with
   no change to the library runtime, public API or supported 4.0.7 peer floor.
 
 ## 0.16.1 — 2026-11-10

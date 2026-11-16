@@ -17,7 +17,7 @@ by this project's tests.
 
 ### Tested configurations
 
-The release checks run on Node.js 24.22.2 and the newest Node.js 26, with Effect 4.0.7 and 4.1.2 and
+The release checks run on Node.js 24.22.2 and the newest Node.js 26, with Effect 4.0.7 and 4.1.4 and
 strict TypeScript consumers using 6.0.3 and 7.0.2. These are verification results, not additional
 packages to install. The [contributor
 guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md#hostile-server-integration-tests)
@@ -164,13 +164,14 @@ refuses what no longer fits it.
 
 #### A redirected response can stay open
 
-With Effect 4.1.2, after `HttpClient.followRedirects`, an attempt's scope does not release the last
-hop's response, because of how Effect ties its abort signal to the first request
+Before Effect 4.1.3, after `HttpClient.followRedirects`, an attempt's scope does not release the
+last hop's response, because of how Effect ties its abort signal to the first request
 ([#142](https://github.com/viell-dev/slop-effect-schema-http/issues/142)). A response nobody reads,
 such as one a decoder refuses unread or `HttpClient.filterStatusOk` rejects, stays open until
-garbage collection. A timeout or an interruption still ends it. Effect 4.1.3 fixes this by attaching
-every request sent during execution to the scope, including each redirect hop. Upgrade Effect to
-4.1.3 or later for that cleanup guarantee; the library's peer floor remains 4.0.7.
+garbage collection. A timeout or an interruption still ends it. This was reproduced with 4.1.2;
+4.0.7 uses the same scoping code. Effect 4.1.3 fixes this by attaching every request sent during
+execution to the scope, including each redirect hop. Upgrade Effect to 4.1.3 or later for that
+cleanup guarantee; the library's peer floor remains 4.0.7.
 
 ## Identify the failure stage
 
