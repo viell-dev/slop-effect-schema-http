@@ -350,16 +350,20 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
     ],
   ] as const;
   for (const [name, primitive] of nestedPrimitives) {
-    const terminal = Schema.Array(Schema.Union([primitive, Filter]));
+    const root = Schema.Union([primitive, Filter]);
+    const terminal = Schema.Array(root);
     const ancestor = Schema.Struct({
       cell: Schema.Union([primitive, Schema.Struct({ filter: Filter })]),
     });
     for (const kind of ["path", "body"] as const) {
       it.effect(
-        `${kind} refuses invalid aliases beside a nested ${name} alternative at both levels`,
+        `${kind} refuses invalid aliases beside a nested ${name} alternative at every level`,
         () =>
           Effect.gen(function* () {
             for (const page_size of ["many", null]) {
+              expect(
+                yield* Effect.flip(prepare(root, { page_size }, kind)),
+              ).toBeInstanceOf(Schema.SchemaError);
               expect(
                 yield* Effect.flip(prepare(terminal, [{ page_size }], kind)),
               ).toBeInstanceOf(Schema.SchemaError);
@@ -372,7 +376,7 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
           }),
       );
       it.effect(
-        `${kind} keeps controls beside a nested ${name} alternative at both levels`,
+        `${kind} keeps controls beside a nested ${name} alternative at every level`,
         () =>
           Effect.gen(function* () {
             for (const [leaf, expected] of [
@@ -380,6 +384,9 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
               [{ limit: 5 }, "5"],
               [{}, "25"],
             ] as const) {
+              expect(yield* prepare(root, leaf, kind)).toEqual({
+                page_size: expected,
+              });
               expect(yield* prepare(terminal, [leaf], kind)).toEqual([
                 { page_size: expected },
               ]);
