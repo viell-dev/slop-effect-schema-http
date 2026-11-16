@@ -103,8 +103,9 @@ behaves like the flat `Union([Filter, Schema.Literal("all")])`. Void, encoded pr
 unions, unions with any other member, primitive encoding intermediates, open/opaque/suspended
 alternatives and array-shaped parent members do not qualify. The object members retain the same
 field-identity and closed-name rules. A union of primitives alone still supplies no object view at
-either level. A codec's closed object encoding view may include the listed primitive alternatives,
-such as `NullOr(Struct)`; this can establish root or terminal evidence too.
+either level. A codec's closed object encoding view may include these alternatives, such as
+`NullOr(Struct)` or `Union([Struct, Schema.Literals([...])])`; this can establish root or terminal
+evidence too.
 
 ### Initial whole construction
 
@@ -330,9 +331,13 @@ a guarantee that preparation refuses safely.
   key, cannot establish an unchanged nested path. The ambiguity guard can therefore leave a supplied
   invalid alias replaced by a generated default.
 - Unsupported object alternatives and construction phases can still lose aliases. Optional,
-  nullable/nullish and the listed primitive alternatives extend the bounded proof; Void,
-  open/opaque/suspended members and encoded primitives do not. A successful actual member-fieldwise
-  reading is not reclassified as initial whole construction.
+  nullable/nullish and the listed primitive alternatives, including unencoded unions of them, extend
+  the bounded proof; Void, open/opaque/suspended members, encoded primitives and encoded unions do
+  not. A successful actual member-fieldwise reading is not reclassified as initial whole
+  construction.
+- A Void member accepts any value on the decoded side, which preparation tries first. Beside an
+  object member it can take a supplied encoded object, even a valid one, and write `undefined`
+  (`null` in JSON). Leave Void out of input schemas, or supply decoded values.
 - Inherited cells, accessors, subclasses, custom prototypes/iterators and changing paths do not
   establish the new array proof. Sparse own cells and exact native own iterator data do qualify. The
   [0.16 migration](./release-notes/0.16.md) covers newly refused aliases, whole-reading changes and

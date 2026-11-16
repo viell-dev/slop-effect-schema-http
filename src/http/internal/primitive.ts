@@ -15,21 +15,20 @@ const nonObjectTags: ReadonlySet<SchemaAST.AST["_tag"]> = new Set([
   "Never",
 ]);
 
-const qualifies = (
-  ast: SchemaAST.AST,
-  active: Set<SchemaAST.AST>,
+const isPrimitiveUnion = (
+  ast: SchemaAST.Union,
   known: Map<SchemaAST.AST, boolean>,
 ): boolean => {
-  if (ast.encoding !== undefined) return false;
-  if (nonObjectTags.has(ast._tag)) return true;
-  if (ast._tag !== "Union") return false;
   const cached = known.get(ast);
   if (cached !== undefined) return cached;
-  // Only a mutated AST forms a union cycle; decline it instead of recursing forever.
-  if (active.has(ast)) return false;
-  active.add(ast);
-  const result = ast.types.every((member) => qualifies(member, active, known));
-  active.delete(ast);
+  // Only a mutated AST forms a union cycle. Seeding false declines it when it is reached again.
+  known.set(ast, false);
+  const result = ast.types.every(
+    (member) =>
+      member.encoding === undefined &&
+      (nonObjectTags.has(member._tag) ||
+        (member._tag === "Union" && isPrimitiveUnion(member, known))),
+  );
   known.set(ast, result);
   return result;
 };
@@ -41,4 +40,6 @@ const qualifies = (
  * `Schema.NullOr(Schema.String)` read like their flat members. Shared members are visited once.
  */
 export const isNonObjectAlternative = (ast: SchemaAST.AST): boolean =>
-  qualifies(ast, new Set(), new Map());
+  ast.encoding === undefined &&
+  (nonObjectTags.has(ast._tag) ||
+    (ast._tag === "Union" && isPrimitiveUnion(ast, new Map())));

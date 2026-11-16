@@ -348,9 +348,16 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
       "doubly nested",
       Schema.Union([Schema.Literals(["all"]), Schema.NullOr(Schema.Boolean)]),
     ],
+    [
+      "checked Literals",
+      Schema.Literals(["all", "none"]).check(Schema.makeFilter(() => true)),
+    ],
+    ["oneOf", Schema.Union([Schema.String, Schema.Number], { mode: "oneOf" })],
+    ["empty Literals", Schema.Literals([])],
   ] as const;
   for (const [name, primitive] of nestedPrimitives) {
     const root = Schema.Union([primitive, Filter]);
+    const objectFirst = Schema.Union([Filter, primitive]);
     const terminal = Schema.Array(root);
     const ancestor = Schema.Struct({
       cell: Schema.Union([primitive, Schema.Struct({ filter: Filter })]),
@@ -361,9 +368,10 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
         () =>
           Effect.gen(function* () {
             for (const page_size of ["many", null]) {
-              expect(
-                yield* Effect.flip(prepare(root, { page_size }, kind)),
-              ).toBeInstanceOf(Schema.SchemaError);
+              for (const schema of [root, objectFirst])
+                expect(
+                  yield* Effect.flip(prepare(schema, { page_size }, kind)),
+                ).toBeInstanceOf(Schema.SchemaError);
               expect(
                 yield* Effect.flip(prepare(terminal, [{ page_size }], kind)),
               ).toBeInstanceOf(Schema.SchemaError);
@@ -384,9 +392,10 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
               [{ limit: 5 }, "5"],
               [{}, "25"],
             ] as const) {
-              expect(yield* prepare(root, leaf, kind)).toEqual({
-                page_size: expected,
-              });
+              for (const schema of [root, objectFirst])
+                expect(yield* prepare(schema, leaf, kind)).toEqual({
+                  page_size: expected,
+                });
               expect(yield* prepare(terminal, [leaf], kind)).toEqual([
                 { page_size: expected },
               ]);
@@ -420,34 +429,35 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
       }),
   );
 
+  // An encoded union can read an object on its encoded side, so encoding alone excludes it.
+  const ObjectToText = Schema.Struct({ page_size: Schema.String }).pipe(
+    Schema.decodeTo(
+      Schema.NullOr(Schema.String),
+      SchemaTransformation.transform<
+        string | null,
+        { readonly page_size: string }
+      >({
+        decode: (value) => value.page_size,
+        encode: (value) => ({ page_size: value ?? "" }),
+      }),
+    ),
+  );
+  const TextToText = Schema.String.pipe(
+    Schema.decodeTo(
+      Schema.NullOr(Schema.String),
+      SchemaTransformation.transform<string | null, string>({
+        decode: (value) => (value === "" ? null : value),
+        encode: (value) => value ?? "",
+      }),
+    ),
+  );
+
   it("keeps a nested union outside the rule unless every member qualifies unencoded", () => {
-    const ObjectToText = Schema.Struct({ page_size: Schema.String }).pipe(
-      Schema.decodeTo(
-        Schema.NullOr(Schema.String),
-        SchemaTransformation.transform<
-          string | null,
-          { readonly page_size: string }
-        >({
-          decode: (value) => value.page_size,
-          encode: (value) => ({ page_size: value ?? "" }),
-        }),
-      ),
-    );
-    const TextToText = Schema.String.pipe(
-      Schema.decodeTo(
-        Schema.NullOr(Schema.String),
-        SchemaTransformation.transform<string | null, string>({
-          decode: (value) => (value === "" ? null : value),
-          encode: (value) => value ?? "",
-        }),
-      ),
-    );
     for (const other of [
       Schema.Union([Schema.String, Schema.Void]),
       Schema.Union([Schema.String, Schema.FiniteFromString]),
       Schema.NullOr(Schema.Unknown),
       Schema.Union([Schema.String, Schema.suspend(() => Schema.Number)]),
-      // An encoded union can read an object on its encoded side, so encoding alone excludes it.
       ObjectToText,
       TextToText,
     ]) {
@@ -499,30 +509,56 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
   });
 
   it.effect(
-    "substitutes the default beside an object-reading encoded union alternative as before",
+    "lets an object-reading encoded union alternative keep the alias it reads",
     () =>
       Effect.gen(function* () {
-        // The second member reads { page_size } on its encoded side, so neither member owns the
-        // alias and the proof stays unavailable; the outcome is unchanged from earlier releases.
-        const ObjectToText = Schema.Struct({ page_size: Schema.String }).pipe(
-          Schema.decodeTo(
-            Schema.NullOr(Schema.String),
-            SchemaTransformation.transform<
-              string | null,
-              { readonly page_size: string }
-            >({
-              decode: (value) => value.page_size,
-              encode: (value) => ({ page_size: value ?? "" }),
-            }),
-          ),
-        );
-        expect(
-          yield* prepare(
-            Schema.Array(Schema.Union([Filter, ObjectToText])),
-            [{ page_size: "05" }],
-            "path",
-          ),
-        ).toEqual([{ page_size: "5" }]);
+        // The second member reads { page_size } on its encoded side, so it can hold invalid
+        // text that Filter refuses. Its own reading applies, as it did before.
+        const schema = Schema.Array(Schema.Union([Filter, ObjectToText]));
+        for (const kind of ["path", "body"] as const) {
+          expect(yield* prepare(schema, [{ page_size: "05" }], kind)).toEqual([
+            { page_size: "5" },
+          ]);
+          expect(yield* prepare(schema, [{ page_size: "many" }], kind)).toEqual(
+            [{ page_size: "many" }],
+          );
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect(
+    "currently substitutes defaults beside encoded primitive alternatives",
+    () =>
+      Effect.gen(function* () {
+        for (const other of [TextToText, Schema.FiniteFromString])
+          for (const kind of ["path", "body"] as const) {
+            const schema = Schema.Array(Schema.Union([Filter, other]));
+            expect(
+              yield* prepare(schema, [{ page_size: "many" }], kind),
+            ).toEqual([{ page_size: "25" }]);
+            expect(yield* prepare(schema, [{ page_size: "05" }], kind)).toEqual(
+              [{ page_size: "5" }],
+            );
+          }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect.fails(
+    "refuses invalid aliases beside encoded primitive alternatives",
+    () =>
+      Effect.gen(function* () {
+        for (const other of [TextToText, Schema.FiniteFromString])
+          expect(
+            yield* Effect.flip(
+              prepare(
+                Schema.Array(Schema.Union([Filter, other])),
+                [{ page_size: "many" }],
+                "path",
+              ),
+            ),
+          ).toBeInstanceOf(Schema.SchemaError);
       }),
   );
 
@@ -545,6 +581,52 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
             >({
               decode: (value) =>
                 value === null || Number.isNaN(Number(value.page_size))
+                  ? Effect.fail(
+                      new SchemaIssue.InvalidValue({ message: "not a number" }),
+                    )
+                  : Effect.succeed({ limit: Number(value.page_size) }),
+              encode: (value) =>
+                Effect.succeed({ page_size: String(value.limit) }),
+            }),
+          ),
+        );
+        expect(encodedInput(schema.ast)).toBeDefined();
+        for (const kind of ["path", "body"] as const) {
+          expect(
+            yield* Effect.flip(prepare(schema, { page_size: "many" }, kind)),
+          ).toBeInstanceOf(Schema.SchemaError);
+          for (const [input, expected] of [
+            [{ page_size: "05" }, "5"],
+            [{ limit: 5 }, "5"],
+            [{}, "25"],
+          ] as const)
+            expect(yield* prepare(schema, input, kind)).toEqual({
+              page_size: expected,
+            });
+        }
+      }),
+  );
+
+  it.effect(
+    "validates an alias through a closed object encoding view beside nested literals",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Union([
+          Schema.Struct({ page_size: Schema.String }),
+          Schema.Literals(["none"]),
+        ]).pipe(
+          Schema.decodeTo(
+            Schema.Struct({
+              limit: Schema.optionalKey(Schema.Number).pipe(
+                Schema.withConstructorDefault(Effect.succeed(25)),
+              ),
+            }),
+            SchemaTransformation.transformEffect<
+              { readonly limit?: number },
+              { readonly page_size: string } | "none"
+            >({
+              decode: (value) =>
+                value === "none" || Number.isNaN(Number(value.page_size))
                   ? Effect.fail(
                       new SchemaIssue.InvalidValue({ message: "not a number" }),
                     )

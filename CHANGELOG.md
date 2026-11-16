@@ -3,11 +3,11 @@
 ## Unreleased
 
 - **Breaking:** treat an unencoded union of primitive alternatives, such as `Schema.Literals([...])`
-  or `Schema.NullOr(Schema.String)`, like its flat members when validating constructor aliases
-  (#170). An invalid encoded alias beside such an alternative now refuses before dispatch instead of
-  being replaced by an optional constructor default. Valid encoded and decoded values, omissions and
-  the alternative's own scalar values keep their results. Encoded unions and unions with any other
-  member stay outside the rule.
+  or `Schema.NullOr(Schema.String)`, like its flat members when validating constructor aliases,
+  including inside a codec's closed object encoding view (#170). An invalid encoded alias beside
+  such an alternative now refuses before dispatch instead of being replaced by an optional
+  constructor default. Valid encoded and decoded values, omissions and the alternative's own scalar
+  values keep their results. Encoded unions and unions with any other member stay outside the rule.
 - Develop and test against Effect 4.1.4 and its test helper. None of its changes touches the Schema
   or HTTP code the library reads, and the supported 4.0.7 peer floor is unchanged.
 - Verify Effect 4.1.3 and its test helpers in development and the hostile suite (#142). Redirected
