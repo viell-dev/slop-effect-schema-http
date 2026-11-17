@@ -81,9 +81,10 @@ export type QueryFields = Readonly<
  * goes on the wire, and {@link path}, {@link query}, {@link headers} and the schema body encoders
  * all take it. The request always carries what the schema writes.
  *
- * Preparation tries the decoded side first, then the decoder as a whole, then the decoder field by
- * field. If all fail, it reports the decoded side's error, a `SchemaError` before dispatch. Both
- * routes validate the values they consume. Unsupported constructor-default paths below can still
+ * Preparation tries the decoded side first, then the decoder as a whole, then, for an object that
+ * is not a list, the decoder field by field. If all fail, it reports the decoded side's error, a
+ * `SchemaError` before dispatch. Both routes validate the values they consume. A list stays a
+ * list: a record or struct member beside it cannot take it as an object keyed by its indexes. Unsupported constructor-default paths below can still
  * ignore a supplied alias. A weak schema also lets more through:
  * `Schema.NumberFromString` turns `"many"` into `NaN`, and `Schema.FiniteFromString` refuses it.
  *

@@ -72,6 +72,10 @@ export type Input<S extends Schema.Top> = EitherSide<
  * through the decoder as a whole, then field by field. Both routes validate, and a value that fits
  * neither fails with the decoded side's error, so existing failures read the same. `options` go to
  * every parse.
+ *
+ * A list has no fields, so it is never read field by field, at any depth: that route copies the
+ * value into a new object, and a record or a struct could take the copy in the list's place. Union
+ * members are still tried in turn, each by the same rules, so a list stays a list or is refused.
  */
 export const toDecoded = <S extends Schema.Top>(
   contract: S,
@@ -106,6 +110,7 @@ export const toDecoded = <S extends Schema.Top>(
   });
   const byMember = (
     input: object,
+    failure: Schema.SchemaError,
     parseOptions?: SchemaAST.ParseOptions,
     onFieldwise?: () => void,
   ) =>
@@ -115,7 +120,10 @@ export const toDecoded = <S extends Schema.Top>(
             fromPart(member, input, parseOptions, onFieldwise),
           ),
         )
-      : byField(input, parseOptions, onFieldwise);
+      : // A copy of a list is an object keyed by its indexes, which a record or a struct could take.
+        Array.isArray(input)
+        ? Effect.fail(failure)
+        : byField(input, parseOptions, onFieldwise);
   return (
     input: Input<S>,
     onConstructed?: () => void,
@@ -132,7 +140,7 @@ export const toDecoded = <S extends Schema.Top>(
         Effect.mapError(
           Effect.catch(decode(input, parseOptions), (encodedFailure) =>
             typeof input === "object" && input !== null
-              ? byMember(input, parseOptions, onFieldwise)
+              ? byMember(input, encodedFailure, parseOptions, onFieldwise)
               : Effect.fail(encodedFailure),
           ),
           () => failure,
