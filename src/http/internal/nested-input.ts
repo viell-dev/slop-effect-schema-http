@@ -18,6 +18,7 @@ interface Node {
 /** A selected path and write, never another candidate on a later check. */
 interface Selected {
   readonly key: Key;
+  readonly path: ReadonlyArray<PropertyKey>;
   readonly matches: () => boolean;
 }
 
@@ -319,6 +320,7 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
             ? undefined
             : {
                 key,
+                path: [key],
                 matches: evidence.matches,
                 written: written.matches,
               };
@@ -381,6 +383,10 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
             if (selected !== undefined) {
               return {
                 key: selected.key,
+                path: [
+                  positions === undefined ? name : Number(name),
+                  ...selected.path,
+                ],
                 matches: () => selected.matches() && data.matches(),
                 // Descendant reflection runs before rechecking the earlier links it may change.
                 written: () =>
@@ -408,7 +414,11 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
           return selected !== undefined &&
             selected.written() &&
             selected.matches()
-            ? { key: selected.key, matches: selected.matches }
+            ? {
+                key: selected.key,
+                path: selected.path,
+                matches: selected.matches,
+              }
             : undefined;
         },
       };

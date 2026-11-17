@@ -107,9 +107,12 @@ export type QueryFields = Readonly<
  * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that
  * names it, because the types allow that value and any member would lose a field the schema states.
- * A direct `Schema.Void` member in an any-of union can still take an empty object in its original
- * order. For an object or list with visible supplied fields, preparation tries to keep those
- * fields through another member or refuses the loss.
+ * Beside a visible object or list candidate in an any-of union, the strict read and write decline
+ * built-in `Schema.Void` when it receives a defined enumerable own object field or a defined own
+ * array cell. This includes annotated and checked Void and unencoded any-of member unions. Empty
+ * values keep first-fit order. Some mixed-side inputs now refuse. Avoid Void in input schemas
+ * that rely on classes, opaque or suspended values, encoded member unions, other union modes,
+ * standalone Void or custom discarding transformations.
  * A key no member states is stripped, as a struct strips it, and so is a key the tag has ruled out.
  * A required literal tag can choose by its decoded or encoded name. Both views must rule a member
  * out before its fields go; a constructor default is not guessed to make that choice.
@@ -847,7 +850,7 @@ const prepareGroup = <
   group: "headers" | "query",
   fold: Fields.Fold,
 ) => {
-  const read = Inputs.reader(contract, Schema.encodeEffect(contract), contract);
+  const read = Inputs.reader(contract);
   const recover = Groups.recovery(contract);
   const { shape, settle, taken, candidates, filled } = Shapes.bind(
     contract,
@@ -855,6 +858,10 @@ const prepareGroup = <
   );
   const takenKey = group === "headers" ? "takenHeaders" : "takenQuery";
   const label = group === "headers" ? "header" : "query";
+  const invalidOutput = () =>
+    new InvalidRequest({
+      message: `The ${label} schema must encode a field record or field pairs`,
+    });
   return {
     shape,
     // Delegate directly so extraction adds no Effect boundary between the original steps.
@@ -872,6 +879,7 @@ const prepareGroup = <
     ) {
       const edited = candidates(value, draft.editedFields.get(shape));
       let { output, lost: lostFromInput } = yield* read(value);
+      if (output === undefined) return yield* invalidOutput();
       let conflicts = filled(edited, output);
       const own = draft[takenKey] && taken(value, output, lostFromInput);
       let prepared = yield* self.prepare(
@@ -910,6 +918,7 @@ const prepareGroup = <
       const settled = yield* Effect.mapError(settle(output, defaults), () =>
         misfit(label, defaults),
       );
+      if (settled === undefined) return yield* invalidOutput();
       // A field the schema does not write back would be lost, as a union member can lose one.
       const lost = Shapes.lost(output, defaults, settled, fold);
       if (lost.length > 0) return yield* lostFields(label, lost);

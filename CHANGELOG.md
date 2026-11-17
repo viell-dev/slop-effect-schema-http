@@ -2,9 +2,15 @@
 
 ## Unreleased
 
-- Keep visible caller fields when a direct `Schema.Void` member would drop them in an any-of request
-  union (#143). In either member order, an object or list with supplied fields goes through a member
-  that keeps them or is refused before dispatch. Empty objects retain first-fit behavior.
+- **Breaking:** keep or refuse visible fields that built-in `Schema.Void` would discard beside an
+  object or list in a visible any-of request union, including nested any-of alternatives and
+  annotated or checked Void (#143). Empty objects retain first-fit behavior. Some mixed-side inputs
+  now refuse. Avoid Void as a standalone schema or beside only class-backed or opaque alternatives.
+  Class fields, opaque or suspended values, encoded member unions, other union modes and custom
+  discard transformations can still drop fields. See the [active
+  limits](./docs/schema-input.md#active-limits-and-recovery) for the exact scope.
+- Return a typed `InvalidRequest` when a query or header schema encodes its group as `undefined`
+  (#236). The regular TypeScript API already requires a field record or field pairs.
 
 ## 0.17.0 — 2026-11-16
 

@@ -202,15 +202,21 @@ accessor on a class, an inherited field and one that is not enumerable are field
 keys first, because a strict read only counts keys. An ordinary class instance that only a struct
 can read reads as a plain object. A strict read that passes has stripped nothing. Anything else is
 read as Effect reads it, and the result is compared with what went in, so what is lost is what
-actually went. A schema with neither choice skips this and reads as it always did. Under either
-choice a schema's own steps can run more than once for a value the strict read refuses.
+actually went. The strict pass also protects visible fields beside Void as described below. A schema
+with none of these choices reads as it always did. A schema's own steps can run more than once when
+the strict pass refuses.
 
-A direct `Schema.Void` member in an any-of union accepts an object but discards its fields. When the
-caller supplies visible fields of an object or list, the strict read can choose another member on
-either side, in either member order. If no member keeps those fields, preparation refuses the loss.
-With an empty object, the original member order still applies. For example, if an object member maps
-decoded `limit` to encoded `page_size`, either order with Void prepares `{ page_size: "05" }`
-through the object member. An invalid `page_size` is a `SchemaError`.
+Built-in `Schema.Void` ordinarily accepts an object and returns `undefined`. Beside an object or
+list candidate in a visible any-of union, the strict read and write decline Void when it receives an
+object with a defined enumerable own field or a list with a defined own cell. This includes
+annotated and checked Void and paths through unencoded any-of member unions. It applies within
+structs and lists, including after a parent encoding or fieldwise read. With no such fields or
+cells, original member order still applies. Unstated fields of closed objects are removed by the
+usual normalization.
+
+If an object member maps decoded `limit` to encoded `page_size`, either order with Void prepares
+`{ page_size: "05" }` through the object member. An invalid `page_size` is a `SchemaError`. Avoid
+Void in schemas that rely on a shape excluded under [Active limits](#active-limits-and-recovery).
 
 ```ts
 import { Schema } from "effect";
@@ -342,9 +348,19 @@ a guarantee that preparation refuses safely.
   the bounded proof; Void, open/opaque/suspended members, encoded primitives and encoded unions do
   not. A successful actual member-fieldwise reading is not reclassified as initial whole
   construction.
-- Void field preservation applies to a direct Void alternative beside an object or list candidate in
-  an any-of union. Custom transformations that discard their input, other union modes and unions
-  inside opaque or suspended values can still use the schema's own selection.
+- Void protection applies to built-in Void beside a visible object or list candidate in an any-of
+  union, including through unencoded any-of member unions. Standalone Void, a union whose other
+  members give it no visible object or list candidate, unions inside `Schema.Class` fields, opaque
+  declarations or suspensions, encoded member unions, other union modes such as `oneOf`, and custom
+  discarding transformations can still discard values. Class alternatives alone supply no visible
+  candidate. Avoid Void in input schemas that rely on those shapes.
+- A mixed-side value can now refuse beside a Void-first member. For example, with
+  `Struct({ filter: Union([Void, Filter]), sortBy: String })` and
+  `encodeKeys({ sortBy: "sort_by" })`, where `Filter` encodes `limit` as `page_size`,
+  `{ filter: { limit: 5 }, sort_by: "a" }` fails at `filter`. Use all-decoded or all-encoded names
+  for that input.
+- JavaScript or casts can bypass the TypeScript requirement for a query or header schema to encode a
+  group of fields. An undefined group encoding fails with `InvalidRequest` before dispatch.
 - Inherited cells, accessors, subclasses, custom prototypes/iterators and changing paths do not
   establish the new array proof. Sparse own cells and exact native own iterator data do qualify. The
   [0.16 migration](./release-notes/0.16.md) covers newly refused aliases, whole-reading changes and
