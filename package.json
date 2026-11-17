@@ -105,15 +105,12 @@
   "peerDependencies": {
     "effect": "^4.0.7"
   },
-  "overrides": {
-    "minimatch@10": "11.0.1"
-  },
   "devDependencies": {
     "@effect/vitest": "^4.1.4",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.6",
     "effect": "^4.1.4",
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-oxlint": "^1.92.0",
     "mdrefine": "^0.8.1",
@@ -121,7 +118,7 @@
     "oxlint": "^1.92.0",
     "prettier": "^3.9.10",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.72.1",
+    "typescript-eslint": "^8.73.0",
     "vitepress": "2.0.0-alpha.21",
     "vitest": "^5.1.0"
   }
