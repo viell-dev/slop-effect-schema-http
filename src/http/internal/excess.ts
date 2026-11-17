@@ -288,7 +288,11 @@ const readAsArray = (sides: ReadonlyArray<Ast>): boolean =>
 
 /** Bring a value's {@link unlisted} fields out as keys, at any depth, and take out what `drops` says. */
 const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
-  const rewrite = (types: ReadonlyArray<Ast>, value: unknown): unknown => {
+  const rewrite = (
+    types: ReadonlyArray<Ast>,
+    value: unknown,
+    supplied?: (value: object) => void,
+  ): unknown => {
     if (types.length === 0 || !isObject(value)) return value;
     const sides = types.flatMap((type) => sidesOf(type, value));
     const hidden = unlisted(sides, value);
@@ -305,15 +309,24 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
         !isList &&
         drops(item, open || inner.length > 0)
         ? []
-        : [[key, rewrite(inner, item)] as const];
+        : [[key, rewrite(inner, item, supplied)] as const];
     });
+    const hasFields =
+      supplied !== undefined && entries.some(([, item]) => item !== undefined);
+    const record = (output: object) => {
+      if (hasFields) {
+        supplied(value);
+        supplied(output);
+      }
+      return output;
+    };
     const same =
       !asStruct &&
       hidden.length === 0 &&
       entries.length === keys.length &&
       entries.every(([key, item]) => item === value[key]);
-    if (same) return value;
-    if (!isList) return Object.fromEntries(entries);
+    if (same) return record(value);
+    if (!isList) return record(Object.fromEntries(entries));
     // Own-key inspection already reads this descriptor. Do not add a length getter read when an
     // enumerable child changes through a mixed opaque view, which may never read array layout.
     const length: unknown = asArray
@@ -325,7 +338,7 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
       length < 0 ||
       length > 0xffff_ffff
     )
-      return value;
+      return record(value);
     // A proxy can report an own index beyond its length. A native array cannot retain both;
     // leave that incoherent frame to ordinary reading instead of manufacturing a larger view.
     if (
@@ -334,7 +347,7 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
         return index !== undefined && index >= length;
       })
     )
-      return value;
+      return record(value);
     const output: Array<unknown> = [];
     output.length = length;
     for (const [key, item] of entries)
@@ -344,7 +357,7 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
         writable: true,
         configurable: true,
       });
-    return output;
+    return record(output);
   };
   return rewrite;
 };
@@ -395,13 +408,18 @@ export const missing = (
   value: unknown,
   output: unknown,
   path: Path = [],
+  voidDeclined?: WeakSet<object>,
 ): ReadonlyArray<Path> => {
   if (!isObject(given)) return [];
   const sides = types.flatMap((type) => sidesOf(type, given));
   if (!comparable(sides, given)) return [];
   const decoded = new Set(types.flatMap((type) => decodedNames(type, given)));
+  const decodedHere = voidDeclined?.has(given) === true;
   const holdsAsWritten = (key: PropertyKey) =>
     has(output, key) &&
+    // A loose constructor can replace an encoded-only alias with a default after a strict Void
+    // choice fails. Its output under that name does not show that the input was consumed.
+    (!decodedHere || decoded.has(String(key))) &&
     (!isObject(value) ||
       !decoded.has(String(key)) ||
       Equal.equals(at(output, key), given[key]));
@@ -417,6 +435,7 @@ export const missing = (
           at(value, key),
           at(output, key),
           here,
+          voidDeclined,
         )
       : [here];
   });

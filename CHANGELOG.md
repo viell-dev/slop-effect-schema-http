@@ -1,5 +1,11 @@
 # Change history
 
+## Unreleased
+
+- Keep visible caller fields when a direct `Schema.Void` member would drop them in an any-of request
+  union (#143). In either member order, an object or list with supplied fields goes through a member
+  that keeps them or is refused before dispatch. Empty objects retain first-fit behavior.
+
 ## 0.17.0 — 2026-11-16
 
 Read [What's in 0.17](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.17) for

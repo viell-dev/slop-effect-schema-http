@@ -3,6 +3,12 @@ import { encodedInput } from "./encoded-input.js";
 import * as Excess from "./excess.js";
 import { nestedEncodedInput } from "./nested-input.js";
 import { snapshotter } from "./snapshot.js";
+import {
+  followRead,
+  guardVoidMembers,
+  preservingRead,
+  preservingWrite,
+} from "./void-member.js";
 
 /** What a schema's constructor takes. This is the one place that names the `~`-prefixed key. */
 type ConstructorInput<S extends Schema.Top> = S["~type.make.in"];
@@ -76,41 +82,54 @@ export const toDecoded = <S extends Schema.Top>(
   contract: S,
   options?: SchemaAST.ParseOptions,
 ) => {
-  const making = options && { parseOptions: options };
-  const make = (input: unknown) =>
+  const make = (
+    input: unknown,
+    parseOptions: SchemaAST.ParseOptions | undefined,
+  ) =>
     Effect.mapError(
-      contract.makeEffect(input, making),
+      contract.makeEffect(input, parseOptions && { parseOptions }),
       (issue) => new Schema.SchemaError(issue),
     );
   const decode = Schema.decodeUnknownEffect(contract);
   const byField = Effect.fnUntraced(function* (
     input: object,
+    parseOptions?: SchemaAST.ParseOptions,
     onFieldwise?: () => void,
   ) {
     const output: Record<PropertyKey, unknown> = { ...input };
+    followRead(parseOptions, input, output);
     // A field need not be a key, as an accessor on a class is not, so it comes from `input`.
     const fields: Record<PropertyKey, unknown> = input as never;
     for (const { name, type } of Excess.fieldsOf(contract.ast))
-      if (fields[name] !== undefined)
-        output[name] = yield* fromPart(type, fields[name], options);
-    const value = yield* make(output);
+      if (fields[name] !== undefined) {
+        const field = fields[name];
+        const read = yield* fromPart(type, field, parseOptions);
+        followRead(parseOptions, field, read);
+        output[name] = read;
+      }
+    const value = yield* make(output, parseOptions);
     onFieldwise?.();
     return value;
   });
-  const byMember = (input: object, onFieldwise?: () => void) =>
+  const byMember = (
+    input: object,
+    parseOptions?: SchemaAST.ParseOptions,
+    onFieldwise?: () => void,
+  ) =>
     contract.ast._tag === "Union" && contract.ast.types.length > 0
       ? Effect.firstSuccessOf(
           contract.ast.types.map((member) =>
-            fromPart(member, input, options, onFieldwise),
+            fromPart(member, input, parseOptions, onFieldwise),
           ),
         )
-      : byField(input, onFieldwise);
+      : byField(input, parseOptions, onFieldwise);
   return (
     input: Input<S>,
     onConstructed?: () => void,
     onFieldwise?: () => void,
+    parseOptions = options,
   ): Effect.Effect<S["Type"], Schema.SchemaError, S["DecodingServices"]> =>
-    Effect.matchEffect(make(input), {
+    Effect.matchEffect(make(input, parseOptions), {
       onSuccess: (value) => {
         // Observe only the initial whole constructor, outside its failure handler.
         onConstructed?.();
@@ -118,9 +137,9 @@ export const toDecoded = <S extends Schema.Top>(
       },
       onFailure: (failure) =>
         Effect.mapError(
-          Effect.catch(decode(input, options), (encodedFailure) =>
+          Effect.catch(decode(input, parseOptions), (encodedFailure) =>
             typeof input === "object" && input !== null
-              ? byMember(input, onFieldwise)
+              ? byMember(input, parseOptions, onFieldwise)
               : Effect.fail(encodedFailure),
           ),
           () => failure,
@@ -184,6 +203,8 @@ const stripping = <S extends Schema.Top, A, R>(
 export const reader = <S extends Schema.Top, A, R>(
   contract: S,
   write: Write<S, A, R>,
+  codec?: Schema.ConstraintCodec<S["Type"], NoInfer<A>, unknown, NoInfer<R>>,
+  json = false,
 ) => {
   const decoded = toDecoded(contract);
   const written = (
@@ -196,15 +217,39 @@ export const reader = <S extends Schema.Top, A, R>(
         lost: [],
       })),
     );
-  if (!Excess.choosing(contract.ast))
+  const ast = contract.ast;
+  const guarded = guardVoidMembers(ast, false);
+  if (guarded === ast && !Excess.choosing(ast))
     return (input: Input<S>) => written(decoded(input));
-  const exact = toDecoded(contract, Excess.strict);
-  const kept = (input: Input<S>) =>
+  const guardWrite =
+    guarded !== ast && codec !== undefined
+      ? guardVoidMembers(codec.ast, json)
+      : undefined;
+  const strictWriter =
+    codec !== undefined && guardWrite !== undefined && guardWrite !== codec.ast
+      ? Schema.encodeEffect(Schema.make<typeof codec>(guardWrite))
+      : write;
+  const writeOptions =
+    strictWriter === write ? Excess.strict : preservingWrite(Excess.strict);
+  const exact = toDecoded(
+    guarded === ast ? contract : Schema.make<S>(guarded),
+    Excess.strict,
+  );
+  const kept = (input: Input<S>, options: SchemaAST.ParseOptions) =>
     Effect.flatMap(
-      Effect.mapError(exact(input), (failure) => ({ failure, reading: true })),
+      Effect.mapError(
+        exact(input, undefined, undefined, options),
+        (failure) => ({ failure, reading: true }),
+      ),
       (value) =>
         Effect.mapError(
-          written(Effect.succeed(value), Excess.strict),
+          Effect.map(
+            strictWriter(value, writeOptions),
+            (output): Written<A> => ({
+              output,
+              lost: [],
+            }),
+          ),
           (failure) => ({
             failure,
             reading: false,
@@ -216,20 +261,34 @@ export const reader = <S extends Schema.Top, A, R>(
     given: unknown,
     read = decoded,
     onWriteFailure?: () => void,
+    voidDeclined?: WeakSet<object>,
   ) =>
-    Effect.flatMap(read(input), (value) =>
-      Effect.map(
-        Effect.catch(write(value, Excess.strict), () => {
-          onWriteFailure?.();
-          return write(value);
+    Effect.suspend(() => {
+      let constructed = false;
+      return Effect.flatMap(
+        read(input, () => {
+          constructed = true;
         }),
-        (output): Written<A> => ({
-          output,
-          lost: Excess.missing([contract.ast], given, value, output),
-        }),
-      ),
-    );
-  const ast = contract.ast;
+        (value) =>
+          Effect.map(
+            Effect.catch(strictWriter(value, writeOptions), () => {
+              onWriteFailure?.();
+              return write(value);
+            }),
+            (output): Written<A> => ({
+              output,
+              lost: Excess.missing(
+                [ast],
+                given,
+                value,
+                output,
+                [],
+                constructed ? voidDeclined : undefined,
+              ),
+            }),
+          ),
+      );
+    });
   const encoded = encodedInput(ast);
   const nested = nestedEncodedInput(ast);
   const decode = (encoded || nested) && Schema.decodeUnknownEffect(contract);
@@ -289,7 +348,7 @@ export const reader = <S extends Schema.Top, A, R>(
       contract.makeEffect(output, { parseOptions: Excess.strict }),
       (issue) => new Schema.SchemaError(issue),
     );
-    const candidate = yield* write(value, Excess.strict);
+    const candidate = yield* strictWriter(value, writeOptions);
     const lost = Excess.missing([ast], given, value, candidate);
     return lost.length === 0 ? { output: candidate, lost } : original;
   });
@@ -303,16 +362,23 @@ export const reader = <S extends Schema.Top, A, R>(
     const encodedEvidence = encoded?.(input);
     const nestedEvidence = nested?.(input);
     const captured = snapshot?.(input);
-    const given = Excess.normalised([contract.ast], input);
+    const supplied = guarded === ast ? undefined : new WeakSet<object>();
+    const declined = guarded === ast ? undefined : new WeakSet<object>();
+    const remember = supplied && ((value: object) => supplied.add(value));
+    const given = Excess.normalised([ast], input, remember);
     // A strict read cannot see a field outside a value's keys, so it may not fall back on `input`.
     const seen = (
-      given === input ? input : Excess.exposed([contract.ast], input)
+      given === input ? input : Excess.exposed([ast], input, remember)
     ) as Input<S>;
+    const options =
+      supplied && declined
+        ? preservingRead(Excess.strict, supplied, declined)
+        : Excess.strict;
     const original = Effect.catch(
       given === input
-        ? kept(input)
-        : Effect.catch(kept(given as Input<S>), (first) =>
-            Effect.mapError(kept(seen), (last) => ({
+        ? kept(input, options)
+        : Effect.catch(kept(given as Input<S>, options), (first) =>
+            Effect.mapError(kept(seen, options), (last) => ({
               ...last,
               reading: first.reading && last.reading,
             })),
@@ -323,25 +389,32 @@ export const reader = <S extends Schema.Top, A, R>(
           decode === undefined ||
           (!encodedEvidence?.matches() && nestedEvidence === undefined)
         )
-          return compared(input, given);
+          return compared(input, given, decoded, undefined, declined);
         return Effect.suspend(() => {
           let constructed = false;
           let fieldwise = false;
           let strictWrite = true;
-          const read = (current: Input<S>) =>
+          const read = (current: Input<S>, onConstructed?: () => void) =>
             decoded(
               current,
               () => {
                 constructed = true;
+                onConstructed?.();
               },
               () => {
                 fieldwise = true;
               },
             );
           return Effect.flatMap(
-            compared(input, given, read, () => {
-              strictWrite = false;
-            }),
+            compared(
+              input,
+              given,
+              read,
+              () => {
+                strictWrite = false;
+              },
+              declined,
+            ),
             (constructedResult) => {
               // Keep constructor alternatives and existing failures. Only an actual encoded write
               // can hide this constructor's inability to consume the encoded-only caller field.
@@ -433,7 +506,7 @@ export const reorderedReaders = <S extends Schema.Top>(contract: S) => {
         ast.encodingChecks,
       ),
     );
-    return reader(reordered, Schema.encodeEffect(reordered));
+    return reader(reordered, Schema.encodeEffect(reordered), reordered);
   });
 };
 
@@ -457,10 +530,15 @@ export const refuseLost = (
 /** Bring a value to the schema's decoded side and write it, with nothing else to hold what it loses. */
 export const encoder = <S extends Schema.Top, A, R>(
   contract: S,
-  write: Write<S, A, R>,
+  codec: Schema.ConstraintCodec<S["Type"], A, unknown, R>,
+  json = false,
 ) => {
-  if (!Excess.choosing(contract.ast)) return stripping(contract, write);
-  const read = reader(contract, write);
+  if (
+    !Excess.choosing(contract.ast) &&
+    guardVoidMembers(contract.ast, false) === contract.ast
+  )
+    return stripping(contract, Schema.encodeEffect(codec));
+  const read = reader(contract, Schema.encodeEffect(codec), codec, json);
   return (
     input: Input<S>,
   ): Effect.Effect<A, Schema.SchemaError, R | S["DecodingServices"]> =>

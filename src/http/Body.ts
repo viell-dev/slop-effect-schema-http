@@ -288,7 +288,7 @@ export const schema = <S extends Schema.Constraint>(contract: S) => {
  * the underlying encoder receives what the schema writes.
  */
 export const encodeSchema = <S extends Schema.Top>(contract: S) => {
-  const encode = Inputs.encoder(contract, Schema.encodeEffect(contract));
+  const encode = Inputs.encoder(contract, contract);
   return <E, R>(
     self: Encoder<S["Encoded"], E, R>,
   ): Encoder<
@@ -331,7 +331,7 @@ export const jsonSchema = <S extends Schema.Top>(
   Inputs.Input<S>
 > => {
   const codec = Schema.toCodecJson(contract);
-  const encode = Inputs.encoder(contract, Schema.encodeEffect(codec));
+  const encode = Inputs.encoder(contract, codec, true);
   return make({
     encode: (value: Inputs.Input<S>) =>
       Effect.flatMap(encode(value), json.encode),

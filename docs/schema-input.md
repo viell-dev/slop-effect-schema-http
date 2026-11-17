@@ -205,6 +205,13 @@ read as Effect reads it, and the result is compared with what went in, so what i
 actually went. A schema with neither choice skips this and reads as it always did. Under either
 choice a schema's own steps can run more than once for a value the strict read refuses.
 
+A direct `Schema.Void` member in an any-of union accepts an object but discards its fields. When the
+caller supplies visible fields of an object or list, the strict read can choose another member on
+either side, in either member order. If no member keeps those fields, preparation refuses the loss.
+With an empty object, the original member order still applies. For example, if an object member maps
+decoded `limit` to encoded `page_size`, either order with Void prepares `{ page_size: "05" }`
+through the object member. An invalid `page_size` is a `SchemaError`.
+
 ```ts
 import { Schema } from "effect";
 import { Request } from "viell-effect-schema-http";
@@ -335,9 +342,9 @@ a guarantee that preparation refuses safely.
   the bounded proof; Void, open/opaque/suspended members, encoded primitives and encoded unions do
   not. A successful actual member-fieldwise reading is not reclassified as initial whole
   construction.
-- A Void member accepts any value on the decoded side, which preparation tries first. Placed after
-  an object member, it can take a supplied encoded object, even a valid one, and write `undefined`
-  (`null` in JSON); placed first, it takes every object. Leave Void out of input schemas.
+- Void field preservation applies to a direct Void alternative beside an object or list candidate in
+  an any-of union. Custom transformations that discard their input, other union modes and unions
+  inside opaque or suspended values can still use the schema's own selection.
 - Inherited cells, accessors, subclasses, custom prototypes/iterators and changing paths do not
   establish the new array proof. Sparse own cells and exact native own iterator data do qualify. The
   [0.16 migration](./release-notes/0.16.md) covers newly refused aliases, whole-reading changes and
