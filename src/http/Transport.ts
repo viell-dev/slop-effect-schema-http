@@ -32,12 +32,15 @@ export const entries = (input: HeaderInput): Lines =>
   Symbol.iterator in input
     ? Array.from(input, ([name, value]) => [name, value] as const)
     : Object.entries(input).flatMap(
-        ([name, value]): Array<readonly [string, string]> =>
-          value === undefined
-            ? []
-            : typeof value === "string"
-              ? [[name, value]]
-              : value.map((line) => [name, line]),
+        ([name, value]): Array<readonly [string, string]> => {
+          if (value === undefined) return [];
+          if (typeof value === "string") return [[name, value]];
+          if (!Array.isArray(value))
+            throw new TypeError(
+              "A header record field must be text or an array of text",
+            );
+          return value.map((line) => [name, line]);
+        },
       );
 
 /**

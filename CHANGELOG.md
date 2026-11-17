@@ -8,9 +8,10 @@
   now refuse. Avoid Void as a standalone schema or beside only class-backed or opaque alternatives.
   Class fields, opaque or suspended values, encoded member unions, other union modes and custom
   discard transformations can still drop fields. See the [active
-  limits](./docs/schema-input.md#active-limits-and-recovery) for the exact scope.
-- Return a typed `InvalidRequest` when a query or header schema encodes its group as `undefined`
-  (#236). The regular TypeScript API already requires a field record or field pairs.
+  limits](https://viell-dev.github.io/slop-effect-schema-http/schema-input#active-limits-and-recovery)
+  for the exact scope.
+- Return a typed `InvalidRequest` when a query or header schema encodes a non-object group or a
+  header record supplies a non-string value (#236).
 
 ## 0.17.0 — 2026-11-16
 

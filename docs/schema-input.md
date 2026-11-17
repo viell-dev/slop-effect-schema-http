@@ -99,8 +99,10 @@ allow-list is String, Number, Boolean, BigInt, Symbol, UniqueSymbol, Literal, En
 Null, Undefined and Never. An unencoded union whose members all qualify counts as one such
 alternative, at any depth. Effect builds `Schema.Literals([...])`, `Schema.NullOr(Schema.String)`
 and `Schema.NullishOr(Schema.Number)` this way, so `Union([Filter, Schema.Literals(["all"])])`
-behaves like the flat `Union([Filter, Schema.Literal("all")])`. Void, encoded primitives, encoded
-unions, unions with any other member, primitive encoding intermediates, open/opaque/suspended
+behaves like the flat `Union([Filter, Schema.Literal("all")])`. A Void alternative qualifies only
+where the [strict Void rule](#a-union-keeps-what-the-caller-gave) guards it, including inside an
+unencoded any-of member union made up of these alternatives. Void elsewhere, encoded primitives,
+encoded unions, unions with any other member, primitive encoding intermediates, open/opaque/suspended
 alternatives and array-shaped parent members do not qualify. The object members retain the same
 field-identity and closed-name rules. A union of primitives alone still supplies no object view at
 either level. A codec's closed object encoding view may include these alternatives, such as
@@ -345,8 +347,8 @@ a guarantee that preparation refuses safely.
   invalid alias replaced by a generated default.
 - Unsupported object alternatives and construction phases can still lose aliases. Optional,
   nullable/nullish and the listed primitive alternatives, including unencoded unions of them, extend
-  the bounded proof; Void, open/opaque/suspended members, encoded primitives and encoded unions do
-  not. A successful actual member-fieldwise reading is not reclassified as initial whole
+  the bounded proof; guarded Void can qualify there too. Other Void, open/opaque/suspended members,
+  encoded primitives and encoded unions remain outside the proof. A successful actual member-fieldwise reading is not reclassified as initial whole
   construction.
 - Void protection applies to built-in Void beside a visible object or list candidate in an any-of
   union, including through unencoded any-of member unions. Standalone Void, a union whose other
@@ -359,8 +361,10 @@ a guarantee that preparation refuses safely.
   `encodeKeys({ sortBy: "sort_by" })`, where `Filter` encodes `limit` as `page_size`,
   `{ filter: { limit: 5 }, sort_by: "a" }` fails at `filter`. Use all-decoded or all-encoded names
   for that input.
-- JavaScript or casts can bypass the TypeScript requirement for a query or header schema to encode a
-  group of fields. An undefined group encoding fails with `InvalidRequest` before dispatch.
+- JavaScript, casts and `Schema.Any` can bypass the TypeScript requirement for a query or header
+  schema to encode a group of fields. A non-object group or a header record with an invalid value
+  fails with `InvalidRequest` before dispatch. Malformed iterable groups can still die while the
+  binding inspects their pairs.
 - Inherited cells, accessors, subclasses, custom prototypes/iterators and changing paths do not
   establish the new array proof. Sparse own cells and exact native own iterator data do qualify. The
   [0.16 migration](./release-notes/0.16.md) covers newly refused aliases, whole-reading changes and
