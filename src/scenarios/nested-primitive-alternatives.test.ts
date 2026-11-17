@@ -736,7 +736,7 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
       for (const order of orders) {
         // https://github.com/viell-dev/slop-effect-schema-http/issues/170
         it.live(
-          `[EXT-49f] currently ${binding} ${level.name} ${order} an encoded-primitive alternative lets the default replace invalid aliases like flat FiniteFromString`,
+          `[EXT-49f] ${binding} ${level.name} ${order} nested and flat FiniteFromString refuse invalid aliases and preserve valid bytes`,
           () =>
             Effect.gen(function* () {
               const backend = yield* start();
@@ -746,13 +746,23 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
                   level.schema(alternative, order),
                   binding,
                 );
-                for (const [leaf, json] of [
-                  ...controls,
-                  ...invalid.map(
-                    (page_size) =>
-                      [{ page_size }, '{"page_size":"25"}'] as const,
-                  ),
-                ]) {
+                for (const page_size of invalid) {
+                  const actual = yield* execute(
+                    level.input({ page_size }),
+                  ).pipe(outcome);
+                  expect(
+                    "error" in actual && Schema.isSchemaError(actual.error),
+                  ).toBe(true);
+                }
+              }
+              expect(yield* backend.ledger).toEqual([]);
+              for (const [, alternative] of encodedAlternatives) {
+                const execute = operation(
+                  backend.origin,
+                  level.schema(alternative, order),
+                  binding,
+                );
+                for (const [leaf, json] of controls) {
                   expect(yield* execute(level.input({ ...leaf }))).toBe(
                     "Not Found",
                   );
@@ -760,7 +770,7 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
                   wire(ledger[ledger.length - 1]!, binding, level.json(json));
                 }
               }
-              expect(yield* backend.ledger).toHaveLength(10);
+              expect(yield* backend.ledger).toHaveLength(6);
             }),
         );
       }
