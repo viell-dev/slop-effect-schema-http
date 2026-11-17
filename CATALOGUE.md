@@ -4394,11 +4394,12 @@ remain under `artifacts/void-member-5e8d57e-*`.
   first; the ancestor's object member requires `filter`, so there Void takes it in both orders.
   Library 0.17.0 sent Void's output for the valid aliases too, in both orders. Status: tested.
   - `[EXT-49e] ${binding} ${level.name} ${order} a direct Void member keeps valid aliases and leaves fieldless input first-fit`
-- **EXT-49f** `Union([Literals(["all"]), FiniteFromString])` and flat `FiniteFromString` keep the
-  valid controls but let the constructor default replace invalid aliases: `"many"` and `null` go
-  out as `"25"` at every level, in both orders and bindings. The guide excludes encoded primitives
-  from the rule and leaves such ignored aliases as unsupported paths under #170. Status: defect.
-  - `[EXT-49f] currently ${binding} ${level.name} ${order} an encoded-primitive alternative lets the default replace invalid aliases like flat FiniteFromString`
+- **EXT-49f** `Union([Literals(["all"]), FiniteFromString])` and flat `FiniteFromString` used to send
+  the default `"25"` for invalid aliases `"many"` and `null`. The assertion now requires
+  `Schema.SchemaError` and an empty ledger for both inputs at every level, in both orders and
+  bindings. The valid controls still send the same six requests per case. See EXT-50 for the
+  expanded encoded-alternative coverage. Status: tested.
+  - `[EXT-49f] ${binding} ${level.name} ${order} nested and flat FiniteFromString refuse invalid aliases and preserve valid bytes`
 - **EXT-49g** `Void` inside an unencoded any-of union of primitives beside `Filter`,
   `Union([Void, Literal("a")])`, `Union([Literals(["all"]), Void])`, `Union([NullOr(String), Void])`
   and `NullOr(Void)`, behaves as a direct Void at `36a6188`, in either order at every level:
@@ -4504,6 +4505,71 @@ remain under `artifacts/void-member-5e8d57e-*`.
   with Void first it is Void's (`{"g":null}`, path `{}`), and with the object first it goes out as
   `{"g":{}}`. The library documents these outcomes; they are the same on `36a6188`. Status: tested.
   - `[EXT-49t] ${binding} ${order} an optional Void union field keeps its populated constructor default`
+
+## Encoded primitive and array-shaped alternatives (EXT-50)
+
+Independent consumer coverage for [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)
+from [library PR #235](https://github.com/viell-dev/slop-effect-schema-http/pull/235), its
+[schema-input guide](https://github.com/viell-dev/slop-effect-schema-http/blob/348f20aab51433a6e258c280db51323f8300e3f5/docs/schema-input.md#active-limits-and-recovery)
+and the [neutral echo contract](./README.md#the-neutral-echo-probe). The
+[scenarios](./src/scenarios/encoded-and-array-alternatives.test.ts) use the public API and Fetch over
+real loopback sockets in Node and Chromium, and run again against the packed install. Successful
+rows check the method, target, relevant header values, exact body bytes and request count. The path
+binding writes one percent-escaped JSON segment. These unions can encode to scalars, arrays or objects
+with nested values, beyond the parameter group shapes accepted by the query and header bindings.
+The app lane checks the packed library's existing application flow.
+
+The cases use EXT-49's `Filter` (decoded `limit`, encoded `page_size`, default `25`) and a distinct
+`Cursor` with required `cursor`. Fixtures exercise both orders of the two outer union members at the
+root, in a struct field and in an array element. The B cases also exercise a union ancestor holding
+`{ filter }`.
+
+The targeted Node and packed baselines on Windows 11 x64, Node 24.22.2, npm 11.19.1 and Effect
+4.1.4 use 0.17.0 at `c9439afb34d7f98a562909fdce0819722a964a0c`. In each, the 88 EXT-50b and
+72 EXT-50d cases dispatched the default `"25"` for both invalid aliases. All 12 EXT-50e cases sent both
+lists and substituted `"25"` for the valid encoded-only `"05"`. All 12 EXT-50f cases sent `"1"` for
+the conflicting item even beside its encoded-only neighbor. The 184 unchanged cases passed in
+each lane. Chromium 158.0.8127.18 reached the expected assertion failures on the baseline and
+timed out on unchanged controls under local load, leaving its count unverified. Logs and completed
+JUnit reports remain under `artifacts/alternative-shapes-c9439af-*`.
+
+On 2026-11-18, the targeted Node run at `348f20aab51433a6e258c280db51323f8300e3f5` passed all
+368 EXT-50 cases and all 198 EXT-49 cases on the same Windows toolchain. The pull request records
+the full-lane results. This synthetic coverage exercises the pinned Effect peer and transports.
+
+- **EXT-50a** An encoded primitive (B: `FiniteFromString`, `NumberFromString`, a string codec and
+  nested literals plus `FiniteFromString`) or a list/tuple (C1) beside a filter object keeps encoded
+  `"05"` and decoded `5` as `"5"`, and omission as `"25"`. The alternative's own values include
+  normalized number strings, lowercased text, a literal, an empty list and a cursor tuple.
+  Status: tested.
+  - `[EXT-50a] ${name} keeps filter and alternative wire values`
+- **EXT-50b** The B and C1 object cells refuse `{ page_size: "many" }` and
+  `{ page_size: null }` with `Schema.SchemaError` and zero dispatches. Status: tested.
+  - `[EXT-50b] ${name} refuses invalid object aliases before dispatch`
+- **EXT-50c** A union with one array reader (C2) preserves the same valid and omitted filter rows
+  in its list or fixed tuple. Its other members send their own exact bytes: cursor, filter object,
+  text or normalized number. A nested union also sends the empty list and its other members'
+  values. Status: tested.
+  - `[EXT-50c] ${name} keeps array items and alternative wire values`
+- **EXT-50d** The C2 arrays and tuples refuse both invalid aliases at the filter position with
+  `Schema.SchemaError` and zero dispatches. Status: tested.
+  - `[EXT-50d] ${name} refuses invalid array aliases before dispatch`
+- **EXT-50e** A list of B elements and C2 lists beside a filter or cursor refuse a mixed list with
+  one encoded-only item and one decoded-only item, whichever comes first. The ledger stays empty.
+  Status: tested.
+  - `[EXT-50e] ${binding} ${name} ${order} refuses mixed-side items before dispatch`
+- **EXT-50f** The same lists send `"1"` for a lone conflicting item
+  `{ limit: 1, page_size: "02" }`. Beside an encoded-only item it sends `"2"`. General
+  conflict refusal remains under [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143).
+  Status: limit.
+  - `[EXT-50f] currently ${binding} ${name} ${order} reads the encoded name beside an encoded-only item`
+- **EXT-50g** Current exclusions still dispatch the invalid alias through the ordinary read. A
+  pass-through encoding middleware, second array reader, encoded array member, class and Option
+  each leave the default `"25"` on the wire. An empty struct beside the list can read it directly.
+  Status: limit.
+  - `[EXT-50g] currently ${binding} ${order} a middleware-encoded primitive permits substitution`
+  - `[EXT-50g] currently ${binding} ${order} ${name} beside a list permits dispatch`
+  - `[EXT-50g] currently ${binding} ${order} an encoded array member permits substitution`
 
 ## Lists beside records (EXT-51)
 
