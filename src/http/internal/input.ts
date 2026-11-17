@@ -281,8 +281,9 @@ const readerForCodec = <S extends Schema.Top, A, R>(
           ),
       );
     });
-  const encoded = encodedInput(ast);
-  const nested = nestedEncodedInput(ast);
+  const voidChoices = guarded.ast === ast ? undefined : guarded.choices;
+  const encoded = encodedInput(ast, voidChoices);
+  const nested = nestedEncodedInput(ast, voidChoices);
   const decode = (encoded || nested) && Schema.decodeUnknownEffect(contract);
   const recoverable =
     ast._tag === "Objects" &&

@@ -1,6 +1,7 @@
 import type { SchemaAST } from "effect";
 import { encodedInput } from "./encoded-input.js";
 import { isNonObjectAlternative } from "./primitive.js";
+import { isGuardedVoidAlternative } from "./void-member.js";
 
 type CaptureTerminal = NonNullable<ReturnType<typeof encodedInput>>;
 type Key = string | symbol;
@@ -188,7 +189,10 @@ const ownData = (
  * A parent union contributes a field only when every declaring member uses the same schema.
  * No schema or thunk runs.
  */
-export const nestedEncodedInput = (ast: SchemaAST.AST) => {
+export const nestedEncodedInput = (
+  ast: SchemaAST.AST,
+  voidChoices?: WeakSet<SchemaAST.AST>,
+) => {
   type Fields = ReadonlyMap<Key, SchemaAST.AST | undefined>;
   const mergeField = (
     fields: Map<Key, SchemaAST.AST | undefined>,
@@ -232,7 +236,11 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
     const fields = new Map<Key, SchemaAST.AST | undefined>();
     let hasObjectMember = false;
     for (const member of part.types) {
-      if (isNonObjectAlternative(member)) continue;
+      if (
+        isNonObjectAlternative(member) ||
+        isGuardedVoidAlternative(part, member, voidChoices)
+      )
+        continue;
       const declared = fieldsOf(member);
       if (declared === undefined) {
         viewing.delete(part);
@@ -256,7 +264,7 @@ export const nestedEncodedInput = (ast: SchemaAST.AST) => {
       return undefined;
     }
     if (known.has(part)) return known.get(part);
-    const terminal = root ? undefined : encodedInput(part);
+    const terminal = root ? undefined : encodedInput(part, voidChoices);
     if (terminal !== undefined) {
       const node = { terminal, names: [], fields: [] };
       known.set(part, node);

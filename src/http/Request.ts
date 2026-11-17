@@ -1,4 +1,12 @@
-import { Data, Effect, Option, Pipeable, Redacted, Schema } from "effect";
+import {
+  Data,
+  Effect,
+  Option,
+  Pipeable,
+  Predicate,
+  Redacted,
+  Schema,
+} from "effect";
 import {
   Headers,
   HttpClientRequest,
@@ -879,7 +887,7 @@ const prepareGroup = <
     ) {
       const edited = candidates(value, draft.editedFields.get(shape));
       let { output, lost: lostFromInput } = yield* read(value);
-      if (output === undefined) return yield* invalidOutput();
+      if (!Predicate.isObjectKeyword(output)) return yield* invalidOutput();
       let conflicts = filled(edited, output);
       const own = draft[takenKey] && taken(value, output, lostFromInput);
       let prepared = yield* self.prepare(
@@ -918,7 +926,7 @@ const prepareGroup = <
       const settled = yield* Effect.mapError(settle(output, defaults), () =>
         misfit(label, defaults),
       );
-      if (settled === undefined) return yield* invalidOutput();
+      if (!Predicate.isObjectKeyword(settled)) return yield* invalidOutput();
       // A field the schema does not write back would be lost, as a union member can lose one.
       const lost = Shapes.lost(output, defaults, settled, fold);
       if (lost.length > 0) return yield* lostFields(label, lost);
@@ -1024,7 +1032,23 @@ export const headers = <
                 Shapes.allows(shape, foldHeader(name)),
             ),
         );
-        const lines = Transport.entries(settled);
+        const invalidFields = (cause?: unknown) =>
+          new InvalidRequest({
+            message:
+              "The header schema must encode string field names and values",
+            cause,
+          });
+        const lines = yield* Effect.try({
+          try: () => Transport.entries(settled),
+          catch: invalidFields,
+        });
+        if (
+          lines.some(
+            ([name, value]) =>
+              typeof name !== "string" || typeof value !== "string",
+          )
+        )
+          return yield* invalidFields();
         const replaced = new Set([
           ...names,
           ...defaults.map(([name]) => foldHeader(name)),

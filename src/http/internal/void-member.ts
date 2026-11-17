@@ -1,5 +1,6 @@
 import { Effect, Schema, SchemaAST, SchemaIssue, SchemaParser } from "effect";
 import { hasDefinedFields } from "./excess.js";
+import { isNonObjectAlternative } from "./primitive.js";
 
 const onDecline = Symbol("track Void refusal");
 type GuardOptions = SchemaAST.ParseOptions & {
@@ -17,6 +18,23 @@ const isPlainVoid = (ast: SchemaAST.AST): ast is SchemaAST.Void =>
   ast._tag === "Void" &&
   (ast.encoding === undefined ||
     (ast.encoding.length === 1 && ast.encoding[0] === jsonVoid));
+
+/** A guarded Void can supply no fields to the closed-object alias proof. */
+export const isGuardedVoidAlternative = (
+  union: SchemaAST.AST,
+  member: SchemaAST.AST,
+  choices: WeakSet<SchemaAST.AST> | undefined,
+): boolean =>
+  choices?.has(union) === true &&
+  (isPlainVoid(member) ||
+    (member._tag === "Union" &&
+      member.encoding === undefined &&
+      (member.options?.mode ?? "anyOf") === "anyOf" &&
+      member.types.every(
+        (type) =>
+          isNonObjectAlternative(type) ||
+          isGuardedVoidAlternative(member, type, choices),
+      )));
 
 const guard = (member: SchemaAST.Void) => {
   // Declaration.flip swaps checks to the opposite side. Delegate to the original type parser

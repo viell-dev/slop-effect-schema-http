@@ -3,6 +3,7 @@ import { Cause, Effect, Option, Schema, SchemaGetter } from "effect";
 import {
   bodyOf,
   linesOf,
+  refusal,
   schemaFailure,
   Tenant,
   urlOf,
@@ -135,6 +136,14 @@ describe("request preparation beside Void", () => {
           Schema.Union([Schema.Void, Schema.Literal("a")]),
           Filter,
         ]),
+        Schema.Union([
+          Schema.Union([Schema.Literals(["all"]), Schema.Void]),
+          Filter,
+        ]),
+        Schema.Union([
+          Schema.Union([Schema.NullOr(Schema.String), Schema.Void]),
+          Filter,
+        ]),
       ]) {
         expect(yield* bodyOf(post(schema), { body: { page_size: "05" } })).toBe(
           '{"page_size":"5"}',
@@ -144,6 +153,46 @@ describe("request preparation beside Void", () => {
         ).toContain('["page_size"]');
       }
     }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "refuses an encoded alias a nested default would replace beside Void",
+    () =>
+      Effect.gen(function* () {
+        const struct = Schema.Struct({ filter: Filter });
+        const union = Schema.Union([struct, Schema.Void]);
+        const nestedChoice = Schema.Union([struct, Schema.NullOr(Schema.Void)]);
+        for (const [schema, wrap, field] of [
+          [union, (input: unknown) => input, '["filter"]'],
+          [
+            Schema.Struct({ value: union }),
+            (input: unknown) => ({ value: input }),
+            '["value"]',
+          ],
+          [Schema.Array(union), (input: unknown) => [input], "[0]"],
+          [nestedChoice, (input: unknown) => input, '["filter"]'],
+        ] as const) {
+          const path = Request.get("").pipe(
+            Request.path(schema, () => "/sent"),
+          );
+          for (const page_size of ["many", null]) {
+            const input = wrap({ filter: { page_size } });
+            expect(
+              yield* schemaFailure(post(schema), { body: input } as never),
+            ).toContain(field);
+            expect(
+              yield* schemaFailure(path, { path: input } as never),
+            ).toContain(field);
+          }
+        }
+        expect(
+          yield* bodyOf(post(union), { body: { filter: { page_size: "05" } } }),
+        ).toBe('{"filter":{"page_size":"5"}}');
+        expect(yield* bodyOf(post(union), { body: { filter: {} } })).toBe(
+          '{"filter":{"page_size":"25"}}',
+        );
+      }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
@@ -279,6 +328,37 @@ describe("request preparation beside Void", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/236
+  it.effect("refuses a header encoding with non-string values", () =>
+    Effect.gen(function* () {
+      const any = Request.get("/x").pipe(Request.headers(Schema.Any));
+      const unknown = Request.get("/x").pipe(
+        Request.headers(Schema.Unknown as never),
+      );
+      for (const value of [5, ["valid", 5], null]) {
+        for (const prepare of [
+          Request.compile(any, { headers: { value } }),
+          Request.compile(unknown, { headers: { value } } as never),
+        ]) {
+          const result = yield* Effect.result(prepare);
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure") {
+            expect(result.failure).toBeInstanceOf(Request.InvalidRequest);
+            expect(result.failure.message).toBe(
+              "The header schema must encode string field names and values",
+            );
+          }
+        }
+      }
+      expect(
+        yield* linesOf(any, { headers: { value: ["one", "two"] } }),
+      ).toEqual([
+        ["value", "one"],
+        ["value", "two"],
+      ]);
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
   it.effect(
     "refuses an undefined query or header encoding with a typed error",
     () =>
@@ -317,6 +397,34 @@ describe("request preparation beside Void", () => {
             { headers: { sort: "a" } } as never,
           ),
         ).toEqual([["sort", "a"]]);
+      }),
+  );
+});
+
+describe("known group output limit", () => {
+  const request = Request.get("/x").pipe(Request.headers(Schema.Any));
+  const input = { headers: [1] };
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
+  it.effect("currently dies while reading malformed iterable field pairs", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(Request.compile(request, input));
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(Cause.hasDies(result.cause)).toBe(true);
+        expect(Cause.pretty(result.cause)).toContain("TypeError");
+      }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
+  it.effect.fails(
+    "refuses malformed iterable field pairs with a typed error",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* refusal(request, input)).toBeInstanceOf(
+          Request.InvalidRequest,
+        );
       }),
   );
 });
