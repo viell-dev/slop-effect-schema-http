@@ -480,38 +480,42 @@ describe(`constructor input profiles (${lane.name})`, () => {
     }
 
     it.live(
-      `[EXT-47l] currently ${binding} Void and open alternatives preserve their own member behavior`,
+      `[EXT-47l] ${binding} a Void-first alternative refuses an invalid alias while open alternatives preserve it`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
           const voidSchema = Schema.Struct({
             filter: Schema.Union([Schema.Void, Filter]),
           });
-          const openSchema = Schema.Struct({
-            filter: Schema.Union([Schema.Unknown, Filter]),
-          });
+          const voidOperation = operation(backend.origin, voidSchema, binding);
+          // Void would discard the supplied field, so it cannot win, and Filter refuses the alias.
+          const refused = yield* voidOperation({
+            filter: { page_size: "many" },
+          }).pipe(result);
+          expect(refused).toMatchObject({ error: { _tag: "SchemaError" } });
           expect(
-            yield* operation(
-              backend.origin,
-              voidSchema,
-              binding,
-            )({ filter: { page_size: "many" } }),
-          ).toBe("Not Found");
-          expect(
-            yield* operation(
-              backend.origin,
-              openSchema,
-              binding,
-            )({ filter: { page_size: "many" } }),
-          ).toBe("Not Found");
+            "error" in refused && Schema.isSchemaError(refused.error),
+          ).toBe(true);
+          expect(yield* backend.ledger).toEqual([]);
+          // A fieldless filter is still Void's, as Void is the first member that fits.
+          expect(yield* voidOperation({ filter: {} })).toBe("Not Found");
+          for (const open of [Schema.Unknown, Schema.Any])
+            expect(
+              yield* operation(
+                backend.origin,
+                Schema.Struct({ filter: Schema.Union([open, Filter]) }),
+                binding,
+              )({ filter: { page_size: "many" } }),
+            ).toBe("Not Found");
           const ledger = yield* backend.ledger;
-          expect(ledger).toHaveLength(2);
+          expect(ledger).toHaveLength(3);
           wire(
             ledger[0]!,
             binding,
             binding === "path" ? "{}" : '{"filter":null}',
           );
           wire(ledger[1]!, binding, '{"filter":{"page_size":"many"}}');
+          wire(ledger[2]!, binding, '{"filter":{"page_size":"many"}}');
         }),
     );
 

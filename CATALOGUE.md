@@ -4160,11 +4160,14 @@ their stated original source; the pull request records fresh CI against the upda
   exactly zero, and descriptors remain unchanged. No iterable is consumed for evidence.
   Status: defect.
   - `[EXT-47k] currently ${binding} ${shape} iterator profiles remain excluded without iteration`
-- **EXT-47l** Void-first and Unknown-first alternatives retain their distinct existing member
-  behavior: Void consumes the object and writes undefined (absent in path JSON, null in body JSON),
-  while Unknown preserves the invalid text. Neither becomes a transparent primitive.
-  Status: limit.
-  - `[EXT-47l] currently ${binding} Void and open alternatives preserve their own member behavior`
+- **EXT-47l** A Void-first alternative under a field refuses the invalid encoded
+  `{ page_size: "many" }` with `SchemaError` and an empty ledger, because Void would discard the
+  supplied field. A fieldless `{}` filter is still Void's, which writes undefined (absent in path
+  JSON, null in body JSON). Unknown-first and Any-first alternatives preserve the invalid text.
+  Library 0.17.0 (`c9439af`) sent Void's output for the invalid alias as well; the direct Void rule
+  of [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143) changed that, and
+  [EXT-49](#nested-primitive-alternatives-ext-49) records the evidence. Status: tested.
+  - `[EXT-47l] ${binding} a Void-first alternative refuses an invalid alias while open alternatives preserve it`
 - **EXT-47m** An optionalKey-only ancestor already refuses invalid text/null before dispatch and
   keeps omitted filter absent. This remains a positive refusal control rather than a repair goal.
   Status: tested.
@@ -4265,8 +4268,9 @@ Each nested alternative, `Literals(["all", "none"])`, `NullOr(String)`, `Nullish
 `Union([String, Number])` and the doubly nested `Union([Literals(["all"]), NullOr(Boolean)])`, sits
 beside EXT-47's `Filter` (decoded `limit`, encoded `page_size`, default `25`), with a flat
 `Literal("all")` reference. Each appears at three levels: the root union, a terminal array element,
-and a union ancestor holding `{ filter }`, in both member orders. EXT-49d to EXT-49f pin observed
-behaviour for members the guide excludes, each beside its flat counterpart.
+and a union ancestor holding `{ filter }`, in both member orders. EXT-49d to EXT-49l cover `Void`,
+open and encoded-primitive members beside the same `Filter`, as the next paragraphs and the entries
+describe.
 
 The baseline is library main `18a48908dca46544e68fe431947788233855c831`, without the change, with
 Effect 4.1.4 and Node 24.22.2 on Windows. There the Node lane fails exactly the 60 nested EXT-49b
@@ -4288,6 +4292,41 @@ follow-up restructures the cycle guard without changing which unions qualify, an
 and documentation; the 198 EXT-49 cases pass there in the Node lane. The pull request records fresh
 CI against this pin.
 
+The Void cases were rewritten by a separate consumer context for the direct Void rule of
+[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). That context worked from the
+library pull request's public description
+([#233](https://github.com/viell-dev/slop-effect-schema-http/pull/233)), the schema-input guide and
+design page at library commit `333cb33103dac4c6e79d859485edcd37022f9c71`, and observed HTTP
+behaviour. No library implementation, source tests, backend or conformance code informed it. The
+rule: a direct `Void` member of an any-of union with an object member cannot win by discarding a
+supplied field. A member that keeps the fields wins in either order, a value no member can hold is
+a `SchemaError` before dispatch, and a fieldless input keeps the original member order. EXT-49d,
+EXT-49e and EXT-49h assert that rule, EXT-49j holds the unchanged `Unknown` and `Any` controls,
+EXT-49g pins nested Void members the rule does not reach, and EXT-49k and EXT-49l record one shape
+where the new commit lets the default replace an invalid alias.
+
+The baseline for the Void cases is library 0.17.0 at `c9439afb34d7f98a562909fdce0819722a964a0c`,
+with Effect 4.1.4 and Node 24.22.2 on Windows. Running the new expectations there, the Node lane
+fails exactly 30 cases: all 10 EXT-49d, all 12 EXT-49e, all 4 EXT-49h, both EXT-47l and both
+EXT-49k. Every one of them is a place where the behaviour changed: 0.17.0 sent Void's output for
+every invalid alias and every valid one Void reached, and refused the valid aliases in a JSON text
+field because Void's undefined has no JSON text. EXT-49g, EXT-49i, EXT-49j and the other EXT-49
+cases pass there, and both EXT-49l goals fail as expected, so those boundaries predate the change.
+The report and log remain under `artifacts/void-member-baseline-c9439af-node.*`.
+
+Verification on 2026-11-17 at `333cb33103dac4c6e79d859485edcd37022f9c71`, with Effect 4.1.4,
+Node 24.22.2 and Chromium 158 on Windows, passes all 227 EXT-49 cases and both EXT-47l cases in
+Node, Chromium and packed mode, with zero skips; the two EXT-49l goals are expected failures. The
+full lanes pass Node (2,475 ordinary cases), Chromium (1,650), packed (2,488) and app (3), each
+source and packed lane with 16 expected failures: the 14 existing ones and the two EXT-49l goals.
+Source, packed and app catalogue gates, `npm run check`, lint and strict packed declarations pass.
+Two earlier whole Node runs on the busy machine each failed one or two cases in unchanged files,
+the gateway conformance tests for AUTH-2 and EXT-31a on 3-second timeouts and then one EXT-45f
+case whose dispatched request reported a failure; each file passes when run alone, and the third
+whole Node run passes. Logs and copied JUnit reports, those attempts included, remain under
+`artifacts/void-member-333cb33-*`. These synthetic consumer checks do not establish other Effect
+peers or platforms, human use or release qualification.
+
 - **EXT-49a** Every nested alternative and the flat reference, in both orders at all three levels,
   retains encoded `"05"` to `"5"`, decoded `5` to `"5"` and omitted limit to default `"25"` bytes,
   with exactly three requests per case. Status: tested.
@@ -4302,23 +4341,70 @@ CI against this pin.
   `SchemaError` at the decoded item, for the flat reference too; these cases do not assert that
   refusal, which the library's source tests and 0.17 migration example check. Status: tested.
   - `[EXT-49c] ${binding} ${alternative.name} ${order} scalars pass through beside filter objects`
-- **EXT-49d** `Union([Literals(["all"]), Void])` and flat `Void`, in either order at every level,
-  accept invalid aliases instead of refusing them and send what Void writes: in JSON `null`,
-  `[null]` and `{"cell":null}`; on the path `[null]`, `{}` and, through this consumer's JSON
-  template, the root text `undefined`. Placed first, they also take every valid control. The guide
-  excludes Void from the rule; this extends EXT-47l's flat Void-first behaviour. Status: limit.
-  - `[EXT-49d] currently ${binding} ${level.name} ${order} a Void-containing alternative consumes invalid aliases like flat Void`
-- **EXT-49e** Placed after the object, the same Void alternatives still capture a valid encoded
-  alias: `{ page_size: "05" }` is sent as Void's output instead of `"5"`, while decoded
-  `{ limit: 5 }` and omitted `{}` reach `Filter`. The caller's valid value is dropped without a
-  refusal, contrary to the guide's promise that a given field is kept or the request refused.
-  Trying the decoded side first appears to let Void win before the encoded reading is tried. Flat
-  Void does the same, so this does not depend on nesting. The library's schema-input guide lists it
-  as an active limit, and [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6927680569)
-  records its disposition. Status: defect.
-  - `[EXT-49e] currently ${binding} ${level.name} a Void-containing alternative after the object captures a valid encoded alias like flat Void`
+- **EXT-49d** A direct `Void` member beside `Filter`, in either order at every level, refuses
+  invalid aliases `"many"` and `null` with `Schema.SchemaError` before dispatch and leaves the
+  ledger empty. Void would discard the supplied field, so it cannot win, and `Filter` cannot hold
+  the alias. The ancestor level with the object first is left to EXT-49k and EXT-49l. Library
+  0.17.0 sent Void's output instead: in JSON `null`, `[null]` and `{"cell":null}`; on the path
+  `[null]`, `{}` and, through this consumer's JSON template, the root text `undefined`.
+  Status: tested.
+  - `[EXT-49d] ${binding} ${level.name} ${order} a direct Void member refuses invalid aliases before dispatch`
+- **EXT-49e** A direct `Void` member beside `Filter`, in either order at every level, sends encoded
+  `{ page_size: "05" }` and decoded `{ limit: 5 }` as `"5"` through `Filter`. At the ancestor, an
+  `{ filter: {} }` and `{ filter: { page_size: undefined } }` supply `filter`, so they go out as the
+  default `"25"`. A union input with no field, `{}` or a key that holds undefined (`{ cell: {} }` at
+  the ancestor), keeps first-fit: Void's output when Void is first, and `"25"` when `Filter` is
+  first; the ancestor's object member requires `filter`, so there Void takes it in both orders.
+  Library 0.17.0 sent Void's output for the valid aliases too, in both orders. Status: tested.
+  - `[EXT-49e] ${binding} ${level.name} ${order} a direct Void member keeps valid aliases and leaves fieldless input first-fit`
 - **EXT-49f** `Union([Literals(["all"]), FiniteFromString])` and flat `FiniteFromString` keep the
   valid controls but let the constructor default replace invalid aliases: `"many"` and `null` go
   out as `"25"` at every level, in both orders and bindings. The guide excludes encoded primitives
   from the rule and leaves such ignored aliases as unsupported paths under #170. Status: defect.
   - `[EXT-49f] currently ${binding} ${level.name} ${order} an encoded-primitive alternative lets the default replace invalid aliases like flat FiniteFromString`
+- **EXT-49g** `Void` nested in a union of primitives, `Union([Literals(["all"]), Void])`,
+  `Union([NullOr(String), Void])` and `NullOr(Void)`, is not a direct member of the union that
+  holds the object, and keeps the 0.17.0 behaviour at `333cb33`. Placed first, it takes every
+  object input and sends Void's output; placed after the object, it still takes encoded
+  `{ page_size: "05" }` and the invalid aliases, while decoded `{ limit: 5 }` and `{}` reach
+  `Filter`. The caller's valid value is dropped without a refusal, contrary to the design page's
+  rule that a visible field is kept or refused. The schema-input guide limits Void field
+  preservation to a direct Void alternative, and
+  [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143) holds the rest. Status:
+  defect.
+  - `[EXT-49g] currently ${binding} ${level.name} ${order} a Void nested in a primitive union consumes supplied fields`
+- **EXT-49h** A query parameter and a header that hold `Union([Void, Filter])` or
+  `Union([Filter, Void])` as JSON text (`Schema.fromJsonString`) send encoded and decoded aliases
+  as `{"page_size":"5"}`, and refuse `"many"` and `null` with `SchemaError` and an empty ledger.
+  A fieldless input is `{"page_size":"25"}` when `Filter` is first; with Void first it is a
+  `SchemaError` before dispatch, because Void's undefined has no JSON text, as it was in 0.17.0.
+  0.17.0 refused the valid aliases in both orders for the same reason. Status: tested.
+  - `[EXT-49h] ${binding} JSON text field ${order} a direct Void member keeps valid aliases and refuses invalid ones before dispatch`
+- **EXT-49i** A union with a direct `Void` member is not a query or header group: Void encodes to
+  undefined, and `Request.query` and `Request.headers` refuse the schema by type, which
+  `npm run check` verifies. The group bindings are therefore not representable for this rule, and
+  EXT-49h covers those groups' JSON text fields. Bypassing the type with a cast was observed to send
+  `page_size=5` for valid aliases and refuse invalid ones at `333cb33`, and to fail with a
+  `TypeError` defect for a fieldless input with Void first, on both commits; this entry does not
+  assert that runtime behaviour. Status: tested.
+  - `[EXT-49i] a union with a direct Void member is not a query or header group`
+- **EXT-49j** `Unknown` and `Any` beside `Filter`, at the root on the path and in JSON and in the
+  query and header JSON text fields, keep their own reading on both commits. Placed first, they send
+  the caller's value as given, `{"limit":5}`, `{"page_size":"05"}` and `{}` included. Placed after
+  the object, they still send `{"page_size":"05"}`, the invalid aliases and an unstated
+  `{ other: "x" }` unchanged, while decoded `{ limit: 5 }` and fieldless input reach `Filter`.
+  Status: tested.
+  - `[EXT-49j] ${name} ${order} keeps its own reading at the root and in JSON text fields`
+- **EXT-49k** A direct `Void` after an object member that holds `Filter` one field down,
+  `Union([Struct({ filter: Filter }), Void])`, lets the constructor default replace the invalid
+  aliases at `333cb33`: `filter` values `{ page_size: "many" }` and `{ page_size: null }` go out as
+  `"25"` at the ancestor level's cell, at the root and as an array element, in both bindings. With
+  Void first the same inputs are refused (EXT-49d). With `Literal("all")` or `Null` in Void's place
+  they were observed to be refused in JSON at the cell, which these cases do not assert. 0.17.0 sent
+  Void's output for them. The guide's promise that such a field is refused before dispatch does not
+  hold for this shape. Status: defect.
+  - `[EXT-49k] currently ${binding} Void after an object holding the filter lets the default replace invalid aliases`
+- **EXT-49l** Distinct expected-failure goals hold the intended refusal for the EXT-49k shapes: each
+  invalid alias is a `SchemaError` and the ledger stays empty. They fail as expected on
+  `333cb33` and on 0.17.0. Status: defect.
+  - `[EXT-49l] goal ${binding} Void after an object holding the filter refuses invalid aliases before dispatch`
