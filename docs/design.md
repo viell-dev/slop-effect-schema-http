@@ -129,12 +129,19 @@ evidence protect that rule across unions and stacked bindings; opaque values ret
 reading. Known violations, conflicting aliases and unsupported recovery remain explicit in the
 [active limits](./schema-input.md#active-limits-and-recovery).
 
-Within a visible any-of union, a direct `Schema.Void` member cannot win by discarding supplied
-fields. The strict read declines that member for a supplied object or list with fields, and the
-strict write keeps a structural value read by another member. Selection still uses the whole schema
-and its original member order. When the strict pass cannot keep the fields, the ordinary read and
-its field-loss check determine the refusal. An empty object remains eligible for Void in the
-original order.
+Within a visible any-of union beside an object or list candidate, the strict read and write decline
+built-in `Schema.Void` when it receives an object with a defined enumerable own field or a list with
+a defined own cell. This also applies to annotated and checked Void and through unencoded any-of
+alternatives. It uses the value at the union site after transformations or fieldwise reads. The
+usual normalization removes unstated fields from closed objects. With no defined field or cell, Void
+remains eligible in the original order. The ordinary read and field-loss check can refuse inputs the
+strict pass cannot keep, including some otherwise valid mixed-side inputs. Avoid Void in request
+input schemas that rely on standalone Void, class-only or opaque alternatives, class fields, opaque
+or suspended values, encoded member unions, other union modes, or custom discard transformations.
+The [active limits](./schema-input.md#active-limits-and-recovery) give the mixed-side example.
+
+A query or header binding that writes an undefined group fails with `InvalidRequest` before
+dispatch. Its encoded side must supply a field record or field pairs.
 
 #### A last constructor attempt
 

@@ -1,58 +1,44 @@
-import { Effect, Schema, SchemaAST, SchemaIssue } from "effect";
+import { Effect, Schema, SchemaAST, SchemaIssue, SchemaParser } from "effect";
+import { hasDefinedFields } from "./excess.js";
 
-const preserve = Symbol("preserve caller fields against Void");
-type PreserveOptions = SchemaAST.ParseOptions & {
-  readonly [preserve]?: {
-    readonly refuses: (input: unknown) => boolean;
-    readonly follow?: (input: unknown, read: unknown) => void;
-  };
+const onDecline = Symbol("track Void refusal");
+type GuardOptions = SchemaAST.ParseOptions & {
+  readonly [onDecline]?: () => void;
 };
 
-const preserving = (
+export const observeVoid = (
   options: SchemaAST.ParseOptions,
-  scope: NonNullable<PreserveOptions[typeof preserve]>,
-): PreserveOptions => ({ ...options, [preserve]: scope });
+  declined: () => void,
+): GuardOptions => ({ ...options, [onDecline]: declined });
 
-const isObject = (value: unknown): value is object =>
-  typeof value === "object" && value !== null;
+const jsonVoid = Schema.toCodecJson(Schema.Void).ast.encoding?.[0];
 
-export const preservingRead = (
-  options: SchemaAST.ParseOptions,
-  given: WeakSet<object>,
-  declined: WeakSet<object>,
-) =>
-  preserving(options, {
-    refuses: (input) => {
-      if (!isObject(input) || !given.has(input)) return false;
-      declined.add(input);
-      return true;
-    },
-    follow: (input, read) => {
-      if (isObject(input) && given.has(input) && isObject(read))
-        given.add(read);
-    },
-  });
-
-export const preservingWrite = (options: SchemaAST.ParseOptions) =>
-  preserving(options, { refuses: isObject });
-
-/** Fieldwise construction replaces a supplied object with the object its field schema read. */
-export const followRead = (
-  options: PreserveOptions | undefined,
-  input: unknown,
-  read: unknown,
-) => options?.[preserve]?.follow?.(input, read);
-
-const discarded = new SchemaIssue.InvalidValue({
-  message: "Void would discard this value",
-});
-const empty = Effect.succeed(undefined);
-const reject = Effect.fail(discarded);
-const jsonVoid = Schema.toCodecJson(Schema.Void).ast.encoding;
-
-const isPlainVoid = (ast: SchemaAST.AST, json: boolean) =>
+const isPlainVoid = (ast: SchemaAST.AST): ast is SchemaAST.Void =>
   ast._tag === "Void" &&
-  (ast.encoding === undefined || (json && ast.encoding === jsonVoid));
+  (ast.encoding === undefined ||
+    (ast.encoding.length === 1 && ast.encoding[0] === jsonVoid));
+
+const guard = (member: SchemaAST.Void) => {
+  // Declaration.flip swaps checks to the opposite side. Delegate to the original type parser
+  // so checks still run on Void's result in both directions.
+  const parse = SchemaParser.decodeUnknownEffect(
+    Schema.make<Schema.Void>(
+      new SchemaAST.Void(member.annotations, member.checks),
+    ),
+  );
+  return new SchemaAST.Declaration(
+    [],
+    () => (input, _self, options: GuardOptions) => {
+      if (!hasDefinedFields(input)) return parse(input, options);
+      options[onDecline]?.();
+      return Effect.fail(new SchemaIssue.InvalidType(member, input, options));
+    },
+    { expected: "void", ...member.annotations },
+    undefined,
+    member.encoding,
+    member.context,
+  );
+};
 
 const objectMember = (ast: SchemaAST.AST): boolean =>
   ast._tag === "Objects" ||
@@ -77,16 +63,26 @@ function mapSame<A>(items: readonly A[], map: (item: A) => A): readonly A[] {
  * member before it erases the value. Its ordinary behavior (including missing and JSON null)
  * is represented by the same context and encoding links.
  */
-export const guardVoidMembers = (root: SchemaAST.AST, json: boolean) => {
+export const guardVoidMembers = (root: SchemaAST.AST) => {
+  const choices = new WeakSet<SchemaAST.AST>();
   const cache = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
-  const visit = (ast: SchemaAST.AST): SchemaAST.AST => {
-    const cached = cache.get(ast);
+  const alternatives = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
+  const visit = (ast: SchemaAST.AST) => visitAlternative(ast, false);
+  const visitAlternative = (
+    ast: SchemaAST.AST,
+    besideObject: boolean,
+  ): SchemaAST.AST => {
+    const known = besideObject ? alternatives : cache;
+    const cached = known.get(ast);
     if (cached !== undefined) return cached;
-    const result = rewrite(ast);
-    cache.set(ast, result);
+    const result = rewrite(ast, besideObject);
+    known.set(ast, result);
     return result;
   };
-  const rewrite = (ast: SchemaAST.AST): SchemaAST.AST => {
+  const rewrite = (
+    ast: SchemaAST.AST,
+    besideObject: boolean,
+  ): SchemaAST.AST => {
     // Stay out of opaque declarations and suspensions. Keep all original link transformations.
     if (ast._tag !== "Objects" && ast._tag !== "Arrays" && ast._tag !== "Union")
       return ast;
@@ -145,20 +141,19 @@ export const guardVoidMembers = (root: SchemaAST.AST, json: boolean) => {
     }
     const protect =
       (ast.options?.mode ?? "anyOf") === "anyOf" &&
-      ast.types.some(objectMember);
-    const members = mapSame(ast.types, (member) =>
-      protect && isPlainVoid(member, json)
-        ? new SchemaAST.Declaration(
-            [],
-            () => (input, _self, options: PreserveOptions) =>
-              options[preserve]?.refuses(input) ? reject : empty,
-            member.annotations,
-            member.checks,
-            member.encoding,
-            member.context,
-          )
-        : visit(member),
-    );
+      (besideObject || ast.types.some(objectMember));
+    const members = mapSame(ast.types, (member) => {
+      if (protect && isPlainVoid(member)) {
+        choices.add(ast);
+        return guard(member);
+      }
+      if (protect && member._tag === "Union" && member.encoding === undefined) {
+        const rewritten = visitAlternative(member, true);
+        if (choices.has(member)) choices.add(ast);
+        return rewritten;
+      }
+      return visit(member);
+    });
     return encoding === ast.encoding && members === ast.types
       ? ast
       : new SchemaAST.Union(
@@ -171,5 +166,5 @@ export const guardVoidMembers = (root: SchemaAST.AST, json: boolean) => {
           ast.encodingChecks,
         );
   };
-  return visit(root);
+  return { ast: visit(root), choices };
 };

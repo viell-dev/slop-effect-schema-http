@@ -666,7 +666,8 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
           let writes = 0;
           const result = yield* Inputs.reader(Filters, () => {
             writes++;
-            return Effect.succeed(output);
+            // Inject representations a codec's declared output type cannot describe.
+            return Effect.succeed(output as typeof Filters.Encoded);
           })({ page_size: "many", count: "07", offset: 9 });
           expect(result.output).toBe(output);
           expect(writes).toBe(1);
