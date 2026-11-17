@@ -430,7 +430,7 @@ describe("a caller's list beside a record member", () => {
       onSuccess: (value) => ({ value }),
     });
   // The types refuse a list for a record and each invalid item, so these come in wider values.
-  const prepared = (schema: Schema.Top, input: unknown) =>
+  const prepared = <S extends Schema.Top>(schema: S, input: unknown) =>
     Effect.forEach(["path", "body"] as const, (binding) =>
       outcome(prepare(schema, input, binding)),
     );
