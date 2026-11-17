@@ -25,6 +25,17 @@
   `Schema.Class` building an index-keyed instance, are unchanged. A default replacing an invalid
   item under a parent read field by field (#241) and a pairs list with no iterator prototype written
   under its indexes (#242) remain open.
+- **Breaking:** validate constructor aliases beside encoded primitive and array-shaped union
+  alternatives (#170). An invalid encoded alias beside `Schema.FiniteFromString`,
+  `Schema.NumberFromString` or another codec whose every link is a plain transformation of
+  primitives now refuses before dispatch instead of being replaced by an optional constructor
+  default. The same holds for an object cell beside an array or tuple member, as in the one-or-many
+  `Union([Schema.Array(Filter), Filter])`, and for an array cell that reaches the union's one
+  array-reading member while every other member refuses arrays. A list mixing an encoded-only item
+  with a decoded-only item there now refuses too; before, the valid alias was replaced by the
+  default. Valid values supplied on one side, omissions and the alternatives' own values keep their
+  results. Middleware-encoded alternatives, `Schema.Struct({})`, a second array-reading member and
+  encoded array members stay outside the rule.
 
 ## 0.17.0 — 2026-11-16
 

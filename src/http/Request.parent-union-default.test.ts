@@ -576,13 +576,20 @@ describe("nested aliases below unchanged parent unions", () => {
     expect(nestedEncodedInput(cycle)).toBeUndefined();
     for (const other of [
       Schema.Void,
-      Schema.Array(Schema.String),
       Schema.Record(Schema.String, Schema.Unknown),
       Direct.pipe(Schema.encodeKeys({ filter: "q" })),
     ])
       expect(
         nestedEncodedInput(Schema.Union([Direct, other]).ast),
       ).toBeUndefined();
+    // An array member cannot read the object cell this view captures.
+    expect(
+      nestedEncodedInput(
+        Schema.Union([Direct, Schema.Array(Schema.String)]).ast,
+      )?.({ filter: { page_size: "many" } })
+        ?.select({ filter: { page_size: "25" } })
+        ?.matches(),
+    ).toBe(true);
   });
 
   it.effect("keeps actual member-fieldwise consumption of a nested alias", () =>

@@ -87,6 +87,7 @@ Eligibility is not a promise that every schema or value in the listed container 
 | Final fieldwise construction at the root                             | Retain the original strict refusal after failed whole decoding | No decoder replay or nested ownership inferred from property reads               |
 | Initial whole construction below direct objects/closed parent unions | Follow stable unchanged declared fields                        | Every declaring member must share the same field schema                          |
 | Initial whole construction below arrays/tuples                       | Follow own data positions with matching output length          | Holes/inherited cells supply no witness; arbitrary own iterators remain excluded |
+| Initial whole construction below array-shaped unions                 | Follow an array cell into the one member that can read it      | Every other member must refuse arrays at every stage                             |
 
 Preparation tries the decoded side first, then the decoder as a whole, then, for an object that is
 not a list, the decoder field by field. If all fail, it reports the decoded side's error, a
@@ -95,21 +96,34 @@ its limits. After a typed strict read failure, stable plain root input can estab
 encoded check from finite closed object/union names: it supplies an encoded-only name and no
 decoded-only name.
 
-Unencoded primitive alternatives that cannot consume an object contribute no object fields or names.
-This includes the Undefined/Null members of optional, nullable and nullish object schemas. The
-allow-list is String, Number, Boolean, BigInt, Symbol, UniqueSymbol, Literal, Enum, TemplateLiteral,
-Null, Undefined and Never. An unencoded union whose members all qualify counts as one such
-alternative, at any depth. Effect builds `Schema.Literals([...])`, `Schema.NullOr(Schema.String)`
-and `Schema.NullishOr(Schema.Number)` this way, so `Union([Filter, Schema.Literals(["all"])])`
-behaves like the flat `Union([Filter, Schema.Literal("all")])`. A Void alternative qualifies only
-where the [strict Void rule](#a-union-keeps-what-the-caller-gave) guards it, including inside an
-unencoded any-of member union made up of these alternatives. Void elsewhere, encoded primitives,
-encoded unions, unions with any other member, primitive encoding intermediates,
-open/opaque/suspended alternatives and array-shaped parent members do not qualify. The object
-members retain the same field-identity and closed-name rules. A union of primitives alone still
-supplies no object view at either level. A codec's closed object encoding view may include these
-alternatives, such as `NullOr(Struct)` or `Union([Struct, Schema.Literals([...])])`; this can
-establish root or terminal evidence too.
+Primitive alternatives that cannot consume an object contribute no object fields or names. This
+includes the Undefined/Null members of optional, nullable and nullish object schemas. The allow-list
+is String, Number, Boolean, BigInt, Symbol, UniqueSymbol, Literal, Enum, TemplateLiteral, Null,
+Undefined and Never. A union whose members all qualify counts as one such alternative, at any depth.
+Effect builds `Schema.Literals([...])`, `Schema.NullOr(Schema.String)` and
+`Schema.NullishOr(Schema.Number)` this way, so `Union([Filter, Schema.Literals(["all"])])` behaves
+like the flat `Union([Filter, Schema.Literal("all")])`. An encoded alternative qualifies when every
+link of its encoding is a plain transformation and every stage qualifies, as in
+`Schema.FiniteFromString`, `Schema.NumberFromString` or a codec from text to nullable text. Effect
+reads the encoded end first, and a plain transformation cannot recover from that read's failure. A
+middleware link, as `Schema.catchDecoding` adds, can turn the failure into a value, so it never
+qualifies. A Void alternative qualifies only where the [strict Void rule](#a-union-keeps-what-the-caller-gave)
+guards it, including inside an unencoded any-of member union made up of these alternatives. Void
+elsewhere, unions with any other member, primitive encoding intermediates and open/opaque/suspended
+alternatives do not qualify. The object members retain the same field-identity
+and closed-name rules. A union of primitives alone still supplies no object view at either level. A
+codec's closed object encoding view may include these alternatives, such as `NullOr(Struct)` or
+`Union([Struct, Schema.Literals([...])])`; this can establish root or terminal evidence too.
+
+Array-shaped members are told apart from objects as Effect's parsers tell them, with
+`Array.isArray`. An array or tuple member, or a plain-transformation chain of such stages, cannot
+read an ordinary or null-prototype object cell. Beside an object member it contributes nothing
+there, so the one-or-many `Union([Schema.Array(Filter), Filter])` reads `{ page_size: "many" }` as
+`Filter` alone does. An actual array cell follows a union's one member that can read an array, when
+every other member refuses arrays at every stage: a primitive alternative above, or an object that
+states at least one property or index signature. `Schema.Struct({})` states none and reads every
+value except `null` and `undefined`, lists included, so it ends that path. So do a second
+array-reading member and an encoded array member. The followed member uses the array rules below.
 
 ### Initial whole construction
 
@@ -146,14 +160,15 @@ selected strict-output array to have matching length and dense own data cells. A
 Symbol.iterator data property qualifies only when its value is the unchanged native array iterator;
 the reference is Array.prototype's iterator as installed when the module loaded. Capture and recheck
 its descriptor. Accessors, subclasses, custom prototypes/iterators and changing paths remain
-excluded, as do array-shaped parent union members. Metadata and selected-path validation have linear
-reflection gates; capture each ancestor frame once. No schema, default or suspension runs to build
-this metadata. Capture stable own-data paths before callbacks and select one coherent caller path
-and actual strict output write, never independent candidates. Validate output correspondence at
-selection, then retain caller evidence through whole decoding and loss checks. Whole decoding can
-repeat checks and services; do not replay construction. Root fieldwise success cannot establish
-nested ownership because its property reader can already consume that alias. Unsupported evidence
-remains under [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
+excluded. A union ancestor passes an actual array cell only to its one array-reading member, as
+described above. Metadata and selected-path validation have linear reflection gates; capture each
+ancestor frame once. No schema, default or suspension runs to build this metadata. Capture stable
+own-data paths before callbacks and select one coherent caller path and actual strict output write,
+never independent candidates. Validate output correspondence at selection, then retain caller
+evidence through whole decoding and loss checks. Whole decoding can repeat checks and services; do
+not replay construction. Root fieldwise success cannot establish nested ownership because its
+property reader can already consume that alias. Unsupported evidence remains under
+[#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
 
 ## Preservation and selection
 
@@ -396,10 +411,12 @@ remaining list limits under #241, #242 and #243.
   key, cannot establish an unchanged nested path. The ambiguity guard can therefore leave a supplied
   invalid alias replaced by a generated default.
 - Unsupported object alternatives and construction phases can still lose aliases. Optional,
-  nullable/nullish and the listed primitive alternatives, including unencoded unions of them, extend
-  the bounded proof; guarded Void can qualify there too. Other Void, open/opaque/suspended members,
-  encoded primitives and encoded unions remain outside the proof. A successful actual
-  member-fieldwise reading is not reclassified as initial whole construction.
+  nullable/nullish, array-shaped and the listed primitive alternatives, including unions and
+  plain-transformation codecs of them, extend the bounded proof; guarded Void can qualify there too.
+  Other Void, open/opaque/suspended members and middleware-encoded alternatives do not. An array cell beside a second array-reading member or
+  an encoded array member keeps the default; beside `Schema.Struct({})`, that member takes the list
+  as it is. A successful actual member-fieldwise reading is not reclassified as initial whole
+  construction.
 - Void protection applies to built-in Void beside a visible object or list candidate in an any-of
   union, including through unencoded any-of member unions. Standalone Void, a union whose other
   members give it no visible object or list candidate, unions inside `Schema.Class` fields, opaque
@@ -428,6 +445,9 @@ remaining list limits under #241, #242 and #243.
   schema to encode a group of fields. Preparation reports lost input fields first. A non-object
   group or a header record with an invalid value fails with `InvalidRequest` before dispatch.
   Malformed iterable groups can still die while the binding inspects their pairs.
+- Once an encoded-only alias enables whole decoding of a list, a decoded-only item beside it can
+  lose its decoded name and refuse. This applies to every covered container, array-shaped unions
+  included.
 - Inherited cells, accessors, subclasses, custom prototypes/iterators and changing paths do not
   establish the new array proof. Sparse own cells and exact native own iterator data do qualify. The
   [0.16 migration](./release-notes/0.16.md) covers newly refused aliases, whole-reading changes and

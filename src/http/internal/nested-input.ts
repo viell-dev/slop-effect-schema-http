@@ -1,19 +1,27 @@
 import type { SchemaAST } from "effect";
 import { encodedInput } from "./encoded-input.js";
-import { isNonObjectAlternative } from "./primitive.js";
+import {
+  isNonObjectAlternative,
+  refusesArray,
+  refusesRecord,
+} from "./primitive.js";
 import type { AliasAlternative } from "./void-member.js";
 
 type CaptureTerminal = NonNullable<ReturnType<typeof encodedInput>>;
 type Key = string | symbol;
 
+interface Positions {
+  readonly names: ReadonlyArray<Key>;
+  readonly elements: ReadonlyArray<Node | undefined>;
+  readonly rest: ReadonlyArray<Node | undefined>;
+}
+
+/** An object cell reads the terminal or fields; an actual array cell reads the positions. */
 interface Node {
-  readonly terminal?: CaptureTerminal;
+  readonly terminal: CaptureTerminal | undefined;
   readonly names: ReadonlyArray<Key>;
   readonly fields: ReadonlyArray<readonly [Key, Node]>;
-  readonly array?: {
-    readonly elements: ReadonlyArray<Node | undefined>;
-    readonly rest: ReadonlyArray<Node | undefined>;
-  };
+  readonly array: Positions | undefined;
 }
 
 /** A selected path and write, never another candidate on a later check. */
@@ -186,8 +194,8 @@ const ownData = (
 
 /**
  * Nested encoded-only evidence through unchanged object/union fields and own array positions.
- * A parent union contributes a field only when every declaring member uses the same schema.
- * No schema or thunk runs.
+ * A parent union contributes a field only when every declaring member uses the same schema, and
+ * passes an actual array cell only to its one member that can read arrays. No schema or thunk runs.
  */
 export const nestedEncodedInput = (
   ast: SchemaAST.AST,
@@ -237,7 +245,8 @@ export const nestedEncodedInput = (
     const fields = new Map<Key, SchemaAST.AST | undefined>();
     let hasObjectMember = false;
     for (const member of part.types) {
-      if (isAlternative(part, member)) continue;
+      // An object view is only captured from an object cell, which array members cannot read.
+      if (isAlternative(part, member) || refusesRecord(member)) continue;
       const declared = fieldsOf(member);
       if (declared === undefined) {
         viewing.delete(part);
@@ -255,56 +264,52 @@ export const nestedEncodedInput = (
   };
   const known = new Map<SchemaAST.AST, Node | undefined>();
   const active = new Set<SchemaAST.AST>();
+  const positionsOf = (part: SchemaAST.AST): Positions | undefined => {
+    if (part.encoding !== undefined) return undefined;
+    if (part._tag === "Union") {
+      // An actual array cell reaches the union's one member Effect's parsers let read an array.
+      const readers = part.types.filter((member) => !refusesArray(member));
+      return readers.length === 1 ? nodeOf(readers[0]!)?.array : undefined;
+    }
+    if (part._tag !== "Arrays") return undefined;
+    const elements = part.elements.map((element) => nodeOf(element));
+    const rest = part.rest.map((element) => nodeOf(element));
+    return elements.every((element) => element === undefined) &&
+      rest.every((element) => element === undefined)
+      ? undefined
+      : {
+          names: Array.from(
+            { length: elements.length + Math.max(0, rest.length - 1) },
+            (_, index) => String(index),
+          ),
+          elements,
+          rest,
+        };
+  };
   const nodeOf = (part: SchemaAST.AST, root = false): Node | undefined => {
     if (active.has(part)) {
       cyclic = true;
       return undefined;
     }
     if (known.has(part)) return known.get(part);
-    const terminal = root ? undefined : encodedInput(part, isAlternative);
-    if (terminal !== undefined) {
-      const node = { terminal, names: [], fields: [] };
-      known.set(part, node);
-      return node;
-    }
-    if (part._tag === "Arrays" && part.encoding === undefined) {
-      active.add(part);
-      const elements = part.elements.map((element) => nodeOf(element));
-      const rest = part.rest.map((element) => nodeOf(element));
-      active.delete(part);
-      const node =
-        elements.every((element) => element === undefined) &&
-        rest.every((element) => element === undefined)
-          ? undefined
-          : {
-              names: Array.from(
-                { length: elements.length + Math.max(0, rest.length - 1) },
-                (_, index) => String(index),
-              ),
-              fields: [],
-              array: { elements, rest },
-            };
-      known.set(part, node);
-      return node;
-    }
-    const declared = fieldsOf(part);
-    if (declared === undefined) {
-      known.set(part, undefined);
-      return undefined;
-    }
     active.add(part);
-    const fields = [...declared].flatMap(([name, type]) => {
+    const array = positionsOf(part);
+    const terminal = root ? undefined : encodedInput(part, isAlternative);
+    const declared = terminal === undefined ? fieldsOf(part) : undefined;
+    const fields = [...(declared ?? [])].flatMap(([name, type]) => {
       if (type === undefined) return [];
       const node = nodeOf(type);
       return node === undefined ? [] : [[name, node] as const];
     });
     active.delete(part);
     const node =
-      fields.length === 0
+      terminal === undefined && fields.length === 0 && array === undefined
         ? undefined
         : {
-            names: [...declared.keys()],
+            terminal,
+            names: fields.length === 0 ? [] : [...declared!.keys()],
             fields,
+            array,
           };
     known.set(part, node);
     return node;
@@ -312,7 +317,12 @@ export const nestedEncodedInput = (
   const root = nodeOf(ast, true);
   if (root === undefined || cyclic) return undefined;
   const capture = (node: Node, input: unknown): Captured | undefined => {
-    if (node.terminal !== undefined) {
+    // Effect's array and object parsers tell cells apart with `Array.isArray`, so this chooses the
+    // view the same way. It sees through proxies and never runs caller code.
+    const list = Array.isArray(input);
+    const positions = list ? node.array : undefined;
+    if (list && positions === undefined) return undefined;
+    if (!list && node.terminal !== undefined) {
       const evidence = node.terminal(input);
       if (evidence === undefined) return undefined;
       return {
@@ -332,10 +342,11 @@ export const nestedEncodedInput = (
         },
       };
     }
-    const positions = node.array;
+    if (!list && node.fields.length === 0) return undefined;
+    const names = positions?.names ?? node.names;
     const data = ownData(
       input,
-      node.names,
+      names,
       positions === undefined ? false : "caller",
     );
     if (data === undefined) return undefined;
@@ -374,7 +385,7 @@ export const nestedEncodedInput = (
           )
             return undefined;
           const arrayOutput = positions
-            ? ownData(output, node.names, "output")
+            ? ownData(output, names, "output")
             : undefined;
           if (
             positions &&

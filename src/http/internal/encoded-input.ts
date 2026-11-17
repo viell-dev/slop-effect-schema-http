@@ -1,5 +1,5 @@
 import type { SchemaAST } from "effect";
-import { isNonObjectAlternative } from "./primitive.js";
+import { isNonObjectAlternative, refusesRecord } from "./primitive.js";
 import type { AliasAlternative } from "./void-member.js";
 
 interface Names {
@@ -38,8 +38,10 @@ const namesOf = (
   ] as const) {
     for (const node of nodes) {
       // This is only a union-member rule. Primitive encoding intermediates remain unsupported,
-      // and never enter the shared memo as an empty group view.
-      if (output === members && isAlternative(ast, node)) continue;
+      // and never enter the shared memo as an empty group view. Captured input is never an array,
+      // so array members cannot read it either.
+      if (output === members && (isAlternative(ast, node) || refusesRecord(node)))
+        continue;
       const names = namesOf(node, isAlternative, active, known);
       if (names === undefined) {
         active.delete(ast);
@@ -101,8 +103,10 @@ export const encodedInput = (
     if (typeof input !== "object" || input === null) return undefined;
     try {
       const prototype: unknown = Object.getPrototypeOf(input);
+      // Effect's parsers tell arrays from objects with `Array.isArray`, which sees through proxies.
       if (
         (prototype !== Object.prototype && prototype !== null) ||
+        Array.isArray(input) ||
         Symbol.iterator in input
       )
         return undefined;
