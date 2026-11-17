@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   Effect,
+  Exit,
+  Option,
   Schema,
   SchemaAST,
   SchemaIssue,
@@ -18,6 +20,28 @@ const Filter = Schema.Struct({ limit }).pipe(
   Schema.encodeKeys({ limit: "page_size" }),
 );
 const Cursor = Schema.Struct({ cursor: Schema.String });
+// An encoded union can read an object on its encoded side, so encoding alone excludes it.
+const ObjectToText = Schema.Struct({ page_size: Schema.String }).pipe(
+  Schema.decodeTo(
+    Schema.NullOr(Schema.String),
+    SchemaTransformation.transform<
+      string | null,
+      { readonly page_size: string }
+    >({
+      decode: (value) => value.page_size,
+      encode: (value) => ({ page_size: value ?? "" }),
+    }),
+  ),
+);
+const TextToText = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.NullOr(Schema.String),
+    SchemaTransformation.transform<string | null, string>({
+      decode: (value) => (value === "" ? null : value),
+      encode: (value) => value ?? "",
+    }),
+  ),
+);
 
 const prepare = <S extends Schema.Top>(
   schema: S,
@@ -429,29 +453,6 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
       }),
   );
 
-  // An encoded union can read an object on its encoded side, so encoding alone excludes it.
-  const ObjectToText = Schema.Struct({ page_size: Schema.String }).pipe(
-    Schema.decodeTo(
-      Schema.NullOr(Schema.String),
-      SchemaTransformation.transform<
-        string | null,
-        { readonly page_size: string }
-      >({
-        decode: (value) => value.page_size,
-        encode: (value) => ({ page_size: value ?? "" }),
-      }),
-    ),
-  );
-  const TextToText = Schema.String.pipe(
-    Schema.decodeTo(
-      Schema.NullOr(Schema.String),
-      SchemaTransformation.transform<string | null, string>({
-        decode: (value) => (value === "" ? null : value),
-        encode: (value) => value ?? "",
-      }),
-    ),
-  );
-
   it("keeps a nested union outside the rule unless every member qualifies unencoded", () => {
     for (const other of [
       Schema.Union([Schema.String, Schema.Void]),
@@ -526,39 +527,262 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
       }),
   );
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  const encodedPrimitives = [
+    ["FiniteFromString", Schema.FiniteFromString],
+    ["NumberFromString", Schema.NumberFromString],
+    ["text-to-text", TextToText],
+  ] as const;
+  const encodedPositions = (other: (typeof encodedPrimitives)[number][1]) =>
+    [
+      {
+        name: "root",
+        schema: Schema.Union([Filter, other]),
+        wrap: (leaf: object) => leaf,
+      },
+      {
+        name: "reversed root",
+        schema: Schema.Union([other, Filter]),
+        wrap: (leaf: object) => leaf,
+      },
+      {
+        name: "array element",
+        schema: Schema.Array(Schema.Union([Filter, other])),
+        wrap: (leaf: object) => [leaf],
+      },
+      {
+        name: "reversed array element",
+        schema: Schema.Array(Schema.Union([other, Filter])),
+        wrap: (leaf: object) => [leaf],
+      },
+      {
+        name: "parent union",
+        schema: Schema.Struct({
+          cell: Schema.Union([other, Schema.Struct({ filter: Filter })]),
+        }),
+        wrap: (leaf: object) => ({ cell: { filter: leaf } }),
+      },
+    ] as const;
+
+  for (const [name, other] of encodedPrimitives)
+    for (const kind of ["path", "body"] as const) {
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+      it.effect(
+        `currently ${kind} substitutes defaults beside an encoded ${name} alternative`,
+        () =>
+          Effect.gen(function* () {
+            for (const { schema, wrap } of encodedPositions(other))
+              for (const page_size of ["many", null])
+                expect(
+                  yield* prepare(schema, wrap({ page_size }), kind),
+                ).toEqual(wrap({ page_size: "25" }));
+          }),
+      );
+
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+      it.effect.fails(
+        `${kind} refuses invalid aliases beside an encoded ${name} alternative`,
+        () =>
+          Effect.gen(function* () {
+            for (const { schema, wrap } of encodedPositions(other))
+              for (const page_size of ["many", null])
+                expect(
+                  yield* Effect.flip(
+                    prepare(schema, wrap({ page_size }), kind),
+                  ),
+                ).toBeInstanceOf(Schema.SchemaError);
+          }),
+      );
+
+      it.effect(
+        `${kind} keeps controls beside an encoded ${name} alternative`,
+        () =>
+          Effect.gen(function* () {
+            for (const { schema, wrap } of encodedPositions(other))
+              for (const [leaf, expected] of [
+                [{ page_size: "05" }, "5"],
+                [{ limit: 5 }, "5"],
+                [{}, "25"],
+                [{ limit: 5, page_size: "many" }, "5"],
+              ] as const)
+                expect(yield* prepare(schema, wrap(leaf), kind)).toEqual(
+                  wrap({ page_size: expected }),
+                );
+          }),
+      );
+    }
+
   it.effect(
-    "currently substitutes defaults beside encoded primitive alternatives",
+    "keeps an encoded primitive alternative's own values unchanged",
     () =>
       Effect.gen(function* () {
-        for (const other of [TextToText, Schema.FiniteFromString])
-          for (const kind of ["path", "body"] as const) {
-            const schema = Schema.Array(Schema.Union([Filter, other]));
+        for (const kind of ["path", "body"] as const) {
+          for (const other of [
+            Schema.FiniteFromString,
+            Schema.NumberFromString,
+          ]) {
+            for (const schema of [
+              Schema.Union([Filter, other]),
+              Schema.Union([other, Filter]),
+            ])
+              expect(yield* prepare(schema, "07", kind)).toBe("7");
+            const list = Schema.Array(Schema.Union([Filter, other]));
             expect(
-              yield* prepare(schema, [{ page_size: "many" }], kind),
-            ).toEqual([{ page_size: "25" }]);
-            expect(yield* prepare(schema, [{ page_size: "05" }], kind)).toEqual(
-              [{ page_size: "5" }],
-            );
+              yield* prepare(list, ["07", { page_size: "05" }], kind),
+            ).toEqual(["7", { page_size: "5" }]);
+            expect(yield* prepare(list, [8, { limit: 5 }, {}], kind)).toEqual([
+              "8",
+              { page_size: "5" },
+              { page_size: "25" },
+            ]);
           }
+          expect(
+            yield* prepare(Schema.Union([Filter, TextToText]), "x", kind),
+          ).toBe("x");
+          expect(
+            yield* prepare(
+              Schema.Array(Schema.Union([Filter, TextToText])),
+              ["x", null, ""],
+              kind,
+            ),
+          ).toEqual(["x", "", ""]);
+        }
+      }),
+  );
+
+  // The proof below rests on these parser facts; the peer-floor lane runs them on Effect 4.0.7.
+  it.effect(
+    "Effect refuses an object through a plain transformation of primitives",
+    () =>
+      Effect.gen(function* () {
+        for (const [, other] of encodedPrimitives) {
+          expect(
+            other.ast.encoding?.map(
+              ({ transformation }) => transformation._tag,
+            ),
+          ).toEqual(["Transformation"]);
+          for (const input of [{ page_size: "many" }, {}, ["07"]]) {
+            expect(
+              Exit.isFailure(
+                yield* Effect.exit(Schema.decodeUnknownEffect(other)(input)),
+              ),
+            ).toBe(true);
+            expect(
+              Exit.isFailure(
+                yield* Effect.exit((other as Schema.Top).makeEffect(input)),
+              ),
+            ).toBe(true);
+          }
+        }
+      }),
+  );
+
+  const Recovering = Schema.Number.pipe(
+    Schema.catchDecoding(() => Effect.succeed(Option.some(0))),
+  );
+
+  it.effect("Effect's decoding middleware can accept an object", () =>
+    Effect.gen(function* () {
+      expect(
+        Recovering.ast.encoding?.map(
+          ({ transformation }) => transformation._tag,
+        ),
+      ).toEqual(["Middleware"]);
+      expect(
+        yield* Schema.decodeUnknownEffect(Recovering)({ page_size: "many" }),
+      ).toBe(0);
+      expect(
+        yield* Schema.decodeUnknownEffect(Schema.Union([Filter, Recovering]))({
+          page_size: "many",
+        }),
+      ).toBe(0);
+    }),
+  );
+
+  it.effect(
+    "keeps a middleware alternative outside the rule and its own reading",
+    () =>
+      Effect.gen(function* () {
+        // Even a middleware that passes its effect through, in any link, stays excluded.
+        for (const other of [
+          Recovering,
+          Schema.String.pipe(
+            Schema.middlewareDecoding((effect) => effect),
+            Schema.decodeTo(
+              Schema.NullOr(Schema.String),
+              SchemaTransformation.transform<string | null, string>({
+                decode: (value) => value,
+                encode: (value) => value ?? "",
+              }),
+            ),
+          ),
+          Schema.FiniteFromString.pipe(
+            Schema.middlewareEncoding((effect) => effect),
+          ),
+        ]) {
+          expect(
+            encodedInput(Schema.Union([Filter, other]).ast),
+          ).toBeUndefined();
+          expect(
+            nestedEncodedInput(Schema.Array(Schema.Union([Filter, other])).ast),
+          ).toBeUndefined();
+        }
+        for (const kind of ["path", "body"] as const)
+          expect(
+            yield* prepare(
+              Schema.Union([Filter, Recovering]),
+              { page_size: "many" },
+              kind,
+            ),
+          ).toBe(0);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect(
+    "currently gives the default when an encoded primitive sits beside a fieldwise root",
+    () =>
+      Effect.gen(function* () {
+        for (const kind of ["path", "body"] as const)
+          for (const schema of [
+            Schema.Union([Gated, Schema.FiniteFromString]),
+            Schema.Union([Schema.FiniteFromString, Gated]),
+          ])
+            expect(
+              yield* prepare(schema, { page_size: "many", gate: "03" }, kind),
+            ).toEqual({ page_size: "25", gate: "3" });
       }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
   it.effect.fails(
-    "refuses invalid aliases beside encoded primitive alternatives",
+    "refuses an invalid alias beside an encoded primitive on a fieldwise root",
     () =>
       Effect.gen(function* () {
-        for (const other of [TextToText, Schema.FiniteFromString])
-          expect(
-            yield* Effect.flip(
-              prepare(
-                Schema.Array(Schema.Union([Filter, other])),
-                [{ page_size: "many" }],
-                "path",
+        for (const kind of ["path", "body"] as const)
+          for (const schema of [
+            Schema.Union([Gated, Schema.FiniteFromString]),
+            Schema.Union([Schema.FiniteFromString, Gated]),
+          ])
+            expect(
+              yield* Effect.flip(
+                prepare(schema, { page_size: "many", gate: "03" }, kind),
               ),
-            ),
-          ).toBeInstanceOf(Schema.SchemaError);
+            ).toBeInstanceOf(Schema.SchemaError);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect(
+    "currently replaces a valid alias beside a decoded item under encoded primitives",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Array(
+          Schema.Union([Filter, Schema.FiniteFromString]),
+        );
+        for (const kind of ["path", "body"] as const)
+          expect(
+            yield* prepare(schema, [{ page_size: "05" }, { limit: 5 }], kind),
+          ).toEqual([{ page_size: "25" }, { page_size: "5" }]);
       }),
   );
 

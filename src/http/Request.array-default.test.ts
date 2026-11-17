@@ -754,34 +754,294 @@ describe("nested aliases below unchanged array positions", () => {
       nestedEncodedInput(Schema.Union([Schema.Array(Inner), Cursor]).ast),
     ).toBeUndefined();
   });
+});
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect("currently retains the default below an array-shaped union", () =>
+const OneOrMany = Schema.Union([Schema.Array(Inner), Inner]);
+const ManyOrOne = Schema.Union([Inner, Schema.Array(Inner)]);
+// An object cell cannot be read by an array member.
+const objectCells = [
+  { name: "one-or-many root", schema: OneOrMany, wrap: (leaf: object) => leaf },
+  { name: "many-or-one root", schema: ManyOrOne, wrap: (leaf: object) => leaf },
+  {
+    name: "one-or-many field",
+    schema: Schema.Struct({ filter: OneOrMany }),
+    wrap: (leaf: object) => ({ filter: leaf }),
+  },
+  {
+    name: "many-or-one element",
+    schema: Schema.Array(ManyOrOne),
+    wrap: (leaf: object) => [leaf],
+  },
+  {
+    name: "one-or-many beside a cursor",
+    schema: Schema.Union([Schema.Array(Inner), Inner, Cursor]),
+    wrap: (leaf: object) => leaf,
+  },
+] as const;
+// An array cell reaches the union's one array member when every other member refuses arrays.
+const arrayCells = [
+  {
+    name: "array beside a cursor",
+    schema: Schema.Union([Schema.Array(Inner), Cursor]),
+    wrap: (leaf: object) => [leaf],
+  },
+  {
+    name: "cursor beside an array",
+    schema: Schema.Union([Cursor, Schema.Array(Inner)]),
+    wrap: (leaf: object) => [leaf],
+  },
+  {
+    name: "one-or-many list",
+    schema: OneOrMany,
+    wrap: (leaf: object) => [leaf],
+  },
+  {
+    name: "many-or-one list",
+    schema: ManyOrOne,
+    wrap: (leaf: object) => [leaf],
+  },
+  {
+    name: "array beside text",
+    schema: Schema.Union([Schema.Array(Inner), Schema.String]),
+    wrap: (leaf: object) => [leaf],
+  },
+  {
+    name: "array beside encoded text",
+    schema: Schema.Union([Schema.FiniteFromString, Schema.Array(Inner)]),
+    wrap: (leaf: object) => [leaf],
+  },
+  {
+    name: "one-or-many field list",
+    schema: Schema.Struct({ filter: OneOrMany }),
+    wrap: (leaf: object) => ({ filter: [leaf] }),
+  },
+  {
+    name: "many-or-one element list",
+    schema: Schema.Array(ManyOrOne),
+    wrap: (leaf: object) => [[leaf]],
+  },
+  {
+    name: "tuple beside a cursor",
+    schema: Schema.Union([Schema.Tuple([Schema.Number, Inner]), Cursor]),
+    wrap: (leaf: object) => [3, leaf],
+  },
+  {
+    name: "nested array union",
+    schema: Schema.Union([
+      Schema.Union([Schema.Array(Inner), Cursor]),
+      Schema.Struct({ token: Schema.String }),
+    ]),
+    wrap: (leaf: object) => [leaf],
+  },
+] as const;
+const arrayShaped = [
+  ...objectCells.map((shape) => ({ ...shape, cell: "object" })),
+  ...arrayCells.map((shape) => ({ ...shape, cell: "array" })),
+] as const;
+
+// A list hidden behind an ordinary prototype is still an array to `Array.isArray`.
+const disguisedList = (items: Array<unknown>) =>
+  new Proxy(items, { getPrototypeOf: () => Object.prototype });
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/170
+describe("nested aliases beside array-shaped union members", () => {
+  // The proofs below rest on these parser facts; the peer-floor lane runs them on Effect 4.0.7.
+  const fails = (effect: Effect.Effect<unknown, unknown>) =>
+    Effect.map(Effect.exit(effect), Exit.isFailure);
+  const records = () => [
+    {},
+    { length: 0 },
+    { 0: {}, length: 1 },
+    Object.assign(Object.create(null), { 0: {}, length: 1 }),
+  ];
+  const lists = () => [
+    [],
+    [1],
+    [{}],
+    [{ page_size: "05" }],
+    Object.setPrototypeOf([{}], null),
+    disguisedList([{}]),
+  ];
+
+  it.effect("Effect's array parser refuses every non-array object", () =>
     Effect.gen(function* () {
-      const schema = Schema.Union([Schema.Array(Inner), Cursor]);
-      for (const kind of ["path", "body"] as const) {
-        expect(yield* prepare(schema, [{ page_size: "many" }], kind)).toEqual([
-          { page_size: "25" },
-        ]);
-        expect(yield* prepare(schema, [{ page_size: "05" }], kind)).toEqual([
-          { page_size: "5" },
-        ]);
-      }
+      for (const schema of [
+        Schema.Array(Inner),
+        Schema.Tuple([]),
+        Schema.Tuple([Schema.Number, Inner]),
+      ])
+        for (const input of records()) {
+          expect(yield* fails(Schema.decodeUnknownEffect(schema)(input))).toBe(
+            true,
+          );
+          expect(yield* fails(schema.makeEffect(input))).toBe(true);
+        }
     }),
   );
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect.fails("refuses invalid input below an array-shaped union", () =>
+  it.effect(
+    "Effect's object parser refuses arrays once it states a property or index",
+    () =>
+      Effect.gen(function* () {
+        for (const schema of [
+          Inner,
+          Cursor,
+          Schema.Struct({ a: Schema.optionalKey(Schema.String) }),
+          Schema.Struct({ length: Schema.Number }),
+          Schema.Record(Schema.String, Schema.Unknown),
+        ])
+          for (const input of lists()) {
+            expect(
+              yield* fails(Schema.decodeUnknownEffect(schema)(input)),
+            ).toBe(true);
+            expect(yield* fails(schema.makeEffect(input))).toBe(true);
+          }
+      }),
+  );
+
+  it.effect(
+    "Effect's empty struct reads any value but null and undefined",
+    () =>
+      Effect.gen(function* () {
+        const Empty = Schema.Struct({});
+        for (const input of [...lists(), "x", 3, true]) {
+          expect(yield* Schema.decodeUnknownEffect(Empty)(input)).toBe(input);
+          expect(yield* Empty.makeEffect(input)).toBe(input);
+        }
+        for (const input of [null, undefined])
+          expect(yield* fails(Schema.decodeUnknownEffect(Empty)(input))).toBe(
+            true,
+          );
+      }),
+  );
+
+  it.effect("Effect reads a disguised list with its array member", () =>
     Effect.gen(function* () {
       expect(
-        yield* Effect.flip(
-          prepare(
-            Schema.Union([Schema.Array(Inner), Cursor]),
-            [{ page_size: "many" }],
-            "path",
-          ),
+        yield* Schema.decodeUnknownEffect(OneOrMany)(
+          disguisedList([{ page_size: "05" }]),
         ),
-      ).toBeInstanceOf(Schema.SchemaError);
+      ).toEqual([{ limit: 5 }]);
     }),
+  );
+
+  for (const kind of ["path", "body"] as const)
+    for (const { name, schema, wrap, cell } of arrayShaped) {
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+      it.effect(
+        `currently ${kind} substitutes the default for an ${cell} cell through a ${name}`,
+        () =>
+          Effect.gen(function* () {
+            for (const page_size of ["many", null])
+              expect(yield* prepare(schema, wrap({ page_size }), kind)).toEqual(
+                wrap({ page_size: "25" }),
+              );
+          }),
+      );
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+      it.effect.fails(
+        `refuses invalid ${kind} input for an ${cell} cell through a ${name}`,
+        () =>
+          Effect.gen(function* () {
+            for (const page_size of ["many", null])
+              expect(
+                yield* Effect.flip(prepare(schema, wrap({ page_size }), kind)),
+              ).toBeInstanceOf(Schema.SchemaError);
+          }),
+      );
+      it.effect(
+        `retains ${kind} controls for an ${cell} cell through a ${name}`,
+        () =>
+          Effect.gen(function* () {
+            for (const value of [{ page_size: "05" }, { limit: 5 }])
+              expect(yield* prepare(schema, wrap(value), kind)).toEqual(
+                wrap({ page_size: "5" }),
+              );
+            expect(yield* prepare(schema, wrap({}), kind)).toEqual(
+              wrap({ page_size: "25" }),
+            );
+          }),
+      );
+    }
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect(
+    "currently replaces a valid alias beside a decoded item in an array-shaped union",
+    () =>
+      Effect.gen(function* () {
+        for (const kind of ["path", "body"] as const)
+          for (const schema of [OneOrMany, arrayCells[0].schema])
+            expect(
+              yield* prepare(schema, [{ page_size: "05" }, { limit: 5 }], kind),
+            ).toEqual([{ page_size: "25" }, { page_size: "5" }]);
+      }),
+  );
+
+  // Its decoded side is a list, but its encoded side reads an object.
+  const ObjectToList = Schema.Struct({
+    items: Schema.Array(Schema.toEncoded(Inner)),
+  }).pipe(
+    Schema.decodeTo(
+      Schema.Array(Inner),
+      SchemaTransformation.transform<
+        ReadonlyArray<typeof Inner.Encoded>,
+        { readonly items: ReadonlyArray<typeof Inner.Encoded> }
+      >({
+        decode: (value) => value.items,
+        encode: (items) => ({ items }),
+      }),
+    ),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect(
+    "currently substitutes the default where another member can read the cell",
+    () =>
+      Effect.gen(function* () {
+        for (const kind of ["path", "body"] as const) {
+          for (const schema of [
+            Schema.Union([Schema.Array(Inner), Schema.Array(Cursor)]),
+            Schema.Union([Schema.Array(Inner), ObjectToList]),
+          ])
+            expect(
+              yield* prepare(schema, [{ page_size: "many" }], kind),
+            ).toEqual([{ page_size: "25" }]);
+          expect(
+            yield* prepare(
+              Schema.Union([ObjectToList, Inner]),
+              { page_size: "many" },
+              kind,
+            ),
+          ).toEqual({ page_size: "25" });
+        }
+      }),
+  );
+
+  it.effect("keeps an empty struct member's own reading of a list", () =>
+    Effect.gen(function* () {
+      const schema = Schema.Union([Schema.Array(Inner), Schema.Struct({})]);
+      expect(nestedEncodedInput(schema.ast)).toBeUndefined();
+      for (const kind of ["path", "body"] as const)
+        expect(yield* prepare(schema, [{ page_size: "many" }], kind)).toEqual([
+          { page_size: "many" },
+        ]);
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "currently keeps the decoded name of a conflicting item in an array-shaped union",
+    () =>
+      Effect.gen(function* () {
+        for (const kind of ["path", "body"] as const)
+          for (const schema of [OneOrMany, arrayCells[0].schema])
+            expect(
+              yield* prepare(
+                schema,
+                [{ limit: 1, page_size: "02" }, { page_size: "25" }],
+                kind,
+              ),
+            ).toEqual([{ page_size: "1" }, { page_size: "25" }]);
+      }),
   );
 });
