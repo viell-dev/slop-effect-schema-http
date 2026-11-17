@@ -78,16 +78,7 @@ installation script. See npm's [ignore-scripts
 documentation](https://docs.npmjs.com/cli/v11/using-npm/config#ignore-scripts) for the option's
 behavior.
 
-The root `overrides` entry replaces minimatch 10 with 11.0.1 in development tools to address
-[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249). It crosses the tools'
-declared major-version range; the required checks validate this repository's usage. Remove it when
-ESLint, `@eslint/config-array` and `@typescript-eslint/typescript-estree` all resolve a patched
-version without it, then rerun the checks and `npm audit`. mdrefine already asks for 11.0.1.
-[#49](https://github.com/viell-dev/slop-effect-schema-http/issues/49) records the compatibility
-evidence; [#41](https://github.com/viell-dev/slop-effect-schema-http/issues/41) tracks dependency
-follow-up.
-
-The development compiler remains TypeScript 6.0.3 because current typescript-eslint 8.72.1 requires
+The development compiler remains TypeScript 6.0.3 because typescript-eslint 8.73.0 requires
 `>=4.8.4 <6.1.0`; TypeScript 7's native compiler does not provide its required programmatic API.
 Release preparation separately checks strict package consumers with TypeScript 7.0.2.
 [#69](https://github.com/viell-dev/slop-effect-schema-http/issues/69) records the resolution failure
