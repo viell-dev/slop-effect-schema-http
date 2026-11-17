@@ -88,8 +88,9 @@ Eligibility is not a promise that every schema or value in the listed container 
 | Initial whole construction below direct objects/closed parent unions | Follow stable unchanged declared fields                        | Every declaring member must share the same field schema                          |
 | Initial whole construction below arrays/tuples                       | Follow own data positions with matching output length          | Holes/inherited cells supply no witness; arbitrary own iterators remain excluded |
 
-Preparation tries the decoded side first, then the decoder as a whole, then the decoder field by
-field. If all fail, it reports the decoded side's error, a `SchemaError` before dispatch. After a
+Preparation tries the decoded side first, then the decoder as a whole, then, for an object that is
+not a list, the decoder field by field. If all fail, it reports the decoded side's error, a
+`SchemaError` before dispatch. [A list stays a list](#a-list-stays-a-list) on every route. After a
 typed strict read failure, stable plain root input can establish an additional encoded check from
 finite closed object/union names: it supplies an encoded-only name and no decoded-only name.
 
@@ -241,6 +242,38 @@ the field that would go. The types allow that value, and whichever member took i
 the schema states, so the choice cannot be made for the caller. A field a wider member states and
 refuses the value of is the same case. Only a real loss counts: a field another schema in the group
 takes is not lost, as the rule on stacked schemas below says.
+
+### A list stays a list
+
+A list is read as a whole and never field by field, at any depth. Effect's record and struct schemas
+refuse a list, as the types do, so beside such a member a list has only its list member's reading:
+it is kept as a list, or the request is refused. An object stays an object, including one whose keys
+look like indexes.
+
+```ts
+import { Schema } from "effect";
+import { Body, Request } from "viell-effect-schema-http";
+
+const Plain = Schema.Struct({ limit: Schema.optionalKey(Schema.String) });
+const Listed = Schema.Union([
+  Schema.Array(Plain),
+  Schema.Record(Schema.String, Schema.Unknown),
+]);
+const send = Request.post("https://api.example.test/things").pipe(
+  Request.body(Body.jsonSchema(Listed)),
+);
+// Input: { body: [{ limit: "x" }] }; JSON body: [{"limit":"x"}]
+// Input: { body: { "0": { limit: 5 } } }; JSON body: {"0":{"limit":5}}
+```
+
+An item the list member refuses, as in `[{ limit: 5 }]`, is a `SchemaError` before dispatch, as it
+is without the record. The record's values hold any key, so beside it a key the list member does not
+state counts as stated: `[{ page_size: "05" }]` would lose `page_size` and is refused too, where
+`Schema.Array(Plain)` alone strips it to `[{}]`. The same holds in paths, at any depth, and for a
+query or header group given as a list of pairs; a list given to a record alone is refused. Below
+such a union an invalid encoded alias in an item can still be replaced by a constructor default, as
+under other array-shaped union members
+([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)).
 
 ### An opaque value is the schema's own reading
 

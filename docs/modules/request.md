@@ -373,8 +373,8 @@ This applies to `Request.path`, `Request.query`, `Request.headers`, `Body.jsonSc
 
 The decoded side is what the schema's constructor takes. A plain object works for a `Schema.Class`,
 and a field with a constructor default can be left out. Preparation tries the decoded side first,
-then the decoder as a whole, then the decoder field by field, and reports the decoded side's error
-if all fail. The type of such an input is `Request.Input<S>`.
+then the decoder as a whole, then, for an object that is not a list, the decoder field by field, and
+reports the decoded side's error if all fail. The type of such an input is `Request.Input<S>`.
 
 The type keeps whole constructor and encoded shapes, including nested aliases. Mixing by field is
 one level deep in the type. A helper that accepts `Request.Input` must handle both sides, or declare

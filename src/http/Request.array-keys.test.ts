@@ -409,3 +409,219 @@ describe("array key normalization during request preparation", () => {
     }),
   );
 });
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/237
+describe("a caller's list beside a record member", () => {
+  const Plain = Schema.Struct({ limit: Schema.optionalKey(Schema.String) });
+  const Open = Schema.Record(Schema.String, Schema.Unknown);
+  const plainUnions = [
+    Schema.Union([Schema.Array(Plain), Open]),
+    Schema.Union([Open, Schema.Array(Plain)]),
+  ];
+  const filterUnions = [
+    Schema.Union([Schema.Array(Filter), Open]),
+    Schema.Union([Open, Schema.Array(Filter)]),
+  ];
+  /** A success's value, or the refusal; anything else stays a failure of the test. */
+  const outcome = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.match(effect, {
+      onFailure: (error) =>
+        error instanceof Schema.SchemaError ? ("refused" as const) : error,
+      onSuccess: (value) => ({ value }),
+    });
+  // The types refuse a list for a record and each invalid item, so these come in wider values.
+  const prepared = (schema: Schema.Top, input: unknown) =>
+    Effect.forEach(["path", "body"] as const, (binding) =>
+      outcome(prepare(schema, input, binding)),
+    );
+  const refused = ["refused", "refused"];
+  const kept = (value: unknown) => [{ value }, { value }];
+
+  it.effect("refuses an item its list member refuses, in either order", () =>
+    Effect.gen(function* () {
+      for (const [unions, list, input] of [
+        [plainUnions, Schema.Array(Plain), [{ limit: 5 }]],
+        [filterUnions, Schema.Array(Filter), [{ limit: "x" }]],
+        [filterUnions, Schema.Array(Filter), [{ limit: "05" }]],
+      ] as const) {
+        expect(yield* prepared(list, input)).toEqual(refused);
+        for (const schema of unions)
+          expect(yield* prepared(schema, input)).toEqual(refused);
+      }
+    }),
+  );
+
+  it.effect("refuses a key that only the record's open values state", () =>
+    Effect.gen(function* () {
+      // Alone, the list member strips a key it does not state. Beside a record of unknown values the
+      // key is stated, so the list member would lose it, and a field no member can keep refuses.
+      for (const input of [[{ page_size: "05" }], [{ page_size: "many" }]]) {
+        expect(yield* prepared(Schema.Array(Plain), input)).toEqual(kept([{}]));
+        for (const schema of plainUnions)
+          expect(yield* prepared(schema, input)).toEqual(refused);
+      }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect(
+    "currently retains the default for an invalid alias in the list",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* prepared(Schema.Array(Filter), [{ page_size: "many" }]),
+        ).toEqual(refused);
+        for (const schema of filterUnions)
+          expect(yield* prepared(schema, [{ page_size: "many" }])).toEqual(
+            kept([{ page_size: "25" }]),
+          );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect.fails("refuses an invalid alias in the list", () =>
+    Effect.gen(function* () {
+      for (const schema of filterUnions)
+        expect(yield* prepared(schema, [{ page_size: "many" }])).toEqual(
+          refused,
+        );
+    }),
+  );
+
+  it.effect("keeps valid lists, and objects with index-like keys", () =>
+    Effect.gen(function* () {
+      const objects = [Open, ...plainUnions, ...filterUnions];
+      for (const [schemas, input, output] of [
+        [
+          [Schema.Array(Plain), ...plainUnions],
+          [{ limit: "x" }],
+          [{ limit: "x" }],
+        ],
+        [
+          [Schema.Array(Filter), ...filterUnions],
+          [{ page_size: "05" }],
+          [{ page_size: "5" }],
+        ],
+        [
+          [Schema.Array(Filter), ...filterUnions],
+          [{ limit: 5 }],
+          [{ page_size: "5" }],
+        ],
+        [objects, { 0: { page_size: "05" } }, { 0: { page_size: "05" } }],
+        [objects, { 0: { limit: 5 }, 1: [] }, { 0: { limit: 5 }, 1: [] }],
+      ] as const)
+        for (const schema of schemas)
+          expect(yield* prepared(schema, input)).toEqual(kept(output));
+    }),
+  );
+
+  it.effect("reads a nested list the same way", () =>
+    Effect.gen(function* () {
+      const union = filterUnions[0]!;
+      for (const schema of [
+        Schema.Struct({ items: union }),
+        Schema.Union([
+          Schema.Struct({ items: Schema.Array(Filter) }),
+          Schema.Struct({ items: Open }),
+        ]),
+      ]) {
+        expect(yield* prepared(schema, { items: [{ limit: "x" }] })).toEqual(
+          refused,
+        );
+        expect(yield* prepared(schema, { items: [{ limit: 5 }] })).toEqual(
+          kept({ items: [{ page_size: "5" }] }),
+        );
+        expect(yield* prepared(schema, { items: { 0: { limit: 5 } } })).toEqual(
+          kept({ items: { 0: { limit: 5 } } }),
+        );
+      }
+      const elements = Schema.Array(union);
+      expect(yield* prepared(elements, [[{ limit: "x" }]])).toEqual(refused);
+      expect(
+        yield* prepared(elements, [[{ limit: 5 }], { 0: { limit: 5 } }]),
+      ).toEqual(kept([[{ page_size: "5" }], { 0: { limit: 5 } }]));
+    }),
+  );
+
+  it.effect("refuses a list given to a record", () =>
+    Effect.gen(function* () {
+      // Effect's record refuses an actual array, as the types do.
+      expect(
+        Exit.isFailure(Schema.decodeUnknownExit(Open)([{ limit: "x" }])),
+      ).toBe(true);
+      for (const input of [[{ limit: "x" }], []])
+        expect(yield* prepared(Open, input)).toEqual(refused);
+    }),
+  );
+
+  it.effect("refuses such a list as a query or header group", () =>
+    Effect.gen(function* () {
+      const Pairs = Schema.Union([
+        Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
+        Schema.Record(Schema.String, Schema.Array(Schema.String)),
+      ]);
+      const query = (value: unknown) =>
+        outcome(
+          Effect.map(
+            Request.compile(Request.get("/q").pipe(Request.query(Pairs)), {
+              query: value as never,
+            }),
+            ({ request }) => request.url,
+          ),
+        );
+      const headers = (value: unknown) =>
+        outcome(
+          Effect.map(
+            Request.compile(Request.get("/h").pipe(Request.headers(Pairs)), {
+              headers: value as never,
+            }),
+            ({ headerLines }) => headerLines,
+          ),
+        );
+      expect(yield* query([["a", "b", "c"]])).toBe("refused");
+      expect(yield* query([["a", "b"]])).toEqual({ value: "/q?a=b" });
+      expect(yield* query({ a: ["x", "y"] })).toEqual({ value: "/q?a=x&a=y" });
+      expect(yield* headers([["x-a", "1", "2"]])).toBe("refused");
+      expect(yield* headers([["x-a", "1"]])).toEqual({
+        value: [["x-a", "1"]],
+      });
+      expect(yield* headers({ "x-a": ["1", "2"] })).toEqual({
+        value: [
+          ["x-a", "1"],
+          ["x-a", "2"],
+        ],
+      });
+    }),
+  );
+
+  it.effect("decides by the list itself, without reading its contents", () =>
+    Effect.gen(function* () {
+      const union = plainUnions[0]!;
+      let iterations = 0;
+      const lists = (item: object) => {
+        const sparse: Array<object> = [];
+        sparse.length = 2;
+        sparse[1] = item;
+        return {
+          extra: Object.assign([item], { extra: "metadata" }),
+          sparse,
+          bare: Object.setPrototypeOf([item], null) as Array<object>,
+          iterable: Object.defineProperty([item], Symbol.iterator, {
+            value: function* () {
+              iterations++;
+              yield item;
+            },
+            enumerable: true,
+          }),
+        };
+      };
+      for (const [name, input] of Object.entries(lists({ limit: 5 })))
+        expect(yield* prepared(union, input), name).toEqual(refused);
+      for (const [name, input] of Object.entries(lists({ limit: "x" })))
+        expect(yield* prepared(union, input), name).toEqual(
+          yield* prepared(Schema.Array(Plain), input),
+        );
+      expect(iterations).toBe(0);
+    }),
+  );
+});
