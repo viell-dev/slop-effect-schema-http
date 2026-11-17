@@ -129,6 +129,13 @@ evidence protect that rule across unions and stacked bindings; opaque values ret
 reading. Known violations, conflicting aliases and unsupported recovery remain explicit in the
 [active limits](./schema-input.md#active-limits-and-recovery).
 
+Within a visible any-of union, a direct `Schema.Void` member cannot win by discarding supplied
+fields. The strict read declines that member for a supplied object or list with fields, and the
+strict write keeps a structural value read by another member. Selection still uses the whole schema
+and its original member order. When the strict pass cannot keep the fields, the ordinary read and
+its field-loss check determine the refusal. An empty object remains eligible for Void in the
+original order.
+
 #### A last constructor attempt
 
 A previously refused visible nested field beside an opaque value can use a bounded constructor-only

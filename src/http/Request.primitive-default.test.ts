@@ -702,18 +702,25 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("refuses a field Void would discard under an array", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        prepare(
+          Schema.Array(Schema.Union([Filter, Schema.Void])),
+          [{ page_size: "many" }],
+          "path",
+        ),
+      );
+      expect(error).toBeInstanceOf(Schema.SchemaError);
+      expect(String(error)).toContain('[0]["page_size"]');
+    }),
+  );
+
   it.effect(
-    "keeps the schema's own reading for Void, open and object-encoded primitive alternatives",
+    "keeps the schema's own reading for open and object-encoded primitive alternatives",
     () =>
       Effect.gen(function* () {
-        // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-        expect(
-          yield* prepare(
-            Schema.Array(Schema.Union([Filter, Schema.Void])),
-            [{ page_size: "many" }],
-            "path",
-          ),
-        ).toEqual([undefined]);
         for (const other of [
           Schema.Unknown,
           Schema.Any,

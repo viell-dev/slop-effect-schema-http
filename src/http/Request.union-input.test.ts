@@ -11,9 +11,226 @@ import {
   takes,
   urlOf,
 } from "../../test/request.js";
-import { bodyText } from "../../test/support.js";
+import { bodyText, empty, synthetic } from "../../test/support.js";
 import * as Body from "./Body.js";
+import * as Operation from "./Operation.js";
 import * as Request from "./Request.js";
+import * as Response from "./Response.js";
+
+const post = <S extends Schema.Top>(schema: S) =>
+  Request.post("https://example.test/x").pipe(
+    Request.body(Body.jsonSchema(schema)),
+  );
+
+describe("a Void member beside a renamed object", () => {
+  const Filter = Schema.Struct({
+    limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+      Schema.withConstructorDefault(Effect.succeed(25)),
+    ),
+  }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+  const VoidFirst = Schema.Union([Schema.Void, Filter]);
+  const VoidLast = Schema.Union([Filter, Schema.Void]);
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("keeps an encoded field in either member order", () =>
+    Effect.gen(function* () {
+      for (const schema of [VoidFirst, VoidLast])
+        expect(yield* bodyOf(post(schema), { body: { page_size: "05" } })).toBe(
+          '{"page_size":"5"}',
+        );
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("keeps a decoded field in either member order", () =>
+    Effect.gen(function* () {
+      for (const schema of [VoidFirst, VoidLast])
+        expect(yield* bodyOf(post(schema), { body: { limit: 5 } })).toBe(
+          '{"page_size":"5"}',
+        );
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("refuses an encoded field that would be discarded", () =>
+    Effect.gen(function* () {
+      const provider = synthetic(() => empty(204));
+      for (const schema of [VoidFirst, VoidLast]) {
+        const operation = Operation.make(
+          post(schema),
+          Response.status(204, Body.empty),
+        );
+        const result = yield* operation
+          .execute({ body: { page_size: "many" } })
+          .pipe(Effect.provide(provider.layer), Effect.result);
+        expect(result._tag).toBe("Failure");
+        if (result._tag !== "Failure") continue;
+        expect(result.failure).toBeInstanceOf(Schema.SchemaError);
+        expect(String(result.failure)).toContain('["page_size"]');
+        expect(String(result.failure)).not.toContain("many");
+      }
+      expect(provider.exchanges).toHaveLength(0);
+    }),
+  );
+
+  it.effect("keeps first-fit behavior when no field is supplied", () =>
+    Effect.gen(function* () {
+      expect(yield* bodyOf(post(VoidFirst), { body: {} })).toBe("null");
+      expect(yield* bodyOf(post(VoidLast), { body: {} })).toBe(
+        '{"page_size":"25"}',
+      );
+      for (const schema of [VoidFirst, VoidLast])
+        expect(yield* bodyOf(post(schema), { body: undefined })).toBe("null");
+    }),
+  );
+
+  it.effect("preserves the value read by Unknown and Any", () =>
+    Effect.gen(function* () {
+      for (const member of [Schema.Unknown, Schema.Any]) {
+        for (const schema of [
+          Schema.Union([Filter, member]),
+          Schema.Union([Schema.Void, member]),
+        ]) {
+          expect(
+            yield* bodyOf(post(schema), { body: { page_size: "05" } }),
+          ).toBe('{"page_size":"05"}');
+        }
+      }
+    }),
+  );
+
+  it.effect("keeps or refuses the object in a field and an array element", () =>
+    Effect.gen(function* () {
+      for (const schema of [VoidFirst, VoidLast]) {
+        const field = post(Schema.Struct({ filter: schema }));
+        const array = post(Schema.Array(schema));
+        for (const filter of [{ page_size: "05" }, { limit: 5 }]) {
+          expect(yield* bodyOf(field, { body: { filter } })).toBe(
+            '{"filter":{"page_size":"5"}}',
+          );
+          expect(yield* bodyOf(array, { body: [filter] })).toBe(
+            '[{"page_size":"5"}]',
+          );
+        }
+        expect(
+          yield* schemaFailure(field, {
+            body: { filter: { page_size: "many" } },
+          }),
+        ).toContain('["filter"]');
+        expect(
+          yield* schemaFailure(array, { body: [{ page_size: "many" }] }),
+        ).toContain("[0]");
+      }
+      expect(
+        yield* bodyOf(post(Schema.Array(VoidFirst)), {
+          body: [{}, { page_size: "05" }],
+        }),
+      ).toBe('[null,{"page_size":"5"}]');
+    }),
+  );
+
+  it.effect("keeps or refuses a path input at each visible level", () =>
+    Effect.gen(function* () {
+      for (const schema of [VoidFirst, VoidLast]) {
+        const request = Request.get("").pipe(
+          Request.path(schema, (value) => `/${value?.page_size ?? "empty"}`),
+        );
+        const nested = Request.get("").pipe(
+          Request.path(
+            Schema.Struct({ filter: schema }),
+            ({ filter }) => `/${filter?.page_size ?? "empty"}`,
+          ),
+        );
+        const array = Request.get("").pipe(
+          Request.path(
+            Schema.Array(schema),
+            ([filter]) => `/${filter?.page_size ?? "empty"}`,
+          ),
+        );
+        for (const filter of [{ page_size: "05" }, { limit: 5 }]) {
+          expect(yield* urlOf(request, { path: filter })).toBe("/5");
+          expect(yield* urlOf(nested, { path: { filter } })).toBe("/5");
+          expect(yield* urlOf(array, { path: [filter] })).toBe("/5");
+        }
+        const invalid = { page_size: "many" };
+        expect(yield* schemaFailure(request, { path: invalid })).toContain(
+          '["page_size"]',
+        );
+        expect(
+          yield* schemaFailure(nested, { path: { filter: invalid } }),
+        ).toContain('["filter"]');
+        expect(yield* schemaFailure(array, { path: [invalid] })).toContain(
+          "[0]",
+        );
+      }
+    }),
+  );
+
+  it.effect(
+    "runs a winning decoder and encoder once and keeps union checks",
+    () =>
+      Effect.gen(function* () {
+        let reads = 0;
+        let writes = 0;
+        const Counted = Schema.String.pipe(
+          Schema.decodeTo(
+            Schema.Number,
+            SchemaTransformation.transform({
+              decode: (value) => {
+                reads += 1;
+                return Number(value);
+              },
+              encode: (value) => {
+                writes += 1;
+                return String(value);
+              },
+            }),
+          ),
+        );
+        const ObjectMember = Schema.Struct({ limit: Counted }).pipe(
+          Schema.encodeKeys({ limit: "page_size" }),
+        );
+        const Checked = Schema.Union([Schema.Void, ObjectMember]).check(
+          Schema.makeFilter((value) => value === undefined || value.limit <= 5),
+        );
+        const request = post(Checked);
+        expect(yield* bodyOf(request, { body: { page_size: "05" } })).toBe(
+          '{"page_size":"5"}',
+        );
+        expect([reads, writes]).toEqual([1, 1]);
+        expect(
+          yield* schemaFailure(request, { body: { page_size: "06" } }),
+        ).toContain('["page_size"]');
+      }),
+  );
+
+  it.effect("keeps visible filter objects bound to query and header text", () =>
+    Effect.gen(function* () {
+      for (const schema of [VoidFirst, VoidLast]) {
+        const group = Schema.Struct({ filter: Schema.fromJsonString(schema) });
+        const query = queried(group);
+        const headers = Request.get("/x").pipe(Request.headers(group));
+        const written = '{"page_size":"5"}';
+        for (const filter of [{ limit: 5 }, { page_size: "05" }]) {
+          expect(yield* urlOf(query, { query: { filter } })).toBe(
+            `/x?filter=${encodeURIComponent(written)}`,
+          );
+          expect(yield* linesOf(headers, { headers: { filter } })).toEqual([
+            ["filter", written],
+          ]);
+        }
+        // The text codec exposes the alias as JSON text in its input type. Exercise JS callers too.
+        const invalid = { filter: { page_size: "many" } } as never;
+        expect(yield* schemaFailure(query, { query: invalid })).toContain(
+          '["filter"]',
+        );
+        expect(yield* schemaFailure(headers, { headers: invalid })).toContain(
+          '["filter"]',
+        );
+      }
+    }),
+  );
+});
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/87
 // https://github.com/viell-dev/slop-effect-schema-http/issues/134

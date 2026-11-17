@@ -107,6 +107,9 @@ export type QueryFields = Readonly<
  * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that
  * names it, because the types allow that value and any member would lose a field the schema states.
+ * A direct `Schema.Void` member in an any-of union can still take an empty object in its original
+ * order. For an object or list with visible supplied fields, preparation tries to keep those
+ * fields through another member or refuses the loss.
  * A key no member states is stripped, as a struct strips it, and so is a key the tag has ruled out.
  * A required literal tag can choose by its decoded or encoded name. Both views must rule a member
  * out before its fields go; a constructor default is not guessed to make that choice.
@@ -844,7 +847,7 @@ const prepareGroup = <
   group: "headers" | "query",
   fold: Fields.Fold,
 ) => {
-  const read = Inputs.reader(contract, Schema.encodeEffect(contract));
+  const read = Inputs.reader(contract, Schema.encodeEffect(contract), contract);
   const recover = Groups.recovery(contract);
   const { shape, settle, taken, candidates, filled } = Shapes.bind(
     contract,
@@ -1288,7 +1291,7 @@ const isPathScalar = (value: unknown): value is PathScalar =>
  */
 const pathValueEncoder = ({ name, schema }: PathValue) => {
   const contract = Schema.Struct({ [name]: schema });
-  const encode = Inputs.encoder(contract, Schema.encodeEffect(contract));
+  const encode = Inputs.encoder(contract, contract);
   return (input: never) =>
     Effect.flatMap(encode(input), ({ [name]: value }) =>
       isPathScalar(value)
@@ -1328,7 +1331,7 @@ const isTemplate = (
 const renderedPath = <S extends Schema.Top>(
   contract: S,
   render: PathRenderer<S["Encoded"]>,
-) => bindPath(Inputs.encoder(contract, Schema.encodeEffect(contract)), render);
+) => bindPath(Inputs.encoder(contract, contract), render);
 
 /**
  * Add to the request's path, from a template or from a renderer.
