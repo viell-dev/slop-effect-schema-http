@@ -3808,9 +3808,11 @@ transformed-group ownership, or unsupported member/final-fieldwise repairs.
   default-overwrite pin remains in baseline reports before the EXT-47 combined repair.
   Status: tested.
   - `[EXT-44f] sparse own-cell aliases refuse instead of dispatching constructor defaults`
-- **EXT-44g** A union containing an array-shaped ancestor retains its unproved default overwrite;
-  the object cursor alternative retains exact path and JSON. Status: defect.
-  - `[EXT-44g] currently an array-shaped union ancestor retains its unproved overwrite`
+- **EXT-44g** A union containing an array-shaped ancestor used to send the constructor default
+  for an invalid alias. It now refuses with `Schema.SchemaError` and an empty ledger. The object
+  cursor alternative still sends exact path and JSON bytes. See EXT-50 for the union matrix.
+  Status: tested.
+  - `[EXT-44g] an array-shaped union refuses an invalid alias and preserves cursor bytes`
 - **EXT-44h** A tail constructor default appends a position or swaps earlier booleans. The length
   change retains the existing schema/loss refusal without dispatch; the order change retains the
   pre-existing default output. Each performs exactly one default callback. Status: tested.

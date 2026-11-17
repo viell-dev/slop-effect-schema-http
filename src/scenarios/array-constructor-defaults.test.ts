@@ -538,7 +538,7 @@ describe(`array constructor defaults (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-44g] currently an array-shaped union ancestor retains its unproved overwrite",
+    "[EXT-44g] an array-shaped union refuses an invalid alias and preserves cursor bytes",
     () =>
       Effect.gen(function* () {
         const backend = yield* start();
@@ -558,27 +558,34 @@ describe(`array constructor defaults (${lane.name})`, () => {
           ),
           response,
         );
-        for (const input of [
-          [{ page_size: "many" }],
-          { cursor: "other/part" },
-        ]) {
+        const invalid = [{ page_size: "many" }];
+        const pathResult = yield* path
+          .execute({ path: invalid })
+          .pipe(Effect.provide(lane.fetchClient), result);
+        const bodyResult = yield* body
+          .execute({ body: invalid })
+          .pipe(Effect.provide(lane.fetchClient), result);
+        for (const outcome of [pathResult, bodyResult])
           expect(
-            yield* path
-              .execute({ path: input })
-              .pipe(Effect.provide(lane.fetchClient)),
-          ).toBe("Not Found");
-          expect(
-            yield* body
-              .execute({ body: input })
-              .pipe(Effect.provide(lane.fetchClient)),
-          ).toBe("Not Found");
-        }
+            "error" in outcome && Schema.isSchemaError(outcome.error),
+          ).toBe(true);
+        expect(yield* backend.ledger).toEqual([]);
+
+        const cursor = { cursor: "other/part" };
+        expect(
+          yield* path
+            .execute({ path: cursor })
+            .pipe(Effect.provide(lane.fetchClient)),
+        ).toBe("Not Found");
+        expect(
+          yield* body
+            .execute({ body: cursor })
+            .pipe(Effect.provide(lane.fetchClient)),
+        ).toBe("Not Found");
         const ledger = yield* backend.ledger;
-        expect(ledger).toHaveLength(4);
-        wire(ledger[0]!, pathFor('[{"page_size":"25"}]'));
-        wire(ledger[1]!, "/x", '[{"page_size":"25"}]');
-        wire(ledger[2]!, pathFor('{"cursor":"other/part"}'));
-        wire(ledger[3]!, "/x", '{"cursor":"other/part"}');
+        expect(ledger).toHaveLength(2);
+        wire(ledger[0]!, pathFor('{"cursor":"other/part"}'));
+        wire(ledger[1]!, "/x", '{"cursor":"other/part"}');
       }),
   );
 
