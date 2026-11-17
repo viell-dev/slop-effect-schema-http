@@ -223,10 +223,9 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     guardWrite !== codec.ast
       ? Schema.encodeEffect(Schema.make<typeof codec>(guardWrite))
       : write;
-  const exact = toDecoded(
-    guarded.ast === ast ? contract : Schema.make<S>(guarded.ast),
-    Excess.strict,
-  );
+  const preserving =
+    guarded.ast === ast ? contract : Schema.make<S>(guarded.ast);
+  const exact = toDecoded(preserving, Excess.strict);
   const kept = (input: Input<S>, options: SchemaAST.ParseOptions) =>
     Effect.flatMap(
       Effect.mapError(
@@ -285,6 +284,10 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   const encoded = encodedInput(ast, voidChoices);
   const nested = nestedEncodedInput(ast, voidChoices);
   const decode = (encoded || nested) && Schema.decodeUnknownEffect(contract);
+  const decodeWithVoidGuard =
+    decode && preserving !== contract
+      ? Schema.decodeUnknownEffect(preserving)
+      : undefined;
   const recoverable =
     ast._tag === "Objects" &&
     ast.encoding === undefined &&
@@ -450,9 +453,12 @@ const readerForCodec = <S extends Schema.Top, A, R>(
               // encoded-only caller name. Refuse its generated replacement without replaying effects.
               if (fieldwise && rootWitness !== undefined)
                 return Effect.fail(refusal);
+              // The alias proof ruled out a guarded Void as a reader of this object. Keep that
+              // guard during the confirming decode so it cannot swallow the rejected alias.
+              const confirm = (declined && decodeWithVoidGuard) || decode;
               const encodedRead = (current: Input<S>) =>
                 Effect.flatMap(
-                  Effect.mapError(decode(current), () => refusal),
+                  Effect.mapError(confirm(current), () => refusal),
                   (value) =>
                     witness.matches()
                       ? Effect.succeed(value)
