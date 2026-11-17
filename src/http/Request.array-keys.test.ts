@@ -453,8 +453,8 @@ describe("a caller's list beside a record member", () => {
 
   it.effect("refuses a key that only the record's open values state", () =>
     Effect.gen(function* () {
-      // Alone, the list member strips a key it does not state. Beside a record of unknown values the
-      // key is stated, so the list member would lose it, and a field no member can keep refuses.
+      // Alone, the list member strips a key it does not state. Beside a record of unknown values
+      // the key is stated, so the list member would lose it, and a field no member keeps refuses.
       for (const input of [[{ page_size: "05" }], [{ page_size: "many" }]]) {
         expect(yield* prepared(Schema.Array(Plain), input)).toEqual(kept([{}]));
         for (const schema of plainUnions)

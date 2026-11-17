@@ -120,7 +120,7 @@ export const toDecoded = <S extends Schema.Top>(
             fromPart(member, input, parseOptions, onFieldwise),
           ),
         )
-      : // A copy of a list is an object keyed by its indexes, which a record or a struct could take.
+      : // A copy of a list is an object keyed by its indexes, which a record or struct could take.
         Array.isArray(input)
         ? Effect.fail(failure)
         : byField(input, parseOptions, onFieldwise);
