@@ -102,12 +102,12 @@ and `Schema.NullishOr(Schema.Number)` this way, so `Union([Filter, Schema.Litera
 behaves like the flat `Union([Filter, Schema.Literal("all")])`. A Void alternative qualifies only
 where the [strict Void rule](#a-union-keeps-what-the-caller-gave) guards it, including inside an
 unencoded any-of member union made up of these alternatives. Void elsewhere, encoded primitives,
-encoded unions, unions with any other member, primitive encoding intermediates, open/opaque/suspended
-alternatives and array-shaped parent members do not qualify. The object members retain the same
-field-identity and closed-name rules. A union of primitives alone still supplies no object view at
-either level. A codec's closed object encoding view may include these alternatives, such as
-`NullOr(Struct)` or `Union([Struct, Schema.Literals([...])])`; this can establish root or terminal
-evidence too.
+encoded unions, unions with any other member, primitive encoding intermediates,
+open/opaque/suspended alternatives and array-shaped parent members do not qualify. The object
+members retain the same field-identity and closed-name rules. A union of primitives alone still
+supplies no object view at either level. A codec's closed object encoding view may include these
+alternatives, such as `NullOr(Struct)` or `Union([Struct, Schema.Literals([...])])`; this can
+establish root or terminal evidence too.
 
 ### Initial whole construction
 
@@ -348,8 +348,8 @@ a guarantee that preparation refuses safely.
 - Unsupported object alternatives and construction phases can still lose aliases. Optional,
   nullable/nullish and the listed primitive alternatives, including unencoded unions of them, extend
   the bounded proof; guarded Void can qualify there too. Other Void, open/opaque/suspended members,
-  encoded primitives and encoded unions remain outside the proof. A successful actual member-fieldwise reading is not reclassified as initial whole
-  construction.
+  encoded primitives and encoded unions remain outside the proof. A successful actual
+  member-fieldwise reading is not reclassified as initial whole construction.
 - Void protection applies to built-in Void beside a visible object or list candidate in an any-of
   union, including through unencoded any-of member unions. Standalone Void, a union whose other
   members give it no visible object or list candidate, unions inside `Schema.Class` fields, opaque

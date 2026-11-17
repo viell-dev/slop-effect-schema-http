@@ -140,11 +140,11 @@ input schemas that rely on standalone Void, class-only or opaque alternatives, c
 or suspended values, encoded member unions, other union modes, or custom discard transformations.
 The [active limits](./schema-input.md#active-limits-and-recovery) give the mixed-side example.
 
-The closed-object alias proof ignores a Void alternative only where the strict pass guards it.
-The existing alias checks can then refuse input a nested constructor default would otherwise replace.
-A query or header binding that writes a non-object group fails with `InvalidRequest` before
-dispatch. Header records must contain strings, arrays of strings or omitted values. Malformed
-iterables can still fail while the binding reads the names of their pairs.
+The closed-object alias proof ignores a Void alternative only where the strict pass guards it. The
+existing alias checks can then refuse input a nested constructor default would otherwise replace. A
+query or header binding that writes a non-object group fails with `InvalidRequest` before dispatch.
+Header records must contain strings, arrays of strings or omitted values. Malformed iterables can
+still fail while the binding reads the names of their pairs.
 
 #### A last constructor attempt
 
