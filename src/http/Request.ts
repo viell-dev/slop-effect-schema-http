@@ -101,8 +101,11 @@ export type QueryFields = Readonly<
  * Conflicting values are not generally refused; give one side's name or validate a decoded mapping.
  *
  * Constructor-default validation is bounded: unsupported aliases can still be ignored in favor of
- * defaults, including inherited-only cells, arbitrary iterators and opaque or ambiguous paths
- * (issue #170). Stable sparse own cells and exact native own iterator data can qualify.
+ * defaults, including inherited-only cells, arbitrary iterators, middleware-encoded alternatives,
+ * lists beside a second array-reading member such as `Schema.Struct({})`, and opaque or ambiguous
+ * paths (issue #170). Stable sparse own cells, exact native own iterator data, plain-transformation
+ * primitive codecs such as `Schema.FiniteFromString`, and one-or-many unions of an object and its
+ * list can qualify.
  * Array normalization preserves positions and symbol identity but does not expand that proof.
  * Supply one decoded shape, validated and mapped explicitly when needed, for unsupported inputs.
  * Whole encoded reading can refuse mixed-side input or change a shared-type field's interpretation;

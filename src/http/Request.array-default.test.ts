@@ -14,6 +14,7 @@ import {
 } from "effect";
 import * as Body from "./Body.js";
 import * as Inputs from "./internal/input.js";
+import { encodedInput } from "./internal/encoded-input.js";
 import { nestedEncodedInput } from "./internal/nested-input.js";
 import * as Request from "./Request.js";
 
@@ -749,15 +750,27 @@ describe("nested aliases below unchanged array positions", () => {
       );
     }
 
-  it("declines an array-shaped union ancestor", () => {
+  it("follows an array cell into an array-shaped union's one array member", () => {
+    const capture = nestedEncodedInput(
+      Schema.Union([Schema.Array(Inner), Cursor]).ast,
+    )!;
     expect(
-      nestedEncodedInput(Schema.Union([Schema.Array(Inner), Cursor]).ast),
-    ).toBeUndefined();
+      capture([{ page_size: "many" }])
+        ?.select([{ page_size: "25" }])
+        ?.matches(),
+    ).toBe(true);
+    expect(capture({ page_size: "many" })).toBeUndefined();
   });
 });
 
 const OneOrMany = Schema.Union([Schema.Array(Inner), Inner]);
 const ManyOrOne = Schema.Union([Inner, Schema.Array(Inner)]);
+const ListOrCursor = Schema.Union([Schema.Array(Inner), Cursor]);
+const ListOrText = Schema.Union([Schema.Array(Inner), Schema.String]);
+const CountOrList = Schema.Union([
+  Schema.FiniteFromString,
+  Schema.Array(Inner),
+]);
 // An object cell cannot be read by an array member.
 const objectCells = [
   { name: "one-or-many root", schema: OneOrMany, wrap: (leaf: object) => leaf },
@@ -782,7 +795,7 @@ const objectCells = [
 const arrayCells = [
   {
     name: "array beside a cursor",
-    schema: Schema.Union([Schema.Array(Inner), Cursor]),
+    schema: ListOrCursor,
     wrap: (leaf: object) => [leaf],
   },
   {
@@ -802,12 +815,12 @@ const arrayCells = [
   },
   {
     name: "array beside text",
-    schema: Schema.Union([Schema.Array(Inner), Schema.String]),
+    schema: ListOrText,
     wrap: (leaf: object) => [leaf],
   },
   {
     name: "array beside encoded text",
-    schema: Schema.Union([Schema.FiniteFromString, Schema.Array(Inner)]),
+    schema: CountOrList,
     wrap: (leaf: object) => [leaf],
   },
   {
@@ -929,17 +942,6 @@ describe("nested aliases beside array-shaped union members", () => {
     for (const { name, schema, wrap, cell } of arrayShaped) {
       // https://github.com/viell-dev/slop-effect-schema-http/issues/170
       it.effect(
-        `currently ${kind} substitutes the default for an ${cell} cell through a ${name}`,
-        () =>
-          Effect.gen(function* () {
-            for (const page_size of ["many", null])
-              expect(yield* prepare(schema, wrap({ page_size }), kind)).toEqual(
-                wrap({ page_size: "25" }),
-              );
-          }),
-      );
-      // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-      it.effect.fails(
         `refuses invalid ${kind} input for an ${cell} cell through a ${name}`,
         () =>
           Effect.gen(function* () {
@@ -964,16 +966,42 @@ describe("nested aliases beside array-shaped union members", () => {
       );
     }
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect("keeps the alternatives' own values and valid lists", () =>
+    Effect.gen(function* () {
+      for (const kind of ["path", "body"] as const) {
+        expect(yield* prepare(ListOrText, "text", kind)).toBe("text");
+        expect(yield* prepare(CountOrList, "07", kind)).toBe("7");
+        expect(yield* prepare(ListOrCursor, { cursor: "a/b" }, kind)).toEqual({
+          cursor: "a/b",
+        });
+        for (const schema of [OneOrMany, ManyOrOne]) {
+          expect(yield* prepare(schema, [], kind)).toEqual([]);
+          // A strict whole decode succeeds and, as for any list, applies no constructor default.
+          expect(
+            yield* prepare(schema, [{ page_size: "05" }, {}], kind),
+          ).toEqual([{ page_size: "5" }, {}]);
+          expect(yield* prepare(schema, [{ limit: 5 }, {}], kind)).toEqual([
+            { page_size: "5" },
+            { page_size: "25" },
+          ]);
+        }
+      }
+    }),
+  );
+
+  // Whole decoding reads the decoded item by its encoded name and loses it.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
   it.effect(
-    "currently replaces a valid alias beside a decoded item in an array-shaped union",
+    "refuses a list mixing encoded-only and decoded items in an array-shaped union",
     () =>
       Effect.gen(function* () {
         for (const kind of ["path", "body"] as const)
-          for (const schema of [OneOrMany, arrayCells[0].schema])
+          for (const schema of [OneOrMany, ListOrCursor])
             expect(
-              yield* prepare(schema, [{ page_size: "05" }, { limit: 5 }], kind),
-            ).toEqual([{ page_size: "25" }, { page_size: "5" }]);
+              yield* Effect.flip(
+                prepare(schema, [{ page_size: "05" }, { limit: 5 }], kind),
+              ),
+            ).toBeInstanceOf(Schema.SchemaError);
       }),
   );
 
@@ -998,6 +1026,20 @@ describe("nested aliases beside array-shaped union members", () => {
     "currently substitutes the default where another member can read the cell",
     () =>
       Effect.gen(function* () {
+        const records = Schema.Union([ObjectToList, Inner]);
+        expect(encodedInput(records.ast)).toBeUndefined();
+        expect(nestedEncodedInput(Schema.Array(records).ast)).toBeUndefined();
+        // An encoded list member is the one array reader, but its positions are not followed.
+        expect(
+          nestedEncodedInput(
+            Schema.Union([
+              Schema.Array(Schema.toEncoded(Inner)).pipe(
+                Schema.decodeTo(Schema.Array(Inner)),
+              ),
+              Cursor,
+            ]).ast,
+          ),
+        ).toBeUndefined();
         for (const kind of ["path", "body"] as const) {
           for (const schema of [
             Schema.Union([Schema.Array(Inner), Schema.Array(Cursor)]),
@@ -1028,20 +1070,128 @@ describe("nested aliases beside array-shaped union members", () => {
     }),
   );
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it("chooses the object or array view as Effect's parsers do", () => {
+    const root = encodedInput(OneOrMany.ast)!;
+    const nested = nestedEncodedInput(OneOrMany.ast)!;
+    const field = nestedEncodedInput(Schema.Struct({ filter: OneOrMany }).ast)!;
+    expect(root({ page_size: "many" })?.matches()).toBe(true);
+    expect(nested({ page_size: "many" })).toBeUndefined();
+    // Lists never supply object evidence, even behind a null or ordinary prototype.
+    const bare = Object.assign(Object.setPrototypeOf([{}], null), {
+      page_size: "many",
+    });
+    for (const list of [bare, disguisedList([{ page_size: "many" }])]) {
+      expect(root(list)).toBeUndefined();
+      expect(field({ filter: list })).toBeUndefined();
+    }
+    // A null-prototype list is still a supported array cell.
+    expect(
+      field({ filter: Object.setPrototypeOf([{ page_size: "many" }], null) })
+        ?.select({ filter: [{ page_size: "25" }] })
+        ?.matches(),
+    ).toBe(true);
+    const input = [{ page_size: "many" }];
+    const evidence = nested(input)!;
+    expect(evidence.select([{ page_size: "25" }])?.matches()).toBe(true);
+    for (const output of [
+      [{}],
+      [{ page_size: "25" }, { page_size: "25" }],
+      { 0: { page_size: "25" } },
+      { page_size: "25" },
+    ])
+      expect(evidence.select(output)).toBeUndefined();
+    const selected = evidence.select([{ page_size: "25" }])!;
+    input[0] = { page_size: "05" };
+    expect(selected.matches()).toBe(false);
+    expect(
+      field({ filter: [{ page_size: "many" }] })
+        ?.select({ filter: [{ page_size: "25" }] })
+        ?.matches(),
+    ).toBe(true);
+    expect(
+      field({ filter: { page_size: "many" } })
+        ?.select({ filter: { page_size: "25" } })
+        ?.matches(),
+    ).toBe(true);
+    expect(
+      field({ filter: { page_size: "many" } })?.select({
+        filter: [{ page_size: "25" }],
+      }),
+    ).toBeUndefined();
+  });
+
+  it.effect("refuses an invalid alias on a one-or-many fieldwise root", () =>
+    Effect.gen(function* () {
+      const Gated = Schema.Struct({
+        limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+          Schema.withConstructorDefault(Effect.succeed(25)),
+        ),
+        gate: Schema.FiniteFromString,
+      }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+      for (const kind of ["path", "body"] as const)
+        for (const schema of [
+          Schema.Union([Schema.Array(Gated), Gated]),
+          Schema.Union([Gated, Schema.Array(Gated)]),
+        ]) {
+          expect(
+            yield* Effect.flip(
+              prepare(schema, { page_size: "many", gate: "03" }, kind),
+            ),
+          ).toBeInstanceOf(Schema.SchemaError);
+          expect(
+            yield* prepare(schema, { page_size: "05", gate: "03" }, kind),
+          ).toEqual({ page_size: "5", gate: "3" });
+        }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
   it.effect(
-    "currently keeps the decoded name of a conflicting item in an array-shaped union",
+    "currently keeps the default for a list behind a custom prototype",
     () =>
       Effect.gen(function* () {
         for (const kind of ["path", "body"] as const)
-          for (const schema of [OneOrMany, arrayCells[0].schema])
+          expect(
+            yield* prepare(
+              OneOrMany,
+              disguisedList([{ page_size: "many" }]),
+              kind,
+            ),
+          ).toEqual([{ page_size: "25" }]);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "currently whole reading changes a conflicting name in an array-shaped union",
+    () =>
+      Effect.gen(function* () {
+        for (const kind of ["path", "body"] as const)
+          for (const schema of [OneOrMany, ListOrCursor])
             expect(
               yield* prepare(
                 schema,
                 [{ limit: 1, page_size: "02" }, { page_size: "25" }],
                 kind,
               ),
-            ).toEqual([{ page_size: "1" }, { page_size: "25" }]);
+            ).toEqual([{ page_size: "2" }, { page_size: "25" }]);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect.fails(
+    "refuses conflicting aliases beside an encoded-only item in an array-shaped union",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* Effect.flip(
+            prepare(
+              OneOrMany,
+              [{ limit: 1, page_size: "02" }, { page_size: "25" }],
+              "path",
+            ),
+          ),
+        ).toBeInstanceOf(Schema.SchemaError);
       }),
   );
 });
