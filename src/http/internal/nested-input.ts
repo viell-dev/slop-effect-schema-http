@@ -1,7 +1,7 @@
 import type { SchemaAST } from "effect";
 import { encodedInput } from "./encoded-input.js";
 import { isNonObjectAlternative } from "./primitive.js";
-import { isGuardedVoidAlternative } from "./void-member.js";
+import type { AliasAlternative } from "./void-member.js";
 
 type CaptureTerminal = NonNullable<ReturnType<typeof encodedInput>>;
 type Key = string | symbol;
@@ -191,7 +191,8 @@ const ownData = (
  */
 export const nestedEncodedInput = (
   ast: SchemaAST.AST,
-  voidChoices?: WeakSet<SchemaAST.AST>,
+  isAlternative: AliasAlternative = (_union, member) =>
+    isNonObjectAlternative(member),
 ) => {
   type Fields = ReadonlyMap<Key, SchemaAST.AST | undefined>;
   const mergeField = (
@@ -236,11 +237,7 @@ export const nestedEncodedInput = (
     const fields = new Map<Key, SchemaAST.AST | undefined>();
     let hasObjectMember = false;
     for (const member of part.types) {
-      if (
-        isNonObjectAlternative(member) ||
-        isGuardedVoidAlternative(part, member, voidChoices)
-      )
-        continue;
+      if (isAlternative(part, member)) continue;
       const declared = fieldsOf(member);
       if (declared === undefined) {
         viewing.delete(part);
@@ -264,7 +261,7 @@ export const nestedEncodedInput = (
       return undefined;
     }
     if (known.has(part)) return known.get(part);
-    const terminal = root ? undefined : encodedInput(part, voidChoices);
+    const terminal = root ? undefined : encodedInput(part, isAlternative);
     if (terminal !== undefined) {
       const node = { terminal, names: [], fields: [] };
       known.set(part, node);

@@ -4,10 +4,12 @@
 
 - **Breaking:** keep or refuse visible fields that built-in `Schema.Void` would discard beside an
   object or list in a visible any-of request union, including nested any-of alternatives and
-  annotated or checked Void (#143). Empty objects retain first-fit behavior. Some mixed-side inputs
-  now refuse. Avoid Void as a standalone schema or beside only class-backed or opaque alternatives.
-  Class fields, opaque or suspended values, encoded member unions, other union modes and custom
-  discard transformations can still drop fields. See the [active
+  annotated or checked Void (#143). Empty objects retain first-fit reading. Objects or lists with
+  fields that decode to `undefined` can still use their writer. Populated defaults and objects with
+  only undefined-valued keys can select a different member. Some mixed-side inputs refuse. Avoid
+  Void as a standalone schema or beside only class-backed or opaque alternatives. Class fields,
+  opaque or suspended values, encoded member unions, other union modes and custom discard
+  transformations can still drop fields. See the [active
   limits](https://viell-dev.github.io/slop-effect-schema-http/schema-input#active-limits-and-recovery)
   for the exact scope.
 - Return a typed `InvalidRequest` when a query or header schema encodes a non-object group or a

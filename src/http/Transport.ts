@@ -22,6 +22,12 @@ export type Lines = ReadonlyArray<readonly [string, string]>;
  */
 export type HeaderInput = Headers.Input;
 
+const headerLine = (name: string, value: string): readonly [string, string] => {
+  if (typeof name !== "string" || typeof value !== "string")
+    throw new TypeError("A header line must have a string name and value");
+  return [name, value];
+};
+
 /**
  * Expand a supported header collection into ordered name/value lines.
  *
@@ -30,7 +36,7 @@ export type HeaderInput = Headers.Input;
  */
 export const entries = (input: HeaderInput): Lines =>
   Symbol.iterator in input
-    ? Array.from(input, ([name, value]) => [name, value] as const)
+    ? Array.from(input, ([name, value]) => headerLine(name, value))
     : Object.entries(input).flatMap(
         ([name, value]): Array<readonly [string, string]> => {
           if (value === undefined) return [];
@@ -39,7 +45,7 @@ export const entries = (input: HeaderInput): Lines =>
             throw new TypeError(
               "A header record field must be text or an array of text",
             );
-          return value.map((line) => [name, line]);
+          return value.map((line) => headerLine(name, line));
         },
       );
 

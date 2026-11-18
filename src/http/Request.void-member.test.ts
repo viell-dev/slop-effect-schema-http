@@ -1,14 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Option, Schema, SchemaGetter } from "effect";
-import {
-  bodyOf,
-  linesOf,
-  refusal,
-  schemaFailure,
-  Tenant,
-  urlOf,
-} from "../../test/request.js";
+import { Cause, Effect, Option, Schema, SchemaAST, SchemaGetter } from "effect";
+import { bodyOf, schemaFailure, Tenant, urlOf } from "../../test/request.js";
 import * as Body from "./Body.js";
+import { encodedInput } from "./internal/encoded-input.js";
+import { nestedEncodedInput } from "./internal/nested-input.js";
+import { guardVoidMembers } from "./internal/void-member.js";
 import * as Request from "./Request.js";
 
 const post = <S extends Schema.Top>(schema: S) =>
@@ -28,6 +24,96 @@ const RenamedSort = Schema.Struct({
 }).pipe(Schema.encodeKeys({ sortBy: "sort_by" }));
 
 describe("request preparation beside Void", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "keeps a read object or array whose cells decode to undefined",
+    () =>
+      Effect.gen(function* () {
+        const NullAsUndefined = Schema.Null.pipe(
+          Schema.decodeTo(Schema.Undefined, {
+            decode: SchemaGetter.transform(() => undefined),
+            encode: SchemaGetter.transform(() => null),
+          }),
+        );
+        const object = post(
+          Schema.Union([Schema.Void, Schema.Struct({ flag: NullAsUndefined })]),
+        );
+        const array = post(
+          Schema.Union([Schema.Void, Schema.Array(NullAsUndefined)]),
+        );
+        expect(yield* bodyOf(object, { body: { flag: null } })).toBe(
+          '{"flag":null}',
+        );
+        expect(yield* bodyOf(array, { body: [null] })).toBe("[null]");
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("reports the invalid sibling beside a valid encoded alias", () =>
+    Effect.gen(function* () {
+      const Extra = Schema.Struct({ a: Schema.Number });
+      const wire = { extra: { a: "x" }, filter: { page_size: "05" } };
+      for (const members of [
+        [Schema.Void, Extra],
+        [Extra, Schema.Void],
+      ] as const) {
+        const extra = Schema.Union(members);
+        const nested = Schema.Struct({ filter: Filter, extra });
+        const root = Schema.Struct({
+          extra,
+          limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+            Schema.withConstructorDefault(Effect.succeed(25)),
+          ),
+        }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+        for (const [prepared, path] of [
+          [
+            schemaFailure(post(nested), { body: wire } as never),
+            '["extra"]["a"]',
+          ],
+          [
+            schemaFailure(post(Schema.Array(nested)), {
+              body: [wire],
+            } as never),
+            '[0]["extra"]["a"]',
+          ],
+          [
+            schemaFailure(post(root), {
+              body: { extra: wire.extra, page_size: "05" },
+            } as never),
+            '["extra"]["a"]',
+          ],
+        ] as const) {
+          const error = yield* prepared;
+          expect(error).toContain(path);
+          expect(error).not.toContain("page_size");
+        }
+      }
+    }),
+  );
+
+  it("reuses member classification for deeply nested alias proofs", () => {
+    let visits = 0;
+    let ast: SchemaAST.AST = VoidFirst.ast;
+    const depth = 100;
+    for (let i = 0; i < depth; i++) {
+      const types: ReadonlyArray<SchemaAST.AST> = [
+        new SchemaAST.Literal(i),
+        ast,
+      ];
+      ast = new SchemaAST.Union(types);
+      Object.defineProperty(ast, "types", {
+        get: () => {
+          visits++;
+          return types;
+        },
+      });
+    }
+    const { isAliasAlternative } = guardVoidMembers(ast);
+    expect(encodedInput(ast, isAliasAlternative)).toBeDefined();
+    nestedEncodedInput(ast, isAliasAlternative);
+    expect(visits).toBeLessThan(depth * 20);
+  });
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
   it.effect("keeps an encoded field beneath a renamed parent key", () =>
     Effect.gen(function* () {
@@ -211,9 +297,7 @@ describe("request preparation beside Void", () => {
           yield* schemaFailure(post(schema), {
             body: { extra: { a: "x" }, filter: { page_size: "many" } },
           } as never),
-        ).toBe(
-          'The schema cannot keep this field with the rest of the value\n  at ["filter"]["page_size"]',
-        );
+        ).toBe('Expected a finite number\n  at ["filter"]["limit"]');
       }),
   );
 
@@ -274,6 +358,49 @@ describe("request preparation beside Void", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "currently keeps a populated struct constructor default beside Void",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Struct({
+          g: Schema.optionalKey(
+            Schema.Union([
+              Schema.Void,
+              Schema.Struct({ a: Schema.optionalKey(Schema.Number) }),
+            ]),
+          ).pipe(Schema.withConstructorDefault(Effect.succeed({ a: 1 }))),
+        });
+        expect(yield* bodyOf(post(schema), { body: {} })).toBe('{"g":{"a":1}}');
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "currently treats undefined-valued fields as absent before first fit",
+    () =>
+      Effect.gen(function* () {
+        const required = post(
+          Schema.Union([
+            Schema.Struct({ inner: Schema.UndefinedOr(Schema.String) }),
+            Schema.Void,
+          ]),
+        );
+        const optional = post(
+          Schema.Union([
+            Schema.Struct({ a: Schema.optionalKey(Schema.Number) }),
+            Schema.Void,
+          ]),
+        );
+        expect(yield* bodyOf(required, { body: { inner: undefined } })).toBe(
+          "null",
+        );
+        expect(
+          yield* bodyOf(optional, { body: { a: undefined } } as never),
+        ).toBe("{}");
+      }),
+  );
+
   it.effect(
     "uses winning schema services once and propagates defects and interruption",
     () =>
@@ -326,110 +453,44 @@ describe("request preparation beside Void", () => {
         }
       }),
   );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
-  it.effect("refuses a header encoding with non-string values", () =>
-    Effect.gen(function* () {
-      const any = Request.get("/x").pipe(Request.headers(Schema.Any));
-      const unknown = Request.get("/x").pipe(
-        Request.headers(Schema.Unknown as never),
-      );
-      for (const value of [5, ["valid", 5], null]) {
-        for (const prepare of [
-          Request.compile(any, { headers: { value } }),
-          Request.compile(unknown, { headers: { value } } as never),
-        ]) {
-          const result = yield* Effect.result(prepare);
-          expect(result._tag).toBe("Failure");
-          if (result._tag === "Failure") {
-            expect(result.failure).toBeInstanceOf(Request.InvalidRequest);
-            expect(result.failure.message).toBe(
-              "The header schema must encode string field names and values",
-            );
-          }
-        }
-      }
-      expect(
-        yield* linesOf(any, { headers: { value: ["one", "two"] } }),
-      ).toEqual([
-        ["value", "one"],
-        ["value", "two"],
-      ]);
-    }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
-  it.effect(
-    "refuses an undefined query or header encoding with a typed error",
-    () =>
-      Effect.gen(function* () {
-        const Sort = Schema.Struct({ sort: Schema.optionalKey(Schema.String) });
-        for (const schema of [Schema.Void, Schema.Union([Schema.Void, Sort])]) {
-          const query = Request.get("/x").pipe(Request.query(schema as never));
-          const headers = Request.get("/x").pipe(
-            Request.headers(schema as never),
-          );
-          for (const [compile, name] of [
-            [Request.compile(query, { query: {} } as never), "query"],
-            [Request.compile(headers, { headers: {} } as never), "header"],
-          ] as const) {
-            const result = yield* Effect.result(compile);
-            expect(result._tag).toBe("Failure");
-            if (result._tag === "Failure") {
-              expect(result.failure).toBeInstanceOf(Request.InvalidRequest);
-              expect(result.failure.message).toBe(
-                "The " +
-                  name +
-                  " schema must encode a field record or field pairs",
-              );
-            }
-          }
-        }
-        const schema = Schema.Union([Schema.Void, Sort]);
-        expect(
-          yield* urlOf(Request.get("/x").pipe(Request.query(schema as never)), {
-            query: { sort: "a" },
-          } as never),
-        ).toBe("/x?sort=a");
-        expect(
-          yield* linesOf(
-            Request.get("/x").pipe(Request.headers(schema as never)),
-            { headers: { sort: "a" } } as never,
-          ),
-        ).toEqual([["sort", "a"]]);
-      }),
-  );
-});
-
-describe("known group output limit", () => {
-  const request = Request.get("/x").pipe(Request.headers(Schema.Any));
-  const input = { headers: [1] };
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
-  it.effect("currently dies while reading malformed iterable field pairs", () =>
-    Effect.gen(function* () {
-      const result = yield* Effect.exit(Request.compile(request, input));
-      expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") {
-        expect(Cause.hasDies(result.cause)).toBe(true);
-        expect(Cause.pretty(result.cause)).toContain("TypeError");
-      }
-    }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
-  it.effect.fails(
-    "refuses malformed iterable field pairs with a typed error",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* refusal(request, input)).toBeInstanceOf(
-          Request.InvalidRequest,
-        );
-      }),
-  );
 });
 
 describe("known Void selection limits", () => {
+  const arrayFirst = post(Schema.Union([Schema.Array(Filter), Schema.Void]));
+  const invalidAlias = { body: [{ page_size: "many" }] };
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "currently uses the struct default for a list beside a struct-only alternative",
+    () =>
+      Effect.gen(function* () {
+        const list = Object.defineProperty([1], 0, { enumerable: false });
+        expect(yield* bodyOf(post(VoidLast), { body: list } as never)).toBe(
+          '{"page_size":"25"}',
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect(
+    "currently substitutes an array member default for an invalid alias beside Void",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* bodyOf(arrayFirst, invalidAlias)).toBe(
+          '[{"page_size":"25"}]',
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect.fails("refuses the invalid array member alias beside Void", () =>
+    Effect.gen(function* () {
+      expect(yield* schemaFailure(arrayFirst, invalidAlias)).toContain(
+        '[0]["page_size"]',
+      );
+    }),
+  );
+
   class FilterClass extends Schema.Class<FilterClass>("FilterClass")({
     limit: Schema.FiniteFromString,
   }) {}

@@ -1,7 +1,16 @@
-import { Effect, Schema, SchemaAST, SchemaIssue, SchemaParser } from "effect";
+import {
+  Effect,
+  Predicate,
+  Schema,
+  SchemaAST,
+  SchemaIssue,
+  SchemaParser,
+} from "effect";
 import { hasDefinedFields } from "./excess.js";
 import { isNonObjectAlternative } from "./primitive.js";
 
+// Effect 4.0.7 and 4.1.4 spread parse options, preserving this per-read observer. Revisit the
+// channel if a supported peer stops forwarding symbol keys.
 const onDecline = Symbol("track Void refusal");
 type GuardOptions = SchemaAST.ParseOptions & {
   readonly [onDecline]?: () => void;
@@ -19,22 +28,11 @@ const isPlainVoid = (ast: SchemaAST.AST): ast is SchemaAST.Void =>
   (ast.encoding === undefined ||
     (ast.encoding.length === 1 && ast.encoding[0] === jsonVoid));
 
-/** A guarded Void can supply no fields to the closed-object alias proof. */
-export const isGuardedVoidAlternative = (
+/** Tests alternatives at their containing union, including any protected Void branch. */
+export type AliasAlternative = (
   union: SchemaAST.AST,
   member: SchemaAST.AST,
-  choices: WeakSet<SchemaAST.AST> | undefined,
-): boolean =>
-  choices?.has(union) === true &&
-  (isPlainVoid(member) ||
-    (member._tag === "Union" &&
-      member.encoding === undefined &&
-      (member.options?.mode ?? "anyOf") === "anyOf" &&
-      member.types.every(
-        (type) =>
-          isNonObjectAlternative(type) ||
-          isGuardedVoidAlternative(member, type, choices),
-      )));
+) => boolean;
 
 const guard = (member: SchemaAST.Void) => {
   // Declaration.flip swaps checks to the opposite side. Delegate to the original type parser
@@ -55,16 +53,13 @@ const guard = (member: SchemaAST.Void) => {
     undefined,
     member.encoding,
     member.context,
+    undefined,
+    () => (input, _self, options) =>
+      Predicate.isObjectOrArray(input)
+        ? Effect.fail(new SchemaIssue.InvalidType(member, input, options))
+        : parse(input, options),
   );
 };
-
-const objectMember = (ast: SchemaAST.AST): boolean =>
-  ast._tag === "Objects" ||
-  ast._tag === "Arrays" ||
-  ast._tag === "Any" ||
-  ast._tag === "Unknown" ||
-  ast._tag === "ObjectKeyword" ||
-  (ast._tag === "Union" && ast.types.some(objectMember));
 
 function mapSame<A>(
   items: readonly [A, ...A[]],
@@ -85,6 +80,26 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
   const choices = new WeakSet<SchemaAST.AST>();
   const cache = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
   const alternatives = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
+  const objectMembers = new WeakMap<SchemaAST.AST, boolean>();
+  const objectMember = (ast: SchemaAST.AST): boolean => {
+    const cached = objectMembers.get(ast);
+    if (cached !== undefined) return cached;
+    const result =
+      ast._tag === "Objects" ||
+      ast._tag === "Arrays" ||
+      ast._tag === "Any" ||
+      ast._tag === "Unknown" ||
+      ast._tag === "ObjectKeyword" ||
+      (ast._tag === "Union" && ast.types.some(objectMember));
+    objectMembers.set(ast, result);
+    return result;
+  };
+  const primitiveCache = new WeakMap<SchemaAST.AST, boolean>();
+  const guardedPrimitives = new WeakSet<SchemaAST.AST>();
+  const guardedMembers = new WeakMap<SchemaAST.AST, WeakSet<SchemaAST.AST>>();
+  const isAliasAlternative: AliasAlternative = (union, member) =>
+    guardedMembers.get(union)?.has(member) === true ||
+    isNonObjectAlternative(member, primitiveCache);
   const visit = (ast: SchemaAST.AST) => visitAlternative(ast, false);
   const visitAlternative = (
     ast: SchemaAST.AST,
@@ -160,18 +175,26 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
     const protect =
       (ast.options?.mode ?? "anyOf") === "anyOf" &&
       (besideObject || ast.types.some(objectMember));
+    const guarded = new WeakSet<SchemaAST.AST>();
     const members = mapSame(ast.types, (member) => {
       if (protect && isPlainVoid(member)) {
         choices.add(ast);
+        guarded.add(member);
         return guard(member);
       }
       if (protect && member._tag === "Union" && member.encoding === undefined) {
         const rewritten = visitAlternative(member, true);
         if (choices.has(member)) choices.add(ast);
+        if (guardedPrimitives.has(member)) guarded.add(member);
         return rewritten;
       }
       return visit(member);
     });
+    if (protect && choices.has(ast)) {
+      guardedMembers.set(ast, guarded);
+      if (ast.types.every((member) => isAliasAlternative(ast, member)))
+        guardedPrimitives.add(ast);
+    }
     return encoding === ast.encoding && members === ast.types
       ? ast
       : new SchemaAST.Union(
@@ -184,5 +207,5 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
           ast.encodingChecks,
         );
   };
-  return { ast: visit(root), choices };
+  return { ast: visit(root), choices, isAliasAlternative };
 };

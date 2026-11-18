@@ -129,12 +129,12 @@ evidence protect that rule across unions and stacked bindings; opaque values ret
 reading. Known violations, conflicting aliases and unsupported recovery remain explicit in the
 [active limits](./schema-input.md#active-limits-and-recovery).
 
-Within a visible any-of union beside an object or list candidate, the strict read and write decline
-built-in `Schema.Void` when it receives an object with a defined enumerable own field or a list with
-a defined own cell. This also applies to annotated and checked Void and through unencoded any-of
-alternatives. It uses the value at the union site after transformations or fieldwise reads. The
-usual normalization removes unstated fields from closed objects. With no defined field or cell, Void
-remains eligible in the original order. The ordinary read and field-loss check can refuse inputs the
+Within a visible any-of union beside an object or list candidate, the strict read declines built-in
+`Schema.Void` for an object with a defined enumerable own field or a list with a defined own cell.
+The strict write refuses every object or list at that Void member. Both use the value at the union
+site, including through transformations, fieldwise reads and unencoded any-of alternatives.
+Normalization removes unstated and undefined-valued keys from closed objects. With no defined field
+or cell, the read keeps member order. The ordinary read and field-loss check can refuse inputs the
 strict pass cannot keep, including some otherwise valid mixed-side inputs. Avoid Void in request
 input schemas that rely on standalone Void, class-only or opaque alternatives, class fields, opaque
 or suspended values, encoded member unions, other union modes, or custom discard transformations.
@@ -142,9 +142,9 @@ The [active limits](./schema-input.md#active-limits-and-recovery) give the mixed
 
 The closed-object alias proof ignores a Void alternative only where the strict pass guards it. The
 existing alias checks can then refuse input a nested constructor default would otherwise replace. A
-query or header binding that writes a non-object group fails with `InvalidRequest` before dispatch.
-Header records must contain strings, arrays of strings or omitted values. Malformed iterables can
-still fail while the binding reads the names of their pairs.
+query or header binding that writes a non-object group reports any lost input fields before refusing
+the output with `InvalidRequest`. Header records must contain strings, arrays of strings or omitted
+values. Malformed iterables can still fail while the binding reads the names of their pairs.
 
 #### A last constructor attempt
 

@@ -280,8 +280,8 @@ const unlisted = (
       ).filter(
         (name) =>
           name !== "__proto__" &&
-          value[name] !== undefined &&
-          !Object.prototype.propertyIsEnumerable.call(value, name),
+          !Object.prototype.propertyIsEnumerable.call(value, name) &&
+          value[name] !== undefined,
       );
 
 /**
