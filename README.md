@@ -59,10 +59,11 @@ tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.18.
 breaking release. Read [What's in
 0.18](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.18) before updating from
 `0.17`: a request union with a `Schema.Void` member now keeps or refuses a supplied object's fields
-instead of sending `null`, and preparation no longer sends a list as an object keyed by its indexes.
-An invalid encoded alias beside an encoded primitive such as `Schema.FiniteFromString`, or in a
-one-or-many union of an object and its list, now refuses instead of being replaced by a default.
-Broader default and alias-preservation limits remain active.
+instead of sending `null`, keys under `Schema.Struct({})` are no longer dropped, and preparation no
+longer sends a list as an object keyed by its indexes. An invalid encoded alias beside an encoded
+primitive such as `Schema.FiniteFromString`, or in a one-or-many union of an object and its list,
+now refuses instead of being replaced by a default. Broader default and alias-preservation limits
+remain active.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
