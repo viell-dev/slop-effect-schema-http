@@ -12,8 +12,6 @@
   transformations can still drop fields. See the [active
   limits](https://viell-dev.github.io/slop-effect-schema-http/schema-input#active-limits-and-recovery)
   for the exact scope.
-- Return a typed `InvalidRequest` when a query or header schema encodes a non-object group or a
-  header record supplies a non-string value (#236).
 - **Breaking:** stop schema-backed preparation's field-by-field fallback from copying a caller's
   list into an object keyed by its indexes (#237). Beside a record or struct member, as in
   `Union([Schema.Array(Plain), Schema.Record(...)])`, a list whose item its list member refused,
@@ -31,14 +29,18 @@
   primitives now refuses before dispatch instead of being replaced by an optional constructor
   default. The same holds for an object cell beside an array or tuple member, as in the one-or-many
   `Union([Schema.Array(Filter), Filter])`, and for an array cell that reaches the union's one
-  array-reading member while every other member refuses arrays. A list mixing an encoded-only item
-  with a decoded-only item there now refuses too; before, the valid alias was replaced by the
+  array-reading member while every other member refuses arrays. A guarded `Schema.Void` counts as
+  refusing a list with a defined cell, so `Union([Schema.Array(Filter), Schema.Void])` now refuses
+  `[{ page_size: "many" }]` instead of writing `[{"page_size":"25"}]`. A list mixing an encoded-only
+  item with a decoded-only item there now refuses too; before, the valid alias was replaced by the
   default. An item supplying both names beside an encoded-only item is now read by its encoded name,
   so `[{ limit: 1, page_size: "02" }, { page_size: "25" }]` writes `2` where it wrote `1`. Valid
   values supplied on one side, omissions and the alternatives' own values keep their results. The
   proof stops at middleware-encoded alternatives, and for an array cell at a union with
   `Schema.Struct({})`, a second array-reading member or an encoded array reader; the schema's own
   selection still decides those inputs.
+- Return a typed `InvalidRequest` when a query or header schema encodes a non-object group or a
+  header record supplies a non-string value (#236).
 
 ## 0.17.0 — 2026-11-16
 

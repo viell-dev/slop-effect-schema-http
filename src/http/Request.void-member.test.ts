@@ -453,12 +453,31 @@ describe("request preparation beside Void", () => {
         }
       }),
   );
+
+  // A guarded Void declines a list with a defined cell, so the list's one array reader is followed.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect("refuses an invalid array member alias beside Void", () =>
+    Effect.gen(function* () {
+      for (const [schema, path] of [
+        [Schema.Union([Schema.Array(Filter), Schema.Void]), '[0]["page_size"]'],
+        [Schema.Union([Schema.Void, Schema.Array(Filter)]), "[0]"],
+      ] as const) {
+        const request = post(schema);
+        expect(
+          yield* schemaFailure(request, { body: [{ page_size: "many" }] }),
+        ).toContain(path);
+        for (const [list, written] of [
+          [[{ page_size: "05" }], '[{"page_size":"5"}]'],
+          [[{ limit: 5 }], '[{"page_size":"5"}]'],
+          [[{}], '[{"page_size":"25"}]'],
+        ] as const)
+          expect(yield* bodyOf(request, { body: list } as never)).toBe(written);
+      }
+    }),
+  );
 });
 
 describe("known Void selection limits", () => {
-  const arrayFirst = post(Schema.Union([Schema.Array(Filter), Schema.Void]));
-  const invalidAlias = { body: [{ page_size: "many" }] };
-
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
   it.effect(
     "currently discards a hidden-cell list beside a struct-only alternative",
@@ -473,26 +492,6 @@ describe("known Void selection limits", () => {
           );
         }
       }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect(
-    "currently substitutes an array member default for an invalid alias beside Void",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* bodyOf(arrayFirst, invalidAlias)).toBe(
-          '[{"page_size":"25"}]',
-        );
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect.fails("refuses the invalid array member alias beside Void", () =>
-    Effect.gen(function* () {
-      expect(yield* schemaFailure(arrayFirst, invalidAlias)).toContain(
-        '[0]["page_size"]',
-      );
-    }),
   );
 
   class FilterClass extends Schema.Class<FilterClass>("FilterClass")({
