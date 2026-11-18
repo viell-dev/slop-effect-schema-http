@@ -248,9 +248,10 @@ takes is not lost, as the rule on stacked schemas below says.
 
 Reading field by field, the last route above, copies a value into a new object. Preparation never
 takes that route for a list, at any depth, so a record or struct member cannot take an index-keyed
-copy in the list's place. Effect's record and struct schemas refuse a list, as the types do, so
-beside such a member a list has its list member's reading: it is kept as a list, or the request is
-refused. An object stays an object, including one whose keys look like indexes.
+copy in the list's place. Effect's record schemas, and struct schemas that state a field, refuse a
+list, as the types do, so beside such a member a list has its list member's reading: it is kept as a
+list, or the request is refused. An object stays an object, including one whose keys look like
+indexes.
 
 ```ts
 import { Schema } from "effect";
