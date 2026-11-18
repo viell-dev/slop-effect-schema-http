@@ -116,14 +116,20 @@ codec's closed object encoding view may include these alternatives, such as `Nul
 `Union([Struct, Schema.Literals([...])])`; this can establish root or terminal evidence too.
 
 Array-shaped members are told apart from objects as Effect's parsers tell them, with
-`Array.isArray`. An array or tuple member, or a plain-transformation chain of such stages, cannot
-read an ordinary or null-prototype object cell. Beside an object member it contributes nothing
-there, so the one-or-many `Union([Schema.Array(Filter), Filter])` reads `{ page_size: "many" }` as
-`Filter` alone does. An actual array cell follows a union's one member that can read an array, when
-every other member refuses arrays at every stage: a primitive alternative above, or an object that
-states at least one property or index signature. `Schema.Struct({})` states none and reads every
-value except `null` and `undefined`, lists included, so it ends that path. So do a second
-array-reading member and an encoded array member. The followed member uses the array rules below.
+`Array.isArray`. An array or tuple member, or a plain-transformation chain of such stages such as an
+array-to-array codec, cannot read an ordinary or null-prototype object cell. Beside an object member
+it contributes nothing there, so the one-or-many `Union([Schema.Array(Filter), Filter])` reads
+`{ page_size: "many" }` as `Filter` alone does. Such a view does not vouch for a list cell, which
+the array member can read. A list under an object schema without such a member keeps its object
+evidence, because the fieldwise route copies the list's own named properties into an object.
+
+An actual array cell follows a union's one member that can read an array, when every other member
+refuses arrays at every stage: a primitive alternative above, or an object that states at least one
+property or index signature. The followed member must be an unencoded array or tuple, or another
+such union, and uses the array rules below. `Schema.Struct({})` states no signature and reads every
+value except `null` and `undefined`, lists included. The proof stops at a union with it, with a
+second array-reading member, or with an encoded array member as the reader; ordinary selection
+decides those cells, which can keep the supplied alias or replace it with a default.
 
 ### Initial whole construction
 
@@ -413,10 +419,10 @@ remaining list limits under #241, #242 and #243.
 - Unsupported object alternatives and construction phases can still lose aliases. Optional,
   nullable/nullish, array-shaped and the listed primitive alternatives, including unions and
   plain-transformation codecs of them, extend the bounded proof; guarded Void can qualify there too.
-  Other Void, open/opaque/suspended members and middleware-encoded alternatives do not. An array cell beside a second array-reading member or
-  an encoded array member keeps the default; beside `Schema.Struct({})`, that member takes the list
-  as it is. A successful actual member-fieldwise reading is not reclassified as initial whole
-  construction.
+  Other Void, open/opaque/suspended members and middleware-encoded alternatives do not. For an array cell, the proof stops at a union with
+  `Schema.Struct({})`, a second array-reading member or an encoded array reader; there the schema's
+  own selection decides, and a generated default can still replace the alias. A successful actual
+  member-fieldwise reading is not reclassified as initial whole construction.
 - Void protection applies to built-in Void beside a visible object or list candidate in an any-of
   union, including through unencoded any-of member unions. Standalone Void, a union whose other
   members give it no visible object or list candidate, unions inside `Schema.Class` fields, opaque

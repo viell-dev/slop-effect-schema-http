@@ -52,23 +52,30 @@ const refuses = (
   return result;
 };
 
-/**
- * Union members that cannot consume an actual ordinary or null-prototype object: primitives, arrays
- * and tuples. Void deliberately does not qualify.
- *
- * A union qualifies when every member does, so `Schema.Literals` and `Schema.NullOr(Schema.String)`
- * read like their flat members. An encoding qualifies when every link is a plain transformation and
- * every stage qualifies, as in `Schema.FiniteFromString`. Shared members are visited once.
- */
-export const refusesRecord = (ast: SchemaAST.AST): boolean =>
-  refuses(ast, "record", new Map());
+/** Which actual cells a union member cannot consume, by the AST alone. */
+export interface Shapes {
+  /**
+   * An ordinary or null-prototype object cannot reach primitives, arrays or tuples. Void
+   * deliberately does not qualify.
+   *
+   * A union qualifies when every member does, so `Schema.Literals` and
+   * `Schema.NullOr(Schema.String)` read like their flat members. An encoding qualifies when every
+   * link is a plain transformation and every stage qualifies, as in `Schema.FiniteFromString`.
+   */
+  readonly record: (ast: SchemaAST.AST) => boolean;
+  /** An array cannot reach primitives or objects that state a property or index signature. */
+  readonly array: (ast: SchemaAST.AST) => boolean;
+}
 
-/**
- * Union members that cannot consume an actual array: primitives and objects that state a property or
- * index signature, at every stage of a plain-transformation encoding.
- */
-export const refusesArray = (ast: SchemaAST.AST): boolean =>
-  refuses(ast, "array", new Map());
+/** One metadata build shares these answers, so each node is classified once per cell kind. */
+export const shapes = (): Shapes => {
+  const records = new Map<SchemaAST.AST, boolean>();
+  const arrays = new Map<SchemaAST.AST, boolean>();
+  return {
+    record: (ast) => refuses(ast, "record", records),
+    array: (ast) => refuses(ast, "array", arrays),
+  };
+};
 
 const isPrimitiveUnion = (
   ast: SchemaAST.Union,

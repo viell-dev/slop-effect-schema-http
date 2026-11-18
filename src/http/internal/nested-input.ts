@@ -1,10 +1,5 @@
 import type { SchemaAST } from "effect";
-import { encodedInput } from "./encoded-input.js";
-import {
-  isNonObjectAlternative,
-  refusesArray,
-  refusesRecord,
-} from "./primitive.js";
+import { encodedInput, metadata } from "./encoded-input.js";
 import type { AliasAlternative } from "./void-member.js";
 
 type CaptureTerminal = NonNullable<ReturnType<typeof encodedInput>>;
@@ -21,6 +16,8 @@ interface Node {
   readonly terminal: CaptureTerminal | undefined;
   readonly names: ReadonlyArray<Key>;
   readonly fields: ReadonlyArray<readonly [Key, Node]>;
+  /** The fields view left out an array member, so it cannot vouch for a list cell. */
+  readonly lists: boolean;
   readonly array: Positions | undefined;
 }
 
@@ -199,10 +196,16 @@ const ownData = (
  */
 export const nestedEncodedInput = (
   ast: SchemaAST.AST,
-  isAlternative: AliasAlternative = (_union, member) =>
-    isNonObjectAlternative(member),
+  isAlternative?: AliasAlternative,
 ) => {
+  // Every node is classified and named once per build, however many ancestors share it.
+  const context = metadata(isAlternative);
+  const { shapes } = context;
   type Fields = ReadonlyMap<Key, SchemaAST.AST | undefined>;
+  interface View {
+    readonly fields: Fields;
+    readonly lists: boolean;
+  }
   const mergeField = (
     fields: Map<Key, SchemaAST.AST | undefined>,
     name: PropertyKey,
@@ -212,10 +215,10 @@ export const nestedEncodedInput = (
     if (!fields.has(key)) fields.set(key, type);
     else if (fields.get(key) !== type) fields.set(key, undefined);
   };
-  const views = new Map<SchemaAST.AST, Fields | undefined>();
+  const views = new Map<SchemaAST.AST, View | undefined>();
   const viewing = new Set<SchemaAST.AST>();
   let cyclic = false;
-  const fieldsOf = (part: SchemaAST.AST): Fields | undefined => {
+  const fieldsOf = (part: SchemaAST.AST): View | undefined => {
     if (views.has(part)) return views.get(part);
     if (
       part.encoding !== undefined ||
@@ -234,8 +237,9 @@ export const nestedEncodedInput = (
       const fields = new Map<Key, SchemaAST.AST | undefined>();
       for (const { name, type } of part.propertySignatures)
         mergeField(fields, name, type);
-      views.set(part, fields);
-      return fields;
+      const view = { fields, lists: false };
+      views.set(part, view);
+      return view;
     }
     if (viewing.has(part)) {
       cyclic = true;
@@ -244,9 +248,14 @@ export const nestedEncodedInput = (
     viewing.add(part);
     const fields = new Map<Key, SchemaAST.AST | undefined>();
     let hasObjectMember = false;
+    let lists = false;
     for (const member of part.types) {
-      // An object view is only captured from an object cell, which array members cannot read.
-      if (isAlternative(part, member) || refusesRecord(member)) continue;
+      if (context.isAlternative(part, member)) continue;
+      // An object cell cannot reach this member. A list can, if it is an array member.
+      if (shapes.record(member)) {
+        lists ||= !shapes.array(member);
+        continue;
+      }
       const declared = fieldsOf(member);
       if (declared === undefined) {
         viewing.delete(part);
@@ -254,22 +263,41 @@ export const nestedEncodedInput = (
         return undefined;
       }
       hasObjectMember = true;
-      for (const [name, type] of declared) mergeField(fields, name, type);
+      lists ||= declared.lists;
+      for (const [name, type] of declared.fields)
+        mergeField(fields, name, type);
     }
     viewing.delete(part);
     // Match the terminal view: a primitive-only union never becomes an empty object view.
-    const view = hasObjectMember ? fields : undefined;
+    const view = hasObjectMember ? { fields, lists } : undefined;
     views.set(part, view);
     return view;
   };
   const known = new Map<SchemaAST.AST, Node | undefined>();
   const active = new Set<SchemaAST.AST>();
+  const placed = new Map<SchemaAST.AST, Positions | undefined>();
+  /** Positions alone, so a chain of unions never builds its intermediate object views. */
   const positionsOf = (part: SchemaAST.AST): Positions | undefined => {
+    if (placed.has(part)) return placed.get(part);
+    const positions = locate(part);
+    placed.set(part, positions);
+    return positions;
+  };
+  const locate = (part: SchemaAST.AST): Positions | undefined => {
     if (part.encoding !== undefined) return undefined;
     if (part._tag === "Union") {
       // An actual array cell reaches the union's one member Effect's parsers let read an array.
-      const readers = part.types.filter((member) => !refusesArray(member));
-      return readers.length === 1 ? nodeOf(readers[0]!)?.array : undefined;
+      const readers = part.types.filter((member) => !shapes.array(member));
+      const reader = readers.length === 1 ? readers[0]! : undefined;
+      if (reader === undefined) return undefined;
+      if (active.has(reader)) {
+        cyclic = true;
+        return undefined;
+      }
+      active.add(reader);
+      const positions = positionsOf(reader);
+      active.delete(reader);
+      return positions;
     }
     if (part._tag !== "Arrays") return undefined;
     const elements = part.elements.map((element) => nodeOf(element));
@@ -294,9 +322,11 @@ export const nestedEncodedInput = (
     if (known.has(part)) return known.get(part);
     active.add(part);
     const array = positionsOf(part);
-    const terminal = root ? undefined : encodedInput(part, isAlternative);
+    const terminal = root
+      ? undefined
+      : encodedInput(part, context.isAlternative, context);
     const declared = terminal === undefined ? fieldsOf(part) : undefined;
-    const fields = [...(declared ?? [])].flatMap(([name, type]) => {
+    const fields = [...(declared?.fields ?? [])].flatMap(([name, type]) => {
       if (type === undefined) return [];
       const node = nodeOf(type);
       return node === undefined ? [] : [[name, node] as const];
@@ -307,8 +337,9 @@ export const nestedEncodedInput = (
         ? undefined
         : {
             terminal,
-            names: fields.length === 0 ? [] : [...declared!.keys()],
+            names: fields.length === 0 ? [] : [...declared!.fields.keys()],
             fields,
+            lists: declared?.lists ?? false,
             array,
           };
     known.set(part, node);
@@ -317,12 +348,13 @@ export const nestedEncodedInput = (
   const root = nodeOf(ast, true);
   if (root === undefined || cyclic) return undefined;
   const capture = (node: Node, input: unknown): Captured | undefined => {
-    // Effect's array and object parsers tell cells apart with `Array.isArray`, so this chooses the
-    // view the same way. It sees through proxies and never runs caller code.
+    // Effect's array and object parsers tell cells apart with `Array.isArray`, which sees through
+    // proxies and never runs caller code. A list reads the array view where there is one. Without
+    // one it keeps the object reading, unless that view left out an array member.
     const list = Array.isArray(input);
     const positions = list ? node.array : undefined;
-    if (list && positions === undefined) return undefined;
-    if (!list && node.terminal !== undefined) {
+    if (positions === undefined && list && node.lists) return undefined;
+    if (positions === undefined && node.terminal !== undefined) {
       const evidence = node.terminal(input);
       if (evidence === undefined) return undefined;
       return {
@@ -342,7 +374,7 @@ export const nestedEncodedInput = (
         },
       };
     }
-    if (!list && node.fields.length === 0) return undefined;
+    if (positions === undefined && node.fields.length === 0) return undefined;
     const names = positions?.names ?? node.names;
     const data = ownData(
       input,

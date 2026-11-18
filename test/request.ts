@@ -50,6 +50,23 @@ export const refusal = <I, E, R>(request: Request.Request<I, E, R>, input: I) =>
       : Effect.die(error),
   );
 
+/**
+ * Whether Effect's decoder refuses a value with a `SchemaError`. A defect or an interruption fails
+ * the test instead of passing as a refusal.
+ */
+export const refusesDecoding = <S extends Schema.Top>(
+  schema: S,
+  input: unknown,
+) =>
+  Effect.map(
+    Effect.flip(Schema.decodeUnknownEffect(schema)(input)),
+    (error) => error instanceof Schema.SchemaError,
+  );
+
+/** Whether Effect's constructor refuses a value with a schema issue, and nothing else. */
+export const refusesConstruction = (schema: Schema.Top, input: unknown) =>
+  Effect.map(Effect.flip(schema.makeEffect(input)), SchemaIssue.isIssue);
+
 /** What a schema said about a caller's value, which comes before any group check. */
 export const schemaFailure = <I, E, R>(
   request: Request.Request<I, E, R>,

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   Effect,
-  Exit,
   Option,
   Schema,
   SchemaAST,
@@ -12,6 +11,7 @@ import * as Body from "./Body.js";
 import { encodedInput } from "./internal/encoded-input.js";
 import { nestedEncodedInput } from "./internal/nested-input.js";
 import * as Request from "./Request.js";
+import { refusesConstruction, refusesDecoding } from "../../test/request.js";
 
 const limit = Schema.optionalKey(Schema.FiniteFromString).pipe(
   Schema.withConstructorDefault(Effect.succeed(25)),
@@ -665,16 +665,8 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
             ),
           ).toEqual(["Transformation"]);
           for (const input of [{ page_size: "many" }, {}, ["07"]]) {
-            expect(
-              Exit.isFailure(
-                yield* Effect.exit(Schema.decodeUnknownEffect(other)(input)),
-              ),
-            ).toBe(true);
-            expect(
-              Exit.isFailure(
-                yield* Effect.exit((other as Schema.Top).makeEffect(input)),
-              ),
-            ).toBe(true);
+            expect(yield* refusesDecoding(other, input)).toBe(true);
+            expect(yield* refusesConstruction(other, input)).toBe(true);
           }
         }
       }),

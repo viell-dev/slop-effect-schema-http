@@ -17,6 +17,7 @@ import * as Inputs from "./internal/input.js";
 import { encodedInput } from "./internal/encoded-input.js";
 import { nestedEncodedInput } from "./internal/nested-input.js";
 import * as Request from "./Request.js";
+import { refusesConstruction, refusesDecoding } from "../../test/request.js";
 
 const Inner = Schema.Struct({
   limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
@@ -859,8 +860,6 @@ const disguisedList = (items: Array<unknown>) =>
 // https://github.com/viell-dev/slop-effect-schema-http/issues/170
 describe("nested aliases beside array-shaped union members", () => {
   // The proofs below rest on these parser facts; the peer-floor lane runs them on Effect 4.0.7.
-  const fails = (effect: Effect.Effect<unknown, unknown>) =>
-    Effect.map(Effect.exit(effect), Exit.isFailure);
   const records = () => [
     {},
     { length: 0 },
@@ -884,10 +883,8 @@ describe("nested aliases beside array-shaped union members", () => {
         Schema.Tuple([Schema.Number, Inner]),
       ])
         for (const input of records()) {
-          expect(yield* fails(Schema.decodeUnknownEffect(schema)(input))).toBe(
-            true,
-          );
-          expect(yield* fails(schema.makeEffect(input))).toBe(true);
+          expect(yield* refusesDecoding(schema, input)).toBe(true);
+          expect(yield* refusesConstruction(schema, input)).toBe(true);
         }
     }),
   );
@@ -904,10 +901,8 @@ describe("nested aliases beside array-shaped union members", () => {
           Schema.Record(Schema.String, Schema.Unknown),
         ])
           for (const input of lists()) {
-            expect(
-              yield* fails(Schema.decodeUnknownEffect(schema)(input)),
-            ).toBe(true);
-            expect(yield* fails(schema.makeEffect(input))).toBe(true);
+            expect(yield* refusesDecoding(schema, input)).toBe(true);
+            expect(yield* refusesConstruction(schema, input)).toBe(true);
           }
       }),
   );
@@ -921,10 +916,10 @@ describe("nested aliases beside array-shaped union members", () => {
           expect(yield* Schema.decodeUnknownEffect(Empty)(input)).toBe(input);
           expect(yield* Empty.makeEffect(input)).toBe(input);
         }
-        for (const input of [null, undefined])
-          expect(yield* fails(Schema.decodeUnknownEffect(Empty)(input))).toBe(
-            true,
-          );
+        for (const input of [null, undefined]) {
+          expect(yield* refusesDecoding(Empty, input)).toBe(true);
+          expect(yield* refusesConstruction(Empty, input)).toBe(true);
+        }
       }),
   );
 
@@ -1021,25 +1016,45 @@ describe("nested aliases beside array-shaped union members", () => {
     ),
   );
 
+  // An array-to-array codec: an encoded array member, which reads only lists.
+  const ListCodec = Schema.Array(Schema.toEncoded(Inner)).pipe(
+    Schema.decodeTo(Schema.Array(Inner)),
+  );
+
+  it.effect("refuses an object cell beside an array-to-array codec", () =>
+    Effect.gen(function* () {
+      for (const kind of ["path", "body"] as const)
+        for (const schema of [
+          Schema.Union([ListCodec, Inner]),
+          Schema.Union([Inner, ListCodec]),
+        ]) {
+          expect(
+            yield* Effect.flip(prepare(schema, { page_size: "many" }, kind)),
+          ).toBeInstanceOf(Schema.SchemaError);
+          expect(yield* prepare(schema, { page_size: "05" }, kind)).toEqual({
+            page_size: "5",
+          });
+        }
+    }),
+  );
+
+  // The proof stops at these unions, and ordinary selection decides the array cell.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
   it.effect(
-    "currently substitutes the default where another member can read the cell",
+    "currently leaves an array cell to selection where another member can read it",
     () =>
       Effect.gen(function* () {
         const records = Schema.Union([ObjectToList, Inner]);
         expect(encodedInput(records.ast)).toBeUndefined();
         expect(nestedEncodedInput(Schema.Array(records).ast)).toBeUndefined();
-        // An encoded list member is the one array reader, but its positions are not followed.
-        expect(
-          nestedEncodedInput(
-            Schema.Union([
-              Schema.Array(Schema.toEncoded(Inner)).pipe(
-                Schema.decodeTo(Schema.Array(Inner)),
-              ),
-              Cursor,
-            ]).ast,
-          ),
-        ).toBeUndefined();
+        const Text = Schema.Struct({ page_size: Schema.String });
+        for (const schema of [
+          Schema.Union([ListCodec, Cursor]),
+          Schema.Union([Schema.Array(Inner), Schema.Array(Cursor)]),
+          Schema.Union([Schema.Array(Inner), Schema.Array(Text)]),
+          Schema.Union([Schema.Array(Inner), ObjectToList]),
+        ])
+          expect(nestedEncodedInput(schema.ast)).toBeUndefined();
         for (const kind of ["path", "body"] as const) {
           for (const schema of [
             Schema.Union([Schema.Array(Inner), Schema.Array(Cursor)]),
@@ -1048,6 +1063,14 @@ describe("nested aliases beside array-shaped union members", () => {
             expect(
               yield* prepare(schema, [{ page_size: "many" }], kind),
             ).toEqual([{ page_size: "25" }]);
+          // A second reader that states the alias as text keeps it.
+          expect(
+            yield* prepare(
+              Schema.Union([Schema.Array(Inner), Schema.Array(Text)]),
+              [{ page_size: "many" }],
+              kind,
+            ),
+          ).toEqual([{ page_size: "many" }]);
           expect(
             yield* prepare(
               Schema.Union([ObjectToList, Inner]),
@@ -1118,6 +1141,37 @@ describe("nested aliases beside array-shaped union members", () => {
         filter: [{ page_size: "25" }],
       }),
     ).toBeUndefined();
+  });
+
+  it("builds nested array-union metadata in work linear in the depth", () => {
+    // Count reads of every union's member list: each union is classified, named and placed once.
+    const readsAt = (depth: number) => {
+      let reads = 0;
+      let schema: Schema.Top = Schema.Array(Inner);
+      const unions: Array<SchemaAST.Union> = [];
+      for (let level = 0; level < depth; level++) {
+        schema = Schema.Union([schema, Cursor]);
+        unions.push(schema.ast as SchemaAST.Union);
+      }
+      for (const union of unions) {
+        const types = union.types;
+        Object.defineProperty(union, "types", {
+          get: () => {
+            reads++;
+            return types;
+          },
+        });
+      }
+      expect(
+        nestedEncodedInput(schema.ast)?.([{ page_size: "many" }])
+          ?.select([{ page_size: "25" }])
+          ?.matches(),
+      ).toBe(true);
+      expect(encodedInput(schema.ast)).toBeUndefined();
+      return reads;
+    };
+    for (const depth of [32, 64, 128, 192])
+      expect(readsAt(depth)).toBeLessThanOrEqual(8 * depth);
   });
 
   it.effect("refuses an invalid alias on a one-or-many fieldwise root", () =>

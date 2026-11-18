@@ -1,12 +1,31 @@
 import type { SchemaAST } from "effect";
-import { isNonObjectAlternative, refusesRecord } from "./primitive.js";
+import { isNonObjectAlternative, shapes, type Shapes } from "./primitive.js";
 import type { AliasAlternative } from "./void-member.js";
 
-interface Names {
+export interface Names {
   readonly decoded: ReadonlySet<PropertyKey>;
   readonly encoded: ReadonlySet<PropertyKey>;
   readonly all: ReadonlySet<PropertyKey>;
+  /** The view left out an array member, which can still read a list as Effect reads it. */
+  readonly lists: boolean;
 }
+
+/** Shape and name results one metadata build shares; each depends on the AST alone. */
+export interface Metadata {
+  readonly shapes: Shapes;
+  /** A member that cannot consume an object at this union, such as a guarded Void branch. */
+  readonly isAlternative: AliasAlternative;
+  readonly names: Map<SchemaAST.AST, Names | undefined>;
+}
+
+export const metadata = (
+  isAlternative: AliasAlternative = (_union, member) =>
+    isNonObjectAlternative(member),
+): Metadata => ({
+  shapes: shapes(),
+  isAlternative,
+  names: new Map(),
+});
 
 /** JavaScript stores numeric property names as strings; symbols retain their identity. */
 const keyOf = (name: PropertyKey): string | symbol =>
@@ -15,10 +34,10 @@ const keyOf = (name: PropertyKey): string | symbol =>
 /** Root names only, through closed group nodes, without evaluating a schema or suspension. */
 const namesOf = (
   ast: SchemaAST.AST,
-  isAlternative: AliasAlternative,
+  context: Metadata,
   active = new Set<SchemaAST.AST>(),
-  known = new Map<SchemaAST.AST, Names | undefined>(),
 ): Names | undefined => {
+  const known = context.names;
   if (known.has(ast)) return known.get(ast);
   if (
     active.has(ast) ||
@@ -32,17 +51,20 @@ const namesOf = (
   active.add(ast);
   const members: Names[] = [];
   const encodings: Names[] = [];
+  let lists = false;
   for (const [nodes, output] of [
     [ast._tag === "Union" ? ast.types : [], members],
     [(ast.encoding ?? []).map(({ to }) => to), encodings],
   ] as const) {
     for (const node of nodes) {
       // This is only a union-member rule. Primitive encoding intermediates remain unsupported,
-      // and never enter the shared memo as an empty group view. Captured input is never an array,
-      // so array members cannot read it either.
-      if (output === members && (isAlternative(ast, node) || refusesRecord(node)))
+      // and never enter the shared memo as an empty group view.
+      if (output === members && context.isAlternative(ast, node)) continue;
+      if (output === members && context.shapes.record(node)) {
+        lists ||= !context.shapes.array(node);
         continue;
-      const names = namesOf(node, isAlternative, active, known);
+      }
+      const names = namesOf(node, context, active);
       if (names === undefined) {
         active.delete(ast);
         known.set(ast, undefined);
@@ -74,6 +96,7 @@ const namesOf = (
       ...decoded,
       ...[...members, ...encodings].flatMap(({ all }) => [...all]),
     ]),
+    lists: lists || [...members, ...encodings].some((view) => view.lists),
   };
   known.set(ast, names);
   return names;
@@ -86,10 +109,10 @@ const namesOf = (
  */
 export const encodedInput = (
   ast: SchemaAST.AST,
-  isAlternative: AliasAlternative = (_union, member) =>
-    isNonObjectAlternative(member),
+  isAlternative?: AliasAlternative,
+  context = metadata(isAlternative),
 ) => {
-  const names = namesOf(ast, isAlternative);
+  const names = namesOf(ast, context);
   if (names === undefined) return undefined;
   const encodedOnly = new Set(
     [...names.encoded].filter((name) => !names.decoded.has(name)),
@@ -103,10 +126,12 @@ export const encodedInput = (
     if (typeof input !== "object" || input === null) return undefined;
     try {
       const prototype: unknown = Object.getPrototypeOf(input);
-      // Effect's parsers tell arrays from objects with `Array.isArray`, which sees through proxies.
+      // Effect's array parser reads what `Array.isArray` accepts, proxies included, so a view that
+      // left out an array member cannot vouch for a list. Otherwise a list keeps its evidence: the
+      // fieldwise route copies its own named properties into an object.
       if (
         (prototype !== Object.prototype && prototype !== null) ||
-        Array.isArray(input) ||
+        (names.lists && Array.isArray(input)) ||
         Symbol.iterator in input
       )
         return undefined;
