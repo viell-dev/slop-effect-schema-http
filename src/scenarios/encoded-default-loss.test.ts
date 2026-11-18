@@ -6,6 +6,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import { lane } from "#lane";
+import { expectOutcomes } from "./outcomes.js";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 import { headerValues, type Recorded } from "../harness/lane.js";
 
@@ -74,7 +75,7 @@ describe(`encoded aliases and optional constructor defaults (${lane.name})`, () 
             .execute({ query: { page_size: null } })
             .pipe(Effect.provide(lane.fetchClient), outcome);
           const ledger = yield* backend.ledger;
-          expect({
+          expectOutcomes({
             text,
             nil,
             targets: ledger.map(({ target }) => target),
@@ -104,7 +105,7 @@ describe(`encoded aliases and optional constructor defaults (${lane.name})`, () 
             .execute({ headers: { page_size: null } })
             .pipe(Effect.provide(lane.fetchClient), outcome);
           const ledger = yield* backend.ledger;
-          expect({
+          expectOutcomes({
             text,
             nil,
             pages: ledger.map(({ lines }) => headerValues(lines, "page_size")),

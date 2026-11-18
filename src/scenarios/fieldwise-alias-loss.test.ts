@@ -6,6 +6,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import { lane } from "#lane";
+import { expectOutcomes } from "./outcomes.js";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 import { headerValues, type Recorded } from "../harness/lane.js";
 
@@ -154,7 +155,7 @@ describe(`fieldwise encoded-alias loss (${lane.name})`, () => {
               .pipe(Effect.provide(lane.fetchClient), outcome);
             outcomes.push({ label, result });
           }
-          expect({
+          expectOutcomes({
             outcomes,
             wire: (yield* backend.ledger).map(wire),
           }).toMatchObject({
@@ -183,7 +184,7 @@ describe(`fieldwise encoded-alias loss (${lane.name})`, () => {
               .pipe(Effect.provide(lane.fetchClient), outcome);
             outcomes.push({ label, result });
           }
-          expect({
+          expectOutcomes({
             outcomes,
             wire: (yield* backend.ledger).map(wire),
           }).toMatchObject({
@@ -267,7 +268,7 @@ describe(`fieldwise encoded-alias loss (${lane.name})`, () => {
               },
             })
             .pipe(Effect.provide(lane.fetchClient), outcome);
-          expect({
+          expectOutcomes({
             result,
             wire: (yield* backend.ledger).map(wire),
           }).toMatchObject({
@@ -297,7 +298,7 @@ describe(`fieldwise encoded-alias loss (${lane.name})`, () => {
               },
             })
             .pipe(Effect.provide(lane.fetchClient), outcome);
-          expect({
+          expectOutcomes({
             result,
             wire: (yield* backend.ledger).map(wire),
           }).toMatchObject({
@@ -481,7 +482,7 @@ describe(`fieldwise encoded-alias loss (${lane.name})`, () => {
               },
             })
             .pipe(Effect.provide(lane.fetchClient), outcome);
-          expect(result).toMatchObject({
+          expectOutcomes(result).toMatchObject({
             kind: "failure",
             error: { _tag: "SchemaError" },
           });
@@ -510,7 +511,7 @@ describe(`fieldwise encoded-alias loss (${lane.name})`, () => {
               },
             })
             .pipe(Effect.provide(lane.fetchClient), outcome);
-          expect(result).toMatchObject({
+          expectOutcomes(result).toMatchObject({
             kind: "failure",
             error: { _tag: "SchemaError" },
           });
@@ -537,7 +538,7 @@ describe(`fieldwise encoded-alias loss (${lane.name})`, () => {
               path: { page_size: "many", count: "07", offset: 9 },
             })
             .pipe(Effect.provide(lane.fetchClient), outcome);
-          expect({
+          expectOutcomes({
             result,
             wire: (yield* backend.ledger).map(wire),
           }).toMatchObject({
@@ -560,7 +561,7 @@ describe(`fieldwise encoded-alias loss (${lane.name})`, () => {
               body: { page_size: "many", count: "07", offset: 9 },
             })
             .pipe(Effect.provide(lane.fetchClient), outcome);
-          expect({
+          expectOutcomes({
             result,
             wire: (yield* backend.ledger).map(wire),
           }).toMatchObject({
