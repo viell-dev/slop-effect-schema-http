@@ -45,16 +45,20 @@ export const metadata = (isAlternative?: AliasAlternative): Metadata => {
     if (cached !== undefined) return cached;
     // Only a mutated AST forms a cycle. Seeding false declines it when it is reached again.
     memo.set(group, false);
-    const result = group.types.every((inner) => refuses(group, inner, cell));
+    const result = group.types.every((inner) =>
+      refuses(group, inner, cell, true),
+    );
     memo.set(group, result);
     return result;
   };
+  // The group's own guard counts only if it guarded every occurrence of the group.
   const refuses = (
     union: SchemaAST.AST,
     member: SchemaAST.AST,
     cell: Cell,
+    inGroup = false,
   ): boolean =>
-    alternative(union, member) ||
+    alternative(union, member, inGroup) ||
     known[cell](member) ||
     (member._tag === "Union" &&
       member.encoding === undefined &&

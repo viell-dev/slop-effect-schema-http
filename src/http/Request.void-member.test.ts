@@ -623,6 +623,75 @@ describe("request preparation beside Void", () => {
       ),
     ).toBeUndefined();
   });
+
+  // One member union can be guarded in one place and left unguarded in another. Sharing it must
+  // read as two separate copies would.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect("reads a shared member union as separate copies would", () =>
+    Effect.gen(function* () {
+      // A Void whose check always fails reads no list, so the oneOf member keeps the list member.
+      const checked = Schema.Void.check(Schema.makeFilter(() => false));
+      const readers = [
+        {
+          reader: Schema.Array(Filter),
+          leaf: (page_size: string) => [{ page_size }],
+          output: [{ page_size: "25" }],
+        },
+        {
+          reader: Parent,
+          leaf: (page_size: string) => ({ filter: { page_size } }),
+          output: { filter: { page_size: "25" } },
+        },
+      ] as const;
+      for (const empty of [Schema.Void, checked])
+        for (const { reader, leaf, output } of readers) {
+          const inner = () => Schema.Union([Schema.String, empty]);
+          const contract = (looseFirst: boolean, sharing: boolean) => {
+            const first = inner();
+            const second = sharing ? first : inner();
+            const guarded = Schema.optionalKey(Schema.Union([reader, first]));
+            const loose = Schema.Union([reader, second], { mode: "oneOf" });
+            return Schema.Array(
+              looseFirst
+                ? Schema.Struct({ loose, guarded, n: Schema.FiniteFromString })
+                : Schema.Struct({ guarded, loose, n: Schema.FiniteFromString }),
+            );
+          };
+          const view = (schema: Schema.Top, input: unknown) =>
+            nestedEncodedInput(
+              schema.ast,
+              guardVoidMembers(schema.ast).isAliasAlternative,
+            )?.(input)
+              ?.select([{ loose: output, n: "2" }])
+              ?.matches();
+          for (const looseFirst of [false, true])
+            for (const input of [
+              [{ loose: leaf("025"), n: 2 }],
+              [{ loose: leaf("many"), n: 2 }],
+              [{ loose: leaf("025"), n: "2" }],
+            ]) {
+              const fresh = contract(looseFirst, false);
+              const shared = contract(looseFirst, true);
+              expect(yield* outcomes(shared, input)).toEqual(
+                yield* outcomes(fresh, input),
+              );
+              expect(view(shared, input)).toBe(view(fresh, input));
+            }
+          if (empty === checked && reader === readers[0].reader)
+            expect(
+              yield* outcomes(contract(false, true), [
+                { loose: leaf("025"), n: 2 },
+              ]),
+            ).toEqual(
+              Array(2).fill('[{"loose":[{"page_size":"25"}],"n":"2"}]'),
+            );
+          // The guarded occurrence keeps the proof.
+          expect(
+            yield* outcomes(Schema.Union([reader, inner()]), leaf("many")),
+          ).toEqual(["refused", "refused"]);
+        }
+    }),
+  );
 });
 
 describe("known Void selection limits", () => {

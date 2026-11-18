@@ -28,10 +28,14 @@ const isPlainVoid = (ast: SchemaAST.AST): ast is SchemaAST.Void =>
   (ast.encoding === undefined ||
     (ast.encoding.length === 1 && ast.encoding[0] === jsonVoid));
 
-/** Tests alternatives at their containing union, including any protected Void branch. */
+/**
+ * Tests alternatives at their containing union, including any protected Void branch. `grouped`
+ * asks about a member of a member union, which the caller reached without the union's context.
+ */
 export type AliasAlternative = (
   union: SchemaAST.AST,
   member: SchemaAST.AST,
+  grouped?: boolean,
 ) => boolean;
 
 const guard = (member: SchemaAST.Void) => {
@@ -98,8 +102,16 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
   const shape = shapes();
   const guardedPrimitives = new WeakSet<SchemaAST.AST>();
   const guardedMembers = new WeakMap<SchemaAST.AST, WeakSet<SchemaAST.AST>>();
-  const isAliasAlternative: AliasAlternative = (union, member) =>
-    guardedMembers.get(union)?.has(member) === true ||
+  // One union can be rewritten guarded in one place and left unguarded in another, yet its guard is
+  // filed under the shared identity. A grouped lookup trusts that guard only if no rewrite left it.
+  const unguarded = new WeakSet<SchemaAST.AST>();
+  const isAliasAlternative: AliasAlternative = (
+    union,
+    member,
+    grouped = false,
+  ) =>
+    (guardedMembers.get(union)?.has(member) === true &&
+      !(grouped && unguarded.has(union))) ||
     (shape.record(member) && shape.array(member));
   const visit = (ast: SchemaAST.AST) => visitAlternative(ast, false);
   const visitAlternative = (
@@ -176,6 +188,7 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
     const protect =
       (ast.options?.mode ?? "anyOf") === "anyOf" &&
       (besideObject || ast.types.some(objectMember));
+    if (!protect) unguarded.add(ast);
     const guarded = new WeakSet<SchemaAST.AST>();
     const members = mapSame(ast.types, (member) => {
       if (protect && isPlainVoid(member)) {
