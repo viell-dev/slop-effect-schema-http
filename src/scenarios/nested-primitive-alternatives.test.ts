@@ -8,7 +8,7 @@
  * No library implementation, library source tests, backend or conformance code was read.
  */
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Effect, Schema, SchemaTransformation } from "effect";
 import { lane } from "#lane";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 import { type Backend, headerValues, type Recorded } from "../harness/lane.js";
@@ -507,6 +507,17 @@ class FilterClass extends Schema.Class<FilterClass>("FilterClass")({
 class VoidFirstParent extends Schema.Class<VoidFirstParent>("VoidFirstParent")({
   filter: Schema.Union([Schema.Void, Filter]),
 }) {}
+// A field whose encoded null decodes to undefined, so a supplied object or list holds only
+// undefined once read (EXT-49q).
+const NullAsUndefined = Schema.Null.pipe(
+  Schema.decodeTo(
+    Schema.Undefined,
+    SchemaTransformation.transform({
+      decode: () => undefined,
+      encode: () => null,
+    }),
+  ),
+);
 // Cast-only groups: these schemas do not type as query or header groups (EXT-49i, EXT-49p).
 type GroupKind = "query" | "headers";
 const Sort = Schema.Struct({ sort: Schema.String });
@@ -1139,18 +1150,187 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
     );
     // https://github.com/viell-dev/slop-effect-schema-http/issues/236
     it.live(
-      `[EXT-49p] currently ${kind} a cast-only Void-first group reports an invalid alias as InvalidRequest`,
+      `[EXT-49p] ${kind} a cast-only Void-first group refuses an invalid alias as a field SchemaError`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
-          yield* invalidRequestBeforeDispatch(
-            backend,
-            group(
-              backend.origin,
-              pair(Schema.Void, Filter, "alternative first"),
-              kind,
+          const execute = group(
+            backend.origin,
+            pair(Schema.Void, Filter, "alternative first"),
+            kind,
+          );
+          const outcomes: Outcome[] = [];
+          for (const page_size of invalid)
+            outcomes.push(yield* execute({ page_size }).pipe(outcome));
+          expect(yield* backend.ledger).toEqual([]);
+          for (const actual of outcomes) {
+            expect(
+              "error" in actual && Schema.isSchemaError(actual.error),
+            ).toBe(true);
+            expect(String((actual as { error: unknown }).error)).toContain(
+              '["page_size"]',
+            );
+          }
+        }),
+    );
+  }
+
+  for (const binding of ["path", "JSON"] as const) {
+    for (const order of orders) {
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+      it.live(
+        `[EXT-49q] ${binding} ${order} Void keeps an object or list whose contents decode to undefined`,
+        () =>
+          Effect.gen(function* () {
+            const backend = yield* start();
+            const Flagged = Schema.Struct({ flag: NullAsUndefined });
+            const Cells = Schema.Array(NullAsUndefined);
+            const cases: ReadonlyArray<readonly [WireSchema, unknown, string]> =
+              [
+                [
+                  pair(Schema.Void, Flagged, order),
+                  { flag: null },
+                  '{"flag":null}',
+                ],
+                [pair(Schema.Void, Cells, order), [null], "[null]"],
+                [pair(Schema.Void, Cells, order), [null, null], "[null,null]"],
+                [
+                  Schema.Struct({ x: pair(Schema.Void, Flagged, order) }),
+                  { x: { flag: null } },
+                  '{"x":{"flag":null}}',
+                ],
+                // Without a field or cell the first member that fits still wins.
+                [pair(Schema.Void, Flagged, order), {}, voidRoot(binding)],
+                [
+                  pair(Schema.Void, Cells, order),
+                  [],
+                  order === "alternative first" ? voidRoot(binding) : "[]",
+                ],
+              ];
+            for (const [schema, input, json] of cases) {
+              const before = structuredClone(input);
+              expect(
+                yield* operation(backend.origin, schema, binding)(input),
+              ).toBe("Not Found");
+              expect(input).toEqual(before);
+              const ledger = yield* backend.ledger;
+              wire(ledger[ledger.length - 1]!, binding, json);
+            }
+            expect(yield* backend.ledger).toHaveLength(cases.length);
+          }),
+      );
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+      it.live(
+        `[EXT-49r] ${binding} ${order} a refusal names the invalid field beside a Void member, not a valid alias`,
+        () =>
+          Effect.gen(function* () {
+            const refusing = yield* start();
+            const schema = Schema.Struct({
+              extra: pair(
+                Schema.Void,
+                Schema.Struct({ a: Schema.Number }),
+                order,
+              ),
+              filter: Filter,
+            });
+            const actual = yield* operation(
+              refusing.origin,
+              schema,
+              binding,
+            )({ extra: { a: "x" }, filter: { page_size: "05" } }).pipe(outcome);
+            expect(yield* refusing.ledger).toEqual([]);
+            expect(
+              "error" in actual && Schema.isSchemaError(actual.error),
+            ).toBe(true);
+            const message = String((actual as { error: unknown }).error);
+            expect(message).toContain('["extra"]["a"]');
+            expect(message).not.toContain("page_size");
+            const backend = yield* start();
+            expect(
+              yield* operation(
+                backend.origin,
+                schema,
+                binding,
+              )({ extra: { a: 1 }, filter: { page_size: "05" } }),
+            ).toBe("Not Found");
+            const ledger = yield* backend.ledger;
+            expect(ledger).toHaveLength(1);
+            wire(ledger[0]!, binding, `{"extra":{"a":1},"filter":${five}}`);
+          }),
+      );
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+      it.live(
+        `[EXT-49t] ${binding} ${order} an optional Void union field keeps its populated constructor default`,
+        () =>
+          Effect.gen(function* () {
+            const backend = yield* start();
+            const schema = Schema.Struct({
+              g: Schema.optionalKey(
+                pair(
+                  Schema.Void,
+                  Schema.Struct({ a: Schema.optionalKey(Schema.Number) }),
+                  order,
+                ),
+              ).pipe(Schema.withConstructorDefault(Effect.succeed({ a: 1 }))),
+            });
+            // An all-undefined object has no field: Void's output first, the object as read last.
+            const empty =
+              order === "object first"
+                ? '{"g":{}}'
+                : binding === "path"
+                  ? "{}"
+                  : '{"g":null}';
+            const cases = [
+              [{}, '{"g":{"a":1}}'],
+              [{ g: {} }, empty],
+              [{ g: { a: undefined } }, empty],
+              [{ g: { a: 2 } }, '{"g":{"a":2}}'],
+            ] as const;
+            for (const [input, json] of cases) {
+              expect(
+                yield* operation(backend.origin, schema, binding)(input),
+              ).toBe("Not Found");
+              const ledger = yield* backend.ledger;
+              wire(ledger[ledger.length - 1]!, binding, json);
+            }
+            expect(yield* backend.ledger).toHaveLength(cases.length);
+          }),
+      );
+    }
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+    it.live(
+      `[EXT-49s] currently ${binding} an array member before Void lets the default replace invalid aliases`,
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          const execute = operation(
+            backend.origin,
+            Schema.Union([Schema.Array(Filter), Schema.Void]),
+            binding,
+          );
+          const cases: ReadonlyArray<readonly [unknown, string]> = [
+            ...invalid.map(
+              (page_size) => [[{ page_size }], `[${defaulted}]`] as const,
             ),
-            invalid.map((page_size) => ({ page_size })),
+            [[{ page_size: "05" }], `[${five}]`],
+            [[], "[]"],
+          ];
+          for (const [input, json] of cases) {
+            expect(yield* execute(input)).toBe("Not Found");
+            const ledger = yield* backend.ledger;
+            wire(ledger[ledger.length - 1]!, binding, json);
+          }
+          expect(yield* backend.ledger).toHaveLength(cases.length);
+          // With Void first the same invalid cells are refused.
+          const refusing = yield* start();
+          yield* refusesBeforeDispatch(
+            refusing,
+            operation(
+              refusing.origin,
+              Schema.Union([Schema.Void, Schema.Array(Filter)]),
+              binding,
+            ),
+            invalid.map((page_size) => [{ page_size }]),
           );
         }),
     );

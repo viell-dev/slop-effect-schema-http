@@ -4294,8 +4294,9 @@ CI against this pin.
 
 The Void cases were written by a separate consumer context for the Void rule of
 [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143), first against library
-commit `333cb33103dac4c6e79d859485edcd37022f9c71` and then against its reviewed follow-up
-`36a61886d2592e2d6232db9285763ef2e5f3f3e6`. That context worked from the library pull request's
+commit `333cb33103dac4c6e79d859485edcd37022f9c71`, then against its reviewed follow-up
+`36a61886d2592e2d6232db9285763ef2e5f3f3e6` and finally against the merged library `main` commit
+`5e8d57e8e04896b790032d91e91e304c37150503`. That context worked from the library pull request's
 public description ([#233](https://github.com/viell-dev/slop-effect-schema-http/pull/233)), the
 schema-input guide and design page, and observed HTTP behaviour. No library implementation, source
 tests, backend or conformance code informed it. The rule: a `Void` member of an any-of union with
@@ -4303,8 +4304,9 @@ an object member, directly or inside an unencoded any-of member union of primiti
 discarding a supplied field, and this holds through parent encodings and fieldwise reads. A member
 that keeps the fields wins in either order, a value no member can hold is a `SchemaError` before
 dispatch, and an input with no defined field keeps the original member order. EXT-49d, EXT-49e,
-EXT-49g, EXT-49h and EXT-49k to EXT-49n assert that rule; EXT-49j holds the unchanged `Unknown` and
-`Any` controls; EXT-49o pins the class-backed, `oneOf` and standalone Void limits; EXT-49i and
+EXT-49g, EXT-49h, EXT-49k to EXT-49n and EXT-49q, EXT-49r and EXT-49t assert that rule; EXT-49j
+holds the unchanged `Unknown` and `Any` controls; EXT-49o pins the class-backed, `oneOf` and
+standalone Void limits and EXT-49s the array-shaped member's default substitution; EXT-49i and
 EXT-49p cover cast-only query and header groups under
 [#236](https://github.com/viell-dev/slop-effect-schema-http/issues/236).
 
@@ -4327,6 +4329,14 @@ a `TypeError` defect) and both EXT-49p (the invalid alias was a field `SchemaErr
 EXT-49e, EXT-49h, EXT-49j, EXT-49l, EXT-49o and the four object-first fieldwise EXT-49m cases pass
 on both commits. The report and log remain under `artifacts/void-member-baseline-333cb33-node.*`.
 
+The third baseline is `36a6188`. Running the expectations for `5e8d57e` there, the two files fail
+exactly 8 of 421 cases, each where the review disposition says behaviour changed: both EXT-49p (the
+cast-only group's invalid alias was `InvalidRequest` rather than a field `SchemaError`), the two
+Void-first EXT-49q cases (Void erased an object or list whose contents decode to undefined) and all
+4 EXT-49r (the refusal named `["filter"]["page_size"]` instead of `["extra"]["a"]`). EXT-49s and
+EXT-49t, and every other case, pass on both commits. The report and log remain under
+`artifacts/void-member-baseline-36a6188-node.*`.
+
 Verification on 2026-11-18 at `36a61886d2592e2d6232db9285763ef2e5f3f3e6`, with Effect 4.1.4 and
 Node 24.22.2 on Windows, passes all 265 EXT-49 cases and both EXT-47l cases in the Node lane and in
 packed mode, with zero skips and no expected failures among them. The full Node lane passes 2,515
@@ -4341,6 +4351,18 @@ Logs and copied JUnit reports, failed attempts included, remain under
 `artifacts/void-member-36a6188-*`; the 2026-11-17 Chromium and app evidence at `333cb33` stays in
 `artifacts/void-member-333cb33-*`. These synthetic consumer checks do not establish other Effect
 peers or platforms, human use or release qualification.
+
+Verification on 2026-11-18 at the merged `5e8d57e8e04896b790032d91e91e304c37150503`, with Effect
+4.1.4 and Node 24.22.2 on Windows, passes all 279 EXT-49 cases and both EXT-47l cases in the Node
+lane and in packed mode, with zero skips. The full Node lane passes 2,529 ordinary cases and packed
+2,542, each with the 14 existing expected failures. `npm run check`, lint, the packed catalogue gate
+and strict packed declarations pass. The first packed run failed once, in the unchanged PAY-1, on a
+3-second timeout; the rerun passed. The machine had 0.3 to 0.5 GB of memory free: one Chromium run
+reached the browser session, but its tests took up to 274 seconds each. It recorded 64 failures,
+spread over unrelated areas as timeouts, and stalled after its last test until it was stopped. Its
+partial log is kept; the app lane was not run. The pull request's CI `suite` check supplies the
+Chromium and app evidence for this commit. Logs and copied JUnit reports, failed attempts included,
+remain under `artifacts/void-member-5e8d57e-*`.
 
 - **EXT-49a** Every nested alternative and the flat reference, in both orders at all three levels,
   retains encoded `"05"` to `"5"`, decoded `5` to `"5"` and omitted limit to default `"25"` bytes,
@@ -4427,11 +4449,11 @@ peers or platforms, human use or release qualification.
   field by field when `n` is decoded beside an encoded alias. Encoded
   `{ page_filter: { page_size: "05" } }`, `{ filter: { page_size: "05" }, sort_by: "a" }`,
   `{ n: 1, mid: { inner: { page_size: "05" } } }` and `{ n: 1, items: [{ page_size: "05" }] }`, and
-  their decoded or fully encoded counterparts, keep `"5"`; `"many"` and `null` refuse before dispatch. With Void first, a decoded filter beside
-  the encoded `sort_by` mixes the sides and refuses as well. Fieldless input keeps first-fit:
-  Void's output when Void is first. When `Filter` is first, the decoded parent constructs the
-  default, while the encoded `{ page_filter: {} }` and `{ filter: {}, sort_by: "a" }` are read as
-  given and send `{}`. Status: tested.
+  their decoded or fully encoded counterparts, keep `"5"`; `"many"` and `null` refuse before
+  dispatch. With Void first, a decoded filter beside the encoded `sort_by` mixes the sides and
+  refuses as well. Fieldless input keeps first-fit: Void's output when Void is first. When `Filter`
+  is first, the decoded parent constructs the default, while the encoded `{ page_filter: {} }` and
+  `{ filter: {}, sort_by: "a" }` are read as given and send `{}`. Status: tested.
   - `[EXT-49m] ${binding} ${route.name} ${order} keeps valid aliases through the parent and refuses invalid ones`
 - **EXT-49n** `Void` annotated with a description or given a check behaves as a direct Void at
   every level, in both orders and bindings, as EXT-49d and EXT-49e describe; at `333cb33` the JSON
@@ -4451,8 +4473,34 @@ peers or platforms, human use or release qualification.
   members fit. A standalone `Void` sends its output. The supplied fields are dropped without a
   refusal; the library records these as limits under #143. Status: limit.
   - `[EXT-49o] currently ${binding} class-backed, oneOf and standalone Void schemas keep Void's own selection`
-- **EXT-49p** At `36a6188`, a cast-only Void-first query or header group given invalid `"many"` or
-  `null` is refused before dispatch with `Request.InvalidRequest`, because the group's encoded value
-  is not a field record. `333cb33` refused it with a `SchemaError` naming `page_size`. The request
-  is still refused, but this type-refused route loses the field-level error. Status: limit.
-  - `[EXT-49p] currently ${kind} a cast-only Void-first group reports an invalid alias as InvalidRequest`
+- **EXT-49p** A cast-only Void-first query or header group given invalid `"many"` or `null` is
+  refused before dispatch with a `SchemaError` naming `["page_size"]`, before any check that the
+  group's encoded value is a field record. At `36a6188` it was `Request.InvalidRequest` (the encoded
+  value is not a field record), which this entry pinned as a limit; `333cb33` gave the same field
+  `SchemaError` as `5e8d57e`. Status: tested.
+  - `[EXT-49p] ${kind} a cast-only Void-first group refuses an invalid alias as a field SchemaError`
+- **EXT-49q** A Void member keeps a supplied object or list whose contents decode to undefined, in
+  either order, on the path and in JSON: with `flag` a codec from encoded `null` to decoded
+  undefined, `Union([Void, Struct({ flag })])` sends `{ flag: null }` as `{"flag":null}`, also as a
+  struct field, and `Union([Void, Array(flag)])` sends `[null]` and `[null, null]` unchanged. `{}`
+  is still Void's, and `[]` is Void's when Void is first and `[]` otherwise. At `36a6188` the
+  Void-first union sent Void's output for these objects and lists. Status: tested.
+  - `[EXT-49q] ${binding} ${order} Void keeps an object or list whose contents decode to undefined`
+- **EXT-49r** With `extra: Union([Void, Struct({ a: Number })])` beside a plain `filter: Filter`,
+  `{ extra: { a: "x" }, filter: { page_size: "05" } }` is refused before dispatch with a
+  `SchemaError` at `["extra"]["a"]`, and the message does not mention the valid `page_size`, in
+  both orders and bindings; `{ extra: { a: 1 } }` beside the same filter sends both. At `36a6188`
+  the refusal named `["filter"]["page_size"]`. Status: tested.
+  - `[EXT-49r] ${binding} ${order} a refusal names the invalid field beside a Void member, not a valid alias`
+- **EXT-49s** `Union([Array(Filter), Void])` lets the constructor default replace invalid aliases in
+  its cells: `[{ page_size: "many" }]` and `[{ page_size: null }]` go out as `[{"page_size":"25"}]`
+  on the path and in JSON, on `36a6188` and `5e8d57e`, while valid cells and `[]` are kept. With
+  Void first the same cells are refused. The library keeps this array-shaped member case under
+  [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170). Status: defect.
+  - `[EXT-49s] currently ${binding} an array member before Void lets the default replace invalid aliases`
+- **EXT-49t** An `optionalKey` field holding `Union([Void, Struct({ a: optionalKey(Number) })])` in
+  either order, with constructor default `{ a: 1 }`, sends `{"g":{"a":1}}` for `{}` and keeps
+  `{ g: { a: 2 } }`. An all-undefined `{ g: {} }` or `{ g: { a: undefined } }` supplies no field:
+  with Void first it is Void's (`{"g":null}`, path `{}`), and with the object first it goes out as
+  `{"g":{}}`. The library documents these outcomes; they are the same on `36a6188`. Status: tested.
+  - `[EXT-49t] ${binding} ${order} an optional Void union field keeps its populated constructor default`
