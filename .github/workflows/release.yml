@@ -92,7 +92,7 @@ jobs:
       # Independent suite history, pinned and reviewed separately from the library.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 21bc0100fef43448b2bae5e4fff66ac00b474942
+          ref: ba2b9327dc7f66869ee9a201e5e00219f7aabae3
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
