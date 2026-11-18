@@ -1,5 +1,5 @@
 import type { SchemaAST } from "effect";
-import { isNonObjectAlternative, shapes, type Shapes } from "./primitive.js";
+import { shapes, type Shapes } from "./primitive.js";
 import type { AliasAlternative } from "./void-member.js";
 
 export interface Names {
@@ -13,19 +13,24 @@ export interface Names {
 /** Shape and name results one metadata build shares; each depends on the AST alone. */
 export interface Metadata {
   readonly shapes: Shapes;
-  /** A member that cannot consume an object at this union, such as a guarded Void branch. */
+  /**
+   * A member that can consume neither an object nor a list at this union: a primitive, or a
+   * guarded Void branch, which declines an object or list with a defined field or cell.
+   */
   readonly isAlternative: AliasAlternative;
   readonly names: Map<SchemaAST.AST, Names | undefined>;
 }
 
-export const metadata = (
-  isAlternative: AliasAlternative = (_union, member) =>
-    isNonObjectAlternative(member),
-): Metadata => ({
-  shapes: shapes(),
-  isAlternative,
-  names: new Map(),
-});
+export const metadata = (isAlternative?: AliasAlternative): Metadata => {
+  const known = shapes();
+  return {
+    shapes: known,
+    isAlternative:
+      isAlternative ??
+      ((_union, member) => known.record(member) && known.array(member)),
+    names: new Map(),
+  };
+};
 
 /** JavaScript stores numeric property names as strings; symbols retain their identity. */
 const keyOf = (name: PropertyKey): string | symbol =>

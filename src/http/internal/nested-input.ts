@@ -287,7 +287,11 @@ export const nestedEncodedInput = (
     if (part.encoding !== undefined) return undefined;
     if (part._tag === "Union") {
       // An actual array cell reaches the union's one member Effect's parsers let read an array.
-      const readers = part.types.filter((member) => !shapes.array(member));
+      // Captured cells are defined, so a guarded Void branch declines this list too.
+      const readers = part.types.filter(
+        (member) =>
+          !context.isAlternative(part, member) && !shapes.array(member),
+      );
       const reader = readers.length === 1 ? readers[0]! : undefined;
       if (reader === undefined) return undefined;
       if (active.has(reader)) {

@@ -7,7 +7,7 @@ import {
   SchemaParser,
 } from "effect";
 import { hasDefinedFields } from "./excess.js";
-import { isNonObjectAlternative } from "./primitive.js";
+import { shapes } from "./primitive.js";
 
 // Effect 4.0.7 and 4.1.4 spread parse options, preserving this per-read observer. Revisit the
 // channel if a supported peer stops forwarding symbol keys.
@@ -94,12 +94,13 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
     objectMembers.set(ast, result);
     return result;
   };
-  const primitiveCache = new WeakMap<SchemaAST.AST, boolean>();
+  // One classification per build. A primitive here refuses both an object and a list.
+  const shape = shapes();
   const guardedPrimitives = new WeakSet<SchemaAST.AST>();
   const guardedMembers = new WeakMap<SchemaAST.AST, WeakSet<SchemaAST.AST>>();
   const isAliasAlternative: AliasAlternative = (union, member) =>
     guardedMembers.get(union)?.has(member) === true ||
-    isNonObjectAlternative(member, primitiveCache);
+    (shape.record(member) && shape.array(member));
   const visit = (ast: SchemaAST.AST) => visitAlternative(ast, false);
   const visitAlternative = (
     ast: SchemaAST.AST,
