@@ -33,14 +33,14 @@
   refusing a list with a defined cell, so `Union([Schema.Array(Filter), Schema.Void])` now refuses
   `[{ page_size: "many" }]` instead of writing `[{"page_size":"25"}]`. A grouped any-of member union
   reads as its flat union, so `Union([Schema.Array(Filter), Schema.Union([Cursor, Schema.Void])])`
-  refuses that list too. A list mixing an encoded-only item with a decoded-only item there now
-  refuses too; before, the valid alias was replaced by the default. An item supplying both names
-  beside an encoded-only item is now read by its encoded name, so
-  `[{ limit: 1, page_size: "02" }, { page_size: "25" }]` writes `2` where it wrote `1`. Valid values
-  supplied on one side, omissions and the alternatives' own values keep their results. The proof
-  stops at middleware-encoded alternatives, and for an array cell at a union with
-  `Schema.Struct({})`, a second array-reading member or an encoded array reader; the schema's own
-  selection still decides those inputs.
+  refuses that list too, unless that member union is also used where its Void is unguarded. A list
+  mixing an encoded-only item with a decoded-only item there now refuses too; before, the valid
+  alias was replaced by the default. An item supplying both names beside an encoded-only item is now
+  read by its encoded name, so `[{ limit: 1, page_size: "02" }, { page_size: "25" }]` writes `2`
+  where it wrote `1`. Valid values supplied on one side, omissions and the alternatives' own values
+  keep their results. The proof stops at middleware-encoded alternatives, and for an array cell at a
+  union with `Schema.Struct({})`, a second array-reading member or an encoded array reader; the
+  schema's own selection still decides those inputs.
 - Return a typed `InvalidRequest` when a query or header schema encodes a non-object group or a
   header record supplies a non-string value (#236).
 

@@ -142,7 +142,8 @@ branch. With `Cursor = Schema.Struct({ cursor: Schema.String })`,
 `Parent = Schema.Struct({ filter: Filter })`,
 `Union([Parent, Schema.Union([Schema.Array(Schema.String), Schema.Void])])` reads an object as its
 flat union does. A `oneOf` member union leaves its Void unguarded, so that Void still counts as a
-reader.
+reader. One member union value used both where its Void is guarded and where it is not counts as
+unguarded in every grouping, as it would be wherever that guard is missing.
 
 Capture reads each own cell's descriptor, while the Void rule reads the cell by index. A proxy can
 answer the two differently, and then the guarded Void sees no defined cell and can take the list.
