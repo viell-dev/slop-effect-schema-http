@@ -2242,11 +2242,11 @@ describe("group schema output", () => {
           const headers = Request.get("/x").pipe(
             Request.headers(schema as never),
           );
-          for (const [compile, name] of [
+          for (const [preparation, name] of [
             [Request.compile(query, { query: {} } as never), "query"],
             [Request.compile(headers, { headers: {} } as never), "header"],
           ] as const) {
-            const result = yield* Effect.result(compile);
+            const result = yield* Effect.result(preparation);
             expect(result._tag).toBe("Failure");
             if (result._tag === "Failure") {
               expect(result.failure).toBeInstanceOf(Request.InvalidRequest);
