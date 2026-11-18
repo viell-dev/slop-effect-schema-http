@@ -4504,3 +4504,69 @@ remain under `artifacts/void-member-5e8d57e-*`.
   with Void first it is Void's (`{"g":null}`, path `{}`), and with the object first it goes out as
   `{"g":{}}`. The library documents these outcomes; they are the same on `36a6188`. Status: tested.
   - `[EXT-49t] ${binding} ${order} an optional Void union field keeps its populated constructor default`
+
+## Lists beside records (EXT-51)
+
+Independent consumer scenarios from [#240](https://github.com/viell-dev/slop-effect-schema-http/pull/240),
+the [schema-input guide's list rule](https://github.com/viell-dev/slop-effect-schema-http/blob/6baefb8184327e6f93f600e00b19eb664e27dcad/docs/schema-input.md#a-list-stays-a-list)
+and the README's [neutral echo contract](./README.md#the-neutral-echo-probe). The tests in
+`src/scenarios/list-record-wire.test.ts` use Fetch over real sockets in both source lanes and
+packed mode. Refusals require a `SchemaError` and an empty request ledger. Successful controls
+and limit pins check one request, its method, exact target, relevant header lines and body bytes.
+The path template writes the encoded value as percent-escaped JSON, so the ledger distinguishes a
+list from an object with keys that look like indexes.
+
+The baseline is library main `5e8d57e8e04896b790032d91e91e304c37150503`, immediately before #240.
+Node and Chromium each pass 34 cases and fail the same 32. Index-keyed requests fail the refusal
+assertions at the root and in a struct field (EXT-51a), in competing member fields (EXT-51c), with
+only a record (EXT-51d), and for malformed pairs (EXT-51e). The baseline also sends index-keyed
+objects in EXT-51f and EXT-51i and dispatches in EXT-51h. The array-element refusals, valid
+controls and EXT-51g already pass. The baseline logs and JUnit reports are under
+`artifacts/list-record-baseline-5e8d57e-*`.
+
+The test pin is library main `6baefb8184327e6f93f600e00b19eb664e27dcad`, with Effect 4.1.4,
+Node 24.22.2, npm 11.19.1 and Chromium 158.0.8127.18 on Windows 11 x64. Node, Chromium and packed
+mode each pass all 66 EXT-51 cases. With the suite based on `5a619c5`, including
+[#238](https://github.com/viell-dev/slop-effect-schema-http/pull/238), the full runs report
+2,595 ordinary passes in Node, 1,770 in Chromium, 2,608 in packed mode and 3 in the bundled app.
+The first three lanes each record 14 existing expected failures. All results catalogue gates pass.
+The logs and JUnit reports are under `artifacts/list-record-6baefb8-*` and `artifacts/junit-*.xml`.
+
+- **EXT-51a** A list with `{ limit: 5 }` beside an open record refuses before dispatch in either
+  union order, at the root, in a struct field and as an array element, in JSON and path.
+  Status: tested.
+  - `[EXT-51a] ${binding} ${name} ${order} refuses an invalid item`
+- **EXT-51b** The same bindings, positions and orders keep `[{ "limit": "x" }]` as a list and
+  `{ "0": { "limit": 5 }, "1": [] }` as an object. Status: tested.
+  - `[EXT-51b] ${binding} ${name} ${order} preserves a ${control}`
+- **EXT-51c** A union of two structs declaring `items` with competing list and record schemas
+  refuses the invalid item in either order, in JSON and path. Status: tested.
+  - `[EXT-51c] ${binding} ${order} refuses a list in competing member fields`
+- **EXT-51d** An open record alone refuses empty and populated lists in JSON and path.
+  Status: tested.
+  - `[EXT-51d] ${binding} record alone refuses ${name}`
+- **EXT-51e** In query and header groups, a pairs array beside a record of string arrays refuses a
+  three-cell tuple in either order. Two valid pairs are sent under their supplied names, with no
+  numeric-index query or header names. Status: tested.
+  - `[EXT-51e] ${group} ${order} refuses a three-cell pair`
+  - `[EXT-51e] ${group} ${order} sends valid pairs under their names`
+- **EXT-51f** [#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241): a parent with
+  `n: FiniteFromString` and an `items` list-or-record union still sends
+  `{"n":"1","items":[{"page_size":"25"}]}` for `{ n: 1, items: [{ limit: "x" }] }` in JSON and
+  path, in either union order. Status: limit.
+  - `[EXT-51f] currently ${binding} ${order} replaces an invalid item under a fieldwise parent`
+- **EXT-51g** [#242](https://github.com/viell-dev/slop-effect-schema-http/issues/242): a
+  null-prototype pairs list beside an empty struct is written under its index. The socket sees
+  `/x?0=x-list&0=a` or one Fetch-combined header `0: x-list, a`. The pairs schema alone sends
+  `/x?x-list=a` or `x-list: a`. Status: limit.
+  - `[EXT-51g] currently ${group} writes a null-prototype pairs list under its index beside an empty struct`
+- **EXT-51h** [#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243): a list with
+  `{ limit: "x", extra: 1 }` beside an open record refuses at `[0]["extra"]` in either order.
+  The list alone strips the extra key and sends `[{"limit":"x"}]` in JSON and path. Status: limit.
+  - `[EXT-51h] currently ${binding} ${order} refuses an unstated list item key beside a record`
+- **EXT-51i** [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170): a list with
+  `{ page_size: "many" }` beside an open record sends `[{"page_size":"25"}]` in either order
+  in JSON and path. The list alone refuses before dispatch. The change proposed in
+  [#235](https://github.com/viell-dev/slop-effect-schema-http/pull/235) is expected to replace this
+  limit. Status: limit.
+  - `[EXT-51i] currently ${binding} ${order} replaces an invalid encoded list item alias`
