@@ -85,11 +85,17 @@ explains the earlier related repairs without claiming they complete every schema
 
    This compares the tested versions, clears only the local generated `dist/`, then runs
    type/format/lint checks, a fresh build, behavior/socket tests, the release tooling tests,
-   executable docs, the site/link checks, and a moderate-or-higher dependency audit. It packs once,
-   installs that tarball into an isolated consumer with Effect 4.1.4, verifies strict declarations
-   and every export, and executes the synthetic example. It then installs and verifies the **same
-   bytes** with the Effect 4.0.7 peer floor and a TypeScript 7.0.2 consumer. No package or release
-   is published.
+   executable docs, the site/link checks, and the dependency audits below. It packs once, installs
+   that tarball into an isolated consumer with Effect 4.1.4, verifies strict declarations and every
+   export, and executes the synthetic example. It then installs and verifies the **same bytes** with
+   the Effect 4.0.7 peer floor and a TypeScript 7.0.2 consumer. No package or release is published.
+
+   The production audit (`--omit=dev`) requires zero findings. The full audit blocks
+   moderate-or-higher advisories unless [explicitly allowed](./scripts/release-audit.mjs) by
+   advisory ID, package and range. Preparation also fails if an allowance stops matching or npm
+   reports a fix within the declared ranges or a non-major fix for an affected package. Adopt the
+   fix and remove the allowance. Recheck upstream before each release as recorded in
+   [#41](https://github.com/viell-dev/slop-effect-schema-http/issues/41).
 
    Outputs are under `artifacts/VERSION/`: the `.tgz`, `SHA256SUMS`, `manifest.json` (file list,
    integrity, source commit and tool versions), and `release-check.mjs`. Existing output is refused;

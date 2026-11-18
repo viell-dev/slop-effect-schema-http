@@ -34,8 +34,8 @@ npm run test:package
 - `npm test`: Vitest behavior tests.
 - `npm run test:release`: reject invalid qualification producers/artifacts, exercise bounded
   registry visibility recovery and terminal integrity/provenance failures, check the read-only
-  workflow, the handover from publication to the site, that release preparation refuses a stale
-  tested version, that peer-floor selection preserves unrelated locked tooling, and every comparison
+  workflow, the handover from publication to the site, the release audits and tested-version checks,
+  that peer-floor selection preserves unrelated locked tooling, and every comparison
   `npm run check-live` makes, against synthetic surfaces.
 - `npm run test:package`: verify the built tarball in an isolated consumer; run the build first.
 - `npm run format`: apply the configured formatters.
