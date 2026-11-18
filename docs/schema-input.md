@@ -134,6 +134,19 @@ included. The proof stops at a union with it, with a second array-reading member
 array member as the reader; ordinary selection decides those cells, which can keep the supplied
 alias or replace it with a default.
 
+Grouping members does not change either reading. An unencoded any-of member union refuses a kind of
+cell when each of its own members does, and the Void rule of that inner union decides its Void
+branch. With `Cursor = Schema.Struct({ cursor: Schema.String })`,
+`Union([Schema.Array(Filter), Schema.Union([Cursor, Schema.Void])])` reads a list as the flat
+`Union([Schema.Array(Filter), Cursor, Schema.Void])` does. With
+`Parent = Schema.Struct({ filter: Filter })`,
+`Union([Parent, Schema.Union([Schema.Array(Schema.String), Schema.Void])])` reads an object as its
+flat union does. A `oneOf` member union leaves its Void unguarded, so that Void still counts as a
+reader.
+
+Capture reads each own cell's descriptor, while the Void rule reads the cell by index. A proxy can
+answer the two differently, and then the guarded Void sees no defined cell and can take the list.
+
 ### Initial whole construction
 
 The initial whole constructor still runs first, followed by existing strict-first writing. Only a
@@ -304,11 +317,9 @@ list's indexes. These limits remain:
 - Beside a record, a key the list member does not state can refuse instead of being stripped: with
   the record above, `[{ page_size: "05" }]` is refused, where `Schema.Array(Plain)` alone writes
   `[{}]` ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)).
-- A constructor default can still replace an invalid item value. Below such a union an encoded alias
-  can be replaced, as under other array-shaped union members
-  ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). When another field
-  makes a parent read field by field, an invalid decoded value can be replaced too, with or without
-  the record: `{ n: 1, items: [{ limit: "x" }] }` under a struct with `n: Schema.FiniteFromString`
+- When another field makes a parent read field by field, a constructor default can still replace an
+  invalid decoded item value, with or without the record: `{ n: 1, items: [{ limit: "x" }] }` under
+  a struct with `n: Schema.FiniteFromString`
   ([#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241)).
 - Writing a query or header group tells a pairs list by its iterator. A list with no iterator on its
   prototype, such as one with a `null` prototype, that a member such as `Schema.Struct({})` keeps is
@@ -436,7 +447,9 @@ remaining list limits under #241, #242 and #243.
 - A list supplied by JavaScript or a cast to a union of a struct and Void, whose cells are all
   non-enumerable, can still be discarded and written as `undefined` (`null` in JSON). Such a cell
   declines Void on the strict read, but a struct cannot read a list and the field-loss check does
-  not see the cell.
+  not see the cell. Beside an array member, such a cell is read, so an invalid alias in it refuses.
+- A proxy list whose index read answers `undefined` for a cell its descriptor holds can be taken by
+  Void beside an array member and written as `undefined` (`null` in JSON).
 - A populated object constructor default can select the object member beside Void. A default of
   `{ a: 1 }` for a field `g` using `Union([Void, Struct({ a: optionalKey(Number) })])` can write
   `{"g":{"a":1}}` for an omitted `g`. With object-first order and only an undefined-valued input

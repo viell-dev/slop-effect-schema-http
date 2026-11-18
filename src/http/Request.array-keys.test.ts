@@ -546,25 +546,11 @@ describe("a caller's list beside a record member", () => {
     }),
   );
 
+  // The record refuses a list, so the list's one array reader is followed.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect(
-    "currently retains the default for an invalid alias in the list",
-    () =>
-      Effect.gen(function* () {
-        expect(
-          yield* prepared(Schema.Array(Filter), [{ page_size: "many" }]),
-        ).toEqual(refused);
-        for (const schema of filterUnions)
-          expect(yield* prepared(schema, [{ page_size: "many" }])).toEqual(
-            kept([{ page_size: "25" }]),
-          );
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect.fails("refuses an invalid alias in the list", () =>
+  it.effect("refuses an invalid alias in the list", () =>
     Effect.gen(function* () {
-      for (const schema of filterUnions)
+      for (const schema of [Schema.Array(Filter), ...filterUnions])
         expect(yield* prepared(schema, [{ page_size: "many" }])).toEqual(
           refused,
         );

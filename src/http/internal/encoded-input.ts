@@ -1,5 +1,5 @@
 import type { SchemaAST } from "effect";
-import { shapes, type Shapes } from "./primitive.js";
+import { shapes, type Cell, type Shapes } from "./primitive.js";
 import type { AliasAlternative } from "./void-member.js";
 
 export interface Names {
@@ -18,16 +18,52 @@ export interface Metadata {
    * guarded Void branch, which declines an object or list with a defined field or cell.
    */
   readonly isAlternative: AliasAlternative;
+  /**
+   * Whether a member of this union cannot consume this kind of cell. An unencoded any-of member
+   * union refuses when each of its own members does, with its own guard deciding its Void branches.
+   */
+  readonly refuses: (
+    union: SchemaAST.AST,
+    member: SchemaAST.AST,
+    cell: Cell,
+  ) => boolean;
   readonly names: Map<SchemaAST.AST, Names | undefined>;
 }
 
 export const metadata = (isAlternative?: AliasAlternative): Metadata => {
   const known = shapes();
+  const alternative: AliasAlternative =
+    isAlternative ??
+    ((_union, member) => known.record(member) && known.array(member));
+  const groups = {
+    record: new Map<SchemaAST.AST, boolean>(),
+    array: new Map<SchemaAST.AST, boolean>(),
+  };
+  const grouped = (group: SchemaAST.Union, cell: Cell): boolean => {
+    const memo = groups[cell];
+    const cached = memo.get(group);
+    if (cached !== undefined) return cached;
+    // Only a mutated AST forms a cycle. Seeding false declines it when it is reached again.
+    memo.set(group, false);
+    const result = group.types.every((inner) => refuses(group, inner, cell));
+    memo.set(group, result);
+    return result;
+  };
+  const refuses = (
+    union: SchemaAST.AST,
+    member: SchemaAST.AST,
+    cell: Cell,
+  ): boolean =>
+    alternative(union, member) ||
+    known[cell](member) ||
+    (member._tag === "Union" &&
+      member.encoding === undefined &&
+      (member.options?.mode ?? "anyOf") === "anyOf" &&
+      grouped(member, cell));
   return {
     shapes: known,
-    isAlternative:
-      isAlternative ??
-      ((_union, member) => known.record(member) && known.array(member)),
+    isAlternative: alternative,
+    refuses,
     names: new Map(),
   };
 };
@@ -64,9 +100,9 @@ const namesOf = (
     for (const node of nodes) {
       // This is only a union-member rule. Primitive encoding intermediates remain unsupported,
       // and never enter the shared memo as an empty group view.
-      if (output === members && context.isAlternative(ast, node)) continue;
-      if (output === members && context.shapes.record(node)) {
-        lists ||= !context.shapes.array(node);
+      if (output === members && context.refuses(ast, node, "record")) {
+        // A member that can still read a list keeps this view from vouching for one.
+        lists ||= !context.refuses(ast, node, "array");
         continue;
       }
       const names = namesOf(node, context, active);
