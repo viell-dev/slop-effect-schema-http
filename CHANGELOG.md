@@ -33,7 +33,9 @@
   refusing a list with a defined cell, so `Union([Schema.Array(Filter), Schema.Void])` now refuses
   `[{ page_size: "many" }]` instead of writing `[{"page_size":"25"}]`. A grouped any-of member union
   reads as its flat union, so `Union([Schema.Array(Filter), Schema.Union([Cursor, Schema.Void])])`
-  refuses that list too, unless that member union is also used where its Void is unguarded. A list
+  refuses that list too. A member union reused where its Void is unguarded, such as one value also
+  placed under a `oneOf` union, gets that grouped proof at neither use, so an invalid alias only it
+  would catch keeps the default, as on 0.17; build a separate member union for each use. A list
   mixing an encoded-only item with a decoded-only item there now refuses too; before, the valid
   alias was replaced by the default. An item supplying both names beside an encoded-only item is now
   read by its encoded name, so `[{ limit: 1, page_size: "02" }, { page_size: "25" }]` writes `2`
