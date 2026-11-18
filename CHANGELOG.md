@@ -46,7 +46,7 @@ the Void member, empty-struct, list and constructor-alias migrations and remaini
   `Union([Schema.Array(Filter), Filter])`, and for an array cell that reaches the union's one
   array-reading member while every other member refuses arrays. A guarded `Schema.Void` counts as
   refusing a list with a defined cell, so `Union([Schema.Array(Filter), Schema.Void])` now refuses
-  `[{ page_size: "many" }]` instead of writing `[{"page_size":"25"}]`. A grouped any-of member union
+  `[{ page_size: "many" }]` where 0.17.0 wrote `null`. A grouped any-of member union
   reads as its flat union, so `Union([Schema.Array(Filter), Schema.Union([Cursor, Schema.Void])])`
   refuses that list too. A member union reused where its Void is unguarded, such as one value also
   placed under a `oneOf` union, gets that grouped proof at neither use, so an invalid alias only it
