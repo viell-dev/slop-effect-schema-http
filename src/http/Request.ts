@@ -115,10 +115,11 @@ export type QueryFields = Readonly<
  * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
  * both sides and at any depth. A field no member can keep beside the others is a `SchemaError` that
  * names it, because the types allow that value and any member would lose a field the schema states.
- * Beside a visible object or list candidate in an any-of union, the strict read and write decline
- * built-in `Schema.Void` when it receives a defined enumerable own object field or a defined own
- * array cell. This includes annotated and checked Void and unencoded any-of member unions. Empty
- * values keep first-fit order. Some mixed-side inputs now refuse. Avoid Void in input schemas
+ * Beside a visible object or list candidate in an any-of union, the strict read declines built-in
+ * `Schema.Void` for defined enumerable own fields and defined own array cells. The strict write
+ * declines Void for every object and array. This includes annotated and checked Void and unencoded
+ * any-of member unions. The read keeps first-fit order when it sees no defined fields or cells.
+ * Some mixed-side inputs refuse. Avoid Void in input schemas
  * that rely on classes, opaque or suspended values, encoded member unions, other union modes,
  * standalone Void or custom discarding transformations.
  * A key no member states is stripped, as a struct strips it, and so is a key the tag has ruled out.
@@ -805,6 +806,12 @@ const misfit = (
     message: `The ${group} group cannot be built against its schema with these declared values: ${listNames(defaults.map(([name]) => name))}.`,
   });
 
+const invalidHeaderFields = (cause: unknown) =>
+  new InvalidRequest({
+    message: "The header schema must encode string field names and values",
+    cause,
+  });
+
 /** Names only, and only those that would go: what the schema kept fits it. */
 const lostFields = (
   group: string,
@@ -887,7 +894,18 @@ const prepareGroup = <
     ) {
       const edited = candidates(value, draft.editedFields.get(shape));
       let { output, lost: lostFromInput } = yield* read(value);
-      if (!Predicate.isObjectKeyword(output)) return yield* invalidOutput();
+      if (!Predicate.isObjectKeyword(output)) {
+        if (lostFromInput.length > 0) {
+          // A non-object output claims no fields. Another binding can still claim a root loss.
+          const prepared = yield* self.prepare(input, draft);
+          yield* Inputs.refuseLost(
+            contract,
+            lostFromInput,
+            prepared[takenKey]?.fields,
+          );
+        }
+        return yield* invalidOutput();
+      }
       let conflicts = filled(edited, output);
       const own = draft[takenKey] && taken(value, output, lostFromInput);
       let prepared = yield* self.prepare(
@@ -1032,23 +1050,10 @@ export const headers = <
                 Shapes.allows(shape, foldHeader(name)),
             ),
         );
-        const invalidFields = (cause?: unknown) =>
-          new InvalidRequest({
-            message:
-              "The header schema must encode string field names and values",
-            cause,
-          });
         const lines = yield* Effect.try({
           try: () => Transport.entries(settled),
-          catch: invalidFields,
+          catch: invalidHeaderFields,
         });
-        if (
-          lines.some(
-            ([name, value]) =>
-              typeof name !== "string" || typeof value !== "string",
-          )
-        )
-          return yield* invalidFields();
         const replaced = new Set([
           ...names,
           ...defaults.map(([name]) => foldHeader(name)),

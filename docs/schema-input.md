@@ -209,12 +209,12 @@ with none of these choices reads as it always did. A schema's own steps can run 
 the strict pass refuses.
 
 Built-in `Schema.Void` ordinarily accepts an object and returns `undefined`. Beside an object or
-list candidate in a visible any-of union, the strict read and write decline Void when it receives an
-object with a defined enumerable own field or a list with a defined own cell. This includes
-annotated and checked Void and paths through unencoded any-of member unions. It applies within
-structs and lists, including after a parent encoding or fieldwise read. With no such fields or
-cells, original member order still applies. Unstated fields of closed objects are removed by the
-usual normalization.
+list candidate in a visible any-of union, the strict read declines Void for an object with a defined
+enumerable own field or a list with a defined own cell. The strict write declines Void for every
+object or list, including when its cells decoded to `undefined`. This includes annotated and checked
+Void and paths through unencoded any-of member unions. The read uses original member order when it
+sees no defined fields or cells. Normalization removes unstated fields from closed objects and
+treats undefined-valued keys as absent in a strict read.
 
 If an object member maps decoded `limit` to encoded `page_size`, either order with Void prepares
 `{ page_size: "05" }` through the object member. An invalid `page_size` is a `SchemaError`. Avoid
@@ -356,15 +356,27 @@ a guarantee that preparation refuses safely.
   declarations or suspensions, encoded member unions, other union modes such as `oneOf`, and custom
   discarding transformations can still discard values. Class alternatives alone supply no visible
   candidate. Avoid Void in input schemas that rely on those shapes.
-- A mixed-side value can now refuse beside a Void-first member. For example, with
+- An array-shaped alternative beside Void can still replace an invalid alias with a constructor
+  default. For example, `Union([Array(Filter), Void])` may write `[{"page_size":"25"}]` for
+  `[{ page_size: "many" }]`. The array-shaped alias proof remains under
+  [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
+- A list supplied by JavaScript or a cast to a union of a struct and Void can still write a struct's
+  constructor default. A non-enumerable own cell can decline Void on the read, but a struct has no
+  array position to retain it.
+- A populated object constructor default can select the object member beside Void. A default of
+  `{ a: 1 }` for a field `g` using `Union([Void, Struct({ a: optionalKey(Number) })])` can write
+  `{"g":{"a":1}}` for an omitted `g`. With object-first order and only an undefined-valued input
+  key, `Struct({ inner: UndefinedOr(String) })` still needs its key, so the union can write `null`.
+  With `Struct({ a: optionalKey(Number) })`, the same omission can write `{}`.
+- A mixed-side value can refuse beside a Void-first member. For example, with
   `Struct({ filter: Union([Void, Filter]), sortBy: String })` and
   `encodeKeys({ sortBy: "sort_by" })`, where `Filter` encodes `limit` as `page_size`,
   `{ filter: { limit: 5 }, sort_by: "a" }` fails at `filter`. Use all-decoded or all-encoded names
   for that input.
 - JavaScript, casts and `Schema.Any` can bypass the TypeScript requirement for a query or header
-  schema to encode a group of fields. A non-object group or a header record with an invalid value
-  fails with `InvalidRequest` before dispatch. Malformed iterable groups can still die while the
-  binding inspects their pairs.
+  schema to encode a group of fields. Preparation reports lost input fields first. A non-object
+  group or a header record with an invalid value fails with `InvalidRequest` before dispatch.
+  Malformed iterable groups can still die while the binding inspects their pairs.
 - Inherited cells, accessors, subclasses, custom prototypes/iterators and changing paths do not
   establish the new array proof. Sparse own cells and exact native own iterator data do qualify. The
   [0.16 migration](./release-notes/0.16.md) covers newly refused aliases, whole-reading changes and

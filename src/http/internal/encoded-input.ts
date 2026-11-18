@@ -1,6 +1,6 @@
 import type { SchemaAST } from "effect";
 import { isNonObjectAlternative } from "./primitive.js";
-import { isGuardedVoidAlternative } from "./void-member.js";
+import type { AliasAlternative } from "./void-member.js";
 
 interface Names {
   readonly decoded: ReadonlySet<PropertyKey>;
@@ -15,7 +15,7 @@ const keyOf = (name: PropertyKey): string | symbol =>
 /** Root names only, through closed group nodes, without evaluating a schema or suspension. */
 const namesOf = (
   ast: SchemaAST.AST,
-  voidChoices: WeakSet<SchemaAST.AST> | undefined,
+  isAlternative: AliasAlternative,
   active = new Set<SchemaAST.AST>(),
   known = new Map<SchemaAST.AST, Names | undefined>(),
 ): Names | undefined => {
@@ -39,13 +39,8 @@ const namesOf = (
     for (const node of nodes) {
       // This is only a union-member rule. Primitive encoding intermediates remain unsupported,
       // and never enter the shared memo as an empty group view.
-      if (
-        output === members &&
-        (isNonObjectAlternative(node) ||
-          isGuardedVoidAlternative(ast, node, voidChoices))
-      )
-        continue;
-      const names = namesOf(node, voidChoices, active, known);
+      if (output === members && isAlternative(ast, node)) continue;
+      const names = namesOf(node, isAlternative, active, known);
       if (names === undefined) {
         active.delete(ast);
         known.set(ast, undefined);
@@ -89,9 +84,10 @@ const namesOf = (
  */
 export const encodedInput = (
   ast: SchemaAST.AST,
-  voidChoices?: WeakSet<SchemaAST.AST>,
+  isAlternative: AliasAlternative = (_union, member) =>
+    isNonObjectAlternative(member),
 ) => {
-  const names = namesOf(ast, voidChoices);
+  const names = namesOf(ast, isAlternative);
   if (names === undefined) return undefined;
   const encodedOnly = new Set(
     [...names.encoded].filter((name) => !names.decoded.has(name)),

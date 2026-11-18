@@ -17,7 +17,7 @@ const nonObjectTags: ReadonlySet<SchemaAST.AST["_tag"]> = new Set([
 
 const isPrimitiveUnion = (
   ast: SchemaAST.Union,
-  known: Map<SchemaAST.AST, boolean>,
+  known: WeakMap<SchemaAST.AST, boolean>,
 ): boolean => {
   const cached = known.get(ast);
   if (cached !== undefined) return cached;
@@ -39,7 +39,10 @@ const isPrimitiveUnion = (
  * An unencoded union qualifies when every member does, so `Schema.Literals` and
  * `Schema.NullOr(Schema.String)` read like their flat members. Shared members are visited once.
  */
-export const isNonObjectAlternative = (ast: SchemaAST.AST): boolean =>
+export const isNonObjectAlternative = (
+  ast: SchemaAST.AST,
+  known = new WeakMap<SchemaAST.AST, boolean>(),
+): boolean =>
   ast.encoding === undefined &&
   (nonObjectTags.has(ast._tag) ||
-    (ast._tag === "Union" && isPrimitiveUnion(ast, new Map())));
+    (ast._tag === "Union" && isPrimitiveUnion(ast, known)));

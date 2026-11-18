@@ -280,9 +280,8 @@ const readerForCodec = <S extends Schema.Top, A, R>(
           ),
       );
     });
-  const voidChoices = guarded.ast === ast ? undefined : guarded.choices;
-  const encoded = encodedInput(ast, voidChoices);
-  const nested = nestedEncodedInput(ast, voidChoices);
+  const encoded = encodedInput(ast, guarded.isAliasAlternative);
+  const nested = nestedEncodedInput(ast, guarded.isAliasAlternative);
   const decode = (encoded || nested) && Schema.decodeUnknownEffect(contract);
   const decodeWithVoidGuard =
     decode && preserving !== contract
@@ -455,10 +454,32 @@ const readerForCodec = <S extends Schema.Top, A, R>(
                 return Effect.fail(refusal);
               // The alias proof ruled out a guarded Void as a reader of this object. Keep that
               // guard during the confirming decode so it cannot swallow the rejected alias.
-              const confirm = (declined && decodeWithVoidGuard) || decode;
+              const confirm = (declined && decodeWithVoidGuard) || undefined;
               const encodedRead = (current: Input<S>) =>
                 Effect.flatMap(
-                  Effect.mapError(confirm(current), () => refusal),
+                  confirm === undefined
+                    ? Effect.mapError(decode(current), () => refusal)
+                    : Effect.catch(confirm(current), (confirmationFailure) =>
+                        Effect.flatMap(
+                          compared(input, given, (original) =>
+                            decode(original),
+                          ),
+                          ({ lost }) =>
+                            Effect.fail(
+                              witness.matches() &&
+                                lost.some(
+                                  (path) =>
+                                    path.length <= witness.path.length &&
+                                    path.every(
+                                      (part, index) =>
+                                        part === witness.path[index],
+                                    ),
+                                )
+                                ? refusal
+                                : confirmationFailure,
+                            ),
+                        ),
+                      ),
                   (value) =>
                     witness.matches()
                       ? Effect.succeed(value)
