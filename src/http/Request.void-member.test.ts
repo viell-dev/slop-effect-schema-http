@@ -461,13 +461,17 @@ describe("known Void selection limits", () => {
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
   it.effect(
-    "currently uses the struct default for a list beside a struct-only alternative",
+    "currently discards a hidden-cell list beside a struct-only alternative",
     () =>
       Effect.gen(function* () {
-        const list = Object.defineProperty([1], 0, { enumerable: false });
-        expect(yield* bodyOf(post(VoidLast), { body: list } as never)).toBe(
-          '{"page_size":"25"}',
-        );
+        // The struct cannot read a list, and since #237 it cannot take an index-keyed copy of one,
+        // so Void takes the list in either order. The field-loss check does not see the cell.
+        for (const schema of [VoidLast, VoidFirst]) {
+          const list = Object.defineProperty([1], 0, { enumerable: false });
+          expect(yield* bodyOf(post(schema), { body: list } as never)).toBe(
+            "null",
+          );
+        }
       }),
   );
 

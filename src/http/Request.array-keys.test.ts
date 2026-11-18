@@ -656,6 +656,28 @@ describe("a caller's list beside a record member", () => {
     }),
   );
 
+  it.effect("keeps the list rule beside a guarded Void member", () =>
+    Effect.gen(function* () {
+      const list = Schema.Array(Plain);
+      for (const schema of [
+        Schema.Union([list, Open, Schema.Void]),
+        Schema.Union([Schema.Void, list, Open]),
+        Schema.Union([Open, Schema.Void, list]),
+        Schema.Union([Schema.Union([list, Open]), Schema.Void]),
+      ]) {
+        expect(yield* prepared(schema, [{ limit: 5 }])).toEqual(refused);
+        expect(yield* prepared(schema, [{ limit: "x" }])).toEqual(
+          kept([{ limit: "x" }]),
+        );
+        expect(yield* prepared(schema, { 0: { limit: 5 } })).toEqual(
+          kept({ 0: { limit: 5 } }),
+        );
+        const parent = Schema.Struct({ x: schema });
+        expect(yield* prepared(parent, { x: [{ limit: 5 }] })).toEqual(refused);
+      }
+    }),
+  );
+
   it.effect("refuses a list given to a record", () =>
     Effect.gen(function* () {
       // Effect's record refuses an actual array, as the types do.
