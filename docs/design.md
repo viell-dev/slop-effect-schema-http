@@ -121,9 +121,9 @@ omittable groups, and `execute()` remains a compile error.
 A schema-backed input accepts constructor input, encoded input or a supported mix by field. The
 request carries what the schema writes. Preparation prioritizes construction, whole decoding and
 then fieldwise recovery; it must not invent a conversion or replay construction just to classify
-input. Fieldwise recovery reads objects, so a list stays a list and is never rebuilt as an object
-keyed by its indexes. The [input reference](./schema-input.md) owns the detailed rules, type
-boundaries and constructor-default validation.
+input. Fieldwise recovery reads objects; it never rebuilds a list as an object keyed by its indexes.
+The [input reference](./schema-input.md) owns the detailed rules, type boundaries and
+constructor-default validation.
 
 For visible fields the intended rule is kept or refused. Strict reads and actual-consumption
 evidence protect that rule across unions and stacked bindings; opaque values retain their schema's
