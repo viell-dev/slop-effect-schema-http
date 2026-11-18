@@ -1,6 +1,6 @@
 # Release history
 
-The current release is [0.17.0](./0.17.md). [Versions](../versions.md) covers installation and
+The current release is [0.18.0](./0.18.md). [Versions](../versions.md) covers installation and
 updates. Use [Schema-backed input](../schema-input.md) and [Schema-backed
 groups](../schema-groups.md) for today's rules and active limits; the articles below explain changes
 between releases.
@@ -10,7 +10,9 @@ native own iterators into one constructor-default extension. Compatible patch
 [0.16.1](./0.16.md#recover-validated-query-and-header-unions) retains parent validation during
 bounded stacked-union recovery; it does not extend the constructor-default proof again. The [0.17
 release](./0.17.md) extends the 0.16 alternative rule to nested primitive unions such as
-`Schema.Literals([...])` and `Schema.NullOr(Schema.String)`.
+`Schema.Literals([...])` and `Schema.NullOr(Schema.String)`. The [0.18 release](./0.18.md) extends
+the union preservation rule to `Schema.Void` members and separately stops the field-by-field reading
+from sending a list as an index-keyed object.
 
 ## Schema-input hardening
 

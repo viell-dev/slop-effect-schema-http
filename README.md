@@ -54,14 +54,13 @@ In an existing Node.js 24 or 26 ESM project with Effect `^4.0.7`, add the librar
 npm install viell-effect-schema-http
 ```
 
-`0.17.0` is the current release. The same package is available as a checksummed [GitHub release
-tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.17.0). This is a
+`0.18.0` is the current release. The same package is available as a checksummed [GitHub release
+tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.18.0). This is a
 breaking release. Read [What's in
-0.17](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.17) before updating from
-`0.16`: constructor-alias validation now recognises nested primitive alternatives such as
-`Schema.Literals([...])` and `Schema.NullOr(Schema.String)`, so an invalid encoded alias beside one
-refuses before dispatch instead of being replaced by a default. Broader default and
-alias-preservation limits remain active.
+0.18](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.18) before updating from
+`0.17`: a request union with a `Schema.Void` member now keeps or refuses a supplied object's fields
+instead of sending `null`, and preparation no longer sends a list as an object keyed by its indexes.
+Broader default and alias-preservation limits remain active.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
@@ -80,8 +79,8 @@ versions and provider boundaries.
   Operation, Policy, Interaction, UrlEncoding and Transport, from basic use to advanced behavior.
 - [Limits and recovery](https://viell-dev.github.io/slop-effect-schema-http/limits): compatibility,
   where the library's promise stops, failure stages and bug reporting.
-- [What's in 0.17](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.17): nested
-  primitive alternatives in constructor-alias validation, migration and remaining limits.
+- [What's in 0.18](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.18): fields
+  beside `Schema.Void`, lists kept as lists, migration and remaining limits.
 - [Release history](https://viell-dev.github.io/slop-effect-schema-http/release-notes/): earlier
   articles and a comparison of the related schema-input repairs.
 - [Versions](https://viell-dev.github.io/slop-effect-schema-http/versions): updates and

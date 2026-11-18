@@ -17,10 +17,11 @@ import "./migration-0-14.ts";
 import "./migration-0-15.ts";
 import "./migration-0-16.ts";
 import "./migration-0-17.ts";
+import "./migration-0-18.ts";
 import "./opaque-neighbor.ts";
 import "./union-annotations.ts";
 import console from "node:console";
 
 console.log(
-  "All three introductory guides and the 0.2 through 0.17 migration examples passed.",
+  "All three introductory guides and the 0.2 through 0.18 migration examples passed.",
 );

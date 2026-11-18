@@ -12,7 +12,7 @@ const examples = new Set([
   "examples/opaque-neighbor.ts",
   "examples/union-annotations.ts",
   ...Array.from(
-    { length: 16 },
+    { length: 17 },
     (_, index) => `examples/migration-0-${index + 2}.ts`,
   ),
   ...[
