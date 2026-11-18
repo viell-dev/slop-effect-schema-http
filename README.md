@@ -60,6 +60,8 @@ breaking release. Read [What's in
 0.18](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.18) before updating from
 `0.17`: a request union with a `Schema.Void` member now keeps or refuses a supplied object's fields
 instead of sending `null`, and preparation no longer sends a list as an object keyed by its indexes.
+An invalid encoded alias beside an encoded primitive such as `Schema.FiniteFromString`, or in a
+one-or-many union of an object and its list, now refuses instead of being replaced by a default.
 Broader default and alias-preservation limits remain active.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
@@ -80,7 +82,8 @@ versions and provider boundaries.
 - [Limits and recovery](https://viell-dev.github.io/slop-effect-schema-http/limits): compatibility,
   where the library's promise stops, failure stages and bug reporting.
 - [What's in 0.18](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.18): fields
-  beside `Schema.Void`, lists kept as lists, migration and remaining limits.
+  beside `Schema.Void`, lists kept as lists, aliases beside encoded and array-shaped members,
+  migration and remaining limits.
 - [Release history](https://viell-dev.github.io/slop-effect-schema-http/release-notes/): earlier
   articles and a comparison of the related schema-input repairs.
 - [Versions](https://viell-dev.github.io/slop-effect-schema-http/versions): updates and

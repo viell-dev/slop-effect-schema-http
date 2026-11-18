@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 // #region imports
-import { Effect, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { Body, Request } from "viell-effect-schema-http";
 // #endregion imports
 
@@ -160,3 +160,137 @@ const stripped = Effect.gen(function* () {
 // #endregion unstated-keys
 assert.match(await refused(unstated), /at \[0\]\["extra"\]/);
 assert.equal(await prepared(stripped), '[{"limit":"x"}]');
+
+// #region alias-schema
+const Cursor = Schema.Struct({ cursor: Schema.String });
+// One filter, or a list of them.
+const OneOrMany = Schema.Union([Schema.Array(Filter), Filter]);
+const filters = Request.post("/filters").pipe(
+  Request.body(Body.jsonSchema(OneOrMany)),
+);
+// #endregion alias-schema
+
+// #region one-or-many
+const invalidOne = Request.compile(filters, { body: { page_size: "many" } });
+const invalidMany = Request.compile(filters, {
+  body: [{ page_size: "many" }],
+});
+const encodedOne = Request.compile(filters, { body: { page_size: "05" } });
+const decodedMany = Request.compile(filters, { body: [{ limit: 5 }] });
+const omittedMany = Request.compile(filters, { body: [{}] });
+// #endregion one-or-many
+assert.match(
+  await refused(invalidOne),
+  /Expected no excess property\s+at \["page_size"\]/,
+);
+assert.match(await refused(invalidMany), /at \[0\]\["page_size"\]/);
+assert.equal(await prepared(encodedOne), '{"page_size":"5"}');
+assert.equal(await prepared(decodedMany), '[{"page_size":"5"}]');
+assert.equal(await prepared(omittedMany), '[{"page_size":"25"}]');
+
+// A list beside an object that states a field follows the list member too.
+const Paged = Schema.Union([Schema.Array(Filter), Cursor]);
+const paged = Request.post("/paged").pipe(Request.body(Body.jsonSchema(Paged)));
+await refused(Request.compile(paged, { body: [{ page_size: "many" }] }));
+assert.equal(
+  await prepared(Request.compile(paged, { body: { cursor: "c" } })),
+  '{"cursor":"c"}',
+);
+
+// #region encoded-primitive
+// Each item is a count given as text, or a filter.
+const Counts = Schema.Array(Schema.Union([Schema.FiniteFromString, Filter]));
+const count = Request.post("/counts").pipe(
+  Request.body(Body.jsonSchema(Counts)),
+);
+const invalidCount = Request.compile(count, { body: [{ page_size: "many" }] });
+const counts = Request.compile(count, { body: ["7", { page_size: "05" }] });
+// #endregion encoded-primitive
+assert.match(await refused(invalidCount), /at \[0\]\["page_size"\]/);
+assert.equal(await prepared(counts), '["7",{"page_size":"5"}]');
+
+// #region list-sides
+const mixedItems = Request.compile(filters, {
+  body: [{ page_size: "05" }, { limit: 7 }],
+});
+const encodedItems = Request.compile(filters, {
+  body: [{ page_size: "05" }, { page_size: "07" }],
+});
+const decodedItems = Request.compile(filters, {
+  body: [{ limit: 5 }, { limit: 7 }],
+});
+// #endregion list-sides
+assert.match(await refused(mixedItems), /at \[1\]\["limit"\]/);
+// The decoded item first refuses as well.
+assert.match(
+  await refused(
+    Request.compile(filters, { body: [{ limit: 1 }, { page_size: "25" }] }),
+  ),
+  /at \[0\]\["limit"\]/,
+);
+assert.equal(
+  await prepared(encodedItems),
+  '[{"page_size":"5"},{"page_size":"7"}]',
+);
+assert.equal(
+  await prepared(decodedItems),
+  '[{"page_size":"5"},{"page_size":"7"}]',
+);
+
+// #region decode-first
+const readFilters = Schema.decodeUnknownEffect(Schema.Array(Filter));
+const withStored = Effect.fn("withStored")(function* (stored: unknown) {
+  const decodedStored = yield* readFilters(stored);
+  return yield* Request.compile(filters, {
+    body: [...decodedStored, { limit: 7 }],
+  });
+});
+// #endregion decode-first
+assert.equal(
+  await prepared(withStored([{ page_size: "05" }])),
+  '[{"page_size":"5"},{"page_size":"7"}]',
+);
+await refused(withStored([{ page_size: "many" }]));
+
+// #region dual-names
+const bothNames = [{ limit: 1, page_size: "02" }, { page_size: "25" }];
+const typedBothNames: Request.Input<typeof OneOrMany> = bothNames;
+const conflicting = Request.compile(filters, { body: typedBothNames });
+const oneName = Request.compile(filters, {
+  body: [{ limit: 1 }, { limit: 25 }],
+});
+// #endregion dual-names
+assert.equal(
+  await prepared(conflicting),
+  '[{"page_size":"2"},{"page_size":"25"}]',
+);
+assert.equal(await prepared(oneName), '[{"page_size":"1"},{"page_size":"25"}]');
+
+// #region proof-stops
+const Recovering = Schema.FiniteFromString.pipe(
+  Schema.catchDecoding(() => Effect.succeed(Option.some(0))),
+);
+const recovering = Request.post("/recovering").pipe(
+  Request.body(Body.jsonSchema(Schema.Union([Filter, Recovering]))),
+);
+const twoLists = Request.post("/two-lists").pipe(
+  Request.body(
+    Body.jsonSchema(Schema.Union([Schema.Array(Filter), Schema.Array(Cursor)])),
+  ),
+);
+const stillRecovered = Request.compile(recovering, {
+  body: { page_size: "many" },
+});
+const stillListed = Request.compile(twoLists, {
+  body: [{ page_size: "many" }],
+});
+// #endregion proof-stops
+assert.equal(await prepared(stillRecovered), '"0"');
+assert.equal(await prepared(stillListed), '[{"page_size":"25"}]');
+// A conflicting alias in one filter is still read by its decoded name.
+assert.equal(
+  await prepared(
+    Request.compile(filters, { body: { limit: 5, page_size: "many" } }),
+  ),
+  '{"page_size":"5"}',
+);

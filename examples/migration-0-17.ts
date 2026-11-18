@@ -102,5 +102,5 @@ const stillDefaulted = Request.compile(count, {
   body: [{ page_size: "many" }],
 });
 // #endregion encoded-alternative
-// The article retains 0.17's exact output; the unreleased batch refuses this call.
+// The article retains 0.17's exact output; 0.18 refuses this call.
 await refused(stillDefaulted);

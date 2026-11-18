@@ -66,7 +66,8 @@ hidden/inherited positions only in structural array views without an open or opa
 union's Array alternative alone does not justify inspecting another alternative's value. Existing
 enumerable-child normalization still applies across views and does not select or execute an
 alternative. The [0.15 migration](./release-notes/0.15.md) states the normalization changes and
-exposed default substitutions. The [0.16 batch](./release-notes/0.16.md) extends the separate
+exposed default substitutions. The [0.16 batch](./release-notes/0.16.md),
+[0.17](./release-notes/0.17.md) and [0.18](./release-notes/0.18.md) extend the separate
 constructor-default proof to the bounded profiles below.
 
 ### The decoded side is what the schema's constructor takes
@@ -272,6 +273,8 @@ removes that exception. A defined own list cell still declines Void.
 If an object member maps decoded `limit` to encoded `page_size`, either order with Void prepares
 `{ page_size: "05" }` through the object member. An invalid `page_size` is a `SchemaError`. Avoid
 Void in schemas that rely on a shape excluded under [Active limits](#active-limits-and-recovery).
+The [0.18 migration](./release-notes/0.18.md#keep-fields-beside-void) shows the results that
+changed.
 
 ```ts
 import { Schema } from "effect";
@@ -323,7 +326,8 @@ const send = Request.post("https://api.example.test/things").pipe(
 An item the list member refuses, as in `[{ limit: 5 }]`, is a `SchemaError` before dispatch. A list
 given to a record, struct, or class alone can also refuse when the fieldwise copy was its only
 successful route. This holds in bodies and paths, at any depth, and when reading a query or header
-group given as a list of pairs.
+group given as a list of pairs. The [0.18 migration](./release-notes/0.18.md#keep-a-list-a-list)
+shows how to build an index-keyed object explicitly.
 
 The rule covers only the copy this route would make. Effect's own readings still apply:
 `Schema.Struct({})` keeps a list as it is, and an empty `Schema.Class` builds an instance keyed by a
@@ -490,9 +494,9 @@ remaining list limits under #241, #242 and #243.
   included.
 - Inherited cells, accessors, subclasses, custom prototypes/iterators and changing paths do not
   establish the new array proof. Sparse own cells and exact native own iterator data do qualify. The
-  [0.16 migration](./release-notes/0.16.md) covers newly refused aliases, whole-reading changes and
-  an executable validated decoded mapping; the [0.15 article](./release-notes/0.15.md) retains the
-  earlier substitutions as historical evidence.
+  [0.16](./release-notes/0.16.md) and [0.18](./release-notes/0.18.md) migrations cover newly refused
+  aliases, whole-reading changes and executable validated decoded mappings; the [0.15
+  article](./release-notes/0.15.md) retains the earlier substitutions as historical evidence.
 - Opaque contents use their schema's own reading. A `ReadonlyMap` containing
   `{ term: "x", page_size: "05" }` can lose the alias through construction. Use decoded contents
   such as `{ term: "x", limit: "05" }` for a predictable decoded route.
