@@ -6,7 +6,7 @@ import {
   SchemaIssue,
   SchemaParser,
 } from "effect";
-import { hasDefinedFields } from "./excess.js";
+import { hasDefinedFields, isSignaturelessObject } from "./excess.js";
 import { shapes } from "./primitive.js";
 
 // Effect 4.0.7 and 4.1.4 spread parse options, preserving this per-read observer. Revisit the
@@ -38,7 +38,7 @@ export type AliasAlternative = (
   grouped?: boolean,
 ) => boolean;
 
-const guard = (member: SchemaAST.Void) => {
+const guard = (member: SchemaAST.Void, listsOnly: boolean) => {
   // Declaration.flip swaps checks to the opposite side. Delegate to the original type parser
   // so checks still run on Void's result in both directions.
   const parse = SchemaParser.decodeUnknownEffect(
@@ -49,7 +49,8 @@ const guard = (member: SchemaAST.Void) => {
   return new SchemaAST.Declaration(
     [],
     () => (input, _self, options: GuardOptions) => {
-      if (!hasDefinedFields(input)) return parse(input, options);
+      if ((listsOnly && !Array.isArray(input)) || !hasDefinedFields(input))
+        return parse(input, options);
       options[onDecline]?.();
       return Effect.fail(new SchemaIssue.InvalidType(member, input, options));
     },
@@ -189,12 +190,24 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
       (ast.options?.mode ?? "anyOf") === "anyOf" &&
       (besideObject || ast.types.some(objectMember));
     if (!protect) unguarded.add(ast);
+    // An empty struct accepts arbitrary keys but states none. Where it is the only alternative,
+    // keep first-fit reading for objects and the existing defined-cell guard for lists.
+    const listsOnly =
+      protect &&
+      !besideObject &&
+      ast.types.every(
+        (member) =>
+          isPlainVoid(member) ||
+          (isSignaturelessObject(member) &&
+            member.encoding === undefined &&
+            member.checks === undefined),
+      );
     const guarded = new WeakSet<SchemaAST.AST>();
     const members = mapSame(ast.types, (member) => {
       if (protect && isPlainVoid(member)) {
         choices.add(ast);
-        guarded.add(member);
-        return guard(member);
+        if (!listsOnly) guarded.add(member);
+        return guard(member, listsOnly);
       }
       if (protect && member._tag === "Union" && member.encoding === undefined) {
         const rewritten = visitAlternative(member, true);

@@ -782,7 +782,7 @@ describe("encoded input beside constructor defaults", () => {
         const evidence = encodedInput(Renamed.ast)!({ page_size: "many" })!;
         let reads = 0;
         expect(
-          evidence.written(
+          evidence.witness(
             Object.defineProperty({}, "page_size", {
               enumerable: true,
               get: () => {
@@ -791,9 +791,9 @@ describe("encoded input beside constructor defaults", () => {
               },
             }),
           ),
-        ).toBe(false);
+        ).toBeUndefined();
         expect(reads).toBe(0);
-        expect(evidence.written({ page_size: "25" })).toBe(true);
+        expect(evidence.witness({ page_size: "25" })).toBe("page_size");
       }),
   );
 
@@ -928,12 +928,13 @@ describe("encoded input beside constructor defaults", () => {
   });
 });
 
+const listedAlias = (page_size: string) =>
+  Object.assign(Object.setPrototypeOf([], null) as object, { page_size });
+
 // The fieldwise route copies a list's own named properties into a record, so a list-shaped
 // caller value can still reach a generated default, and its alias evidence must stay.
 // https://github.com/viell-dev/slop-effect-schema-http/issues/170
 describe("encoded aliases on list-shaped caller values", () => {
-  const listed = (page_size: string) =>
-    Object.assign(Object.setPrototypeOf([], null) as object, { page_size });
   const bindings = {
     path: (schema: Schema.Top) =>
       Request.get("").pipe(Request.path(schema as never, () => "/p")),
@@ -956,7 +957,9 @@ describe("encoded aliases on list-shaped caller values", () => {
           for (const value of ["many", "05"])
             expect(
               yield* Effect.flip(
-                compile(bind(schema) as Checked, { [group]: listed(value) }),
+                compile(bind(schema) as Checked, {
+                  [group]: listedAlias(value),
+                }),
               ),
             ).toBeInstanceOf(Schema.SchemaError);
         }),
@@ -973,7 +976,7 @@ describe("encoded aliases on list-shaped caller values", () => {
             expect(
               yield* Effect.flip(
                 compile(bindings[group](schema) as Checked, {
-                  [group]: listed(value),
+                  [group]: listedAlias(value),
                 }),
               ),
             ).toBeInstanceOf(Schema.SchemaError);

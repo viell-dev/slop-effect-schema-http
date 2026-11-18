@@ -252,10 +252,17 @@ the strict pass refuses.
 Built-in `Schema.Void` ordinarily accepts an object and returns `undefined`. Beside an object or
 list candidate in a visible any-of union, the strict read declines Void for an object with a defined
 enumerable own field or a list with a defined own cell. The strict write declines Void for every
-object or list, including when its cells decoded to `undefined`. This includes annotated and checked
-Void and paths through unencoded any-of member unions. The read uses original member order when it
-sees no defined fields or cells. Normalization removes unstated fields from closed objects and
-treats undefined-valued keys as absent in a strict read.
+object or list, including when its cells decoded to `undefined`. The fallback write keeps that guard
+while relaxing excess-property handling. If the structural member cannot encode a value, such as
+JSON metadata containing a `Date` under `Schema.Unknown`, preparation fails with a `SchemaError`.
+This includes annotated and checked Void and paths through unencoded any-of member unions. The read
+uses original member order when it sees no defined fields or cells.
+
+Normalization removes unstated fields from closed objects and treats undefined-valued keys as absent
+in a strict read. A signature-less `Schema.Struct({})` can keep arbitrary keys when selected. Beside
+Void alone, a plain empty struct keeps first-fit object reading. This means a leading Void can take
+an object and a leading empty struct can keep it. A defined own list cell still declines Void. An
+empty struct query or header binding still states no names.
 
 If an object member maps decoded `limit` to encoded `page_size`, either order with Void prepares
 `{ page_size: "05" }` through the object member. An invalid `page_size` is a `SchemaError`. Avoid
@@ -308,9 +315,10 @@ const send = Request.post("https://api.example.test/things").pipe(
 // Input: { body: { "0": { limit: 5 } } }; JSON body: {"0":{"limit":5}}
 ```
 
-An item the list member refuses, as in `[{ limit: 5 }]`, is a `SchemaError` before dispatch, as it
-is without the record, and a list given to a record alone is refused. This holds in bodies and
-paths, at any depth, and when reading a query or header group given as a list of pairs.
+An item the list member refuses, as in `[{ limit: 5 }]`, is a `SchemaError` before dispatch. A list
+given to a record, struct, or class alone can also refuse when the fieldwise copy was its only
+successful route. This holds in bodies and paths, at any depth, and when reading a query or header
+group given as a list of pairs.
 
 The rule covers only the copy this route would make. Effect's own readings still apply:
 `Schema.Struct({})` keeps a list as it is, and an empty `Schema.Class` builds an instance keyed by a
@@ -462,7 +470,7 @@ remaining list limits under #241, #242 and #243.
   `{"g":{"a":1}}` for an omitted `g`. With object-first order and only an undefined-valued input
   key, `Struct({ inner: UndefinedOr(String) })` still needs its key, so the union can write `null`.
   With `Struct({ a: optionalKey(Number) })`, the same omission can write `{}`.
-- A mixed-side value can refuse beside a Void-first member. For example, with
+- A mixed-side value can refuse with either Void order. For example, with
   `Struct({ filter: Union([Void, Filter]), sortBy: String })` and
   `encodeKeys({ sortBy: "sort_by" })`, where `Filter` encodes `limit` as `page_size`,
   `{ filter: { limit: 5 }, sort_by: "a" }` fails at `filter`. Use all-decoded or all-encoded names
@@ -470,7 +478,8 @@ remaining list limits under #241, #242 and #243.
 - JavaScript, casts and `Schema.Any` can bypass the TypeScript requirement for a query or header
   schema to encode a group of fields. Preparation reports lost input fields first. A non-object
   group or a header record with an invalid value fails with `InvalidRequest` before dispatch.
-  Malformed iterable groups can still die while the binding inspects their pairs.
+  Malformed iterable groups can still die while the binding inspects their pairs. Direct calls to
+  `Transport.entries` throw `TypeError` for non-string values in a record array or ordered pair.
 - Once an encoded-only alias enables whole decoding of a list, a decoded-only item beside it can
   lose its decoded name and refuse. This applies to every covered container, array-shaped unions
   included.

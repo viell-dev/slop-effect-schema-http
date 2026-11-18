@@ -132,21 +132,26 @@ reading. Known violations, conflicting aliases and unsupported recovery remain e
 
 Within a visible any-of union beside an object or list candidate, the strict read declines built-in
 `Schema.Void` for an object with a defined enumerable own field or a list with a defined own cell.
-The strict write refuses every object or list at that Void member. Both use the value at the union
-site, including through transformations, fieldwise reads and unencoded any-of alternatives.
-Normalization removes unstated and undefined-valued keys from closed objects. With no defined field
-or cell, the read keeps member order. The ordinary read and field-loss check can refuse inputs the
-strict pass cannot keep, including some otherwise valid mixed-side inputs. Avoid Void in request
-input schemas that rely on standalone Void, class-only or opaque alternatives, class fields, opaque
-or suspended values, encoded member unions, other union modes, or custom discard transformations.
-The [active limits](./schema-input.md#active-limits-and-recovery) give the mixed-side example.
+The strict write refuses every object or list at that Void member. Its fallback relaxes excess
+checking and keeps the Void guard, so a structural encoding failure remains a `SchemaError`. Both
+use the value at the union site, including through transformations, fieldwise reads and unencoded
+any-of alternatives. Normalization removes unstated and undefined-valued keys from closed objects. A
+signature-less struct keeps arbitrary keys when selected and contributes no names to query or header
+group shape. Beside Void alone, a plain empty struct retains first-fit object reading and the
+defined-cell guard on lists. With no defined field or cell, the read keeps member order. The
+ordinary read and field-loss check can refuse inputs the strict pass cannot keep, including some
+otherwise valid mixed-side inputs. Avoid Void in request input schemas that rely on standalone Void,
+class-only or opaque alternatives, class fields, opaque or suspended values, encoded member unions,
+other union modes, or custom discard transformations. The [active
+limits](./schema-input.md#active-limits-and-recovery) give the mixed-side example.
 
 The alias proof ignores a Void alternative only where the strict pass guards it, for an object cell
 and for a list beside one array-reading member, including inside a grouped any-of member union. The
 existing alias checks can then refuse input a nested constructor default would otherwise replace. A
 query or header binding that writes a non-object group reports any lost input fields before refusing
 the output with `InvalidRequest`. Header records must contain strings, arrays of strings or omitted
-values. Malformed iterables can still fail while the binding reads the names of their pairs.
+values. Direct expansion with `Transport.entries` throws `TypeError` on non-string values. Malformed
+iterables can still fail while the binding reads the names of their pairs.
 
 #### A last constructor attempt
 

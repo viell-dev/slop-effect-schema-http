@@ -25,6 +25,32 @@ const Inner = Schema.Struct({
   ),
 }).pipe(Schema.encodeKeys({ limit: "page_size" }));
 const Cursor = Schema.Struct({ cursor: Schema.String });
+const arrayUnionReadsAt = (depth: number) => {
+  let reads = 0;
+  let schema: Schema.Top = Schema.Array(Inner);
+  const unions: Array<SchemaAST.Union> = [];
+  for (let level = 0; level < depth; level++) {
+    schema = Schema.Union([schema, Cursor]);
+    unions.push(schema.ast as SchemaAST.Union);
+  }
+  for (const union of unions) {
+    const types = union.types;
+    Object.defineProperty(union, "types", {
+      get: () => {
+        reads++;
+        return types;
+      },
+    });
+  }
+  expect(
+    nestedEncodedInput(schema.ast)?.([{ page_size: "many" }])
+      ?.select([{ page_size: "25" }])
+      ?.matches(),
+  ).toBe(true);
+  expect(encodedInput(schema.ast)).toBeUndefined();
+  return reads;
+};
+
 const shapes = [
   {
     name: "root array",
@@ -857,24 +883,25 @@ const arrayShaped = [
 const disguisedList = (items: Array<unknown>) =>
   new Proxy(items, { getPrototypeOf: () => Object.prototype });
 
+const nonArrayInputs = () => [
+  {},
+  { length: 0 },
+  { 0: {}, length: 1 },
+  Object.assign(Object.create(null), { 0: {}, length: 1 }),
+];
+
+const listInputs = () => [
+  [],
+  [1],
+  [{}],
+  [{ page_size: "05" }],
+  Object.setPrototypeOf([{}], null),
+  disguisedList([{}]),
+];
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/170
 describe("nested aliases beside array-shaped union members", () => {
   // The proofs below rest on these parser facts; the peer-floor lane runs them on Effect 4.0.7.
-  const records = () => [
-    {},
-    { length: 0 },
-    { 0: {}, length: 1 },
-    Object.assign(Object.create(null), { 0: {}, length: 1 }),
-  ];
-  const lists = () => [
-    [],
-    [1],
-    [{}],
-    [{ page_size: "05" }],
-    Object.setPrototypeOf([{}], null),
-    disguisedList([{}]),
-  ];
-
   it.effect("Effect's array parser refuses every non-array object", () =>
     Effect.gen(function* () {
       for (const schema of [
@@ -882,7 +909,7 @@ describe("nested aliases beside array-shaped union members", () => {
         Schema.Tuple([]),
         Schema.Tuple([Schema.Number, Inner]),
       ])
-        for (const input of records()) {
+        for (const input of nonArrayInputs()) {
           expect(yield* refusesDecoding(schema, input)).toBe(true);
           expect(yield* refusesConstruction(schema, input)).toBe(true);
         }
@@ -900,7 +927,7 @@ describe("nested aliases beside array-shaped union members", () => {
           Schema.Struct({ length: Schema.Number }),
           Schema.Record(Schema.String, Schema.Unknown),
         ])
-          for (const input of lists()) {
+          for (const input of listInputs()) {
             expect(yield* refusesDecoding(schema, input)).toBe(true);
             expect(yield* refusesConstruction(schema, input)).toBe(true);
           }
@@ -912,7 +939,7 @@ describe("nested aliases beside array-shaped union members", () => {
     () =>
       Effect.gen(function* () {
         const Empty = Schema.Struct({});
-        for (const input of [...lists(), "x", 3, true]) {
+        for (const input of [...listInputs(), "x", 3, true]) {
           expect(yield* Schema.decodeUnknownEffect(Empty)(input)).toBe(input);
           expect(yield* Empty.makeEffect(input)).toBe(input);
         }
@@ -1146,33 +1173,8 @@ describe("nested aliases beside array-shaped union members", () => {
   it("builds nested array-union metadata in work linear in the depth", () => {
     // Count reads of every union's member list: each union is classified, grouped, named and placed
     // a bounded number of times, so the work stays linear in the depth.
-    const readsAt = (depth: number) => {
-      let reads = 0;
-      let schema: Schema.Top = Schema.Array(Inner);
-      const unions: Array<SchemaAST.Union> = [];
-      for (let level = 0; level < depth; level++) {
-        schema = Schema.Union([schema, Cursor]);
-        unions.push(schema.ast as SchemaAST.Union);
-      }
-      for (const union of unions) {
-        const types = union.types;
-        Object.defineProperty(union, "types", {
-          get: () => {
-            reads++;
-            return types;
-          },
-        });
-      }
-      expect(
-        nestedEncodedInput(schema.ast)?.([{ page_size: "many" }])
-          ?.select([{ page_size: "25" }])
-          ?.matches(),
-      ).toBe(true);
-      expect(encodedInput(schema.ast)).toBeUndefined();
-      return reads;
-    };
     for (const depth of [32, 64, 128, 192])
-      expect(readsAt(depth)).toBeLessThanOrEqual(12 * depth);
+      expect(arrayUnionReadsAt(depth)).toBeLessThanOrEqual(12 * depth);
   });
 
   it.effect("refuses an invalid alias on a one-or-many fieldwise root", () =>

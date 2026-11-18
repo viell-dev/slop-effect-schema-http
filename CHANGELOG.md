@@ -4,25 +4,27 @@
 
 - **Breaking:** keep or refuse visible fields that built-in `Schema.Void` would discard beside an
   object or list in a visible any-of request union, including nested any-of alternatives and
-  annotated or checked Void (#143). Empty objects retain first-fit reading. Objects or lists with
-  fields that decode to `undefined` can still use their writer. Populated defaults and objects with
-  only undefined-valued keys can select a different member. Some mixed-side inputs refuse. Avoid
-  Void as a standalone schema or beside only class-backed or opaque alternatives. Class fields,
-  opaque or suspended values, encoded member unions, other union modes and custom discard
-  transformations can still drop fields. See the [active
+  annotated or checked Void (#143). The fallback writer keeps the guard, so a member that cannot
+  encode a supplied object or list fails with `SchemaError`. An empty struct retains arbitrary keys
+  when selected, and a plain empty struct beside Void alone retains first-fit object reading.
+  Objects or lists with fields that decode to `undefined` can still use their writer. Populated
+  defaults and objects with only undefined-valued keys can select a different member. Some
+  mixed-side inputs refuse. Avoid Void as a standalone schema or beside only class-backed or opaque
+  alternatives. Class fields, opaque or suspended values, encoded member unions, other union modes
+  and custom discard transformations can still drop fields. See the [active
   limits](https://viell-dev.github.io/slop-effect-schema-http/schema-input#active-limits-and-recovery)
   for the exact scope.
 - **Breaking:** stop schema-backed preparation's field-by-field fallback from copying a caller's
   list into an object keyed by its indexes (#237). Beside a record or struct member, as in
   `Union([Schema.Array(Plain), Schema.Record(...)])`, a list whose item its list member refused,
   such as `[{ limit: 5 }]`, went out as `{"0":{"limit":5}}`. Such a list now refuses before dispatch
-  in paths, bodies and nested fields, and when a query or header group reads a list of pairs, and so
-  does a list given to a record alone. Beside such a record, `[{ page_size: "05" }]` now refuses
-  too, where the list member alone strips the key (#243). Valid lists and objects, including objects
-  with index-like keys, keep their results, and Effect's own readings, such as an empty
-  `Schema.Class` building an index-keyed instance, are unchanged. A default replacing an invalid
-  item under a parent read field by field (#241) and a pairs list with no iterator prototype written
-  under its indexes (#242) remain open.
+  in paths, bodies and nested fields, and when a query or header group reads a list of pairs. A list
+  given to a record, struct, or class can refuse when the copy was its only successful route. Beside
+  such a record, `[{ page_size: "05" }]` now refuses too, where the list member alone strips the key
+  (#243). Valid lists and objects, including objects with index-like keys, keep their results, and
+  Effect's own readings, such as an empty `Schema.Class` building an index-keyed instance, are
+  unchanged. A default replacing an invalid item under a parent read field by field (#241) and a
+  pairs list with no iterator prototype written under its indexes (#242) remain open.
 - **Breaking:** validate constructor aliases beside encoded primitive and array-shaped union
   alternatives (#170). An invalid encoded alias beside `Schema.FiniteFromString`,
   `Schema.NumberFromString` or another codec whose every link is a plain transformation of
@@ -44,7 +46,8 @@
   union with `Schema.Struct({})`, a second array-reading member or an encoded array reader; the
   schema's own selection still decides those inputs.
 - Return a typed `InvalidRequest` when a query or header schema encodes a non-object group or a
-  header record supplies a non-string value (#236).
+  header record or ordered pair supplies a non-string value (#236). For JavaScript and casts, direct
+  calls to `Transport.entries` throw `TypeError` on those invalid header values.
 
 ## 0.17.0 — 2026-11-16
 
