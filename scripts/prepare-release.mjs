@@ -11,6 +11,7 @@ import {
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
+import { checkReleaseAudit } from "./release-audit.mjs";
 import { checkTestedVersions } from "./tested-versions.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -59,7 +60,7 @@ for (const script of [
   "docs:build",
 ])
   run("run", script);
-run("audit", "--audit-level=moderate");
+checkReleaseAudit(npm);
 run("run", "test:package", "--", "--out-dir", output);
 run(
   "run",

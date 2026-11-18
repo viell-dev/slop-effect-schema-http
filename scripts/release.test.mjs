@@ -21,6 +21,7 @@ import {
   assertDocumentationPaths,
   verifyDocumentationCorrection,
 } from "./documentation-scope.mjs";
+import { checkAuditReport } from "./release-audit.mjs";
 import {
   selectPublishedRelease,
   verifiedStep,
@@ -46,6 +47,134 @@ const qualified = {
   status: "completed",
   conclusion: "success",
 };
+
+const picomatchAdvisory = {
+  name: "picomatch",
+  dependency: "picomatch",
+  url: "https://github.com/advisories/GHSA-fc5q-39xc-vjpf",
+  severity: "high",
+  range: "<=4.0.7",
+};
+const picomatchFinding = {
+  name: "picomatch",
+  severity: "high",
+  via: [picomatchAdvisory],
+  fixAvailable: { name: "vitest", version: "3.1.4", isSemVerMajor: true },
+};
+const vitestFinding = {
+  ...picomatchFinding,
+  name: "vitest",
+  via: ["picomatch"],
+};
+
+function auditResult(...findings) {
+  return {
+    status: findings.length ? 1 : 0,
+    stdout: JSON.stringify({
+      auditReportVersion: 2,
+      vulnerabilities: Object.fromEntries(
+        findings.map((finding) => [finding.name, finding]),
+      ),
+      metadata: {
+        vulnerabilities: {
+          info: 0,
+          low: 0,
+          moderate: 0,
+          high: findings.length,
+          critical: 0,
+          total: findings.length,
+        },
+      },
+    }),
+  };
+}
+
+test("the release audit refuses a production finding even when it is allowed in development", () => {
+  assert.match(checkAuditReport(auditResult(), "Production"), /0 findings/);
+  assert.throws(
+    () =>
+      checkAuditReport(
+        auditResult(picomatchFinding, vitestFinding),
+        "Production",
+      ),
+    /Production dependency audit refused:\nGHSA-fc5q-39xc-vjpf picomatch.*picomatch, vitest.*\nUpdate/,
+  );
+});
+
+test("the release audit refuses an unlisted advisory on an otherwise allowed package", () => {
+  const unlistedAdvisory = {
+    ...picomatchAdvisory,
+    url: "https://github.com/advisories/GHSA-xxxx-xxxx-xxxx",
+    severity: "moderate",
+  };
+  assert.throws(
+    () =>
+      checkAuditReport(
+        auditResult(
+          { ...picomatchFinding, via: [picomatchAdvisory, unlistedAdvisory] },
+          vitestFinding,
+        ),
+        "Full",
+      ),
+    /Full dependency audit refused:\nGHSA-xxxx-xxxx-xxxx picomatch.*moderate.*picomatch, vitest.*Update/,
+  );
+});
+
+test("the release audit permits the named dev advisory and all its transitive findings", () => {
+  const cycle = { ...vitestFinding, name: "test-runner", via: ["vitest"] };
+  const vitest = { ...vitestFinding, via: ["picomatch", "test-runner"] };
+  const report = auditResult(picomatchFinding, vitest, cycle);
+  assert.match(
+    checkAuditReport(report, "Full"),
+    /3 package findings, 1 advisory allowed/,
+  );
+  assert.throws(
+    () => checkAuditReport(report, "Full", []),
+    /GHSA-fc5q-39xc-vjpf/,
+  );
+});
+
+test("the release audit refuses a stale allowance when its advisory disappears or changes range", () => {
+  const changed = {
+    ...picomatchFinding,
+    via: [{ ...picomatchAdvisory, range: "<=4.0.8" }],
+  };
+  for (const report of [auditResult(), auditResult(changed)])
+    assert.throws(
+      () => checkAuditReport(report, "Full"),
+      /Stale allowance for GHSA-fc5q-39xc-vjpf picomatch.*Adopt any available fix and remove/,
+    );
+});
+
+test("the release audit refuses an allowance once npm reports a compatible fix", () => {
+  for (const fixAvailable of [
+    true,
+    { name: "vitest", version: "5.1.1", isSemVerMajor: false },
+  ]) {
+    assert.throws(
+      () =>
+        checkAuditReport(
+          auditResult(picomatchFinding, { ...vitestFinding, fixAvailable }),
+          "Full",
+        ),
+      /GHSA-fc5q-39xc-vjpf picomatch.*compatible fix.*remove this allowance/,
+    );
+  }
+});
+
+test("the release audit refuses malformed or unsuccessful npm output", () => {
+  for (const report of [
+    { status: 1, stdout: "not JSON" },
+    { status: 1, stdout: '{"error":{"code":"EAUDITNOLOCK"}}' },
+    { status: 1, stdout: auditResult().stdout },
+    auditResult(vitestFinding),
+    auditResult({ ...vitestFinding, via: ["vitest"] }),
+  ])
+    assert.throws(
+      () => checkAuditReport(report, "Full"),
+      /Full npm audit returned malformed or unsuccessful output.*rerun/,
+    );
+});
 
 test("only the successful exact-commit qualification producer admits publication", (t) => {
   t.after(() => {
@@ -282,6 +411,7 @@ function testedFixture(t) {
     "package-lock.json",
     "package.json",
     "scripts/prepare-release.mjs",
+    "scripts/release-audit.mjs",
     "scripts/tested-versions.mjs",
   ]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -307,7 +437,15 @@ test("release preparation refuses a tested version the documents no longer state
   writeFileSync(
     npm,
     `import fs from "node:fs";
-fs.appendFileSync(process.env.NPM_CALLS, process.argv.slice(2).join(" ") + "\\n");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.NPM_CALLS, args.join(" ") + "\\n");
+if (args[0] === "audit") {
+  const result = args.includes("--omit=dev")
+    ? ${JSON.stringify(auditResult())}
+    : ${JSON.stringify(auditResult(picomatchFinding, vitestFinding))};
+  process.stdout.write(result.stdout);
+  process.exitCode = result.status;
+}
 `,
   );
   const commit = () => {
@@ -332,7 +470,12 @@ fs.appendFileSync(process.env.NPM_CALLS, process.argv.slice(2).join(" ") + "\\n"
   commit();
   const agreed = prepare();
   assert.equal(agreed.status, 0, agreed.stderr);
-  assert.match(readFileSync(calls, "utf8"), /^run check\n/);
+  const commands = readFileSync(calls, "utf8");
+  assert.match(commands, /^run check\n/);
+  assert.match(
+    commands,
+    /audit [^\n]+ --omit=dev\naudit [^\n]+ --include=dev\nrun test:package/,
+  );
 
   rmSync(calls);
   const file = join(root, "package-lock.json");
