@@ -4,16 +4,25 @@
 
 - **Breaking:** keep or refuse visible fields that built-in `Schema.Void` would discard beside an
   object or list in a visible any-of request union, including nested any-of alternatives and
-  annotated or checked Void (#143). The fallback writer keeps the guard, so a member that cannot
-  encode a supplied object or list fails with `SchemaError`. An empty struct retains arbitrary keys
-  when selected, and a plain empty struct beside Void alone retains first-fit object reading.
-  Objects or lists with fields that decode to `undefined` can still use their writer. Populated
-  defaults and objects with only undefined-valued keys can select a different member. Some
-  mixed-side inputs refuse. Avoid Void as a standalone schema or beside only class-backed or opaque
-  alternatives. Class fields, opaque or suspended values, encoded member unions, other union modes
-  and custom discard transformations can still drop fields. See the [active
+  annotated or checked Void (#143). The fallback writer keeps the guard. When a structural member
+  cannot encode a supplied object or list, preparation fails with `SchemaError` if no other member
+  can take it ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)). A leading
+  Void keeps first-fit object reading in a union made up solely of Void and plain empty structs. A
+  further kind of member, a check on an empty struct or grouping the union inside an enclosing
+  guarded union removes that exception. Objects or lists with fields that decode to `undefined` can
+  still use their writer. Populated defaults and objects with only undefined-valued keys can select
+  a different member. Some mixed-side inputs refuse. Avoid Void as a standalone schema or beside
+  only class-backed or opaque alternatives. Class fields, opaque or suspended values, encoded member
+  unions, other union modes and custom discard transformations can still drop fields. See the
+  [active
   limits](https://viell-dev.github.io/slop-effect-schema-http/schema-input#active-limits-and-recovery)
   for the exact scope.
+- **Breaking:** preserve supplied keys during strict normalization when every candidate object at
+  that value has no property or index signatures. This applies at any depth within a chosen union
+  member. For example, a field read solely by `Schema.Struct({})` can send `{"e":{"tag":"a"}}` where
+  0.17.0 sent `{"e":{}}`. A union mixing empty and stated object candidates at the same value
+  retains its existing selection rules
+  ([#249](https://github.com/viell-dev/slop-effect-schema-http/issues/249)).
 - **Breaking:** stop schema-backed preparation's field-by-field fallback from copying a caller's
   list into an object keyed by its indexes (#237). Beside a record or struct member, as in
   `Union([Schema.Array(Plain), Schema.Record(...)])`, a list whose item its list member refused,

@@ -163,6 +163,13 @@ describe("request preparation beside Void", () => {
           expect(yield* outcomes(schema, [1])).toEqual(["[1]", "[1]"]);
           expect(yield* outcomes(schema, null)).toEqual(["undefined", "null"]);
         }
+        expect(yield* outcomes(structFirst, {})).toEqual(["{}", "{}"]);
+        expect(yield* outcomes(structFirst, [])).toEqual(["[]", "[]"]);
+        expect(yield* outcomes(voidFirst, {})).toEqual(["undefined", "null"]);
+        expect(yield* outcomes(voidFirst, { tag: undefined })).toEqual([
+          "undefined",
+          "null",
+        ]);
         expect(yield* outcomes(voidFirst, [])).toEqual(["undefined", "null"]);
       }),
   );
