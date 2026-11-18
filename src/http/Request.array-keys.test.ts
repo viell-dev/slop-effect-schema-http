@@ -598,34 +598,36 @@ describe("a caller's list beside a record member", () => {
     }),
   );
 
-  it.effect("decides by the list itself, without reading its contents", () =>
-    Effect.gen(function* () {
-      const union = plainUnions[0]!;
-      let iterations = 0;
-      const lists = (item: object) => {
-        const sparse: Array<object> = [];
-        sparse.length = 2;
-        sparse[1] = item;
-        return {
-          extra: Object.assign([item], { extra: "metadata" }),
-          sparse,
-          bare: Object.setPrototypeOf([item], null) as Array<object>,
-          iterable: Object.defineProperty([item], Symbol.iterator, {
-            value: function* () {
-              iterations++;
-              yield item;
-            },
-            enumerable: true,
-          }),
+  it.effect(
+    "treats extra keys, holes, no prototype or an own iterator as a list",
+    () =>
+      Effect.gen(function* () {
+        const union = plainUnions[0]!;
+        let iterations = 0;
+        const lists = (item: object) => {
+          const sparse: Array<object> = [];
+          sparse.length = 2;
+          sparse[1] = item;
+          return {
+            extra: Object.assign([item], { extra: "metadata" }),
+            sparse,
+            bare: Object.setPrototypeOf([item], null) as Array<object>,
+            iterable: Object.defineProperty([item], Symbol.iterator, {
+              value: function* () {
+                iterations++;
+                yield item;
+              },
+              enumerable: true,
+            }),
+          };
         };
-      };
-      for (const [name, input] of Object.entries(lists({ limit: 5 })))
-        expect(yield* prepared(union, input), name).toEqual(refused);
-      for (const [name, input] of Object.entries(lists({ limit: "x" })))
-        expect(yield* prepared(union, input), name).toEqual(
-          yield* prepared(Schema.Array(Plain), input),
-        );
-      expect(iterations).toBe(0);
-    }),
+        for (const [name, input] of Object.entries(lists({ limit: 5 })))
+          expect(yield* prepared(union, input), name).toEqual(refused);
+        for (const [name, input] of Object.entries(lists({ limit: "x" })))
+          expect(yield* prepared(union, input), name).toEqual(
+            yield* prepared(Schema.Array(Plain), input),
+          );
+        expect(iterations).toBe(0);
+      }),
   );
 });
