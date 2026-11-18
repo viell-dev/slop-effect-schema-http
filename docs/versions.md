@@ -2,15 +2,14 @@
 
 ## Choose a release
 
-`0.17.0` is the current stable release, available from npm and GitHub. [Getting
+`0.18.0` is the current stable release, available from npm and GitHub. [Getting
 started](./getting-started.md) adds it to your Effect project. [What's in
-0.17](./release-notes/0.17.md) covers updating from `0.16`: constructor-alias validation now
-recognises nested primitive alternatives such as `Schema.Literals([...])`, so invalid encoded
-aliases beside them refuse instead of sending a default. Updating from `0.15` or earlier also
-includes the breaking migration in [What's in 0.16](./release-notes/0.16.md). [Release
-history](./release-notes/index.md) compares earlier changes and links every migration article. Use
-the [current input reference](./schema-input.md) for today's supported behavior and [Schema-backed
-groups](./schema-groups.md) for the recovery boundary.
+0.18](./release-notes/0.18.md) covers updating from `0.17`: request unions keep or refuse fields
+beside `Schema.Void` instead of sending `null`, and a list is no longer sent as an object keyed by
+its indexes. Updating from `0.16` or earlier also includes the breaking migration in [What's in
+0.17](./release-notes/0.17.md). [Release history](./release-notes/index.md) compares earlier changes
+and links every migration article. Use the [current input reference](./schema-input.md) for today's
+supported behavior and [Schema-backed groups](./schema-groups.md) for the recovery boundary.
 
 The npm `latest` tag selects the stable release, so ordinary install commands need no version
 suffix. The `rc` tag still identifies `0.1.0-rc.1`; use an explicit prerelease version when
@@ -43,20 +42,20 @@ meets your project's policy, then retry the install command.
 
 ## Install a GitHub release tarball
 
-The [GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.17.0)
+The [GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.18.0)
 offers the same package bytes as npm. This is an alternative to registry installation.
 
 Download both
-[`viell-effect-schema-http-0.17.0.tgz`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.17.0/viell-effect-schema-http-0.17.0.tgz)
+[`viell-effect-schema-http-0.18.0.tgz`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.18.0/viell-effect-schema-http-0.18.0.tgz)
 and
-[`SHA256SUMS`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.17.0/SHA256SUMS)
+[`SHA256SUMS`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.18.0/SHA256SUMS)
 into one directory. Open a terminal in that directory and compare the downloaded tarball with its
 listed checksum.
 
 ### PowerShell
 
 ```powershell
-$archive = "viell-effect-schema-http-0.17.0.tgz"
+$archive = "viell-effect-schema-http-0.18.0.tgz"
 $entries = @(Get-Content -LiteralPath "./SHA256SUMS" |
     Where-Object { $_.EndsWith("  $archive") })
 if ($entries.Count -ne 1) { throw "Expected one checksum entry for $archive" }
@@ -71,7 +70,7 @@ if ($expected -notmatch "^[0-9a-f]{64}$" -or $actual -ne $expected) {
 ### Linux
 
 ```sh
-test -f ./viell-effect-schema-http-0.17.0.tgz &&
+test -f ./viell-effect-schema-http-0.18.0.tgz &&
   sha256sum --check --strict --ignore-missing SHA256SUMS
 ```
 
@@ -79,7 +78,7 @@ This checks the listed files present in the directory; `--ignore-missing` permit
 assets to be absent. With just the two downloads above, success prints:
 
 ```text
-viell-effect-schema-http-0.17.0.tgz: OK
+viell-effect-schema-http-0.18.0.tgz: OK
 ```
 
 Both versions compare the calculated SHA-256 with the release's recorded value. A missing checksum,
@@ -91,7 +90,7 @@ After the comparison succeeds, run this from your application directory, adjusti
 downloaded archive is elsewhere:
 
 ```sh
-npm install ./viell-effect-schema-http-0.17.0.tgz
+npm install ./viell-effect-schema-http-0.18.0.tgz
 ```
 
 ## Compatibility policy
@@ -99,8 +98,8 @@ npm install ./viell-effect-schema-http-0.17.0.tgz
 The supported API covers finite-body HTTP contracts, ESM, Node 24 or 26 on Windows/Linux and
 Chromium Fetch with Effect 4. [Limits and recovery](./limits.md#compatibility-and-scope) separates
 application requirements from tested configurations. While the package remains `0.x`, compatible
-fixes raise the patch number and incompatible changes raise the minor number: `0.17.0` becomes
-`0.17.1` for a compatible fix or `0.18.0` for an incompatible change. After `1.0`, an incompatible
+fixes raise the patch number and incompatible changes raise the minor number: `0.18.0` becomes
+`0.18.1` for a compatible fix or `0.19.0` for an incompatible change. After `1.0`, an incompatible
 public API change would require a major bump under [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html). A breaking change comes with migration guidance in
 its release article.

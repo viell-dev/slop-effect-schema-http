@@ -1,6 +1,9 @@
 # Change history
 
-## Unreleased
+## 0.18.0 — 2026-11-18
+
+Read [What's in 0.18](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.18) for
+the Void member, list and constructor-alias migrations and remaining limits.
 
 - **Breaking:** keep or refuse visible fields that built-in `Schema.Void` would discard beside an
   object or list in a visible any-of request union, including nested any-of alternatives and
@@ -57,6 +60,9 @@
 - Return a typed `InvalidRequest` when a query or header schema encodes a non-object group or a
   header record or ordered pair supplies a non-string value (#236). For JavaScript and casts, direct
   calls to `Transport.entries` throw `TypeError` on those invalid header values.
+- Update the development linters to ESLint 10.15.0 and typescript-eslint 8.73.0, whose patched
+  `minimatch` requirements let the repository drop its `minimatch` override (#234). This is
+  development maintenance; the published package is unaffected.
 
 ## 0.17.0 — 2026-11-16
 
