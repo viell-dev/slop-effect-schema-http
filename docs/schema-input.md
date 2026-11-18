@@ -324,10 +324,11 @@ const send = Request.post("https://api.example.test/things").pipe(
 ```
 
 An item the list member refuses, as in `[{ limit: 5 }]`, is a `SchemaError` before dispatch. A list
-given to a record, struct, or class alone can also refuse when the fieldwise copy was its only
-successful route. This holds in bodies and paths, at any depth, and when reading a query or header
-group given as a list of pairs. The [0.18 migration](./release-notes/0.18.md#keep-a-list-a-list)
-shows how to build an index-keyed object explicitly.
+given to a record, struct, or class alone can also refuse with `Expected object` when the fieldwise
+copy was its only successful route. This holds in bodies and paths, at any depth, and when reading a
+query or header group given as a list of pairs. The [0.18
+migration](./release-notes/0.18.md#refuse-a-list-given-to-an-object-schema) shows how to build an
+index-keyed object explicitly.
 
 The rule covers only the copy this route would make. Effect's own readings still apply:
 `Schema.Struct({})` keeps a list as it is, and an empty `Schema.Class` builds an instance keyed by a
@@ -339,7 +340,8 @@ list's indexes. These limits remain:
 - When another field makes a parent read field by field, a constructor default can still replace an
   invalid decoded item value, with or without the record: `{ n: 1, items: [{ limit: "x" }] }` under
   a struct with `n: Schema.FiniteFromString`
-  ([#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241)).
+  ([#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241)). The all-encoded
+  `{ n: "1", items: [{ page_size: "many" }] }` gets the default under that parent too.
 - Writing a query or header group tells a pairs list by its iterator. A list with no iterator on its
   prototype, such as one with a `null` prototype, that a member such as `Schema.Struct({})` keeps is
   written under its indexes
@@ -482,8 +484,9 @@ remaining list limits under #241, #242 and #243.
 - A mixed-side value can refuse with either Void order. For example, with
   `Struct({ filter: Union([Void, Filter]), sortBy: String })` and
   `encodeKeys({ sortBy: "sort_by" })`, where `Filter` encodes `limit` as `page_size`,
-  `{ filter: { limit: 5 }, sort_by: "a" }` fails at `filter`. Use all-decoded or all-encoded names
-  for that input.
+  `{ filter: { limit: 5 }, sort_by: "a" }` fails at `filter`; with Void last it fails at
+  `filter.limit`. An object giving both names beside Void, such as `{ limit: 5, page_size: "5" }`,
+  refuses in either order too. Use all-decoded or all-encoded names, one per field, for that input.
 - JavaScript, casts and `Schema.Any` can bypass the TypeScript requirement for a query or header
   schema to encode a group of fields. Preparation reports lost input fields first. A non-object
   group or a header record with an invalid value fails with `InvalidRequest` before dispatch.

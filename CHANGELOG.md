@@ -31,12 +31,13 @@ the Void member, list and constructor-alias migrations and remaining limits.
   `Union([Schema.Array(Plain), Schema.Record(...)])`, a list whose item its list member refused,
   such as `[{ limit: 5 }]`, went out as `{"0":{"limit":5}}`. Such a list now refuses before dispatch
   in paths, bodies and nested fields, and when a query or header group reads a list of pairs. A list
-  given to a record, struct, or class can refuse when the copy was its only successful route. Beside
-  such a record, `[{ page_size: "05" }]` now refuses too, where the list member alone strips the key
-  (#243). Valid lists and objects, including objects with index-like keys, keep their results, and
-  Effect's own readings, such as an empty `Schema.Class` building an index-keyed instance, are
-  unchanged. A default replacing an invalid item under a parent read field by field (#241) and a
-  pairs list with no iterator prototype written under its indexes (#242) remain open.
+  given to a record, struct, or class can refuse with `Expected object` when the copy was its only
+  successful route; 0.17.0 could send `{}`, a constructor default or a URL with no query for it.
+  Beside such a record, `[{ page_size: "05" }]` now refuses too, where the list member alone strips
+  the key (#243). Valid lists and objects, including objects with index-like keys, keep their
+  results, and Effect's own readings, such as an empty `Schema.Class` building an index-keyed
+  instance, are unchanged. A default replacing an invalid item under a parent read field by field
+  (#241) and a pairs list with no iterator prototype written under its indexes (#242) remain open.
 - **Breaking:** validate constructor aliases beside encoded primitive and array-shaped union
   alternatives (#170). An invalid encoded alias beside `Schema.FiniteFromString`,
   `Schema.NumberFromString` or another codec whose every link is a plain transformation of
@@ -57,9 +58,12 @@ the Void member, list and constructor-alias migrations and remaining limits.
   keep their results. The proof stops at middleware-encoded alternatives, and for an array cell at a
   union with `Schema.Struct({})`, a second array-reading member or an encoded array reader; the
   schema's own selection still decides those inputs.
-- Return a typed `InvalidRequest` when a query or header schema encodes a non-object group or a
-  header record or ordered pair supplies a non-string value (#236). For JavaScript and casts, direct
-  calls to `Transport.entries` throw `TypeError` on those invalid header values.
+- **Breaking:** return a typed `InvalidRequest` when a query or header schema encodes a non-object
+  group or a header record or ordered pair supplies a non-string value (#236). These calls could
+  stop with a `TypeError` defect. Two cast-only header inputs that were written with number values
+  now refuse too: a list of numbers such as `{ "x-count": [1, 2] }` and a pair such as
+  `[["x-count", 1]]`. The input types already rejected both. For JavaScript and casts, direct calls
+  to `Transport.entries` throw `TypeError` on those invalid header values.
 - Update the development linters to ESLint 10.15.0 and typescript-eslint 8.73.0, whose patched
   `minimatch` requirements let the repository drop its `minimatch` override (#234). This is
   development maintenance; the published package is unaffected.
