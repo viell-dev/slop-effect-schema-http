@@ -200,7 +200,6 @@ export const nestedEncodedInput = (
 ) => {
   // Every node is classified and named once per build, however many ancestors share it.
   const context = metadata(isAlternative);
-  const { shapes } = context;
   type Fields = ReadonlyMap<Key, SchemaAST.AST | undefined>;
   interface View {
     readonly fields: Fields;
@@ -250,10 +249,9 @@ export const nestedEncodedInput = (
     let hasObjectMember = false;
     let lists = false;
     for (const member of part.types) {
-      if (context.isAlternative(part, member)) continue;
-      // An object cell cannot reach this member. A list can, if it is an array member.
-      if (shapes.record(member)) {
-        lists ||= !shapes.array(member);
+      // An object cell cannot reach this member. A list can, unless the member refuses lists too.
+      if (context.refuses(part, member, "record")) {
+        lists ||= !context.refuses(part, member, "array");
         continue;
       }
       const declared = fieldsOf(member);
@@ -287,10 +285,10 @@ export const nestedEncodedInput = (
     if (part.encoding !== undefined) return undefined;
     if (part._tag === "Union") {
       // An actual array cell reaches the union's one member Effect's parsers let read an array.
-      // Captured cells are defined, so a guarded Void branch declines this list too.
+      // A guarded Void branch declines a list whose own cells it reads as defined, which every
+      // cell captured here is, unless a proxy answers that read differently from its descriptor.
       const readers = part.types.filter(
-        (member) =>
-          !context.isAlternative(part, member) && !shapes.array(member),
+        (member) => !context.refuses(part, member, "array"),
       );
       const reader = readers.length === 1 ? readers[0]! : undefined;
       if (reader === undefined) return undefined;

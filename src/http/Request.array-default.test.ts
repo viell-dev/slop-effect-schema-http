@@ -1144,7 +1144,8 @@ describe("nested aliases beside array-shaped union members", () => {
   });
 
   it("builds nested array-union metadata in work linear in the depth", () => {
-    // Count reads of every union's member list: each union is classified, named and placed once.
+    // Count reads of every union's member list: each union is classified, grouped, named and placed
+    // a bounded number of times, so the work stays linear in the depth.
     const readsAt = (depth: number) => {
       let reads = 0;
       let schema: Schema.Top = Schema.Array(Inner);
@@ -1171,7 +1172,7 @@ describe("nested aliases beside array-shaped union members", () => {
       return reads;
     };
     for (const depth of [32, 64, 128, 192])
-      expect(readsAt(depth)).toBeLessThanOrEqual(8 * depth);
+      expect(readsAt(depth)).toBeLessThanOrEqual(12 * depth);
   });
 
   it.effect("refuses an invalid alias on a one-or-many fieldwise root", () =>

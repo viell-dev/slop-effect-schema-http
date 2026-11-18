@@ -16,7 +16,7 @@ const nonObjectTags: ReadonlySet<SchemaAST.AST["_tag"]> = new Set([
 ]);
 
 /** An actual ordinary or null-prototype object, or an actual array, as `Array.isArray` tells. */
-type Cell = "record" | "array";
+export type Cell = "record" | "array";
 
 /**
  * Effect's array parser refuses whatever `Array.isArray` rejects. Its object parser refuses arrays

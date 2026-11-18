@@ -7,6 +7,35 @@ import { nestedEncodedInput } from "./internal/nested-input.js";
 import { guardVoidMembers } from "./internal/void-member.js";
 import * as Request from "./Request.js";
 
+/** What path and JSON body preparation write, or `"refused"` for a `SchemaError`. */
+const outcomes = <S extends Schema.Codec<unknown, unknown>>(
+  schema: S,
+  input: unknown,
+) =>
+  Effect.forEach(["path", "body"] as const, (kind) => {
+    let path: unknown;
+    const prepared =
+      kind === "path"
+        ? Effect.map(
+            Request.compile(
+              Request.get("").pipe(
+                Request.path(schema, (value) => {
+                  path = value;
+                  return "/p";
+                }),
+              ),
+              { path: input as Request.Input<S> },
+            ),
+            () => JSON.stringify(path) ?? "undefined",
+          )
+        : bodyOf(post(schema), { body: input } as never);
+    return Effect.catchIf(
+      prepared,
+      (error) => error instanceof Schema.SchemaError,
+      () => Effect.succeed("refused"),
+    );
+  });
+
 const post = <S extends Schema.Top>(schema: S) =>
   Request.post("/x").pipe(Request.body(Body.jsonSchema(schema)));
 
@@ -475,9 +504,182 @@ describe("request preparation beside Void", () => {
       }
     }),
   );
+
+  // A cell that is not enumerable is still an own cell: the guarded Void declines the list.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+  it.effect("refuses a hidden invalid list cell beside Void", () =>
+    Effect.gen(function* () {
+      const hidden = (page_size: string) =>
+        Object.defineProperty([], 0, { value: { page_size } });
+      for (const schema of [
+        Schema.Union([Schema.Array(Filter), Schema.Void]),
+        Schema.Union([Schema.Void, Schema.Array(Filter)]),
+      ]) {
+        expect(yield* outcomes(schema, hidden("many"))).toEqual([
+          "refused",
+          "refused",
+        ]);
+        expect(yield* outcomes(schema, hidden("05"))).toEqual([
+          '[{"page_size":"5"}]',
+          '[{"page_size":"5"}]',
+        ]);
+      }
+    }),
+  );
+
+  const Cursor = Schema.Struct({ cursor: Schema.String });
+  const Parent = Schema.Struct({ filter: Filter });
+  // Each grouping reads like its flat union: the guard of the union holding Void decides it.
+  const grouped = [
+    {
+      name: "a list beside a grouped cursor and Void",
+      schemas: [
+        Schema.Union([
+          Schema.Array(Filter),
+          Schema.Union([Cursor, Schema.Void]),
+        ]),
+        Schema.Union([
+          Schema.Array(Filter),
+          Schema.Union([Schema.Void, Cursor]),
+        ]),
+        Schema.Union([Schema.Array(Filter), Cursor, Schema.Void]),
+      ],
+      leaf: (filter: object) => [filter],
+    },
+    {
+      name: "an object beside a grouped list and Void",
+      schemas: [
+        Schema.Union([
+          Parent,
+          Schema.Union([Schema.Array(Schema.String), Schema.Void]),
+        ]),
+        Schema.Union([
+          Parent,
+          Schema.Union([Schema.Void, Schema.Array(Schema.String)]),
+        ]),
+        Schema.Union([Parent, Schema.Array(Schema.String), Schema.Void]),
+      ],
+      leaf: (filter: object) => ({ filter }),
+    },
+  ] as const;
+  for (const { name, schemas, leaf } of grouped)
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/170
+    it.effect(`refuses an invalid alias in ${name}`, () =>
+      Effect.gen(function* () {
+        for (const union of schemas)
+          for (const [schema, wrap] of [
+            [union, (value: unknown) => value],
+            [
+              Schema.Struct({ cell: union }),
+              (value: unknown) => ({ cell: value }),
+            ],
+            [Schema.Array(union), (value: unknown) => [value]],
+          ] as const) {
+            expect(
+              yield* outcomes(schema, wrap(leaf({ page_size: "many" }))),
+            ).toEqual(["refused", "refused"]);
+            for (const [filter, written] of [
+              [{ page_size: "05" }, "5"],
+              [{ limit: 5 }, "5"],
+              [{}, "25"],
+            ] as const) {
+              const expected = JSON.stringify(
+                wrap(leaf({ page_size: written })),
+              );
+              expect(yield* outcomes(schema, wrap(leaf(filter)))).toEqual([
+                expected,
+                expected,
+              ]);
+            }
+          }
+      }),
+    );
+
+  it("classifies a grouped Void by the guard of the union that holds it", () => {
+    const view = (schema: Schema.Top) =>
+      nestedEncodedInput(
+        schema.ast,
+        guardVoidMembers(schema.ast).isAliasAlternative,
+      );
+    const input = [{ page_size: "many" }];
+    const output = [{ page_size: "25" }];
+    for (const schema of grouped[0].schemas)
+      expect(view(schema)?.(input)?.select(output)?.matches()).toBe(true);
+    // An unguarded Void, as under a oneOf member union, can read the list.
+    expect(
+      view(
+        Schema.Union([
+          Schema.Array(Filter),
+          Schema.Union([Cursor, Schema.Void], { mode: "oneOf" }),
+        ]),
+      ),
+    ).toBeUndefined();
+    expect(
+      nestedEncodedInput(
+        Schema.Union([
+          Schema.Array(Filter),
+          Schema.Union([Cursor, Schema.Void]),
+        ]).ast,
+      ),
+    ).toBeUndefined();
+  });
 });
 
 describe("known Void selection limits", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "currently lets Void take a list beside a oneOf grouping of Void",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* outcomes(
+            Schema.Union([
+              Schema.Array(Filter),
+              Schema.Union(
+                [Schema.Struct({ cursor: Schema.String }), Schema.Void],
+                {
+                  mode: "oneOf",
+                },
+              ),
+            ]),
+            [{ page_size: "many" }],
+          ),
+        ).toEqual(["undefined", "null"]);
+      }),
+  );
+
+  // Capture reads a list's own descriptors; the guard reads `list[0]`. A proxy can answer the two
+  // differently, so the guard can see no defined cell and let Void take the list.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "currently lets Void take a proxy list whose index read hides its cell",
+    () =>
+      Effect.gen(function* () {
+        const hiding = () =>
+          new Proxy([{ page_size: "many" }], {
+            get: (target, key, receiver) =>
+              key === "0" ? undefined : Reflect.get(target, key, receiver),
+          });
+        for (const schema of [
+          Schema.Union([Schema.Array(Filter), Schema.Void]),
+          Schema.Union([Schema.Void, Schema.Array(Filter)]),
+        ]) {
+          expect(
+            nestedEncodedInput(
+              schema.ast,
+              guardVoidMembers(schema.ast).isAliasAlternative,
+            )?.(hiding())
+              ?.select([{ page_size: "25" }])
+              ?.matches(),
+          ).toBe(true);
+          expect(yield* outcomes(schema, hiding())).toEqual([
+            "undefined",
+            "null",
+          ]);
+        }
+      }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
   it.effect(
     "currently discards a hidden-cell list beside a struct-only alternative",

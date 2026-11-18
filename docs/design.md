@@ -142,11 +142,11 @@ or suspended values, encoded member unions, other union modes, or custom discard
 The [active limits](./schema-input.md#active-limits-and-recovery) give the mixed-side example.
 
 The alias proof ignores a Void alternative only where the strict pass guards it, for an object cell
-and for a list beside one array-reading member. The existing alias checks can then refuse input a
-nested constructor default would otherwise replace. A query or header binding that writes a
-non-object group reports any lost input fields before refusing the output with `InvalidRequest`.
-Header records must contain strings, arrays of strings or omitted values. Malformed iterables can
-still fail while the binding reads the names of their pairs.
+and for a list beside one array-reading member, including inside a grouped any-of member union. The
+existing alias checks can then refuse input a nested constructor default would otherwise replace. A
+query or header binding that writes a non-object group reports any lost input fields before refusing
+the output with `InvalidRequest`. Header records must contain strings, arrays of strings or omitted
+values. Malformed iterables can still fail while the binding reads the names of their pairs.
 
 #### A last constructor attempt
 
