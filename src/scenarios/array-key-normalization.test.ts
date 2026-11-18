@@ -6,6 +6,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Schema, SchemaGetter, type SchemaIssue } from "effect";
 import { lane } from "#lane";
+import { expectOutcomes } from "./outcomes.js";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 import { headerValues, type Recorded } from "../harness/lane.js";
 
@@ -365,7 +366,10 @@ describe(`array key normalization (${lane.name})`, () => {
             expect(input[layout === "audit" ? 0 : 1]).toBe(leaf);
             if (layout === "sparse")
               expect(Object.hasOwn(input, 0)).toBe(false);
-            expect({ outcome, requests: received(ledger) }).toMatchObject({
+            expectOutcomes({
+              outcome,
+              requests: received(ledger),
+            }).toMatchObject({
               outcome: { kind: "success", value: "Not Found" },
               requests: [{ method: binding === "path" ? "GET" : "POST" }],
             });
@@ -435,7 +439,10 @@ describe(`array key normalization (${lane.name})`, () => {
                 }
               }
               const ledger = yield* backend.ledger;
-              expect({ outcomes, requests: received(ledger) }).toMatchObject({
+              expectOutcomes({
+                outcomes,
+                requests: received(ledger),
+              }).toMatchObject({
                 outcomes: [
                   { kind: "success", value: "Not Found" },
                   { kind: "success", value: "Not Found" },
@@ -497,7 +504,10 @@ describe(`array key normalization (${lane.name})`, () => {
                 unchanged(input, before);
               }
             const ledger = yield* backend.ledger;
-            expect({ outcomes, requests: received(ledger) }).toMatchObject({
+            expectOutcomes({
+              outcomes,
+              requests: received(ledger),
+            }).toMatchObject({
               outcomes: Array.from(
                 { length: metadataNames.length * 2 },
                 () => ({ kind: "success" }),
@@ -565,7 +575,10 @@ describe(`array key normalization (${lane.name})`, () => {
               expect(input[1]).toBe(leaf);
             }
           const ledger = yield* backend.ledger;
-          expect({ outcomes, requests: received(ledger) }).toMatchObject({
+          expectOutcomes({
+            outcomes,
+            requests: received(ledger),
+          }).toMatchObject({
             outcomes: Array.from({ length: 4 }, () => ({
               kind: "success",
               value: "Not Found",
@@ -627,7 +640,10 @@ describe(`array key normalization (${lane.name})`, () => {
                   expect(watched.calls()).toBe(0);
                 }
               const ledger = yield* backend.ledger;
-              expect({ outcomes, requests: received(ledger) }).toMatchObject({
+              expectOutcomes({
+                outcomes,
+                requests: received(ledger),
+              }).toMatchObject({
                 outcomes: Array.from({ length: 4 }, () =>
                   shape === "normal iterator"
                     ? { kind: "failure", error: { _tag: "SchemaError" } }
@@ -690,7 +706,7 @@ describe(`array key normalization (${lane.name})`, () => {
           }
           // Exact native data is covered. Arbitrary wrappers remain outside the accepted
           // evidence, so their separate kept-or-refused goal stays an expected failure.
-          expect({
+          expectOutcomes({
             outcomes,
             requests: received(yield* backend.ledger),
           }).toMatchObject({
@@ -749,7 +765,7 @@ describe(`array key normalization (${lane.name})`, () => {
             unchanged(input, before);
             expect(Object.hasOwn(input, 0)).toBe(false);
           }
-          expect({
+          expectOutcomes({
             outcomes,
             requests: received(yield* backend.ledger),
           }).toMatchObject({
@@ -800,10 +816,12 @@ describe(`array key normalization (${lane.name})`, () => {
           unchanged(input, before);
           expect(cycle.self).toBe(cycle);
           expect(input[0]).toBe(leaf);
-          expect({ outcome, requests: received(ledger) }).toMatchObject({
-            outcome: { kind: "success", value: "Not Found" },
-            requests: [{}],
-          });
+          expectOutcomes({ outcome, requests: received(ledger) }).toMatchObject(
+            {
+              outcome: { kind: "success", value: "Not Found" },
+              requests: [{}],
+            },
+          );
           expect(ledger).toHaveLength(1);
           wire(ledger[0]!, binding, '[{"page_size":"5"}]');
         }),
@@ -845,7 +863,7 @@ describe(`array key normalization (${lane.name})`, () => {
               );
               unchanged(input, before);
             }
-          expect({
+          expectOutcomes({
             outcomes,
             requests: received(yield* backend.ledger),
           }).toMatchObject({
@@ -941,7 +959,7 @@ describe(`array key normalization (${lane.name})`, () => {
             expect(Object.hasOwn(input, 0)).toBe(false);
           }
           const ledger = yield* backend.ledger;
-          expect(outcomes).toMatchObject([
+          expectOutcomes(outcomes).toMatchObject([
             { kind: "failure", error: { _tag: "SchemaError" } },
             { kind: "failure", error: { _tag: "SchemaError" } },
           ]);
@@ -1030,7 +1048,7 @@ describe(`array key normalization (${lane.name})`, () => {
             Effect.provide(lane.fetchClient),
             observe,
           );
-          expect(outcome).toMatchObject({
+          expectOutcomes(outcome).toMatchObject({
             kind: "failure",
             error: { _tag: "SchemaError" },
           });
@@ -1099,7 +1117,7 @@ describe(`array key normalization (${lane.name})`, () => {
           const ledger = yield* backend.ledger;
           // The observation records prototype probes, but promises no exact total reflection
           // count. Existing best-effort metadata probes can catch their own reflection errors.
-          expect({
+          expectOutcomes({
             outcomes,
             prototypeReads,
             requests: received(ledger),
@@ -1185,7 +1203,10 @@ describe(`array key normalization (${lane.name})`, () => {
             expect(target.length).toBe(1);
             expect(Object.hasOwn(target, 1000)).toBe(false);
             if (!stray) {
-              expect(outcome).toEqual({ kind: "success", value: "Not Found" });
+              expectOutcomes(outcome).toEqual({
+                kind: "success",
+                value: "Not Found",
+              });
               expect(ledger).toHaveLength(1);
               wire(ledger[0]!, binding, '[{"page_size":"5"}]');
               if (binding === "path")
@@ -1214,7 +1235,7 @@ describe(`array key normalization (${lane.name})`, () => {
                   json,
                 };
               });
-              expect({
+              expectOutcomes({
                 outcome,
                 rendered,
                 delivered,
@@ -1347,7 +1368,7 @@ describe(`array key normalization (${lane.name})`, () => {
         expect(input.count).toBe("05");
         expect(target.length).toBe(1);
         expect(target[0]).toBe(cell);
-        expect({
+        expectOutcomes({
           outcome,
           identities,
           lengthReads,
@@ -1460,7 +1481,7 @@ describe(`array key normalization (${lane.name})`, () => {
             unchanged(values, before);
             expect(values[0]).toBe(cell);
             expect(cell.additional).toBe("retain");
-            expect({
+            expectOutcomes({
               outcome,
               rendered,
               requests: received(ledger),
@@ -1510,7 +1531,7 @@ describe(`array key normalization (${lane.name})`, () => {
           const ledger = yield* backend.ledger;
           unchanged(values, before);
           expect(cell.additional).toBe("retain");
-          expect({
+          expectOutcomes({
             outcome,
             rendered,
             requests: received(ledger),
@@ -1609,7 +1630,10 @@ describe(`array key normalization (${lane.name})`, () => {
               }
             const ledger = yield* backend.ledger;
             if (opaque !== "closed array") expect(rejected).toBeGreaterThan(0);
-            expect({ outcomes, requests: received(ledger) }).toMatchObject({
+            expectOutcomes({
+              outcomes,
+              requests: received(ledger),
+            }).toMatchObject({
               outcomes: [
                 { kind: "success", value: "Not Found" },
                 { kind: "failure", error: { _tag: "SchemaError" } },
@@ -1685,7 +1709,7 @@ describe(`array key normalization (${lane.name})`, () => {
           expect(cell.additional).toBe("retain");
           // The prototype fixture has an enumerable rewriting cell: its existing normalized
           // clone is intentional. Hidden cells in the other two profiles retain the opaque value.
-          expect({
+          expectOutcomes({
             outcome,
             identities,
             forbiddenReads,
@@ -1741,7 +1765,7 @@ describe(`array key normalization (${lane.name})`, () => {
         const ledger = yield* backend.ledger;
         expect(target.length).toBe(1);
         expect(Object.hasOwn(target, 0)).toBe(false);
-        expect({ outcome, requests: received(ledger) }).toMatchObject({
+        expectOutcomes({ outcome, requests: received(ledger) }).toMatchObject({
           outcome: { kind: "success", value: "Not Found" },
           requests: [{}],
         });
@@ -1809,7 +1833,7 @@ describe(`array key normalization (${lane.name})`, () => {
           );
         }
         const ledger = yield* backend.ledger;
-        expect({
+        expectOutcomes({
           outcomes,
           identities,
           reads,
@@ -1872,10 +1896,12 @@ describe(`array key normalization (${lane.name})`, () => {
           expect(target[0]).toBe(cell);
           expect(Object.hasOwn(target, 1)).toBe(false);
           expect(Object.hasOwn(target, 2)).toBe(false);
-          expect({ outcome, requests: received(ledger) }).toMatchObject({
-            outcome: { kind: "success", value: "Not Found" },
-            requests: [{}],
-          });
+          expectOutcomes({ outcome, requests: received(ledger) }).toMatchObject(
+            {
+              outcome: { kind: "success", value: "Not Found" },
+              requests: [{}],
+            },
+          );
           expect(ledger).toHaveLength(1);
           wire(
             ledger[0]!,

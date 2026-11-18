@@ -67,9 +67,11 @@ const failedBody = (status: number): Bookings.Described => ({
 
 /**
  * What a client does with the connection afterwards. A gzip fault's framing is whole, so even a
- * stream that cannot be read leaves a connection that the next call can use.
+ * stream that cannot be read leaves a connection that the next call can use. `either` is for a
+ * failure after which the client may keep that connection or close it, depending on timing: the
+ * further call then reuses it, or arrives on a new one after it closed.
  */
-type Afterwards = "closed" | "reused";
+type Afterwards = "closed" | "reused" | "either";
 
 interface Verdict {
   readonly failure: Bookings.Described;
@@ -105,13 +107,19 @@ const recovers = (
       connection === "closed"
         ? yield* Bookings.closed(backend, 0)
         : yield* backend.ledger;
-    expect(before[0]?.connectionOpen).toBe(connection === "reused");
+    if (connection !== "either")
+      expect(before[0]?.connectionOpen).toBe(connection === "reused");
     expect(yield* call).toBe(Bookings.manifestText);
     const after = yield* backend.ledger;
     expect(after).toHaveLength(before.length + 1);
     const [first, last] = [before[0]?.connection, after.at(-1)?.connection];
     if (connection === "closed") expect(last).not.toBe(first);
-    else expect(last).toBe(first);
+    else if (connection === "reused") expect(last).toBe(first);
+    else if (last !== first)
+      // A new connection is only right when the client closed the first one.
+      expect((yield* Bookings.closed(backend, 0))[0]?.connectionOpen).toBe(
+        false,
+      );
   });
 
 /** A further call on a connection the failure has closed is whole, with its own arrival. */
@@ -487,7 +495,13 @@ describe(`failures after response headers arrive (${lane.name})`, () => {
         () =>
           failsAndRecovers(manifestFault("gzip-checksum"), {
             ...brokenBody(provider, "incorrect data check", ""),
-            connection: "reused",
+            // Only the trailer's CRC shows this fault, so Node's fetch fails at the very end of a
+            // whole reply. Whether it then keeps the connection depends on whether the HTTP
+            // message had finished when the decompressor's error arrived, and a hosted run once
+            // saw the further call on a new connection where every other run reused it (#246).
+            // The scenario establishes the DecodeError, its cause and that a further call
+            // recovers; it accepts either connection, and a new one only after the first closed.
+            connection: "either",
           }).pipe(Effect.provide(client)),
       );
 

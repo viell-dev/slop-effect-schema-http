@@ -14,6 +14,7 @@ import {
   SchemaIssue,
 } from "effect";
 import { lane } from "#lane";
+import { expectOutcomes } from "./outcomes.js";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 import { bodyText, headerValues, type Recorded } from "../harness/lane.js";
 
@@ -217,7 +218,7 @@ describe(`nested constructor defaults (${lane.name})`, () => {
               .pipe(Effect.provide(lane.fetchClient), outcome);
             results.push({ shape: inputShape, text, nil });
           }
-          expect({
+          expectOutcomes({
             results,
             wire: (yield* backend.ledger).map(view),
           }).toMatchObject({
@@ -258,7 +259,7 @@ describe(`nested constructor defaults (${lane.name})`, () => {
               .pipe(Effect.provide(lane.fetchClient), outcome);
             results.push({ shape: inputShape, text, nil });
           }
-          expect({
+          expectOutcomes({
             results,
             wire: (yield* backend.ledger).map(view),
           }).toMatchObject({
@@ -374,7 +375,7 @@ describe(`nested constructor defaults (${lane.name})`, () => {
             path: { outer: { page: { filter: { page_size: null } } } },
           })
           .pipe(Effect.provide(lane.fetchClient), outcome);
-        expect({
+        expectOutcomes({
           text,
           nil,
           wire: (yield* backend.ledger).map(view),
@@ -408,7 +409,7 @@ describe(`nested constructor defaults (${lane.name})`, () => {
             body: { outer: { page: { filter: { page_size: null } } } },
           })
           .pipe(Effect.provide(lane.fetchClient), outcome);
-        expect({
+        expectOutcomes({
           text,
           nil,
           wire: (yield* backend.ledger).map(view),
@@ -855,7 +856,7 @@ describe(`nested constructor defaults (${lane.name})`, () => {
         const result = yield* operation
           .execute({ body: input })
           .pipe(Effect.provide(lane.fetchClient), outcome);
-        expect(result).toMatchObject({
+        expectOutcomes(result).toMatchObject({
           kind: "failure",
           error: { _tag: "SchemaError" },
         });

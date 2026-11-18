@@ -2342,7 +2342,8 @@ After either part it reads the ledger until the failed arrival shows `connection
 then a further call on the same client gets the whole manifest, with its own arrival on a new
 connection. A gzip fault is the exception: its framing is whole, so even a stream that cannot be read
 leaves the connection open, in both lanes and through every provider, and the further call reuses
-it. The manifest's text comes from its rule on the service page, written out by the test.
+it, except where EXT-23j says otherwise. The manifest's text comes from its rule on the service
+page, written out by the test.
 
 The library promises the same thing throughout, so entries do not repeat it: a value reaches the
 caller only from a body the decoder could read, no live response crosses a failure, the attempt's
@@ -2423,8 +2424,14 @@ errors and the statuses 408, 429, 500, 502, 503 and 504.
   - `[EXT-23i] ${provider}: ${fault} is a success holding the stream` (`lines`)
   - `[EXT-23i] through the same-origin proxy ${fault} fails at the body as it does for a page reaching the region directly` (Chromium)
 - **EXT-23j** `gzip-checksum`: all of the text, and a wrong CRC. Provider: Node's `fetch` is a
-  `DecodeError` with the cause `incorrect data check`, and the connection stays open. Chromium never
-  checks, so it gives the manifest with no failure. `lines`: as EXT-23h. Status: limit.
+  `DecodeError` with the cause `incorrect data check`. Only the trailer shows the fault, so the
+  failure comes at the very end of a whole reply, and whether the connection stays open depends on
+  timing. Observed: the further call reused the connection in every run but one hosted CI run, where
+  it arrived on a new connection
+  ([#246](https://github.com/viell-dev/slop-effect-schema-http/issues/246)). Asserted: the
+  `DecodeError`, its cause, and that a further call recovers on either connection, a new one only
+  after the first closed. Every other gzip case keeps the strict reuse. Chromium never checks, so it
+  gives the manifest with no failure. `lines`: as EXT-23h. Status: limit.
   - `[EXT-23j] ${provider}: gzip-checksum is a DecodeError in Node, with the cause incorrect data check` (`fetch` in Node)
   - `[EXT-23j] ${provider}: Chromium never checks the CRC, so gzip-checksum gives the manifest with no failure` (Chromium)
   - `[EXT-23j] ${provider}: gzip-checksum is a success holding the stream` (`lines`)
