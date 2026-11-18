@@ -12,6 +12,7 @@ import {
   SchemaIssue,
   SchemaTransformation,
 } from "effect";
+import * as Body from "./Body.js";
 import { encodedInput } from "./internal/encoded-input.js";
 import * as Excess from "./internal/excess.js";
 import * as Inputs from "./internal/input.js";
@@ -925,4 +926,57 @@ describe("encoded input beside constructor defaults", () => {
       expect(evidence.matches()).toBe(false);
     }
   });
+});
+
+// The fieldwise route copies a list's own named properties into a record, so a list-shaped
+// caller value can still reach a generated default, and its alias evidence must stay.
+// https://github.com/viell-dev/slop-effect-schema-http/issues/170
+describe("encoded aliases on list-shaped caller values", () => {
+  const listed = (page_size: string) =>
+    Object.assign(Object.setPrototypeOf([], null) as object, { page_size });
+  const bindings = {
+    path: (schema: Schema.Top) =>
+      Request.get("").pipe(Request.path(schema as never, () => "/p")),
+    body: (schema: Schema.Top) =>
+      Request.post("/x").pipe(Request.body(Body.jsonSchema(schema as never))),
+    query: (schema: Schema.Top) =>
+      Request.get("/x").pipe(Request.query(schema as never)),
+    headers: (schema: Schema.Top) =>
+      Request.get("/x").pipe(Request.headers(schema as never)),
+  };
+  for (const [group, bind] of Object.entries(bindings))
+    for (const [name, schema] of [
+      ["direct", Renamed],
+      ["singleton", Schema.Union([Renamed])],
+      ["union", Schema.Union([Renamed, Cursor])],
+      ["reversed", Schema.Union([Cursor, Renamed])],
+    ] as const)
+      it.effect(`refuses a ${group} list's alias in ${name}`, () =>
+        Effect.gen(function* () {
+          for (const value of ["many", "05"])
+            expect(
+              yield* Effect.flip(
+                compile(bind(schema) as Checked, { [group]: listed(value) }),
+              ),
+            ).toBeInstanceOf(Schema.SchemaError);
+        }),
+      );
+
+  it.effect("refuses a list's alias beside an encoded primitive", () =>
+    Effect.gen(function* () {
+      for (const group of ["path", "body"] as const)
+        for (const schema of [
+          Schema.Union([Renamed, Schema.FiniteFromString]),
+          Schema.Union([Schema.FiniteFromString, Renamed]),
+        ])
+          for (const value of ["many", "05"])
+            expect(
+              yield* Effect.flip(
+                compile(bindings[group](schema) as Checked, {
+                  [group]: listed(value),
+                }),
+              ),
+            ).toBeInstanceOf(Schema.SchemaError);
+    }),
+  );
 });
