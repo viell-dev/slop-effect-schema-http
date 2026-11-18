@@ -2,8 +2,8 @@
  * Independently consumer-authored from the accepted nested primitive alternative scope under
  * https://github.com/viell-dev/slop-effect-schema-http/issues/170, the library's public
  * schema-input guide and the echo HTTP contract in README.md. Expected outcomes outside that scope
- * (EXT-49f, EXT-49g, EXT-49j, EXT-49k) were observed over the wire before being pinned. The direct
- * Void cases (EXT-49d, EXT-49e, EXT-49h, EXT-49l) follow the Void field-preservation rule of #143
+ * (EXT-49f, EXT-49j, EXT-49o, EXT-49p) were observed over the wire before being pinned. The Void
+ * cases (EXT-49d, EXT-49e, EXT-49g to EXT-49i, EXT-49k to EXT-49n) follow the Void rule of #143
  * as the library's guide and design page state it, checked against observed HTTP behaviour.
  * No library implementation, library source tests, backend or conformance code was read.
  */
@@ -235,9 +235,10 @@ const controls = [
 ] as const;
 const invalid = ["many", null] as const;
 
-// A Void nested inside a union of primitives is not a direct member of the union that holds the
-// object, so the direct Void rule (EXT-49d, EXT-49e) does not reach it (EXT-49g).
+// Void inside an unencoded any-of union of primitives that sits beside the object member. The rule
+// follows such member unions, so these behave like a direct Void (EXT-49g).
 const nestedVoidAlternatives = [
+  ["nested Void and Literal", Schema.Union([Schema.Void, Schema.Literal("a")])],
   [
     "nested Literals and Void",
     Schema.Union([Schema.Literals(["all"]), Schema.Void]),
@@ -305,6 +306,243 @@ const voidJson = (level: Level, binding: Binding) =>
       : binding === "path"
         ? "{}"
         : '{"cell":null}';
+
+// The direct Void rule's refusal and its kept and first-fit outputs for one Void-holding
+// alternative, at one level and order (EXT-49d, EXT-49e, EXT-49g).
+const voidRefuses = (
+  level: Level,
+  order: Order,
+  binding: Binding,
+  alternative: WireSchema,
+) =>
+  Effect.gen(function* () {
+    const backend = yield* start();
+    yield* refusesBeforeDispatch(
+      backend,
+      operation(backend.origin, level.schema(alternative, order), binding),
+      invalid.map((page_size) => level.input({ page_size })),
+    );
+  });
+const voidKeeps = (
+  level: Level,
+  order: Order,
+  binding: Binding,
+  alternative: WireSchema,
+) =>
+  Effect.gen(function* () {
+    const backend = yield* start();
+    const execute = operation(
+      backend.origin,
+      level.schema(alternative, order),
+      binding,
+    );
+    const cases: ReadonlyArray<readonly [unknown, string]> = [
+      ...valid.map(
+        (leaf) => [level.input({ ...leaf }), level.json(five)] as const,
+      ),
+      // An empty filter in the ancestor's cell is a supplied field of the union's input.
+      ...(level.name === "ancestor"
+        ? [{}, { page_size: undefined }].map(
+            (leaf) => [level.input(leaf), level.json(defaulted)] as const,
+          )
+        : []),
+      ...fieldless(level).map(
+        (input) =>
+          [
+            input,
+            order === "alternative first"
+              ? voidJson(level, binding)
+              : fieldlessObjectJson(level, binding),
+          ] as const,
+      ),
+    ];
+    for (const [input, json] of cases) {
+      const before = structuredClone(input);
+      expect(yield* execute(input)).toBe("Not Found");
+      expect(input).toEqual(before);
+      const ledger = yield* backend.ledger;
+      wire(ledger[ledger.length - 1]!, binding, json);
+    }
+    expect(yield* backend.ledger).toHaveLength(cases.length);
+  });
+
+// Void reached through a parent's encoding or a fieldwise read: a renamed parent field, a renamed
+// sibling, and a mixed-side parent (decoded `n` beside an encoded alias) holding Void in a nested
+// struct or an array (EXT-49m). `fieldless` gives the first-fit outputs for an input with no
+// field at the Void-holding union.
+type Route = {
+  readonly name: string;
+  readonly schema: (union: WireSchema) => WireSchema;
+  readonly kept: ReadonlyArray<readonly [unknown, string]>;
+  readonly refused: (order: Order) => ReadonlyArray<unknown>;
+  readonly fieldless: (
+    order: Order,
+    binding: Binding,
+  ) => ReadonlyArray<readonly [unknown, string]>;
+};
+const routes: ReadonlyArray<Route> = [
+  {
+    name: "renamed parent field",
+    schema: (union) =>
+      Schema.Struct({ pageFilter: union }).pipe(
+        Schema.encodeKeys({ pageFilter: "page_filter" }),
+      ),
+    kept: [
+      [{ page_filter: { page_size: "05" } }, `{"page_filter":${five}}`],
+      [{ pageFilter: { limit: 5 } }, `{"page_filter":${five}}`],
+    ],
+    refused: () => invalid.map((page_size) => ({ page_filter: { page_size } })),
+    fieldless: (order, binding) =>
+      order === "alternative first"
+        ? [{ pageFilter: {} }, { page_filter: {} }].map(
+            (input) =>
+              [
+                input,
+                binding === "path" ? "{}" : '{"page_filter":null}',
+              ] as const,
+          )
+        : [
+            // The decoded parent constructs the default; the encoded parent reads `{}` as given.
+            [{ pageFilter: {} }, `{"page_filter":${defaulted}}`],
+            [{ page_filter: {} }, '{"page_filter":{}}'],
+          ],
+  },
+  {
+    name: "renamed sibling",
+    schema: (union) =>
+      Schema.Struct({ filter: union, sortBy: Schema.String }).pipe(
+        Schema.encodeKeys({ sortBy: "sort_by" }),
+      ),
+    kept: [
+      [
+        { filter: { page_size: "05" }, sort_by: "a" },
+        `{"filter":${five},"sort_by":"a"}`,
+      ],
+      [
+        { filter: { limit: 5 }, sortBy: "a" },
+        `{"filter":${five},"sort_by":"a"}`,
+      ],
+    ],
+    // A decoded filter beside the encoded sibling mixes the sides, which the library refuses.
+    refused: (order) => [
+      ...invalid.map((page_size) => ({ filter: { page_size }, sort_by: "a" })),
+      ...(order === "alternative first"
+        ? [{ filter: { limit: 5 }, sort_by: "a" }]
+        : []),
+    ],
+    fieldless: (order, binding) => [
+      [
+        { filter: {}, sort_by: "a" },
+        order === "object first"
+          ? '{"filter":{},"sort_by":"a"}'
+          : binding === "path"
+            ? '{"sort_by":"a"}'
+            : '{"filter":null,"sort_by":"a"}',
+      ],
+    ],
+  },
+  {
+    name: "fieldwise nested struct",
+    schema: (union) =>
+      Schema.Struct({
+        n: Schema.FiniteFromString,
+        mid: Schema.Struct({ inner: union }),
+      }),
+    kept: [
+      [
+        { n: 1, mid: { inner: { page_size: "05" } } },
+        `{"n":"1","mid":{"inner":${five}}}`,
+      ],
+      [
+        { n: "1", mid: { inner: { page_size: "05" } } },
+        `{"n":"1","mid":{"inner":${five}}}`,
+      ],
+    ],
+    refused: () =>
+      invalid.map((page_size) => ({ n: 1, mid: { inner: { page_size } } })),
+    fieldless: (order, binding) => [
+      [
+        { n: 1, mid: { inner: {} } },
+        order === "object first"
+          ? `{"n":"1","mid":{"inner":${defaulted}}}`
+          : binding === "path"
+            ? '{"n":"1","mid":{}}'
+            : '{"n":"1","mid":{"inner":null}}',
+      ],
+    ],
+  },
+  {
+    name: "fieldwise array",
+    schema: (union) =>
+      Schema.Struct({ n: Schema.FiniteFromString, items: Schema.Array(union) }),
+    kept: [
+      [{ n: 1, items: [{ page_size: "05" }] }, `{"n":"1","items":[${five}]}`],
+      [{ n: "1", items: [{ page_size: "05" }] }, `{"n":"1","items":[${five}]}`],
+    ],
+    refused: () =>
+      invalid.map((page_size) => ({ n: 1, items: [{ page_size }] })),
+    fieldless: (order) => [
+      [
+        { n: 1, items: [{}] },
+        order === "object first"
+          ? `{"n":"1","items":[${defaulted}]}`
+          : '{"n":"1","items":[null]}',
+      ],
+    ],
+  },
+];
+// Void annotated or given a check builds a new encoding for it (EXT-49n).
+const voidVariants = [
+  ["annotated Void", Schema.Void.annotate({ description: "nothing" })],
+  ["checked Void", Schema.Void.check(Schema.makeFilter(() => true))],
+] as const satisfies ReadonlyArray<readonly [string, WireSchema]>;
+// The root text Void's undefined has in each binding.
+const voidRoot = (binding: Binding) =>
+  binding === "path" ? "undefined" : "null";
+class FilterClass extends Schema.Class<FilterClass>("FilterClass")({
+  limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+    Schema.withConstructorDefault(Effect.succeed(25)),
+  ),
+}) {}
+class VoidFirstParent extends Schema.Class<VoidFirstParent>("VoidFirstParent")({
+  filter: Schema.Union([Schema.Void, Filter]),
+}) {}
+// Cast-only groups: these schemas do not type as query or header groups (EXT-49i, EXT-49p).
+type GroupKind = "query" | "headers";
+const Sort = Schema.Struct({ sort: Schema.String });
+const group = (origin: string, schema: unknown, kind: GroupKind) => {
+  const query = Operation.make(
+    Request.get(`${origin}/x`).pipe(Request.query(schema as typeof Sort)),
+    response,
+  );
+  const headers = Operation.make(
+    Request.get(`${origin}/x`).pipe(Request.headers(schema as typeof Sort)),
+    response,
+  );
+  return (input: unknown) =>
+    (kind === "query"
+      ? query.execute({ query: input as Request.Input<typeof Sort> })
+      : headers.execute({ headers: input as Request.Input<typeof Sort> })
+    ).pipe(Effect.provide(lane.fetchClient));
+};
+const invalidRequestBeforeDispatch = (
+  backend: Backend,
+  execute: (input: unknown) => Effect.Effect<unknown, unknown>,
+  inputs: ReadonlyArray<unknown>,
+) =>
+  Effect.gen(function* () {
+    const outcomes: Outcome[] = [];
+    for (const input of inputs)
+      outcomes.push(yield* execute(input).pipe(outcome));
+    expect({ outcomes, ledger: yield* backend.ledger }).toMatchObject({
+      outcomes: inputs.map(() => ({ error: { _tag: "InvalidRequest" } })),
+      ledger: [],
+    });
+    for (const actual of outcomes)
+      expect(
+        "error" in actual && actual.error instanceof Request.InvalidRequest,
+      ).toBe(true);
+  });
 
 const openMembers = [
   ["Unknown", Schema.Unknown],
@@ -462,99 +700,25 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
 
     for (const level of levels) {
       for (const order of orders) {
-        const schema = level.schema(Schema.Void, order);
-        // The object member holds Filter one level down, and Void follows it (EXT-49k, EXT-49l).
-        const deferred = level.name === "ancestor" && order === "object first";
-        // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-        if (!deferred)
-          it.live(
-            `[EXT-49d] ${binding} ${level.name} ${order} a direct Void member refuses invalid aliases before dispatch`,
-            () =>
-              Effect.gen(function* () {
-                const backend = yield* start();
-                yield* refusesBeforeDispatch(
-                  backend,
-                  operation(backend.origin, schema, binding),
-                  invalid.map((page_size) => level.input({ page_size })),
-                );
-              }),
-          );
         // https://github.com/viell-dev/slop-effect-schema-http/issues/143
         it.live(
-          `[EXT-49e] ${binding} ${level.name} ${order} a direct Void member keeps valid aliases and leaves fieldless input first-fit`,
-          () =>
-            Effect.gen(function* () {
-              const backend = yield* start();
-              const execute = operation(backend.origin, schema, binding);
-              const cases: ReadonlyArray<readonly [unknown, string]> = [
-                ...valid.map(
-                  (leaf) =>
-                    [level.input({ ...leaf }), level.json(five)] as const,
-                ),
-                // An empty filter in the ancestor's cell is a supplied field of the union's input.
-                ...(level.name === "ancestor"
-                  ? [{}, { page_size: undefined }].map(
-                      (leaf) =>
-                        [level.input(leaf), level.json(defaulted)] as const,
-                    )
-                  : []),
-                ...fieldless(level).map(
-                  (input) =>
-                    [
-                      input,
-                      order === "alternative first"
-                        ? voidJson(level, binding)
-                        : fieldlessObjectJson(level, binding),
-                    ] as const,
-                ),
-              ];
-              for (const [input, json] of cases) {
-                const before = structuredClone(input);
-                expect(yield* execute(input)).toBe("Not Found");
-                expect(input).toEqual(before);
-                const ledger = yield* backend.ledger;
-                wire(ledger[ledger.length - 1]!, binding, json);
-              }
-              expect(yield* backend.ledger).toHaveLength(cases.length);
-            }),
+          `[EXT-49d] ${binding} ${level.name} ${order} a direct Void member refuses invalid aliases before dispatch`,
+          () => voidRefuses(level, order, binding, Schema.Void),
         );
         // https://github.com/viell-dev/slop-effect-schema-http/issues/143
         it.live(
-          `[EXT-49g] currently ${binding} ${level.name} ${order} a Void nested in a primitive union consumes supplied fields`,
+          `[EXT-49e] ${binding} ${level.name} ${order} a direct Void member keeps valid aliases and leaves fieldless input first-fit`,
+          () => voidKeeps(level, order, binding, Schema.Void),
+        );
+        // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+        it.live(
+          `[EXT-49g] ${binding} ${level.name} ${order} a Void nested in a primitive union keeps valid aliases and refuses invalid ones`,
           () =>
             Effect.gen(function* () {
-              const backend = yield* start();
-              let sent = 0;
               for (const [, alternative] of nestedVoidAlternatives) {
-                const execute = operation(
-                  backend.origin,
-                  level.schema(alternative, order),
-                  binding,
-                );
-                const cases: ReadonlyArray<readonly [object, string]> =
-                  order === "alternative first"
-                    ? [
-                        ...invalid.map((page_size) => ({ page_size })),
-                        ...controls.map(([leaf]) => ({ ...leaf })),
-                      ].map((leaf) => [leaf, voidJson(level, binding)] as const)
-                    : [
-                        ...[
-                          { page_size: "05" },
-                          ...invalid.map((page_size) => ({ page_size })),
-                        ].map(
-                          (leaf) => [leaf, voidJson(level, binding)] as const,
-                        ),
-                        [{ limit: 5 }, level.json(five)],
-                        [{}, level.json(defaulted)],
-                      ];
-                for (const [leaf, json] of cases) {
-                  expect(yield* execute(level.input(leaf))).toBe("Not Found");
-                  const ledger = yield* backend.ledger;
-                  expect(ledger).toHaveLength(++sent);
-                  wire(ledger[sent - 1]!, binding, json);
-                }
+                yield* voidRefuses(level, order, binding, alternative);
+                yield* voidKeeps(level, order, binding, alternative);
               }
-              expect(sent).toBe(15);
             }),
         );
       }
@@ -593,30 +757,7 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
 
     // https://github.com/viell-dev/slop-effect-schema-http/issues/143
     it.live(
-      `[EXT-49k] currently ${binding} Void after an object holding the filter lets the default replace invalid aliases`,
-      () =>
-        Effect.gen(function* () {
-          const backend = yield* start();
-          let sent = 0;
-          for (const shape of objectThenVoid) {
-            const execute = operation(backend.origin, shape.schema, binding);
-            for (const page_size of invalid) {
-              const input = shape.input({ page_size });
-              const before = structuredClone(input);
-              expect(yield* execute(input)).toBe("Not Found");
-              expect(input).toEqual(before);
-              const ledger = yield* backend.ledger;
-              expect(ledger).toHaveLength(++sent);
-              wire(ledger[sent - 1]!, binding, shape.json(defaulted));
-            }
-          }
-          expect(sent).toBe(6);
-        }),
-    );
-    // The guide and design page promise that a supplied field no member keeps is refused.
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-    it.live.fails(
-      `[EXT-49l] goal ${binding} Void after an object holding the filter refuses invalid aliases before dispatch`,
+      `[EXT-49k] ${binding} Void after an object holding the filter refuses invalid aliases before dispatch`,
       () =>
         Effect.gen(function* () {
           for (const shape of objectThenVoid) {
@@ -627,6 +768,31 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
               invalid.map((page_size) => shape.input({ page_size })),
             );
           }
+        }),
+    );
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+    it.live(
+      `[EXT-49l] ${binding} Void after an object holding the filter keeps valid aliases and an empty filter`,
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          let sent = 0;
+          for (const shape of objectThenVoid) {
+            const execute = operation(backend.origin, shape.schema, binding);
+            for (const [leaf, json] of [
+              ...valid.map((given) => [{ ...given }, five] as const),
+              [{}, defaulted],
+            ] as const) {
+              const input = shape.input(leaf);
+              const before = structuredClone(input);
+              expect(yield* execute(input)).toBe("Not Found");
+              expect(input).toEqual(before);
+              const ledger = yield* backend.ledger;
+              expect(ledger).toHaveLength(++sent);
+              wire(ledger[sent - 1]!, binding, shape.json(json));
+            }
+          }
+          expect(sent).toBe(9);
         }),
     );
   }
@@ -721,5 +887,272 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
           }),
       );
     }
+  }
+
+  for (const binding of ["path", "JSON"] as const) {
+    for (const order of orders) {
+      const union = pair(Schema.Void, Filter, order);
+      for (const route of routes) {
+        // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+        it.live(
+          `[EXT-49m] ${binding} ${route.name} ${order} keeps valid aliases through the parent and refuses invalid ones`,
+          () =>
+            Effect.gen(function* () {
+              const backend = yield* start();
+              const execute = operation(
+                backend.origin,
+                route.schema(union),
+                binding,
+              );
+              yield* refusesBeforeDispatch(
+                backend,
+                execute,
+                route.refused(order),
+              );
+              const cases = [...route.kept, ...route.fieldless(order, binding)];
+              for (const [input, json] of cases) {
+                const before = structuredClone(input);
+                expect(yield* execute(input)).toBe("Not Found");
+                expect(input).toEqual(before);
+                const ledger = yield* backend.ledger;
+                wire(ledger[ledger.length - 1]!, binding, json);
+              }
+              expect(yield* backend.ledger).toHaveLength(cases.length);
+            }),
+        );
+      }
+    }
+
+    for (const level of levels) {
+      for (const order of orders) {
+        // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+        it.live(
+          `[EXT-49n] ${binding} ${level.name} ${order} annotated and checked Void members keep valid aliases and refuse invalid ones`,
+          () =>
+            Effect.gen(function* () {
+              for (const [, variant] of voidVariants) {
+                yield* voidRefuses(level, order, binding, variant);
+                yield* voidKeeps(level, order, binding, variant);
+              }
+            }),
+        );
+      }
+    }
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+    it.live(
+      `[EXT-49n] ${binding} a Void member yields supplied fields to an open member or a list`,
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          const cases: ReadonlyArray<readonly [WireSchema, unknown, string]> = [
+            [
+              Schema.Union([Schema.Void, Schema.Unknown]),
+              { page_size: "05" },
+              '{"page_size":"05"}',
+            ],
+            [
+              Schema.Union([Schema.Void, Schema.Unknown]),
+              { limit: 5 },
+              '{"limit":5}',
+            ],
+            [
+              Schema.Union([Schema.Void, Schema.Unknown]),
+              {},
+              voidRoot(binding),
+            ],
+            [
+              Schema.Union([Schema.Void, Schema.Any]),
+              { page_size: "05" },
+              '{"page_size":"05"}',
+            ],
+            [Schema.Union([Schema.Void, Schema.Any]), {}, voidRoot(binding)],
+            [
+              Schema.Union([
+                Schema.Void,
+                Schema.Array(Schema.FiniteFromString),
+              ]),
+              [1],
+              '["1"]',
+            ],
+            [
+              Schema.Union([
+                Schema.Void,
+                Schema.Array(Schema.FiniteFromString),
+              ]),
+              [],
+              voidRoot(binding),
+            ],
+          ];
+          for (const [schema, input, json] of cases) {
+            expect(
+              yield* operation(backend.origin, schema, binding)(input),
+            ).toBe("Not Found");
+            const ledger = yield* backend.ledger;
+            wire(ledger[ledger.length - 1]!, binding, json);
+          }
+          expect(yield* backend.ledger).toHaveLength(cases.length);
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+    it.live(
+      `[EXT-49o] currently ${binding} class-backed, oneOf and standalone Void schemas keep Void's own selection`,
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          const cases: ReadonlyArray<readonly [WireSchema, unknown, string]> = [
+            // A class alternative after Void: Void takes the fields.
+            [
+              Schema.Union([Schema.Void, FilterClass]),
+              { limit: 5 },
+              voidRoot(binding),
+            ],
+            // A class alternative before Void keeps valid fields, but Void takes an invalid one.
+            [
+              Schema.Union([FilterClass, Schema.Void]),
+              { limit: 5 },
+              '{"limit":"5"}',
+            ],
+            [
+              Schema.Union([FilterClass, Schema.Void]),
+              { limit: "many" },
+              voidRoot(binding),
+            ],
+            // A class parent holding a Void-first field.
+            [
+              VoidFirstParent,
+              { filter: { limit: 5 } },
+              binding === "path" ? "{}" : '{"filter":null}',
+            ],
+            [
+              VoidFirstParent,
+              { filter: { page_size: "05" } },
+              binding === "path" ? "{}" : '{"filter":null}',
+            ],
+            // oneOf unions keep Effect's own selection in either order.
+            [
+              Schema.Union([Schema.Void, Filter], { mode: "oneOf" }),
+              { page_size: "05" },
+              voidRoot(binding),
+            ],
+            [
+              Schema.Union([Schema.Void, Filter], { mode: "oneOf" }),
+              { page_size: "many" },
+              voidRoot(binding),
+            ],
+            [
+              Schema.Union([Filter, Schema.Void], { mode: "oneOf" }),
+              { page_size: "05" },
+              voidRoot(binding),
+            ],
+            [
+              Schema.Union([Filter, Schema.Void], { mode: "oneOf" }),
+              { limit: 5 },
+              voidRoot(binding),
+            ],
+            // A standalone Void has no other member to keep the fields.
+            [Schema.Void, { page_size: "05" }, voidRoot(binding)],
+          ];
+          for (const [schema, input, json] of cases) {
+            const before = structuredClone(input);
+            expect(
+              yield* operation(backend.origin, schema, binding)(input),
+            ).toBe("Not Found");
+            expect(input).toEqual(before);
+            const ledger = yield* backend.ledger;
+            wire(ledger[ledger.length - 1]!, binding, json);
+          }
+          expect(yield* backend.ledger).toHaveLength(cases.length);
+          // A fieldless value fits both oneOf members after the object, so Effect refuses it.
+          const refusing = yield* start();
+          yield* refusesBeforeDispatch(
+            refusing,
+            operation(
+              refusing.origin,
+              Schema.Union([Filter, Schema.Void], { mode: "oneOf" }),
+              binding,
+            ),
+            [{}],
+          );
+        }),
+    );
+  }
+
+  for (const kind of ["query", "headers"] as const) {
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/236
+    it.live(
+      `[EXT-49i] ${kind} cast-only Void and open groups fail as InvalidRequest before dispatch and keep valid fields`,
+      () =>
+        Effect.gen(function* () {
+          const refusing = yield* start();
+          const VoidSort = Schema.Union([Schema.Void, Sort]);
+          for (const [schema, inputs] of [
+            [Schema.Void, [{}]],
+            [pair(Schema.Void, Filter, "alternative first"), [{}]],
+            [VoidSort, [{}]],
+            ...(kind === "headers"
+              ? ([
+                  [Schema.Any, [{ "x-count": 5 }, { "x-count": null }]],
+                  [Schema.Unknown, [{ "x-count": 5 }]],
+                ] as const)
+              : []),
+          ] as const)
+            yield* invalidRequestBeforeDispatch(
+              refusing,
+              group(refusing.origin, schema, kind),
+              inputs,
+            );
+          const backend = yield* start();
+          const sent: ReadonlyArray<
+            readonly [unknown, unknown, string, string]
+          > = [
+            [
+              pair(Schema.Void, Filter, "alternative first"),
+              { page_size: "05" },
+              "page_size",
+              "5",
+            ],
+            [pair(Schema.Void, Filter, "object first"), {}, "page_size", "25"],
+            [VoidSort, { sort: "a" }, "sort", "a"],
+            ...(kind === "headers"
+              ? ([[Schema.Any, { "x-count": "5" }, "x-count", "5"]] as const)
+              : []),
+          ];
+          for (const [schema, input, name, value] of sent) {
+            expect(yield* group(backend.origin, schema, kind)(input)).toBe(
+              "Not Found",
+            );
+            const ledger = yield* backend.ledger;
+            const entry = ledger[ledger.length - 1]!;
+            expect(entry.method).toBe("GET");
+            expect(entry.target).toBe(
+              kind === "query" ? `/x?${name}=${value}` : "/x",
+            );
+            expect(headerValues(entry.lines, name)).toEqual(
+              kind === "query" ? [] : [value],
+            );
+            expect(entry.body.byteLength).toBe(0);
+          }
+          expect(yield* backend.ledger).toHaveLength(sent.length);
+        }),
+    );
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/236
+    it.live(
+      `[EXT-49p] currently ${kind} a cast-only Void-first group reports an invalid alias as InvalidRequest`,
+      () =>
+        Effect.gen(function* () {
+          const backend = yield* start();
+          yield* invalidRequestBeforeDispatch(
+            backend,
+            group(
+              backend.origin,
+              pair(Schema.Void, Filter, "alternative first"),
+              kind,
+            ),
+            invalid.map((page_size) => ({ page_size })),
+          );
+        }),
+    );
   }
 });
