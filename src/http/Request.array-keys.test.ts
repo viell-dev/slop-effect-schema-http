@@ -1,7 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Schema, SchemaTransformation } from "effect";
+import {
+  Effect,
+  Exit,
+  Schema,
+  SchemaGetter,
+  SchemaTransformation,
+} from "effect";
 import * as Body from "./Body.js";
 import * as Request from "./Request.js";
+import type * as Transport from "./Transport.js";
+import type * as UrlEncoding from "./UrlEncoding.js";
 
 const Filter = Schema.Struct({
   limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
@@ -427,6 +435,48 @@ const prepared = <S extends Schema.Top>(schema: S, input: unknown) =>
 const refused = ["refused", "refused"];
 const kept = (value: unknown) => [{ value }, { value }];
 
+/** Where the path and body bindings each refuse one input. */
+const refusals = <S extends Schema.Top>(schema: S, input: unknown) =>
+  Effect.forEach(["path", "body"] as const, (binding) =>
+    Effect.map(Effect.flip(prepare(schema, input, binding)), (error) =>
+      error instanceof Schema.SchemaError ? error.message : error,
+    ),
+  );
+
+/** The URL a query group writes, or the refusal. */
+const queried = <
+  S extends Schema.Top &
+    Schema.ConstraintCodec<unknown, UrlEncoding.QueryInput, unknown, unknown>,
+>(
+  schema: S,
+  query: unknown,
+) =>
+  outcome(
+    Effect.map(
+      Request.compile(Request.get("/x").pipe(Request.query(schema)), {
+        query: query as never,
+      }),
+      ({ request }) => request.url,
+    ),
+  );
+
+/** The header lines a header group writes, or the refusal. */
+const headed = <
+  S extends Schema.Top &
+    Schema.ConstraintCodec<unknown, Transport.HeaderInput, unknown, unknown>,
+>(
+  schema: S,
+  headers: unknown,
+) =>
+  outcome(
+    Effect.map(
+      Request.compile(Request.get("/x").pipe(Request.headers(schema)), {
+        headers: headers as never,
+      }),
+      ({ headerLines }) => headerLines,
+    ),
+  );
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/237
 describe("a caller's list beside a record member", () => {
   // The types refuse a list for a record and each invalid item, so these come in wider values.
@@ -455,14 +505,40 @@ describe("a caller's list beside a record member", () => {
     }),
   );
 
-  it.effect("refuses a key that only the record's open values state", () =>
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+  it.effect(
+    "currently refuses an item key only the record's values could hold",
+    () =>
+      Effect.gen(function* () {
+        // The record cannot read a list, yet loss accounting still counts its open values at the
+        // list's positions, so a key the list member strips counts as lost.
+        for (const [input, output, at] of [
+          [[{ page_size: "05" }], [{}], '[0]["page_size"]'],
+          [[{ page_size: "many" }], [{}], '[0]["page_size"]'],
+          [[{ limit: "x", extra: 1 }], [{ limit: "x" }], '[0]["extra"]'],
+        ] as const) {
+          expect(yield* prepared(Schema.Array(Plain), input)).toEqual(
+            kept(output),
+          );
+          for (const schema of plainUnions)
+            expect(yield* refusals(schema, input)).toEqual([
+              expect.stringContaining(at),
+              expect.stringContaining(at),
+            ]);
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+  it.effect.fails("reads a list as its list member alone reads it", () =>
     Effect.gen(function* () {
-      // Alone, the list member strips a key it does not state. Beside a record of unknown values
-      // the key is stated, so the list member would lose it, and a field no member keeps refuses.
-      for (const input of [[{ page_size: "05" }], [{ page_size: "many" }]]) {
-        expect(yield* prepared(Schema.Array(Plain), input)).toEqual(kept([{}]));
-        for (const schema of plainUnions)
-          expect(yield* prepared(schema, input)).toEqual(refused);
+      for (const schema of plainUnions) {
+        expect(yield* prepared(schema, [{ page_size: "05" }])).toEqual(
+          kept([{}]),
+        );
+        expect(yield* prepared(schema, [{ limit: "x", extra: 1 }])).toEqual(
+          kept([{ limit: "x" }]),
+        );
       }
     }),
   );
@@ -547,6 +623,36 @@ describe("a caller's list beside a record member", () => {
     }),
   );
 
+  // A decoded `n` beside the list makes the parent read field by field.
+  const parents = [...filterUnions, Schema.Array(Filter)].map((items) =>
+    Schema.Struct({ n: Schema.FiniteFromString, items }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect(
+    "currently replaces an invalid item with a default under a fieldwise parent",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* prepared(Schema.Array(Filter), [{ limit: "x" }])).toEqual(
+          refused,
+        );
+        for (const schema of parents)
+          expect(
+            yield* prepared(schema, { n: 1, items: [{ limit: "x" }] }),
+          ).toEqual(kept({ n: "1", items: [{ page_size: "25" }] }));
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect.fails("refuses an invalid item under a fieldwise parent", () =>
+    Effect.gen(function* () {
+      for (const schema of parents)
+        expect(
+          yield* prepared(schema, { n: 1, items: [{ limit: "x" }] }),
+        ).toEqual(refused);
+    }),
+  );
+
   it.effect("refuses a list given to a record", () =>
     Effect.gen(function* () {
       // Effect's record refuses an actual array, as the types do.
@@ -560,41 +666,79 @@ describe("a caller's list beside a record member", () => {
 
   it.effect("refuses such a list as a query or header group", () =>
     Effect.gen(function* () {
-      const Pairs = Schema.Union([
+      const Group = Schema.Union([
         Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
         Schema.Record(Schema.String, Schema.Array(Schema.String)),
       ]);
-      const query = (value: unknown) =>
-        outcome(
-          Effect.map(
-            Request.compile(Request.get("/q").pipe(Request.query(Pairs)), {
-              query: value as never,
-            }),
-            ({ request }) => request.url,
-          ),
-        );
-      const headers = (value: unknown) =>
-        outcome(
-          Effect.map(
-            Request.compile(Request.get("/h").pipe(Request.headers(Pairs)), {
-              headers: value as never,
-            }),
-            ({ headerLines }) => headerLines,
-          ),
-        );
-      expect(yield* query([["a", "b", "c"]])).toBe("refused");
-      expect(yield* query([["a", "b"]])).toEqual({ value: "/q?a=b" });
-      expect(yield* query({ a: ["x", "y"] })).toEqual({ value: "/q?a=x&a=y" });
-      expect(yield* headers([["x-a", "1", "2"]])).toBe("refused");
-      expect(yield* headers([["x-a", "1"]])).toEqual({
+      expect(yield* queried(Group, [["a", "b", "c"]])).toBe("refused");
+      expect(yield* queried(Group, [["a", "b"]])).toEqual({ value: "/x?a=b" });
+      expect(yield* queried(Group, { a: ["x", "y"] })).toEqual({
+        value: "/x?a=x&a=y",
+      });
+      expect(yield* headed(Group, [["x-a", "1", "2"]])).toBe("refused");
+      expect(yield* headed(Group, [["x-a", "1"]])).toEqual({
         value: [["x-a", "1"]],
       });
-      expect(yield* headers({ "x-a": ["1", "2"] })).toEqual({
+      expect(yield* headed(Group, { "x-a": ["1", "2"] })).toEqual({
         value: [
           ["x-a", "1"],
           ["x-a", "2"],
         ],
       });
+    }),
+  );
+
+  const Pairs = Schema.Array(Schema.Tuple([Schema.String, Schema.String]));
+  const Kept = Schema.Union([Schema.Struct({}), Pairs]);
+  const bare = () => Object.setPrototypeOf([["k", "v"]], null) as unknown;
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/242
+  it.effect(
+    "currently writes a pairs list without an iterator prototype under its indexes",
+    () =>
+      Effect.gen(function* () {
+        // `Struct({})` keeps the list as it is; writing then tells pairs by an iterator.
+        expect(yield* queried(Pairs, bare())).toEqual({ value: "/x?k=v" });
+        expect(yield* queried(Kept, [["k", "v"]])).toEqual({ value: "/x?k=v" });
+        expect(yield* queried(Kept, bare())).toEqual({ value: "/x?0=k&0=v" });
+        expect(yield* headed(Pairs, bare())).toEqual({ value: [["k", "v"]] });
+        expect(yield* headed(Kept, [["k", "v"]])).toEqual({
+          value: [["k", "v"]],
+        });
+        expect(yield* headed(Kept, bare())).toEqual({
+          value: [
+            ["0", "k"],
+            ["0", "v"],
+          ],
+        });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/242
+  it.effect.fails("writes a pairs list without an iterator prototype", () =>
+    Effect.gen(function* () {
+      expect(yield* queried(Kept, bare())).toEqual({ value: "/x?k=v" });
+      expect(yield* headed(Kept, bare())).toEqual({ value: [["k", "v"]] });
+    }),
+  );
+
+  it.effect("still tries union members one by one for a list", () =>
+    Effect.gen(function* () {
+      // Both members read the list, so the any-one rule refuses it as a whole. Only the first
+      // member can write it, so a member read alone settles the choice.
+      const DecodeOnly = Schema.Array(Schema.String).pipe(
+        Schema.decodeTo(Schema.Array(Schema.String), {
+          decode: SchemaGetter.passthrough(),
+          encode: SchemaGetter.forbiddenEncoding,
+        }),
+      );
+      const Either = Schema.Union([Schema.Array(Schema.String), DecodeOnly], {
+        mode: "oneOf",
+      });
+      expect(Exit.isFailure(Schema.decodeUnknownExit(Either)(["abc"]))).toBe(
+        true,
+      );
+      expect(yield* prepared(Either, ["abc"])).toEqual(kept(["abc"]));
     }),
   );
 
