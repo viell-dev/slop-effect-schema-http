@@ -4308,7 +4308,7 @@ that keeps the fields wins in either order, a value no member can hold is a `Sch
 dispatch, and an input with no defined field keeps the original member order. EXT-49d, EXT-49e,
 EXT-49g, EXT-49h, EXT-49k to EXT-49n and EXT-49q, EXT-49r and EXT-49t assert that rule; EXT-49j
 holds the unchanged `Unknown` and `Any` controls; EXT-49o pins the class-backed, `oneOf` and
-standalone Void limits and EXT-49s the array-shaped member's default substitution; EXT-49i and
+standalone Void limits. EXT-49s follows #235's array-shaped member validation. EXT-49i and
 EXT-49p cover cast-only query and header groups under
 [#236](https://github.com/viell-dev/slop-effect-schema-http/issues/236).
 
@@ -4495,12 +4495,12 @@ remain under `artifacts/void-member-5e8d57e-*`.
   both orders and bindings; `{ extra: { a: 1 } }` beside the same filter sends both. At `36a6188`
   the refusal named `["filter"]["page_size"]`. Status: tested.
   - `[EXT-49r] ${binding} ${order} a refusal names the invalid field beside a Void member, not a valid alias`
-- **EXT-49s** `Union([Array(Filter), Void])` lets the constructor default replace invalid aliases in
-  its cells: `[{ page_size: "many" }]` and `[{ page_size: null }]` go out as `[{"page_size":"25"}]`
-  on the path and in JSON, on `36a6188` and `5e8d57e`, while valid cells and `[]` are kept. With
-  Void first the same cells are refused. The library keeps this array-shaped member case under
-  [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170). Status: defect.
-  - `[EXT-49s] currently ${binding} an array member before Void lets the default replace invalid aliases`
+- **EXT-49s** `Union([Array(Filter), Void])` in either order refuses invalid `"many"` and `null`
+  with `Schema.SchemaError` and zero dispatch on the path and in JSON. Valid encoded, decoded and
+  omitted aliases send `"5"`, `"5"` and `"25"`. The empty list keeps first-fit: `[]` array-first
+  and Void's output Void-first. Before #235, array-first sent the default for invalid aliases
+  while Void-first already refused them. Status: tested.
+  - `[EXT-49s] ${binding} ${order} an array beside Void refuses invalid aliases and preserves valid lists`
 - **EXT-49t** An `optionalKey` field holding `Union([Void, Struct({ a: optionalKey(Number) })])` in
   either order, with constructor default `{ a: 1 }`, sends `{"g":{"a":1}}` for `{}` and keeps
   `{ g: { a: 2 } }`. An all-undefined `{ g: {} }` or `{ g: { a: undefined } }` supplies no field:
@@ -4512,13 +4512,14 @@ remain under `artifacts/void-member-5e8d57e-*`.
 
 Independent consumer coverage for [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)
 from [library PR #235](https://github.com/viell-dev/slop-effect-schema-http/pull/235), its
-[schema-input guide](https://github.com/viell-dev/slop-effect-schema-http/blob/348f20aab51433a6e258c280db51323f8300e3f5/docs/schema-input.md#active-limits-and-recovery)
+[schema-input guide](https://github.com/viell-dev/slop-effect-schema-http/blob/ba3676687fb23bc969b0770a5142251df21a2fa9/docs/schema-input.md#active-limits-and-recovery)
 and the [neutral echo contract](./README.md#the-neutral-echo-probe). The
 [scenarios](./src/scenarios/encoded-and-array-alternatives.test.ts) use the public API and Fetch over
 real loopback sockets in Node and Chromium, and run again against the packed install. Successful
 rows check the method, target, relevant header values, exact body bytes and request count. The path
-binding writes one percent-escaped JSON segment. These unions can encode to scalars, arrays or objects
-with nested values, beyond the parameter group shapes accepted by the query and header bindings.
+binding writes one percent-escaped JSON segment. EXT-50h also uses query and header bindings for
+schemas that encode a record of fields. The other union profiles can encode scalars, arrays or
+nested objects beyond the parameter group formats.
 The app lane checks the packed library's existing application flow.
 
 The cases use EXT-49's `Filter` (decoded `limit`, encoded `page_size`, default `25`) and a distinct
@@ -4526,7 +4527,7 @@ The cases use EXT-49's `Filter` (decoded `limit`, encoded `page_size`, default `
 root, in a struct field and in an array element. The B cases also exercise a union ancestor holding
 `{ filter }`.
 
-The targeted Node, Chromium and packed baselines use 0.17.0 at
+For the original EXT-50a–g matrix, the targeted Node, Chromium and packed baselines use 0.17.0 at
 `c9439afb34d7f98a562909fdce0819722a964a0c` on Windows 11 x64, with Node 24.22.2, npm 11.19.1,
 Effect 4.1.4 and Chromium 158.0.8127.18. In each lane, the 88 EXT-50b and 72 EXT-50d cases
 dispatched the default `"25"` for both invalid aliases. All 12 EXT-50e cases sent both lists and
@@ -4535,16 +4536,34 @@ conflicting item even beside its encoded-only neighbor. These were the only 184 
 lane, and all 184 unchanged cases passed. Logs and JUnit reports remain under
 `artifacts/alternative-shapes-c9439af-*`.
 
-On 2026-11-18, all 368 EXT-50 cases passed on the same Windows toolchain in Node, Chromium and
-packed mode at `348f20aab51433a6e258c280db51323f8300e3f5`. The app passed all three cases. The full
-Windows runs timed out on older scenarios (two Node, three Chromium and one packed). The three
-timed-out Node and packed cases passed in targeted reruns.
+On 2026-11-18, all 368 original EXT-50 cases passed on the same Windows toolchain in Node,
+Chromium and packed mode at `348f20aab51433a6e258c280db51323f8300e3f5`. The app passed all three
+cases. The full Windows runs timed out on older scenarios (two Node, three Chromium and one
+packed). The three timed-out Node and packed cases passed in targeted reruns.
 
 The [Ubuntu 26.04 CI run](https://github.com/viell-dev/slop-effect-schema-http/actions/runs/44202309039/job/134459250707)
 at that library pin passed all four lanes. The ordinary pass counts were 2,816 Node, 1,991
 Chromium and 2,829 packed, including all 368 EXT-50 cases in each. Each of those lanes also had 14
 existing expected failures. All three app cases passed, and the source, packed and app catalogue
 gates passed. This synthetic coverage exercises the pinned Effect peer and transports.
+
+For the merged library comparison, Windows Node ran EXT-50a–n and the flipped EXT-49s and
+EXT-51i assertions against `6baefb8184327e6f93f600e00b19eb664e27dcad`. Of 548 selected cases, 318
+passed and 230 failed. The failures were the original 184, 36 grouped or flat cases with the
+filter-bearing member first (EXT-50k), two array-first hidden cells (EXT-50l), both fresh-union
+cases (EXT-50n), the two array-first EXT-49s cases and all four EXT-51i cases. The Void-first
+EXT-49s and EXT-50l cases already passed. All 16 EXT-50h cases failed against `348f20a` and passed
+against `6baefb8`, confirming the intermediate regression and its restoration. The four EXT-50i
+cases already refused on `6baefb8`. The targeted JUnit reports are
+`artifacts/alternative-shapes-6baefb8-node.xml` and
+`artifacts/alternative-shapes-348f20a-list-evidence.xml`.
+
+At merged library `ba3676687fb23bc969b0770a5142251df21a2fa9`, all 540 EXT-50 cases and all
+eight EXT-49s and EXT-51i cases passed in Node, Chromium and packed mode on the same Windows
+toolchain. Full runs passed 3,137 ordinary cases in Node, 2,312 in Chromium and 3,150 in packed
+mode, with 14 existing expected failures and zero skips per lane. The app passed three cases.
+Check, lint, all catalogue gates and strict packed declarations passed. Logs and JUnit reports
+remain under `artifacts/alternative-shapes-ba36766-*`.
 
 - **EXT-50a** An encoded primitive (B: `FiniteFromString`, `NumberFromString`, a string codec and
   nested literals plus `FiniteFromString`) or a list/tuple (C1) beside a filter object keeps encoded
@@ -4579,6 +4598,34 @@ gates passed. This synthetic coverage exercises the pinned Effect peer and trans
   - `[EXT-50g] currently ${binding} ${order} a middleware-encoded primitive permits substitution`
   - `[EXT-50g] currently ${binding} ${order} ${name} beside a list permits dispatch`
   - `[EXT-50g] currently ${binding} ${order} an encoded array member permits substitution`
+- **EXT-50h** Direct `Filter`, a singleton union and either order with `Cursor` refuse a
+  null-prototype list with an own `page_size` named property, for both `"many"` and `"05"`. The
+  aliases refuse with an empty ledger on path, JSON, query and headers. This restores the result
+  observed before the initial #235 revision. Status: tested.
+  - `[EXT-50h] ${binding} ${name} refuses a named alias on a null-prototype list`
+- **EXT-50i** `FiniteFromString` beside `Filter` refuses the same list input in either order,
+  through path and JSON. Status: tested.
+  - `[EXT-50i] ${binding} ${order} a primitive codec beside Filter refuses aliases on a null-prototype list`
+- **EXT-50j** Grouping `Cursor` with Void beside `Array(Filter)`, or grouping `Array(String)` with
+  Void beside a parent struct holding `Filter`, preserves encoded, decoded and omitted aliases
+  like the flat forms. Cases exercise both inner orders, either placement of the filter-bearing
+  member and the root, field and element positions. Status: tested.
+  - `[EXT-50j] ${name} preserves encoded decoded and omitted aliases`
+- **EXT-50k** The same grouped and flat shapes refuse `"many"` and `null` with
+  `Schema.SchemaError` and an empty ledger. Status: tested.
+  - `[EXT-50k] ${name} refuses invalid aliases before dispatch`
+- **EXT-50l** A list with one non-enumerable cell beside Void refuses a hidden `"many"` alias
+  and sends `[{"page_size":"5"}]` for a hidden `"05"` alias. Both member orders preserve the
+  caller's descriptor and list length. Status: tested.
+  - `[EXT-50l] ${binding} ${order} a list beside Void refuses a hidden invalid alias and sends a hidden valid alias`
+- **EXT-50m** Reusing the same member union of a cursor text codec and Void under both an any-of
+  and a one-of field lets the guarded list cell send the default `"25"` for `"many"`.
+  [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170) tracks the limit.
+  Status: limit.
+  - `[EXT-50m] currently ${binding} a reused member union beside Void lets the default replace an invalid alias`
+- **EXT-50n** Separate instances of that member union refuse the same invalid alias before
+  dispatch. Status: tested.
+  - `[EXT-50n] ${binding} separate member unions refuse the same invalid alias`
 
 ## Lists beside records (EXT-51)
 
@@ -4599,7 +4646,7 @@ objects in EXT-51f and EXT-51i and dispatches in EXT-51h. The array-element refu
 controls and EXT-51g already pass. The baseline logs and JUnit reports are under
 `artifacts/list-record-baseline-5e8d57e-*`.
 
-The test pin is library main `6baefb8184327e6f93f600e00b19eb664e27dcad`, with Effect 4.1.4,
+The original test pin was library main `6baefb8184327e6f93f600e00b19eb664e27dcad`, with Effect 4.1.4,
 Node 24.22.2, npm 11.19.1 and Chromium 158.0.8127.18 on Windows 11 x64. Node, Chromium and packed
 mode each pass all 66 EXT-51 cases. With the suite based on `5a619c5`, including
 [#238](https://github.com/viell-dev/slop-effect-schema-http/pull/238), the full runs report
@@ -4639,9 +4686,8 @@ The logs and JUnit reports are under `artifacts/list-record-6baefb8-*` and `arti
   `{ limit: "x", extra: 1 }` beside an open record refuses at `[0]["extra"]` in either order.
   The list alone strips the extra key and sends `[{"limit":"x"}]` in JSON and path. Status: limit.
   - `[EXT-51h] currently ${binding} ${order} refuses an unstated list item key beside a record`
-- **EXT-51i** [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170): a list with
-  `{ page_size: "many" }` beside an open record sends `[{"page_size":"25"}]` in either order
-  in JSON and path. The list alone refuses before dispatch. The change proposed in
-  [#235](https://github.com/viell-dev/slop-effect-schema-http/pull/235) is expected to replace this
-  limit. Status: limit.
-  - `[EXT-51i] currently ${binding} ${order} replaces an invalid encoded list item alias`
+- **EXT-51i** A list with `{ page_size: "many" }` beside an open record refuses with
+  `Schema.SchemaError` and an empty ledger, in either order in JSON and path, as the list alone
+  does. Before [#235](https://github.com/viell-dev/slop-effect-schema-http/pull/235) the union
+  sent `[{"page_size":"25"}]`. Status: tested.
+  - `[EXT-51i] ${binding} ${order} refuses an invalid encoded list item alias before dispatch`

@@ -1307,42 +1307,36 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
           }),
       );
     }
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-    it.live(
-      `[EXT-49s] currently ${binding} an array member before Void lets the default replace invalid aliases`,
-      () =>
-        Effect.gen(function* () {
-          const backend = yield* start();
-          const execute = operation(
-            backend.origin,
-            Schema.Union([Schema.Array(Filter), Schema.Void]),
-            binding,
-          );
-          const cases: ReadonlyArray<readonly [unknown, string]> = [
-            ...invalid.map(
-              (page_size) => [[{ page_size }], `[${defaulted}]`] as const,
-            ),
-            [[{ page_size: "05" }], `[${five}]`],
-            [[], "[]"],
-          ];
-          for (const [input, json] of cases) {
-            expect(yield* execute(input)).toBe("Not Found");
-            const ledger = yield* backend.ledger;
-            wire(ledger[ledger.length - 1]!, binding, json);
-          }
-          expect(yield* backend.ledger).toHaveLength(cases.length);
-          // With Void first the same invalid cells are refused.
-          const refusing = yield* start();
-          yield* refusesBeforeDispatch(
-            refusing,
-            operation(
-              refusing.origin,
-              Schema.Union([Schema.Void, Schema.Array(Filter)]),
+    for (const order of orders) {
+      it.live(
+        `[EXT-49s] ${binding} ${order} an array beside Void refuses invalid aliases and preserves valid lists`,
+        () =>
+          Effect.gen(function* () {
+            const backend = yield* start();
+            const execute = operation(
+              backend.origin,
+              pair(Schema.Void, Schema.Array(Filter), order),
               binding,
-            ),
-            invalid.map((page_size) => [{ page_size }]),
-          );
-        }),
-    );
+            );
+            yield* refusesBeforeDispatch(
+              backend,
+              execute,
+              invalid.map((page_size) => [{ page_size }]),
+            );
+            const cases: ReadonlyArray<readonly [unknown, string]> = [
+              [[{ page_size: "05" }], `[${five}]`],
+              [[{ limit: 5 }], `[${five}]`],
+              [[{}], `[${defaulted}]`],
+              [[], order === "object first" ? "[]" : voidRoot(binding)],
+            ];
+            for (const [input, json] of cases) {
+              expect(yield* execute(input)).toBe("Not Found");
+              const ledger = yield* backend.ledger;
+              wire(ledger[ledger.length - 1]!, binding, json);
+            }
+            expect(yield* backend.ledger).toHaveLength(cases.length);
+          }),
+      );
+    }
   }
 });
