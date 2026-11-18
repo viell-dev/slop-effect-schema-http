@@ -461,8 +461,8 @@ const readerForCodec = <S extends Schema.Top, A, R>(
                     ? Effect.mapError(decode(current), () => refusal)
                     : Effect.catch(confirm(current), (confirmationFailure) =>
                         Effect.flatMap(
-                          compared(input, given, (original) =>
-                            decode(original),
+                          compared(input, given, (candidate) =>
+                            decode(candidate),
                           ),
                           ({ lost }) =>
                             Effect.fail(
