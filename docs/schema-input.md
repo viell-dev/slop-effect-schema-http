@@ -410,9 +410,10 @@ remaining list limits under #241, #242 and #243.
   default. For example, `Union([Array(Filter), Void])` may write `[{"page_size":"25"}]` for
   `[{ page_size: "many" }]`. The array-shaped alias proof remains under
   [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
-- A list supplied by JavaScript or a cast to a union of a struct and Void can still write a struct's
-  constructor default. A non-enumerable own cell can decline Void on the read, but a struct has no
-  array position to retain it.
+- A list supplied by JavaScript or a cast to a union of a struct and Void, whose cells are all
+  non-enumerable, can still be discarded and written as `undefined` (`null` in JSON). Such a cell
+  declines Void on the strict read, but a struct cannot read a list and the field-loss check does
+  not see the cell.
 - A populated object constructor default can select the object member beside Void. A default of
   `{ a: 1 }` for a field `g` using `Union([Void, Struct({ a: optionalKey(Number) })])` can write
   `{"g":{"a":1}}` for an omitted `g`. With object-first order and only an undefined-valued input
