@@ -43,6 +43,12 @@ assert.equal(await prepared(encoded), '{"page_size":"5"}');
 assert.equal(await prepared(decoded), '{"page_size":"5"}');
 assert.match(await refused(invalid), /at \["page_size"\]/);
 assert.equal(await prepared(empty), "null");
+// An object whose only keys no member states keeps first fit too.
+const otherOnly = { other: 1 } as unknown as Request.Input<typeof Choice>;
+assert.equal(
+  await prepared(Request.compile(search, { body: otherOnly })),
+  "null",
+);
 
 // #region void-sides
 const Page = Schema.Struct({ filter: Choice, sortBy: Schema.String }).pipe(
@@ -70,6 +76,29 @@ assert.equal(
   await prepared(decodedSide),
   '{"filter":{"page_size":"5"},"sort_by":"a"}',
 );
+// With Void last, the mixed value refuses one level deeper.
+const pageLast = Request.post("/pages").pipe(
+  Request.body(
+    Body.jsonSchema(
+      Schema.Struct({
+        filter: Schema.Union([Filter, Schema.Void]),
+        sortBy: Schema.String,
+      }).pipe(Schema.encodeKeys({ sortBy: "sort_by" })),
+    ),
+  ),
+);
+assert.match(
+  await refused(Request.compile(pageLast, { body: mixedRuntime as never })),
+  /at \["filter"\]\["limit"\]/,
+);
+// Both names in one object refuse beside Void, in either member order.
+const bothNamesBesideVoid = { limit: 5, page_size: "5" };
+for (const order of [Choice, Schema.Union([Filter, Schema.Void])]) {
+  const send = Request.post("/searches").pipe(
+    Request.body(Body.jsonSchema(order)),
+  );
+  await refused(Request.compile(send, { body: bothNamesBesideVoid }));
+}
 
 // #region void-defaults
 const Grouping = Schema.Struct({
@@ -108,12 +137,16 @@ const size = Request.compile(
 assert.equal(await prepared(note), "null");
 assert.equal(await prepared(size), "{}");
 
-// A header schema that encodes a non-string value fails with a typed error.
+// A header schema that encodes a non-string value fails with a typed error,
+// including number lists and pairs that 0.17 wrote.
 const counted = Request.get("/counts").pipe(Request.headers(Schema.Any));
-await refused(
-  Request.compile(counted, { headers: { "x-count": 5 } }),
-  "InvalidRequest",
-);
+for (const headers of [
+  { "x-count": 5 },
+  { "x-count": [1, 2] },
+  [["x-count", 1]],
+]) {
+  await refused(Request.compile(counted, { headers }), "InvalidRequest");
+}
 
 // #region list-schema
 const Plain = Schema.Struct({ limit: Schema.optionalKey(Schema.String) });
@@ -137,18 +170,51 @@ assert.match(await refused(wrongItem), /at \[0\]\["limit"\]/);
 assert.equal(await prepared(list), '[{"limit":"x"}]');
 assert.equal(await prepared(named), '{"0":{"limit":5}}');
 
-// #region record-only
+// #region object-only
 const Named = Schema.Record(Schema.String, Schema.Unknown);
 const saveNamed = Request.post("/named").pipe(
   Request.body(Body.jsonSchema(Named)),
 );
+const savePlain = Request.post("/plain").pipe(
+  Request.body(Body.jsonSchema(Plain)),
+);
 const items = [{ limit: "x" }];
-const listRuntime = items as unknown as Request.Input<typeof Named>;
-const listForRecord = Request.compile(saveNamed, { body: listRuntime });
+// A list from JavaScript or external data, where the type expects an object.
+const external: unknown = items;
+const listForRecord = Request.compile(saveNamed, {
+  body: external as Request.Input<typeof Named>,
+});
+const listForStruct = Request.compile(savePlain, {
+  body: external as Request.Input<typeof Plain>,
+});
 const spread = Request.compile(saveNamed, { body: { ...items } });
-// #endregion record-only
-await refused(listForRecord);
+// #endregion object-only
+assert.match(await refused(listForRecord), /Expected object/);
+assert.match(await refused(listForStruct), /Expected object/);
 assert.equal(await prepared(spread), '{"0":{"limit":"x"}}');
+// The same holds for a defaulted struct, a class and a query group.
+const saveFilter = Request.post("/filter").pipe(
+  Request.body(Body.jsonSchema(Filter)),
+);
+assert.match(
+  await refused(Request.compile(saveFilter, { body: [] as never })),
+  /Expected object/,
+);
+class PlainClass extends Schema.Class<PlainClass>("PlainClass")({
+  limit: Schema.optionalKey(Schema.String),
+}) {}
+const saveClass = Request.post("/class").pipe(
+  Request.body(Body.jsonSchema(PlainClass)),
+);
+assert.match(
+  await refused(Request.compile(saveClass, { body: external as never })),
+  /Expected object/,
+);
+const queried = Request.get("/plain").pipe(Request.query(Plain));
+assert.match(
+  await refused(Request.compile(queried, { query: [["limit", "x"]] as never })),
+  /Expected object/,
+);
 
 // #region unstated-keys
 const unstated = Request.compile(save, { body: [{ limit: "x", extra: 1 }] });
@@ -224,7 +290,7 @@ assert.match(await refused(mixedItems), /at \[1\]\["limit"\]/);
 // The decoded item first refuses as well.
 assert.match(
   await refused(
-    Request.compile(filters, { body: [{ limit: 1 }, { page_size: "25" }] }),
+    Request.compile(filters, { body: [{ limit: 1 }, { page_size: "30" }] }),
   ),
   /at \[0\]\["limit"\]/,
 );
