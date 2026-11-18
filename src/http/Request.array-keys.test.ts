@@ -435,6 +435,9 @@ const prepared = <S extends Schema.Top>(schema: S, input: unknown) =>
 const refused = ["refused", "refused"];
 const kept = (value: unknown) => [{ value }, { value }];
 
+/** A pairs list with no prototype, so no iterator to tell it by. */
+const bare = () => Object.setPrototypeOf([["k", "v"]], null) as unknown;
+
 /** Where the path and body bindings each refuse one input. */
 const refusals = <S extends Schema.Top>(schema: S, input: unknown) =>
   Effect.forEach(["path", "body"] as const, (binding) =>
@@ -690,7 +693,6 @@ describe("a caller's list beside a record member", () => {
 
   const Pairs = Schema.Array(Schema.Tuple([Schema.String, Schema.String]));
   const Kept = Schema.Union([Schema.Struct({}), Pairs]);
-  const bare = () => Object.setPrototypeOf([["k", "v"]], null) as unknown;
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/242
   it.effect(
