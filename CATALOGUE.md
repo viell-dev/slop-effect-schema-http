@@ -4526,18 +4526,25 @@ The cases use EXT-49's `Filter` (decoded `limit`, encoded `page_size`, default `
 root, in a struct field and in an array element. The B cases also exercise a union ancestor holding
 `{ filter }`.
 
-The targeted Node and packed baselines on Windows 11 x64, Node 24.22.2, npm 11.19.1 and Effect
-4.1.4 use 0.17.0 at `c9439afb34d7f98a562909fdce0819722a964a0c`. In each, the 88 EXT-50b and
-72 EXT-50d cases dispatched the default `"25"` for both invalid aliases. All 12 EXT-50e cases sent both
-lists and substituted `"25"` for the valid encoded-only `"05"`. All 12 EXT-50f cases sent `"1"` for
-the conflicting item even beside its encoded-only neighbor. The 184 unchanged cases passed in
-each lane. Chromium 158.0.8127.18 reached the expected assertion failures on the baseline and
-timed out on unchanged controls under local load, leaving its count unverified. Logs and completed
-JUnit reports remain under `artifacts/alternative-shapes-c9439af-*`.
+The targeted Node, Chromium and packed baselines use 0.17.0 at
+`c9439afb34d7f98a562909fdce0819722a964a0c` on Windows 11 x64, with Node 24.22.2, npm 11.19.1,
+Effect 4.1.4 and Chromium 158.0.8127.18. In each lane, the 88 EXT-50b and 72 EXT-50d cases
+dispatched the default `"25"` for both invalid aliases. All 12 EXT-50e cases sent both lists and
+substituted `"25"` for the valid encoded-only `"05"`. All 12 EXT-50f cases sent `"1"` for the
+conflicting item even beside its encoded-only neighbor. These were the only 184 failures in each
+lane, and all 184 unchanged cases passed. Logs and JUnit reports remain under
+`artifacts/alternative-shapes-c9439af-*`.
 
-On 2026-11-18, the targeted Node run at `348f20aab51433a6e258c280db51323f8300e3f5` passed all
-368 EXT-50 cases and all 198 EXT-49 cases on the same Windows toolchain. The pull request records
-the full-lane results. This synthetic coverage exercises the pinned Effect peer and transports.
+On 2026-11-18, all 368 EXT-50 cases passed on the same Windows toolchain in Node, Chromium and
+packed mode at `348f20aab51433a6e258c280db51323f8300e3f5`. The app passed all three cases. The full
+Windows runs timed out on older scenarios (two Node, three Chromium and one packed). The three
+timed-out Node and packed cases passed in targeted reruns.
+
+The [Ubuntu 26.04 CI run](https://github.com/viell-dev/slop-effect-schema-http/actions/runs/44202309039/job/134459250707)
+at that library pin passed all four lanes. The ordinary pass counts were 2,816 Node, 1,991
+Chromium and 2,829 packed, including all 368 EXT-50 cases in each. Each of those lanes also had 14
+existing expected failures. All three app cases passed, and the source, packed and app catalogue
+gates passed. This synthetic coverage exercises the pinned Effect peer and transports.
 
 - **EXT-50a** An encoded primitive (B: `FiniteFromString`, `NumberFromString`, a string codec and
   nested literals plus `FiniteFromString`) or a list/tuple (C1) beside a filter object keeps encoded
