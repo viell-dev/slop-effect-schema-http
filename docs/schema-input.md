@@ -143,7 +143,8 @@ branch. With `Cursor = Schema.Struct({ cursor: Schema.String })`,
 `Union([Parent, Schema.Union([Schema.Array(Schema.String), Schema.Void])])` reads an object as its
 flat union does. A `oneOf` member union leaves its Void unguarded, so that Void still counts as a
 reader. One member union value used both where its Void is guarded and where it is not counts as
-unguarded in every grouping, as it would be wherever that guard is missing.
+unguarded in every grouping, as it would be wherever that guard is missing; the active limits below
+give the consequence.
 
 Capture reads each own cell's descriptor, while the Void rule reads the cell by index. A proxy can
 answer the two differently, and then the guarded Void sees no defined cell and can take the list.
@@ -449,6 +450,11 @@ remaining list limits under #241, #242 and #243.
   non-enumerable, can still be discarded and written as `undefined` (`null` in JSON). Such a cell
   declines Void on the strict read, but a struct cannot read a list and the field-loss check does
   not see the cell. Beside an array member, such a cell is read, so an invalid alias in it refuses.
+- One member union value reused where its Void is guarded and where it is not gets the grouped proof
+  at neither use. An example is the same union of `Schema.Void` and a text member decoded from an
+  object, placed under an any-of union and under a `oneOf` union. An invalid alias that only that
+  proof would catch then keeps the constructor default, as on 0.17. A union of primitive members and
+  Void keeps the proof at its guarded use. Build a separate member union for each use.
 - A proxy list whose index read answers `undefined` for a cell its descriptor holds can be taken by
   Void beside an array member and written as `undefined` (`null` in JSON).
 - A populated object constructor default can select the object member beside Void. A default of
