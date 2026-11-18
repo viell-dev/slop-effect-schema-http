@@ -137,6 +137,76 @@ const size = Request.compile(
 assert.equal(await prepared(note), "null");
 assert.equal(await prepared(size), "{}");
 
+// #region void-unencodable
+const Entry = Schema.Struct({ title: Schema.String, meta: Schema.Unknown });
+const entries = Request.post("/entries").pipe(
+  Request.body(Body.jsonSchema(Schema.Union([Entry, Schema.Void]))),
+);
+const dated = Request.compile(entries, {
+  body: { title: "a", meta: new Date(0) },
+});
+const plainMeta = Request.compile(entries, {
+  body: { title: "a", meta: { at: "x" } },
+});
+// #endregion void-unencodable
+assert.match(await refused(dated), /Expected JSON value\s+at \["meta"\]/);
+assert.equal(await prepared(plainMeta), '{"title":"a","meta":{"at":"x"}}');
+// The refusal names the invalid alias beside a valid decoded sibling.
+const Sized = Schema.Struct({
+  n: Schema.FiniteFromString,
+  filter: Schema.Union([Filter, Schema.Void]),
+});
+const sized = Request.post("/sized").pipe(Request.body(Body.jsonSchema(Sized)));
+assert.match(
+  await refused(
+    Request.compile(sized, { body: { n: 1, filter: { page_size: "many" } } }),
+  ),
+  /at \["filter"\]\["page_size"\]/,
+);
+// Void beside empty structs alone keeps first fit, as on 0.17.
+const tagged = { tag: "a" };
+for (const [members, expected] of [
+  [[Schema.Struct({}), Schema.Void], '{"tag":"a"}'],
+  [[Schema.Void, Schema.Struct({})], "null"],
+] as const) {
+  const send = Request.post("/tagged").pipe(
+    Request.body(Body.jsonSchema(Schema.Union(members))),
+  );
+  assert.equal(
+    await prepared(Request.compile(send, { body: tagged })),
+    expected,
+  );
+}
+
+// #region empty-struct
+const Labelled = Schema.Struct({
+  labels: Schema.Struct({}),
+  title: Schema.String,
+}).pipe(Schema.encodeKeys({ title: "wire_title" }));
+const label = Request.post("/labelled").pipe(
+  Request.body(Body.jsonSchema(Labelled)),
+);
+const labelled = Request.compile(label, {
+  body: { labels: { tag: "a" }, title: "item" },
+});
+// #endregion empty-struct
+assert.equal(
+  await prepared(labelled),
+  '{"labels":{"tag":"a"},"wire_title":"item"}',
+);
+// A union mixing a stated and an empty member still strips unstated keys.
+const Mixed = Schema.Union([
+  Schema.Struct({ a: Schema.String }),
+  Schema.Struct({}),
+]);
+const sendMixed = Request.post("/mixed").pipe(
+  Request.body(Body.jsonSchema(Mixed)),
+);
+assert.equal(
+  await prepared(Request.compile(sendMixed, { body: { a: "x", z: 1 } })),
+  '{"a":"x"}',
+);
+
 // A header schema that encodes a non-string value fails with a typed error,
 // including number lists and pairs that 0.17 wrote.
 const counted = Request.get("/counts").pipe(Request.headers(Schema.Any));

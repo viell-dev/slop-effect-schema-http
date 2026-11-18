@@ -3,7 +3,7 @@
 ## 0.18.0 — 2026-11-18
 
 Read [What's in 0.18](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.18) for
-the Void member, list and constructor-alias migrations and remaining limits.
+the Void member, empty-struct, list and constructor-alias migrations and remaining limits.
 
 - **Breaking:** keep or refuse visible fields that built-in `Schema.Void` would discard beside an
   object or list in a visible any-of request union, including nested any-of alternatives and

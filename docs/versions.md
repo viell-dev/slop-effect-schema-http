@@ -5,12 +5,12 @@
 `0.18.0` is the current stable release, available from npm and GitHub. [Getting
 started](./getting-started.md) adds it to your Effect project. [What's in
 0.18](./release-notes/0.18.md) covers updating from `0.17`: request unions keep or refuse fields
-beside `Schema.Void` instead of sending `null`, a list is no longer sent as an object keyed by its
-indexes, and invalid encoded aliases beside encoded primitive and array-shaped members refuse
-instead of sending a default. Updating from `0.16` or earlier also includes the breaking migration
-in [What's in 0.17](./release-notes/0.17.md). [Release history](./release-notes/index.md) compares
-earlier changes and links every migration article. Use the [current input
-reference](./schema-input.md) for today's supported behavior and [Schema-backed
+beside `Schema.Void` instead of sending `null`, keys under `Schema.Struct({})` are kept, a list is
+no longer sent as an object keyed by its indexes, and invalid encoded aliases beside encoded
+primitive and array-shaped members refuse instead of sending a default. Updating from `0.16` or
+earlier also includes the breaking migration in [What's in 0.17](./release-notes/0.17.md). [Release
+history](./release-notes/index.md) compares earlier changes and links every migration article. Use
+the [current input reference](./schema-input.md) for today's supported behavior and [Schema-backed
 groups](./schema-groups.md) for the recovery boundary.
 
 The npm `latest` tag selects the stable release, so ordinary install commands need no version

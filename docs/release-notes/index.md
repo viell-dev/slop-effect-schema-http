@@ -12,8 +12,8 @@ bounded stacked-union recovery; it does not extend the constructor-default proof
 release](./0.17.md) extends the 0.16 alternative rule to nested primitive unions such as
 `Schema.Literals([...])` and `Schema.NullOr(Schema.String)`. The [0.18 release](./0.18.md) extends
 it again, to encoded primitive and array-shaped members. It also extends the union preservation rule
-to `Schema.Void` members, and separately stops the field-by-field reading from sending a list as an
-index-keyed object.
+to `Schema.Void` members, keeps keys under `Schema.Struct({})` in that strict reading, and
+separately stops the field-by-field reading from sending a list as an index-keyed object.
 
 ## Schema-input hardening
 
