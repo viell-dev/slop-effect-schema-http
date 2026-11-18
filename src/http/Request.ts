@@ -125,14 +125,16 @@ export type QueryFields = Readonly<
  * Beside a visible object or list candidate in an any-of union, the strict read declines built-in
  * `Schema.Void` for defined enumerable own fields and defined own array cells. The strict write
  * declines Void for every object and array, including when it retries without strict excess
- * checking. If the structural member cannot encode the value, the request reports a
- * `SchemaError`. The guard includes annotated and checked Void and unencoded any-of member unions.
- * The read keeps first-fit order when it sees no defined fields or cells. A plain empty struct
- * keeps arbitrary keys when selected. Beside Void alone, it retains first-fit object reading
- * and the guard for defined list cells. Some mixed-side inputs refuse in either order.
+ * checking. A structural encoding failure gives a `SchemaError` if no other member can take
+ * the value. The guard includes annotated and checked Void and unencoded any-of member unions.
+ * The read keeps first-fit order when it sees no defined fields or cells. A union of Void and
+ * plain, unchecked empty structs keeps first-fit object reading unless grouped inside an enclosing
+ * guarded union. A defined own list cell still declines Void. Some mixed-side inputs refuse in
+ * either order.
  * Avoid Void in input schemas that rely on classes, opaque or suspended values, encoded member
  * unions, other union modes, standalone Void or custom discarding transformations.
- * Closed structs strip keys no member states and keys a tag rules out.
+ * Closed structs strip keys no member states and keys a tag rules out. When every object
+ * candidate at a value has no property or index signatures, supplied keys are kept.
  * A required literal tag can choose by its decoded or encoded name. Both views must rule a member
  * out before its fields go; a constructor default is not guessed to make that choice.
  * A key set to `undefined` is no field, and an accessor on a class is one, as it is to a struct. In a

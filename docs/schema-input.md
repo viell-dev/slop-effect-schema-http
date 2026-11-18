@@ -249,20 +249,25 @@ actually went. The strict pass also protects visible fields beside Void as descr
 with none of these choices reads as it always did. A schema's own steps can run more than once when
 the strict pass refuses.
 
+In strict normalization, when every candidate object at a value has no property or index signatures,
+its supplied keys are kept at any depth within the chosen union member, as `Schema.Struct({})` alone
+keeps them. The 0.17.0 strict pass removed those keys. An empty struct query or header binding still
+states no names.
+
 Built-in `Schema.Void` ordinarily accepts an object and returns `undefined`. Beside an object or
 list candidate in a visible any-of union, the strict read declines Void for an object with a defined
 enumerable own field or a list with a defined own cell. The strict write declines Void for every
 object or list, including when its cells decoded to `undefined`. The fallback write keeps that guard
 while relaxing excess-property handling. If the structural member cannot encode a value, such as
-JSON metadata containing a `Date` under `Schema.Unknown`, preparation fails with a `SchemaError`.
-This includes annotated and checked Void and paths through unencoded any-of member unions. The read
-uses original member order when it sees no defined fields or cells.
+JSON metadata containing a `Date` under `Schema.Unknown`, preparation fails with a `SchemaError`
+when no other member can take the value. The guard includes annotated and checked Void and paths
+through unencoded any-of member unions. The read uses original member order when it sees no defined
+fields or cells.
 
-Normalization removes unstated fields from closed objects and treats undefined-valued keys as absent
-in a strict read. A signature-less `Schema.Struct({})` can keep arbitrary keys when selected. Beside
-Void alone, a plain empty struct keeps first-fit object reading. This means a leading Void can take
-an object and a leading empty struct can keep it. A defined own list cell still declines Void. An
-empty struct query or header binding still states no names.
+A union made up solely of Void and plain, unchecked empty structs keeps first-fit object reading. A
+leading Void can take the object and a leading empty struct can keep it. Adding another kind of
+member, checking an empty struct or grouping the union as a member of an enclosing guarded union
+removes that exception. A defined own list cell still declines Void.
 
 If an object member maps decoded `limit` to encoded `page_size`, either order with Void prepares
 `{ page_size: "05" }` through the object member. An invalid `page_size` is a `SchemaError`. Avoid

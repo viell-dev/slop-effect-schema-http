@@ -22,6 +22,71 @@ const post = <S extends Schema.Top>(schema: S) =>
     Request.body(Body.jsonSchema(schema)),
   );
 
+describe("signature-less object candidates under unions", () => {
+  const Empty = Schema.Struct({});
+  const A = Schema.Struct({ a: Schema.String });
+
+  it.effect("keeps supplied keys when every object candidate is empty", () =>
+    Effect.gen(function* () {
+      class EmptyClass extends Schema.Class<EmptyClass>("EmptyClass")({}) {}
+      const tag = { tag: "a" };
+      for (const value of [
+        Schema.Union([Empty, Schema.Literal("x")]),
+        Schema.Union([EmptyClass, Schema.Null]),
+      ]) {
+        expect(yield* bodyOf(post(value), { body: tag })).toBe('{"tag":"a"}');
+        // The renamed sibling requires strict normalization of the whole request value.
+        const strict = Schema.Struct({ e: value, title: Schema.String }).pipe(
+          Schema.encodeKeys({ title: "wire_title" }),
+        );
+        expect(
+          yield* bodyOf(post(strict), { body: { e: tag, title: "item" } }),
+        ).toBe('{"e":{"tag":"a"},"wire_title":"item"}');
+      }
+    }),
+  );
+
+  it.effect(
+    "keeps the keys of the only object candidate inside a union member",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Union([Schema.Struct({ e: Empty }), A]);
+        expect(yield* bodyOf(post(schema), { body: { e: { tag: "a" } } })).toBe(
+          '{"e":{"tag":"a"}}',
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/249
+  it.effect(
+    "currently strips unstated keys when a stated member is available",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Union([A, Empty]);
+        const input = { a: "x", z: 1 };
+        expect(yield* bodyOf(post(schema), { body: input })).toBe('{"a":"x"}');
+        expect(yield* urlOf(queried(schema), { query: input })).toBe("/x?a=x");
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/249
+  it.effect(
+    "currently uses the stated member's query default beside an empty struct",
+    () =>
+      Effect.gen(function* () {
+        const Filter = Schema.Struct({
+          limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+            Schema.withConstructorDefault(Effect.succeed(25)),
+          ),
+        }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+        const schema = Schema.Union([Filter, Empty]);
+        expect(yield* urlOf(queried(schema), { query: { tag: "a" } })).toBe(
+          "/x?page_size=25",
+        );
+      }),
+  );
+});
+
 describe("a Void member beside a renamed object", () => {
   const Filter = Schema.Struct({
     limit: Schema.optionalKey(Schema.FiniteFromString).pipe(

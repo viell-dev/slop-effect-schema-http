@@ -310,7 +310,12 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     const sides = types.flatMap((type) => sidesOf(type, value));
     const hidden = unlisted(sides, value);
     const open = leaveKeysOpen(sides);
-    const keepKeys = open || sides.some(isSignaturelessObject);
+    const keepKeys =
+      open ||
+      (sides.some(isSignaturelessObject) &&
+        !sides.some(
+          (side) => side._tag === "Objects" && !isSignaturelessObject(side),
+        ));
     const plain = isPlain(value);
     const asStruct = !plain && readAsStruct(sides, open);
     const asArray = readAsArray(sides);
