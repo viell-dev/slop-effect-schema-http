@@ -410,8 +410,26 @@ describe("array key normalization during request preparation", () => {
   );
 });
 
+/** A success's value, or the refusal; anything else stays a failure of the test. */
+const outcome = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.match(effect, {
+    onFailure: (error) =>
+      error instanceof Schema.SchemaError ? ("refused" as const) : error,
+    onSuccess: (value) => ({ value }),
+  });
+
+/** What the path and body bindings each give for one input. */
+const prepared = <S extends Schema.Top>(schema: S, input: unknown) =>
+  Effect.forEach(["path", "body"] as const, (binding) =>
+    outcome(prepare(schema, input, binding)),
+  );
+
+const refused = ["refused", "refused"];
+const kept = (value: unknown) => [{ value }, { value }];
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/237
 describe("a caller's list beside a record member", () => {
+  // The types refuse a list for a record and each invalid item, so these come in wider values.
   const Plain = Schema.Struct({ limit: Schema.optionalKey(Schema.String) });
   const Open = Schema.Record(Schema.String, Schema.Unknown);
   const plainUnions = [
@@ -422,20 +440,6 @@ describe("a caller's list beside a record member", () => {
     Schema.Union([Schema.Array(Filter), Open]),
     Schema.Union([Open, Schema.Array(Filter)]),
   ];
-  /** A success's value, or the refusal; anything else stays a failure of the test. */
-  const outcome = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    Effect.match(effect, {
-      onFailure: (error) =>
-        error instanceof Schema.SchemaError ? ("refused" as const) : error,
-      onSuccess: (value) => ({ value }),
-    });
-  // The types refuse a list for a record and each invalid item, so these come in wider values.
-  const prepared = <S extends Schema.Top>(schema: S, input: unknown) =>
-    Effect.forEach(["path", "body"] as const, (binding) =>
-      outcome(prepare(schema, input, binding)),
-    );
-  const refused = ["refused", "refused"];
-  const kept = (value: unknown) => [{ value }, { value }];
 
   it.effect("refuses an item its list member refuses, in either order", () =>
     Effect.gen(function* () {
