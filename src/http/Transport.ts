@@ -32,7 +32,9 @@ const headerLine = (name: string, value: string): readonly [string, string] => {
  * Expand a supported header collection into ordered name/value lines.
  *
  * @remarks
- * Record array values become repeated lines; `undefined` fields are omitted.
+ * Record arrays of strings become repeated lines, and `undefined` record fields are omitted.
+ * Pair names and values must be strings. An invalid name or non-string value throws `TypeError`.
+ * A schema-backed `Request.headers` binding reports this failure as `InvalidRequest`.
  */
 export const entries = (input: HeaderInput): Lines =>
   Symbol.iterator in input

@@ -265,6 +265,12 @@ const leaveKeysOpen = (sides: ReadonlyArray<Ast>): boolean =>
       _tag === "Any" || _tag === "Unknown" || _tag === "ObjectKeyword",
   ) || !sides.some(({ _tag }) => _tag === "Objects" || _tag === "Arrays");
 
+/** Effect's empty struct has no shape checks on the keys of a supplied value. */
+export const isSignaturelessObject = (ast: Ast): boolean =>
+  ast._tag === "Objects" &&
+  ast.propertySignatures.length === 0 &&
+  ast.indexSignatures.length === 0;
+
 /**
  * The names a struct here reads from a value although they are no keys of it, as an accessor on a
  * class is. A strict read only counts keys as excess, so it would strip such a field with no error.
@@ -304,6 +310,7 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     const sides = types.flatMap((type) => sidesOf(type, value));
     const hidden = unlisted(sides, value);
     const open = leaveKeysOpen(sides);
+    const keepKeys = open || sides.some(isSignaturelessObject);
     const plain = isPlain(value);
     const asStruct = !plain && readAsStruct(sides, open);
     const asArray = readAsArray(sides);
@@ -314,7 +321,7 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
       const inner = typesAt(sides, key);
       return (plain || asStruct) &&
         !isList &&
-        drops(item, open || inner.length > 0)
+        drops(item, keepKeys || inner.length > 0)
         ? []
         : [[key, rewrite(inner, item)] as const];
     });

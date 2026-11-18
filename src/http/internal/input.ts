@@ -100,11 +100,8 @@ export const toDecoded = <S extends Schema.Top>(
     // A field need not be a key, as an accessor on a class is not, so it comes from `input`.
     const fields: Record<PropertyKey, unknown> = input as never;
     for (const { name, type } of Excess.fieldsOf(contract.ast))
-      if (fields[name] !== undefined) {
-        const field = fields[name];
-        const read = yield* fromPart(type, field, parseOptions);
-        output[name] = read;
-      }
+      if (fields[name] !== undefined)
+        output[name] = yield* fromPart(type, fields[name], parseOptions);
     const value = yield* make(output, parseOptions);
     onFieldwise?.();
     return value;
@@ -167,6 +164,11 @@ export interface Written<A> {
   readonly output: A;
   readonly lost: ReadonlyArray<Excess.Path>;
 }
+
+/** Whether a lost field is the witnessed alias or one of its ancestors. */
+const coversPath = (lost: Excess.Path, alias: Excess.Path): boolean =>
+  lost.length <= alias.length &&
+  lost.every((part, index) => part === alias[index]);
 
 /** Takes a decoded value out through a schema, as the options say. */
 type Write<S extends Schema.Top, A, R> = (
@@ -273,7 +275,8 @@ const readerForCodec = <S extends Schema.Top, A, R>(
           Effect.map(
             Effect.catch(strictWriter(value, Excess.strict), () => {
               onWriteFailure?.();
-              return write(value);
+              // Relax excess-property handling while keeping any Void guard on the writer.
+              return strictWriter(value);
             }),
             (output): Written<A> => ({
               output,
@@ -470,19 +473,14 @@ const readerForCodec = <S extends Schema.Top, A, R>(
                     ? Effect.mapError(decode(current), () => refusal)
                     : Effect.catch(confirm(current), (confirmationFailure) =>
                         Effect.flatMap(
-                          compared(input, given, (candidate) =>
-                            decode(candidate),
+                          compared(current, given, (candidate) =>
+                            Effect.mapError(decode(candidate), () => refusal),
                           ),
                           ({ lost }) =>
                             Effect.fail(
                               witness.matches() &&
-                                lost.some(
-                                  (path) =>
-                                    path.length <= witness.path.length &&
-                                    path.every(
-                                      (part, index) =>
-                                        part === witness.path[index],
-                                    ),
+                                lost.some((path) =>
+                                  coversPath(path, witness.path),
                                 )
                                 ? refusal
                                 : confirmationFailure,

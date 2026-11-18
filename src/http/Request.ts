@@ -87,9 +87,8 @@ export type QueryFields = Readonly<
  * copies a list into an object keyed by its indexes, so a record or struct member cannot take such
  * a copy; Effect's own readings, such as an empty `Schema.Class`, still apply. Unsupported
  * constructor-default paths below can still ignore a supplied alias, and a default can replace an
- * invalid list item under a parent read field by field (issue #241). A weak schema also lets more
- * through:
- * `Schema.NumberFromString` turns `"many"` into `NaN`, and `Schema.FiniteFromString` refuses it.
+ * invalid list item under a parent read field by field (issue #241). A weak schema can accept more
+ * values. `Schema.NumberFromString` turns `"many"` into `NaN` and `Schema.FiniteFromString` refuses it.
  *
  * A value that fits the decoded side is read as decoded. Under a schema whose two sides share a
  * type, such as one from text to text, an already encoded value fits the decoded side, so it is
@@ -104,9 +103,9 @@ export type QueryFields = Readonly<
  * decides and a supplied alias can still be ignored in favor of a default. It stops at
  * inherited-only cells, arbitrary iterators, middleware-encoded alternatives, a list under a union
  * whose list reader is encoded or not its only member that can read lists (`Schema.Struct({})`
- * reads them), and opaque or ambiguous paths (issue #170). Stable sparse own cells, exact native own iterator data,
- * plain-transformation primitive codecs such as `Schema.FiniteFromString`, and one-or-many unions of
- * an object and its list can qualify.
+ * reads them), and opaque or ambiguous paths (issue #170). Stable sparse own cells, exact native
+ * own iterator data, plain-transformation primitive codecs such as `Schema.FiniteFromString`, and
+ * one-or-many unions of an object and its list can qualify.
  * Array normalization preserves positions and symbol identity but does not expand that proof.
  * Supply one decoded shape, validated and mapped explicitly when needed, for unsupported inputs.
  * Whole encoded reading can refuse mixed-side input or change a shared-type field's interpretation;
@@ -125,12 +124,15 @@ export type QueryFields = Readonly<
  * names it, because the types allow that value and any member would lose a field the schema states.
  * Beside a visible object or list candidate in an any-of union, the strict read declines built-in
  * `Schema.Void` for defined enumerable own fields and defined own array cells. The strict write
- * declines Void for every object and array. This includes annotated and checked Void and unencoded
- * any-of member unions. The read keeps first-fit order when it sees no defined fields or cells.
- * Some mixed-side inputs refuse. Avoid Void in input schemas
- * that rely on classes, opaque or suspended values, encoded member unions, other union modes,
- * standalone Void or custom discarding transformations.
- * A key no member states is stripped, as a struct strips it, and so is a key the tag has ruled out.
+ * declines Void for every object and array, including when it retries without strict excess
+ * checking. If the structural member cannot encode the value, the request reports a
+ * `SchemaError`. The guard includes annotated and checked Void and unencoded any-of member unions.
+ * The read keeps first-fit order when it sees no defined fields or cells. A plain empty struct
+ * keeps arbitrary keys when selected. Beside Void alone, it retains first-fit object reading
+ * and the guard for defined list cells. Some mixed-side inputs refuse in either order.
+ * Avoid Void in input schemas that rely on classes, opaque or suspended values, encoded member
+ * unions, other union modes, standalone Void or custom discarding transformations.
+ * Closed structs strip keys no member states and keys a tag rules out.
  * A required literal tag can choose by its decoded or encoded name. Both views must rule a member
  * out before its fields go; a constructor default is not guessed to make that choice.
  * A key set to `undefined` is no field, and an accessor on a class is one, as it is to a struct. In a

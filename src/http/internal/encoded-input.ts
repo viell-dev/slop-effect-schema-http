@@ -223,9 +223,6 @@ export const encodedInput = (
       };
       return {
         witness,
-        written(output: unknown) {
-          return witness(output) !== undefined;
-        },
         matches() {
           try {
             if (

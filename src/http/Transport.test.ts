@@ -5,6 +5,14 @@ import { response, text } from "../../test/support.js";
 import * as Transport from "./Transport.js";
 
 describe("Transport.entries", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
+  it.each([{ input: { "x-count": [1, 2] } }, { input: [["x-count", 1]] }])(
+    "throws TypeError for a non-string header value",
+    ({ input }) => {
+      expect(() => Transport.entries(input as never)).toThrow(TypeError);
+    },
+  );
+
   it("expands a record, keeping spelling and turning arrays into repeated lines", () => {
     expect(
       Transport.entries({
