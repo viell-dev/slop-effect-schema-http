@@ -11,8 +11,9 @@ native own iterators into one constructor-default extension. Compatible patch
 bounded stacked-union recovery; it does not extend the constructor-default proof again. The [0.17
 release](./0.17.md) extends the 0.16 alternative rule to nested primitive unions such as
 `Schema.Literals([...])` and `Schema.NullOr(Schema.String)`. The [0.18 release](./0.18.md) extends
-the union preservation rule to `Schema.Void` members and separately stops the field-by-field reading
-from sending a list as an index-keyed object.
+it again, to encoded primitive and array-shaped members. It also extends the union preservation rule
+to `Schema.Void` members, and separately stops the field-by-field reading from sending a list as an
+index-keyed object.
 
 ## Schema-input hardening
 
@@ -34,11 +35,13 @@ constructor default is another. Static input types and array normalization are s
 | [0.15](./0.15.md) | Preserve actual array layout and handle symbol keys                              | An inner rewrite previously compacted/dropped cells or misread metadata   |
 | [0.16](./0.16.md) | Validate aliases in the accepted remaining container profiles                    | Primitive alternatives, sparse own cells and exact native own iterators   |
 | [0.17](./0.17.md) | Validate aliases beside Effect's nested primitive alternatives                   | An unencoded union whose members are all primitive alternatives           |
+| [0.18](./0.18.md) | Validate aliases beside encoded primitive and array-shaped members               | Plain-transformation primitive codecs; a union's one list-reading member  |
 
-Thus 0.9, 0.11–0.14, 0.16 and 0.17 extend one constructor-default repair. Versions 0.8 and 0.10
+Thus 0.9, 0.11–0.14 and 0.16–0.18 extend one constructor-default repair. Versions 0.8 and 0.10
 repair static types without changing runtime selection. Version 0.15 fixes separate normalization
-defects and does not finish the constructor-default work. Some successful results changed and some
-calls began to refuse, so the articles retain their breaking-change migrations.
+defects and does not finish the constructor-default work; the 0.18 list change is also a separate
+fix. Some successful results changed and some calls began to refuse, so the articles retain their
+breaking-change migrations.
 
 These narrow implementation proofs protect schema priority, effects, opaque boundaries and actual
 caller/output evidence. They did not require a separate software publication for every extension.
