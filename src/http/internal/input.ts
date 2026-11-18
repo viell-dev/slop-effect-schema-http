@@ -75,7 +75,8 @@ export type Input<S extends Schema.Top> = EitherSide<
  *
  * A list has no fields, so it is never read field by field, at any depth: that route copies the
  * value into a new object, and a record or a struct could take the copy in the list's place. Union
- * members are still tried in turn, each by the same rules, so a list stays a list or is refused.
+ * members are still tried in turn, each by the same rules, because a member read alone can settle
+ * what the whole union refuses, as an any-one union of two list members can.
  */
 export const toDecoded = <S extends Schema.Top>(
   contract: S,

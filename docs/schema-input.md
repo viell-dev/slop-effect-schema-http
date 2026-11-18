@@ -90,9 +90,10 @@ Eligibility is not a promise that every schema or value in the listed container 
 
 Preparation tries the decoded side first, then the decoder as a whole, then, for an object that is
 not a list, the decoder field by field. If all fail, it reports the decoded side's error, a
-`SchemaError` before dispatch. [A list stays a list](#a-list-stays-a-list) on every route. After a
-typed strict read failure, stable plain root input can establish an additional encoded check from
-finite closed object/union names: it supplies an encoded-only name and no decoded-only name.
+`SchemaError` before dispatch. [A list stays a list](#a-list-stays-a-list) describes that rule and
+its limits. After a typed strict read failure, stable plain root input can establish an additional
+encoded check from finite closed object/union names: it supplies an encoded-only name and no
+decoded-only name.
 
 Unencoded primitive alternatives that cannot consume an object contribute no object fields or names.
 This includes the Undefined/Null members of optional, nullable and nullish object schemas. The
@@ -245,10 +246,11 @@ takes is not lost, as the rule on stacked schemas below says.
 
 ### A list stays a list
 
-A list is read as a whole and never field by field, at any depth. Effect's record and struct schemas
-refuse a list, as the types do, so beside such a member a list has only its list member's reading:
-it is kept as a list, or the request is refused. An object stays an object, including one whose keys
-look like indexes.
+Reading field by field, the last route above, copies a value into a new object. Preparation never
+takes that route for a list, at any depth, so a record or struct member cannot take an index-keyed
+copy in the list's place. Effect's record and struct schemas refuse a list, as the types do, so
+beside such a member a list has its list member's reading: it is kept as a list, or the request is
+refused. An object stays an object, including one whose keys look like indexes.
 
 ```ts
 import { Schema } from "effect";
@@ -267,13 +269,26 @@ const send = Request.post("https://api.example.test/things").pipe(
 ```
 
 An item the list member refuses, as in `[{ limit: 5 }]`, is a `SchemaError` before dispatch, as it
-is without the record. The record's values hold any key, so beside it a key the list member does not
-state counts as stated: `[{ page_size: "05" }]` would lose `page_size` and is refused too, where
-`Schema.Array(Plain)` alone strips it to `[{}]`. The same holds in paths, at any depth, and for a
-query or header group given as a list of pairs; a list given to a record alone is refused. Below
-such a union an invalid encoded alias in an item can still be replaced by a constructor default, as
-under other array-shaped union members
-([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)).
+is without the record, and a list given to a record alone is refused. This holds in bodies and
+paths, at any depth, and when reading a query or header group given as a list of pairs.
+
+The rule covers only the copy this route would make. Effect's own readings still apply:
+`Schema.Struct({})` keeps a list as it is, and an empty `Schema.Class` builds an instance keyed by a
+list's indexes. These limits remain:
+
+- Beside a record, a key the list member does not state can refuse instead of being stripped: with
+  the record above, `[{ page_size: "05" }]` is refused, where `Schema.Array(Plain)` alone writes
+  `[{}]` ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)).
+- A constructor default can still replace an invalid item value. Below such a union an encoded alias
+  can be replaced, as under other array-shaped union members
+  ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170)). When another field
+  makes a parent read field by field, an invalid decoded value can be replaced too, with or without
+  the record: `{ n: 1, items: [{ limit: "x" }] }` under a struct with `n: Schema.FiniteFromString`
+  ([#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241)).
+- Writing a query or header group tells a pairs list by its iterator. A list with no iterator on its
+  prototype, such as one with a `null` prototype, that a member such as `Schema.Struct({})` keeps is
+  written under its indexes
+  ([#242](https://github.com/viell-dev/slop-effect-schema-http/issues/242)).
 
 ### An opaque value is the schema's own reading
 
@@ -369,7 +384,8 @@ bounded case.
 The kept-or-refused rule is the intended contract. Known violations remain under
 [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143) and
 [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170); an unsupported proof is not
-a guarantee that preparation refuses safely.
+a guarantee that preparation refuses safely. [A list stays a list](#a-list-stays-a-list) lists the
+remaining list limits under #241, #242 and #243.
 
 - Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
   name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that

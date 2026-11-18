@@ -14,14 +14,17 @@
   for the exact scope.
 - Return a typed `InvalidRequest` when a query or header schema encodes a non-object group or a
   header record supplies a non-string value (#236).
-- **Breaking:** keep a caller's list a list when schema-backed preparation falls back to reading
-  field by field (#237). That route copied a list into an object keyed by its indexes, so beside a
-  record or struct member, as in `Union([Schema.Array(Plain), Schema.Record(...)])`, a list whose
-  item its list member refused, such as `[{ limit: 5 }]`, went out as `{"0":{"limit":5}}`. Such a
-  list now refuses before dispatch, in paths, bodies, nested fields and query or header groups of
-  pairs, and so does a list given to a record alone. A key only the record's open values state, as
-  `page_size` in `[{ page_size: "05" }]`, refuses instead of being sent. Valid lists and objects,
-  including objects with index-like keys, keep their results.
+- **Breaking:** stop schema-backed preparation's field-by-field fallback from copying a caller's
+  list into an object keyed by its indexes (#237). Beside a record or struct member, as in
+  `Union([Schema.Array(Plain), Schema.Record(...)])`, a list whose item its list member refused,
+  such as `[{ limit: 5 }]`, went out as `{"0":{"limit":5}}`. Such a list now refuses before dispatch
+  in paths, bodies and nested fields, and when a query or header group reads a list of pairs, and so
+  does a list given to a record alone. Beside such a record, `[{ page_size: "05" }]` now refuses
+  too, where the list member alone strips the key (#243). Valid lists and objects, including objects
+  with index-like keys, keep their results, and Effect's own readings, such as an empty
+  `Schema.Class` building an index-keyed instance, are unchanged. A default replacing an invalid
+  item under a parent read field by field (#241) and a pairs list with no iterator prototype written
+  under its indexes (#242) remain open.
 
 ## 0.17.0 — 2026-11-16
 
