@@ -265,14 +265,13 @@ describe("Lists beside records on the wire", () => {
       );
 
       it.live(
-        `[EXT-51i] currently ${binding} ${order} replaces an invalid encoded list item alias`,
+        `[EXT-51i] ${binding} ${order} refuses an invalid encoded list item alias before dispatch`,
         () =>
           Effect.gen(function* () {
             const backend = yield* start();
             const input = [{ page_size: "many" }];
             yield* refuse(backend, send(backend, binding, Filter, input));
-            yield* send(backend, binding, filtered, input);
-            yield* jsonWire(backend, binding, '[{"page_size":"25"}]');
+            yield* refuse(backend, send(backend, binding, filtered, input));
           }),
       );
     }

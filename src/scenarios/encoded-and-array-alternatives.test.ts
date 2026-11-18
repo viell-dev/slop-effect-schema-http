@@ -6,7 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema, SchemaGetter } from "effect";
 import { lane } from "#lane";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
-import { headerValues } from "../harness/lane.js";
+import { headerValues, type Backend, type Recorded } from "../harness/lane.js";
 
 const Filter = Schema.Struct({
   limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
@@ -70,6 +70,20 @@ const invalidAliases = [{ page_size: "many" }, { page_size: null }] as const;
 const list = (input: unknown) => [input];
 const listJson = (json: string) => `[${json}]`;
 
+const assertWire = (entry: Recorded, binding: Binding, json: string) => {
+  expect(entry.method).toBe(binding === "path" ? "GET" : "POST");
+  expect(entry.target).toBe(
+    binding === "path" ? `/x/${encodeURIComponent(json)}` : "/x",
+  );
+  expect(headerValues(entry.lines, "accept")).toEqual(["text/plain"]);
+  expect(headerValues(entry.lines, "content-type")).toEqual(
+    binding === "path" ? [] : ["application/json"],
+  );
+  expect(entry.body).toEqual(
+    new TextEncoder().encode(binding === "path" ? "" : json),
+  );
+};
+
 const checkWire = (
   schema: WireSchema,
   binding: Binding,
@@ -84,32 +98,18 @@ const checkWire = (
       expect(input).toEqual(fixture);
       const ledger = yield* backend.ledger;
       expect(ledger).toHaveLength(index + 1);
-      const entry = ledger[index]!;
-      expect(entry.method).toBe(binding === "path" ? "GET" : "POST");
-      expect(entry.target).toBe(
-        binding === "path" ? `/x/${encodeURIComponent(json)}` : "/x",
-      );
-      expect(headerValues(entry.lines, "accept")).toEqual(["text/plain"]);
-      expect(headerValues(entry.lines, "content-type")).toEqual(
-        binding === "path" ? [] : ["application/json"],
-      );
-      expect(entry.body).toEqual(
-        new TextEncoder().encode(binding === "path" ? "" : json),
-      );
+      assertWire(ledger[index]!, binding, json);
     }
   });
 
-const checkRefusal = (
-  schema: WireSchema,
-  binding: Binding,
+const refuse = (
+  backend: Backend,
+  execute: (input: unknown) => Effect.Effect<unknown, unknown>,
   inputs: ReadonlyArray<unknown>,
 ) =>
   Effect.gen(function* () {
-    const backend = yield* start();
-    const execute = bind(backend.origin, schema, binding);
     const outcomes = [];
-    for (const fixture of inputs) {
-      const input = structuredClone(fixture);
+    for (const input of inputs) {
       outcomes.push(
         yield* execute(input).pipe(
           Effect.match({
@@ -119,7 +119,6 @@ const checkRefusal = (
           }),
         ),
       );
-      expect(input).toEqual(fixture);
     }
     const ledger = yield* backend.ledger;
     expect({
@@ -129,6 +128,18 @@ const checkRefusal = (
         body: new TextDecoder().decode(body),
       })),
     }).toEqual({ outcomes: inputs.map(() => "SchemaError"), requests: [] });
+  });
+
+const checkRefusal = (
+  schema: WireSchema,
+  binding: Binding,
+  fixtures: ReadonlyArray<unknown>,
+) =>
+  Effect.gen(function* () {
+    const backend = yield* start();
+    const inputs = fixtures.map((fixture) => structuredClone(fixture));
+    yield* refuse(backend, bind(backend.origin, schema, binding), inputs);
+    expect(inputs).toEqual(fixtures);
   });
 
 const Uppercase = Schema.String.pipe(
@@ -301,6 +312,111 @@ const arrayLimits = [
   },
 ] as const;
 
+const objectEvidence = [
+  ["direct Filter", Filter],
+  ["singleton union", Schema.Union([Filter])],
+  ["Filter before Cursor", Schema.Union([Filter, Cursor])],
+  ["Cursor before Filter", Schema.Union([Cursor, Filter])],
+] as const;
+type ObjectEvidence = (typeof objectEvidence)[number][1];
+const bindObjectEvidence = (
+  origin: string,
+  schema: ObjectEvidence,
+  binding: Binding | "query" | "headers",
+) => {
+  const request = Request.get(`${origin}/x`);
+  if (binding === "query") {
+    const operation = Operation.make(
+      request.pipe(Request.query(schema)),
+      response,
+    );
+    return (input: unknown) =>
+      operation
+        .execute({ query: input as Request.Input<ObjectEvidence> })
+        .pipe(Effect.provide(lane.fetchClient));
+  }
+  if (binding === "headers") {
+    const operation = Operation.make(
+      request.pipe(Request.headers(schema)),
+      response,
+    );
+    return (input: unknown) =>
+      operation
+        .execute({ headers: input as Request.Input<ObjectEvidence> })
+        .pipe(Effect.provide(lane.fetchClient));
+  }
+  return bind(origin, schema, binding);
+};
+const namedLists = () =>
+  ["many", "05"].map((page_size) => {
+    const input: unknown[] = [];
+    Object.setPrototypeOf(input, null);
+    return Object.assign(input, { page_size });
+  });
+
+const groupedProfiles = [
+  {
+    name: "list beside cursor",
+    member: Filters,
+    companion: Cursor,
+    input: list,
+    json: listJson,
+  },
+  {
+    name: "object beside string list",
+    member: Schema.Struct({ filter: Filter }),
+    companion: Schema.Array(Schema.String),
+    input: (filter: unknown) => ({ filter }),
+    json: (json: string) => `{"filter":${json}}`,
+  },
+] as const;
+const groupings = [
+  {
+    name: "flat",
+    schema: (member: WireSchema, companion: WireSchema, order: Order) =>
+      Schema.Union(
+        order === "filter first"
+          ? [member, companion, Schema.Void]
+          : [companion, Schema.Void, member],
+      ),
+  },
+  {
+    name: "companion then Void",
+    schema: (member: WireSchema, companion: WireSchema, order: Order) =>
+      union(member, Schema.Union([companion, Schema.Void]), order),
+  },
+  {
+    name: "Void then companion",
+    schema: (member: WireSchema, companion: WireSchema, order: Order) =>
+      union(member, Schema.Union([Schema.Void, companion]), order),
+  },
+] as const;
+
+const hiddenList = (page_size: string) =>
+  Object.defineProperty([] as unknown[], "0", { value: { page_size } });
+
+const CursorText = Cursor.pipe(
+  Schema.decodeTo(Schema.String, {
+    decode: SchemaGetter.transform(({ cursor }) => cursor),
+    encode: SchemaGetter.transform((cursor) => ({ cursor })),
+  }),
+);
+const cursorOrVoid = () => Schema.Union([CursorText, Schema.Void]);
+const guardedList = (shared: boolean) => {
+  const inner = cursorOrVoid();
+  return Schema.Array(
+    Schema.Struct({
+      guarded: Schema.optionalKey(Schema.Union([Filters, inner])),
+      loose: Schema.optionalKey(
+        Schema.Union([Filters, shared ? inner : cursorOrVoid()], {
+          mode: "oneOf",
+        }),
+      ),
+      n: Schema.FiniteFromString,
+    }),
+  );
+};
+
 describe(`encoded primitive and array alternatives (${lane.name})`, () => {
   for (const binding of bindings) {
     for (const order of orders) {
@@ -465,5 +581,125 @@ describe(`encoded primitive and array alternatives (${lane.name})`, () => {
           ]),
       );
     }
+  }
+
+  for (const binding of [...bindings, "query", "headers"] as const) {
+    for (const [name, schema] of objectEvidence) {
+      it.live(
+        `[EXT-50h] ${binding} ${name} refuses a named alias on a null-prototype list`,
+        () =>
+          Effect.gen(function* () {
+            const backend = yield* start();
+            const inputs = namedLists();
+            yield* refuse(
+              backend,
+              bindObjectEvidence(backend.origin, schema, binding),
+              inputs,
+            );
+            for (const [index, input] of inputs.entries()) {
+              expect(Object.getPrototypeOf(input)).toBeNull();
+              expect(Object.keys(input)).toEqual(["page_size"]);
+              expect(input.page_size).toBe(index === 0 ? "many" : "05");
+            }
+          }),
+      );
+    }
+  }
+
+  for (const binding of bindings) {
+    for (const order of orders) {
+      it.live(
+        `[EXT-50i] ${binding} ${order} a primitive codec beside Filter refuses aliases on a null-prototype list`,
+        () =>
+          Effect.gen(function* () {
+            const backend = yield* start();
+            const schema = union(Filter, Schema.FiniteFromString, order);
+            yield* refuse(
+              backend,
+              bind(backend.origin, schema, binding),
+              namedLists(),
+            );
+          }),
+      );
+
+      for (const fixture of groupedProfiles) {
+        for (const grouping of groupings) {
+          for (const position of positions) {
+            const schema = position.schema(
+              grouping.schema(fixture.member, fixture.companion, order),
+            );
+            const name = `${binding} ${fixture.name} ${grouping.name} ${order} ${position.name}`;
+            it.live(
+              `[EXT-50j] ${name} preserves encoded decoded and omitted aliases`,
+              () =>
+                checkWire(
+                  schema,
+                  binding,
+                  samples.map(([input, json]) => [
+                    position.input(fixture.input(input)),
+                    position.json(fixture.json(json)),
+                  ]),
+                ),
+            );
+            it.live(
+              `[EXT-50k] ${name} refuses invalid aliases before dispatch`,
+              () =>
+                checkRefusal(
+                  schema,
+                  binding,
+                  invalidAliases.map((input) =>
+                    position.input(fixture.input(input)),
+                  ),
+                ),
+            );
+          }
+        }
+      }
+
+      it.live(
+        `[EXT-50l] ${binding} ${order} a list beside Void refuses a hidden invalid alias and sends a hidden valid alias`,
+        () =>
+          Effect.gen(function* () {
+            const backend = yield* start();
+            const execute = bind(
+              backend.origin,
+              union(Filters, Schema.Void, order),
+              binding,
+            );
+            const invalid = hiddenList("many");
+            yield* refuse(backend, execute, [invalid]);
+            const valid = hiddenList("05");
+            expect(yield* execute(valid)).toBe("Not Found");
+            const ledger = yield* backend.ledger;
+            expect(ledger).toHaveLength(1);
+            assertWire(ledger[0]!, binding, '[{"page_size":"5"}]');
+            for (const [input, page_size] of [
+              [invalid, "many"],
+              [valid, "05"],
+            ] as const) {
+              expect(Object.getOwnPropertyDescriptor(input, "0")).toEqual({
+                value: { page_size },
+                enumerable: false,
+                configurable: false,
+                writable: false,
+              });
+              expect(input.length).toBe(1);
+            }
+          }),
+      );
+    }
+
+    const input = [{ guarded: [{ page_size: "many" }], n: 2 }];
+    it.live(
+      `[EXT-50m] currently ${binding} a reused member union beside Void lets the default replace an invalid alias`,
+      () =>
+        checkWire(guardedList(true), binding, [
+          [input, '[{"guarded":[{"page_size":"25"}],"n":"2"}]'],
+        ]),
+    );
+    it.live(
+      `[EXT-50n] ${binding} separate member unions refuse the same invalid alias`,
+      () => checkRefusal(guardedList(false), binding, [input]),
+    );
   }
 });
