@@ -29,24 +29,53 @@
   text. Own formatting methods have no effect, and invalid dates write the literal `Invalid Date`.
 - **Breaking:** JSON request bodies refuse lossy representations with a field path
   ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). For example,
-  `{ v: NaN }` no longer writes `{"v":null}`, and `{ v: [undefined] }` no longer writes
-  `{"v":[null]}` under an open schema. The JSON writer also refuses functions, symbols and defined
-  enumerable symbol fields. These checks use the result of `toJSON` when present and report
-  `HttpBodyError`. A schema can still refuse first with `SchemaError`. Exceptions from caller
-  getters, proxies and `toJSON` now propagate as defects from the JSON writer.
-- **Breaking:** schema-backed form writers refuse unsupported values and empty nested containers
-  with `SchemaError` naming the field
-  ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). For example, multipart
-  no longer sends only `extra=keep` for `{ v: 1, extra: "keep" }` through an open
-  `Schema.fromFormData`. Use text or a schema that encodes values to text. The direct
-  `Body.formData` and `Body.urlEncoded` encoders now have a `SchemaError` channel for invalid
-  representations. A prepared form kept by an open form schema reaches the writer with its entries
-  intact.
-- **Breaking:** query and header record writers refuse own enumerable symbol fields with defined
-  values ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). Bindings report
-  `InvalidRequest` when the symbol reaches the writer and `SchemaError` when an indexed schema loses
-  it during input construction. The public entry helpers and object forms of `Request.setQuery` and
-  `Request.setHeader` throw `TypeError`. Iterable group outputs still write their pairs.
+  `{ v: NaN }` no longer writes `{"v":null}`, `{ v: [undefined] }` no longer writes `{"v":[null]}`,
+  and `{ v: new Map([["k", "v"]]) }` no longer writes `{"v":{}}`, through `Body.json` or an open
+  schema. The writer also refuses functions, symbols, defined enumerable symbol fields, an array's
+  own fields beside its positions, and objects whose content is not in their own fields: built-in
+  collections, binary data, `RegExp`, `Error`, `URLSearchParams`, `FormData`, `Headers`, `Blob`,
+  `File` and boxed symbols. Plain objects, class instances and values with `toJSON`, such as
+  `Option` and `DateTime`, write as before, and an invalid `Date` still writes `null`. The checks
+  use the result of `toJSON` and report `HttpBodyError`, as nesting beyond the engine's limit, about
+  4,700 levels on Node 24, still does. A schema can still refuse first with `SchemaError`.
+  Exceptions from caller getters, proxies and `toJSON` now propagate as defects. The writer now
+  reads enumerable symbol-keyed fields, including getters, to see whether they supply a value. It
+  does more work than `HttpBody.json`: on Node 24, a large body takes about two to three times as
+  long to encode as on 0.18.0, and the same without Node's brand helpers, as in a browser.
+- **Breaking:** form writers refuse values they would silently skip, with `HttpBodyError` naming the
+  field ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). For example,
+  multipart no longer sends only `extra=keep` for `{ v: 1, extra: "keep" }` through an open
+  `Schema.fromFormData`. Use text or a schema that encodes values to text. The refused values
+  include numbers, `null`, a `Date`, an `undefined` list item, symbol fields, a list's own fields
+  beside its positions, and objects whose content is not in their fields, such as a `Redacted`
+  value. Circular form data used to exhaust the stack as a defect and is now refused too. An empty
+  list or plain object still writes no entries. `Body.formData` refuses a value that is not a form,
+  recognizing one by its `FormData` tag and `append` method, so a form from another realm or
+  implementation is sent as it is. `Body.urlEncoded` refuses a value that is not `UrlParams`, such
+  as a plain record passed from JavaScript, which used to be read as Effect's `UrlParams.fromInput`
+  reads it, and malformed or non-text pairs. `Body.formData`, `Body.urlEncoded` and every
+  `Body.encodeSchema` encoder now have `HttpBodyError` in their error type.
+- **Breaking:** `Body.text`, `Body.bytes` and `Body.empty` refuse what they cannot write, with
+  `HttpBodyError` ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). A value
+  that is not a string, such as an object passed through `Body.encodeSchema(Schema.Any)`, used to
+  write `[object Object]`. A value that is not a `Uint8Array` reached the client as it was, and a
+  value given to `Body.empty` was dropped. These codecs, and requests and operations that use them,
+  now have `HttpBodyError` in their error type.
+- **Breaking:** query and header writers refuse own enumerable symbol fields with defined values,
+  and own fields beside the positions of a value list, a pair list or a pair
+  ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). For example,
+  `{ k: Object.assign(["a"], { extra: "keep" }) }` no longer writes `?k=a`. A record whose defined
+  enumerable `Symbol.iterator` field cannot be called is refused instead of being read as a record.
+  Bindings report `InvalidRequest` when the writer refuses and `SchemaError` when a string-indexed
+  schema loses a supplied symbol, whether it constructs or decodes the group. The public entry
+  helpers and object forms of `Request.setQuery` and `Request.setHeader` throw `TypeError`. Iterable
+  group outputs still write their pairs.
+- **Breaking:** a supplied symbol field that Effect's own schema reading drops from a body is
+  refused with `SchemaError`
+  ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). A string-indexed record
+  drops one whether it constructs or decodes the value, and `Body.jsonSchema` of
+  `Schema.ObjectKeyword` drops one from the top-level object, whose canonical JSON codec copies only
+  string fields.
 
 ## 0.18.0 — 2026-11-18
 
