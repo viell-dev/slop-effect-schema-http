@@ -846,6 +846,166 @@ describe("writers keep or refuse what they cannot write", () => {
   });
 });
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/256
+// Gaps the second #260 review found. Each pin records the current outcome.
+describe("writer gaps from the second #260 review", () => {
+  const symbol = Symbol("extra");
+  const supplied = () => ({ a: 1, [symbol]: "kept" });
+  const record = Schema.Record(Schema.String, Schema.Unknown);
+  class Holder extends Schema.Class<Holder>("PinHolder")({ meta: record }) {}
+  const linked = record.pipe(Schema.decodeTo(Schema.Struct({})));
+  const tagged = <A extends object>(value: A): A =>
+    Object.defineProperty(value, Symbol.toStringTag, {
+      value: "Object",
+      configurable: true,
+    });
+  const portable = async () => {
+    const builtin = Object.getOwnPropertyDescriptor(
+      process,
+      "getBuiltinModule",
+    )!;
+    try {
+      Object.defineProperty(process, "getBuiltinModule", {
+        ...builtin,
+        value: undefined,
+      });
+      vi.resetModules();
+      return await import("./internal/json-body.js");
+    } finally {
+      Object.defineProperty(process, "getBuiltinModule", builtin);
+      vi.resetModules();
+    }
+  };
+
+  it.effect("currently drops symbols through a class and a linked record", () =>
+    Effect.gen(function* () {
+      const body = yield* Body.jsonSchema(Holder).encode({ meta: supplied() });
+      expect(textOf(body)).toBe('{"meta":{"a":1}}');
+      expect(textOf(yield* Body.jsonSchema(linked).encode(supplied()))).toBe(
+        '{"a":1}',
+      );
+    }),
+  );
+
+  it.effect.fails("refuses symbols a class or a linked record drops", () =>
+    Effect.gen(function* () {
+      yield* Effect.flip(Body.jsonSchema(Holder).encode({ meta: supplied() }));
+      yield* Effect.flip(Body.jsonSchema(linked).encode(supplied()));
+    }),
+  );
+
+  it.effect(
+    "currently drops an extra array field through the ObjectKeyword codec",
+    () =>
+      Effect.gen(function* () {
+        const body = yield* Body.jsonSchema(Schema.ObjectKeyword).encode(
+          Object.assign([1], { extra: "keep" }),
+        );
+        expect(textOf(body)).toBe("[1]");
+      }),
+  );
+
+  it.effect.fails(
+    "refuses an extra array field the ObjectKeyword codec drops",
+    () =>
+      Effect.gen(function* () {
+        yield* Effect.flip(
+          Body.jsonSchema(Schema.ObjectKeyword).encode(
+            Object.assign([1], { extra: "keep" }),
+          ),
+        );
+      }),
+  );
+
+  it.effect(
+    "currently drops extra fields on a root URL-encoded pair list",
+    () =>
+      Effect.gen(function* () {
+        for (const extra of [{ extra: "keep" }, { [symbol]: "keep" }])
+          expect(
+            textOf(
+              yield* Body.urlEncoded.encode(
+                Object.assign([["k", "v"]], extra) as never,
+              ),
+            ),
+          ).toBe("k=v");
+      }),
+  );
+
+  it.effect.fails("refuses extra fields on a root URL-encoded pair list", () =>
+    Effect.gen(function* () {
+      yield* Effect.flip(
+        Body.urlEncoded.encode(
+          Object.assign([["k", "v"]], { extra: "keep" }) as never,
+        ),
+      );
+    }),
+  );
+
+  it.effect(
+    "currently gives a list reason for null in a URL-encoded list",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* urlEncodedRefusal({ k: ["a", null] })).toBe(
+          'URL-encoded body at $["k"][1] cannot encode a list or an object inside a list',
+        );
+      }),
+  );
+
+  it.effect.fails("gives the value reason for null in a URL-encoded list", () =>
+    Effect.gen(function* () {
+      expect(yield* urlEncodedRefusal({ k: ["a", null] })).toContain(
+        "must be text",
+      );
+    }),
+  );
+
+  it.effect(
+    "currently writes a reparented BigInt box with fields and a tagged iterator",
+    () =>
+      Effect.gen(function* () {
+        const box = Object.assign(
+          Object.setPrototypeOf(Object(1n), Object.prototype),
+          { a: 1 },
+        );
+        expect(textOf(yield* Body.json.encode({ v: box }))).toBe(
+          '{"v":{"a":1}}',
+        );
+        expect(
+          textOf(yield* Body.json.encode({ v: tagged([1].values()) })),
+        ).toBe('{"v":{}}');
+      }),
+  );
+
+  it.effect.fails(
+    "refuses a reparented BigInt box with fields and a tagged iterator",
+    () =>
+      Effect.gen(function* () {
+        const box = Object.assign(
+          Object.setPrototypeOf(Object(1n), Object.prototype),
+          { a: 1 },
+        );
+        yield* Effect.flip(Body.json.encode({ v: box }));
+      }),
+  );
+
+  it("currently writes a tagged Map on the portable path", async () => {
+    const writer = await portable();
+    const exit = Effect.runSync(
+      Effect.exit(writer.encode({ v: tagged(new Map([["k", 1]])) })),
+    );
+    expect(Exit.isSuccess(exit) && textOf(exit.value)).toBe('{"v":{}}');
+  });
+
+  it.fails("refuses a tagged Map on the portable path", async () => {
+    const writer = await portable();
+    const exit = Effect.runSync(
+      Effect.exit(writer.encode({ v: tagged(new Map([["k", 1]])) })),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+  });
+});
+
 describe("Body.json", () => {
   it.effect("encodes JSON with its content type", () =>
     Effect.gen(function* () {

@@ -2952,6 +2952,32 @@ describe("group writers keep or refuse symbol fields and extra list fields", () 
   );
 });
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/256
+// A gap the second #260 review found. The pin records the current outcome.
+describe("group writer gap from the second #260 review", () => {
+  const symbol = Symbol("extra");
+  const linked = Schema.Record(Schema.String, Schema.String).pipe(
+    Schema.decodeTo(Schema.Struct({})),
+  );
+  const request = Request.get("/x").pipe(Request.query(linked));
+
+  it.effect("currently drops a symbol a linked record loses", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlOf(request, { query: { a: "1", [symbol]: "kept" } }),
+      ).toBe("/x?a=1");
+    }),
+  );
+
+  it.effect.fails("refuses a symbol a linked record loses", () =>
+    Effect.gen(function* () {
+      yield* Effect.flip(
+        compile(request, { query: { a: "1", [symbol]: "kept" } }),
+      );
+    }),
+  );
+});
+
 describe("open group writer symbol fields", () => {
   const input = { k: "v", [Symbol("extra")]: "kept" };
   const schemas = [
