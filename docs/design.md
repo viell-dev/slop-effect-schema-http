@@ -151,8 +151,11 @@ and for a list beside one array-reading member, including inside a grouped any-o
 existing alias checks can then refuse input a nested constructor default would otherwise replace. A
 query or header binding that writes a non-object group reports any lost input fields before refusing
 the output with `InvalidRequest`. Header records must contain strings, arrays of strings or omitted
-values. Direct expansion with `Transport.entries` throws `TypeError` on non-string values. Malformed
-iterables can still fail while the binding reads the names of their pairs.
+values. Each encoded array of pairs is read once by position. The binding uses that reading to
+collect names, append declared defaults and write the group. Other iterables yield their pairs
+through the iterator protocol. The binding collects names from validated pairs and refuses a
+malformed pair with `InvalidRequest` before dispatch. Direct calls to `Transport.entries` and
+`UrlEncoding.queryEntries` throw `TypeError` for malformed pairs.
 
 #### A last constructor attempt
 

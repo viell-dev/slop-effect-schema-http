@@ -41,6 +41,22 @@ describe("Transport.entries", () => {
     ]);
   });
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/242
+  it("reads arrays and their pairs by position", () => {
+    const pair = ["X-Scope", "read"] as const;
+    Object.defineProperty(pair, Symbol.iterator, {
+      get: () => {
+        throw new Error("must not read the iterator");
+      },
+    });
+    const input = [pair, ["X-Scope", "write"] as const];
+    Object.setPrototypeOf(input, null);
+    expect(Transport.entries(input)).toEqual([
+      ["X-Scope", "read"],
+      ["X-Scope", "write"],
+    ]);
+  });
+
   it("keeps a value that contains a comma as one line", () => {
     expect(Transport.entries({ "X-List": "a, b" })).toEqual([
       ["X-List", "a, b"],

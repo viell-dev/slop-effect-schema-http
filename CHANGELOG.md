@@ -1,5 +1,17 @@
 # Change history
 
+## Unreleased
+
+- **Breaking:** read query and header arrays of pairs by position through name collection, declared
+  defaults and serialization
+  ([#242](https://github.com/viell-dev/slop-effect-schema-http/issues/242)). For example, a
+  null-prototype `[["k", "v"]]` kept by `Schema.Struct({})` now writes `?k=v` instead of `?0=k&0=v`.
+  An array's custom iterator can no longer substitute different fields.
+- **Breaking:** refuse malformed field pairs with a typed `InvalidRequest` before dispatch
+  ([#236](https://github.com/viell-dev/slop-effect-schema-http/issues/236)). A cast-only pair array
+  must have exactly two positions, including a string name. Malformed output could previously die
+  with a `TypeError` or be written after silently dropping part of a pair.
+
 ## 0.18.0 — 2026-11-18
 
 Read [What's in 0.18](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.18) for

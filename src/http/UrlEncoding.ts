@@ -1,4 +1,5 @@
 import { Context, Layer } from "effect";
+import * as FieldPairs from "./internal/field-pairs.js";
 
 /**
  * Ordered decoded query entries, including repeated names.
@@ -47,11 +48,15 @@ export type QueryInput =
  *
  * @remarks
  * Omits `undefined`, keeps `null`, writes a `Date` as ISO text, and converts other scalar values to
- * strings. URL escaping happens later through the query renderer.
+ * strings. Arrays of pairs are read by position. Malformed field pairs throw `TypeError`.
+ * URL escaping happens later through the query renderer.
  */
 export const queryEntries = (input: QueryInput): Query => {
-  const entries =
-    Symbol.iterator in input ? Array.from(input) : Object.entries(input);
+  const entries = Array.isArray(input)
+    ? FieldPairs.fromArray(input)
+    : Symbol.iterator in input
+      ? FieldPairs.fromIterable(input)
+      : Object.entries(input);
   return entries.flatMap(
     ([key, value]): Array<readonly [string, string | null]> =>
       (Array.isArray(value) ? value : [value]).flatMap((entry: QueryValue) =>

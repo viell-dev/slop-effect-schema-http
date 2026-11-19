@@ -118,6 +118,22 @@ describe("UrlEncoding.queryEntries", () => {
       ["y", null],
     ]);
   });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/242
+  it("reads an array with its own iterator and a prototype-free pair by position", () => {
+    const pair = ["flag", null] as const;
+    Object.setPrototypeOf(pair, null);
+    const input = [pair, ["skip", undefined] as const];
+    Object.defineProperty(input, Symbol.iterator, {
+      get: () => {
+        throw new Error("must not read the iterator");
+      },
+    });
+    expect(UrlEncoding.queryEntries(input)).toEqual([["flag", null]]);
+    expect(() => UrlEncoding.queryEntries([["missing"]] as never)).toThrow(
+      TypeError,
+    );
+  });
 });
 
 describe("UrlEncoding.defaults", () => {

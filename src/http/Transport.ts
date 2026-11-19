@@ -4,6 +4,7 @@ import {
   type HttpClientRequest,
   type HttpClientResponse,
 } from "effect/http";
+import * as FieldPairs from "./internal/field-pairs.js";
 
 /**
  * Ordered header name/value pairs, preserving supplied spelling and repeated lines.
@@ -22,7 +23,10 @@ export type Lines = ReadonlyArray<readonly [string, string]>;
  */
 export type HeaderInput = Headers.Input;
 
-const headerLine = (name: string, value: string): readonly [string, string] => {
+const headerLine = (
+  name: string,
+  value: unknown,
+): readonly [string, string] => {
   if (typeof name !== "string" || typeof value !== "string")
     throw new TypeError("A header line must have a string name and value");
   return [name, value];
@@ -33,23 +37,31 @@ const headerLine = (name: string, value: string): readonly [string, string] => {
  *
  * @remarks
  * Record arrays of strings become repeated lines, and `undefined` record fields are omitted.
- * Pair names and values must be strings. An invalid name or non-string value throws `TypeError`.
- * A schema-backed `Request.headers` binding reports this failure as `InvalidRequest`.
+ * Arrays of pairs are read by position. Pair names and values must be strings. Malformed pairs
+ * and invalid names or values throw `TypeError`. A schema-backed `Request.headers` binding reports
+ * this failure as `InvalidRequest`.
  */
 export const entries = (input: HeaderInput): Lines =>
-  Symbol.iterator in input
-    ? Array.from(input, ([name, value]) => headerLine(name, value))
-    : Object.entries(input).flatMap(
-        ([name, value]): Array<readonly [string, string]> => {
-          if (value === undefined) return [];
-          if (typeof value === "string") return [[name, value]];
-          if (!Array.isArray(value))
-            throw new TypeError(
-              "A header record field must be text or an array of text",
-            );
-          return value.map((line) => headerLine(name, line));
-        },
-      );
+  Array.isArray(input)
+    ? FieldPairs.fromArray(input).map(([name, value]) =>
+        headerLine(name, value),
+      )
+    : Symbol.iterator in input
+      ? Array.from(input, (pair) => {
+          const [name, value] = FieldPairs.iterableEntry(pair);
+          return headerLine(name, value);
+        })
+      : Object.entries(input).flatMap(
+          ([name, value]): Array<readonly [string, string]> => {
+            if (value === undefined) return [];
+            if (typeof value === "string") return [[name, value]];
+            if (!Array.isArray(value))
+              throw new TypeError(
+                "A header record field must be text or an array of text",
+              );
+            return value.map((line) => headerLine(name, line));
+          },
+        );
 
 /**
  * Produce Effect's normalized header view from ordered lines.

@@ -342,10 +342,13 @@ list's indexes. These limits remain:
   a struct with `n: Schema.FiniteFromString`
   ([#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241)). The all-encoded
   `{ n: "1", items: [{ page_size: "many" }] }` gets the default under that parent too.
-- Writing a query or header group tells a pairs list by its iterator. A list with no iterator on its
-  prototype, such as one with a `null` prototype, that a member such as `Schema.Struct({})` keeps is
-  written under its indexes
-  ([#242](https://github.com/viell-dev/slop-effect-schema-http/issues/242)).
+
+A query or header group that encodes to an array of field pairs is read by position, including when
+`Schema.Struct({})` keeps the original array. Both the list and its pairs can have a `null`
+prototype or an own iterator. A pair must be a two-position array with a string name and a value at
+the second position. An explicit `undefined` value in a query pair omits that entry. A malformed
+entry, including a hole in the list, fails with `InvalidRequest`. Declared defaults are added as
+pairs before the schema reads the group again.
 
 ### An opaque value is the schema's own reading
 
@@ -442,7 +445,7 @@ The kept-or-refused rule is the intended contract. Known violations remain under
 [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143) and
 [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170); an unsupported proof is not
 a guarantee that preparation refuses safely. [A list stays a list](#a-list-stays-a-list) lists the
-remaining list limits under #241, #242 and #243.
+remaining list limits under #241 and #243.
 
 - Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
   name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that
@@ -489,9 +492,9 @@ remaining list limits under #241, #242 and #243.
   refuses in either order too. Use all-decoded or all-encoded names, one per field, for that input.
 - JavaScript, casts and `Schema.Any` can bypass the TypeScript requirement for a query or header
   schema to encode a group of fields. Preparation reports lost input fields first. A non-object
-  group or a header record with an invalid value fails with `InvalidRequest` before dispatch.
-  Malformed iterable groups can still die while the binding inspects their pairs. Direct calls to
-  `Transport.entries` throw `TypeError` for non-string values in a record array or ordered pair.
+  group, a malformed field pair or a header field with an invalid value fails with `InvalidRequest`
+  before dispatch. Direct calls to `Transport.entries` throw `TypeError` for malformed pairs and
+  invalid header values. `UrlEncoding.queryEntries` throws `TypeError` for malformed pairs.
 - Once an encoded-only alias enables whole decoding of a list, a decoded-only item beside it can
   lose its decoded name and refuse. This applies to every covered container, array-shaped unions
   included.
