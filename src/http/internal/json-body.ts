@@ -5,7 +5,9 @@ import {
   BodyWriteError,
   checkedBody,
   extraArrayField,
+  isPosition,
   type Path,
+  supplies as definesField,
 } from "./writer-error.js";
 
 const { isRawJSON } = JSON as JSON & {
@@ -19,6 +21,11 @@ const bare = Object.create(null) as object;
 
 const isIndex = (name: string) => String(Number(name) >>> 0) === name;
 
+const hasPosition = (prototype: object) => {
+  const first = Object.getOwnPropertyNames(prototype)[0];
+  return first !== undefined && isIndex(first);
+};
+
 /**
  * How to make copies the final write treats as it treats the caller's own plain values.
  *
@@ -27,29 +34,29 @@ const isIndex = (name: string) => String(Number(name) >>> 0) === name;
  * iterative fast path that has no depth limit, and give it up for objects without the standard
  * prototype, so a prototype-free copy would fail at a depth the caller's own objects reach. A
  * standard prototype that offers `toJSON` would run it again on a copy, so copies then lose their
- * prototype. A field an assignment would not create, such as `__proto__`, or `toString` under a
- * frozen `Object.prototype`, is defined instead.
+ * prototype, and so do arrays when a standard prototype holds a position an assignment would meet.
+ * This runs once per body. Positions come first among a prototype's names, so only the first is
+ * tested. `Array.prototype`, an array itself, is listed only when its length says it may hold one,
+ * as a deleted position leaves the length behind.
  */
 function copies() {
-  const defined = new Set<string>();
-  let indexed = false;
-  for (const prototype of [Object.prototype, Array.prototype])
-    for (const name of Object.getOwnPropertyNames(prototype)) {
-      indexed ||= isIndex(name);
-      if (prototype !== Object.prototype) continue;
-      const field = Object.getOwnPropertyDescriptor(prototype, name);
-      if (
-        field !== undefined &&
-        (!("value" in field) || field.writable !== true)
-      )
-        defined.add(name);
-    }
   return {
     bareObjects: "toJSON" in Object.prototype,
-    bareArrays: "toJSON" in Array.prototype || indexed,
-    defined,
+    bareArrays:
+      "toJSON" in Array.prototype ||
+      (Array.prototype.length !== 0 && hasPosition(Array.prototype)) ||
+      hasPosition(Object.prototype),
   };
 }
+
+/** Define a field an assignment would not create, because `Object.prototype` holds its name. */
+const defineField = (target: Container, field: string, value: unknown) =>
+  Object.defineProperty(target, field, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
 
 const isObject = (value: unknown): value is object =>
   (typeof value === "object" && value !== null) || typeof value === "function";
@@ -84,17 +91,6 @@ function lengthOf(array: ReadonlyArray<unknown>): number {
   return Number.isNaN(length) || length < 0 ? 0 : length;
 }
 
-/** Positions of a string box are its characters, not fields JSON would drop. */
-const isStringPosition = (key: string, length: number) => {
-  const position = Number(key);
-  return (
-    Number.isInteger(position) &&
-    position >= 0 &&
-    position < length &&
-    String(position) === key
-  );
-};
-
 /** An open container: the value being read, its copy, and the next field or position to fill. */
 class Frame {
   next = 0;
@@ -123,18 +119,19 @@ class Frame {
 function snapshot(input: unknown): unknown {
   let top: Frame | undefined;
   let active: Set<object> | undefined;
-  const { bareObjects, bareArrays, defined } = copies();
+  const { bareObjects, bareArrays } = copies();
 
   const refuse = (
     key: string | number,
     explanation: string,
     field?: PropertyKey,
   ): never => {
+    // Collected from the innermost key outwards, then reversed once, so a deep refusal is linear.
     const path: PropertyKey[] = field === undefined ? [] : [field];
-    if (top !== undefined) path.unshift(key);
+    if (top !== undefined) path.push(key);
     for (let frame = top; frame?.parent !== undefined; frame = frame.parent)
-      path.unshift(frame.name);
-    throw new BodyWriteError("JSON", path as Path, explanation);
+      path.push(frame.name);
+    throw new BodyWriteError("JSON", path.toReversed() as Path, explanation);
   };
 
   const open = (
@@ -181,8 +178,11 @@ function snapshot(input: unknown): unknown {
     if (fields.length === 1 && fields[0] === "rawJSON" && isRawJSON?.(source))
       return source;
     const symbols = Object.getOwnPropertySymbols(source);
-    // Classify before reading any symbol field, so each one is read at most once.
-    const state = stateOf(source, fields.length === 0 && symbols.length === 0);
+    // Classify by descriptors before reading any symbol field, so each one is read at most once.
+    const fieldless =
+      fields.length === 0 &&
+      symbols.every((field) => !definesField(source, field));
+    const state = stateOf(source, fieldless);
     if (state !== undefined && !isBox(state))
       return refuse(key, "cannot encode " + state);
     if (state !== undefined) return unbox(source, state, fields, symbols, key);
@@ -207,7 +207,7 @@ function snapshot(input: unknown): unknown {
       fields.find(
         (field) =>
           box !== "String" ||
-          !isStringPosition(field, (source as { length: number }).length),
+          !isPosition(field, (source as { length: number }).length),
       ) ??
       // The conversion of a boxed number or string reads its own `Symbol.toPrimitive`.
       symbols.find(
@@ -279,15 +279,10 @@ function snapshot(input: unknown): unknown {
       const field = fields[index]!;
       const value = read(source[field], field, false);
       if (value === undefined) continue;
-      if (bareObjects || !defined.has(field))
+      // `__proto__`, or `toString` under a frozen prototype, would meet the inherited property.
+      if (bareObjects || !Object.hasOwn(Object.prototype, field))
         (frame.target as Container)[field] = value;
-      else
-        Object.defineProperty(frame.target, field, {
-          value,
-          writable: true,
-          enumerable: true,
-          configurable: true,
-        });
+      else defineField(frame.target as Container, field, value);
     }
   }
   return output;

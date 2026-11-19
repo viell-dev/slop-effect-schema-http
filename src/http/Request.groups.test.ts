@@ -2873,6 +2873,21 @@ describe("group writers keep or refuse symbol fields and extra list fields", () 
           Request.query(Schema.ObjectKeyword as never),
           Request.headers(Schema.ObjectKeyword as never),
         );
+        const linked = Schema.Record(Schema.String, Schema.String).pipe(
+          Schema.decodeTo(Schema.Struct({})),
+        );
+        const throughLink = Request.get("/x").pipe(
+          Request.query(linked),
+          Request.headers(linked),
+        );
+        for (const supplied of [
+          { query: { k: "1", [key]: "kept" }, headers: {} },
+          { query: {}, headers: { k: "1", [key]: "kept" } },
+        ]) {
+          const failure = yield* Effect.flip(compile(throughLink, supplied));
+          expect(failure).toBeInstanceOf(Schema.SchemaError);
+          expect(failure.message).toContain("at [Symbol(extra)]");
+        }
         for (const value of ["1", 1]) {
           const fields = { k: value, [key]: "kept" };
           for (const supplied of [
@@ -2949,32 +2964,6 @@ describe("group writers keep or refuse symbol fields and extra list fields", () 
         });
         expect(yield* urlOf(query, { query: hidden })).toBe("/x?k=v");
       }),
-  );
-});
-
-// https://github.com/viell-dev/slop-effect-schema-http/issues/256
-// A gap the second #260 review found. The pin records the current outcome.
-describe("group writer gap from the second #260 review", () => {
-  const symbol = Symbol("extra");
-  const linked = Schema.Record(Schema.String, Schema.String).pipe(
-    Schema.decodeTo(Schema.Struct({})),
-  );
-  const request = Request.get("/x").pipe(Request.query(linked));
-
-  it.effect("currently drops a symbol a linked record loses", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* urlOf(request, { query: { a: "1", [symbol]: "kept" } }),
-      ).toBe("/x?a=1");
-    }),
-  );
-
-  it.effect.fails("refuses a symbol a linked record loses", () =>
-    Effect.gen(function* () {
-      yield* Effect.flip(
-        compile(request, { query: { a: "1", [symbol]: "kept" } }),
-      );
-    }),
   );
 });
 

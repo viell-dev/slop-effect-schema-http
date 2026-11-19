@@ -14,6 +14,7 @@ import {
   checked,
   checkedBody,
   extraArrayField,
+  isBodyWriteError,
   type Path,
 } from "./writer-error.js";
 
@@ -126,10 +127,11 @@ interface Step {
   readonly parent: Step | undefined;
 }
 
+/** The path to a step, collected from the step outwards and reversed once, in linear time. */
 const pathOf = (step: Step | undefined): Path => {
   const path: PropertyKey[] = [];
-  for (let at = step; at !== undefined; at = at.parent) path.unshift(at.key);
-  return path;
+  for (let at = step; at !== undefined; at = at.parent) path.push(at.key);
+  return path.toReversed();
 };
 
 type Task =
@@ -141,16 +143,6 @@ type Task =
     }
   | { readonly kind: "leave"; readonly container: object };
 
-/**
- * Flatten a form tree into entries with the bracket paths and repeated names of Effect's form
- * links, refusing what those links would silently skip.
- *
- * @remarks
- * Each value is read once, in Effect's order: all fields of an object, then each field's
- * entries. A list of leaves repeats its name, and any other list uses indexed names. An empty
- * list or plain object writes no entries, as in Effect. The traversal keeps its own stack, so an
- * exception thrown while it runs came from caller code.
- */
 /** Refuse the pair at a position, or one of its fields. */
 type PairRefusal = (
   position: number,
@@ -195,6 +187,16 @@ interface Rules<A> {
   readonly append: (key: string, value: A) => void;
 }
 
+/**
+ * Flatten a form tree into entries with the bracket paths and repeated names of Effect's form
+ * links, refusing what those links would silently skip.
+ *
+ * @remarks
+ * Each value is read once, in Effect's order: all fields of an object, then each field's
+ * entries. A list of leaves repeats its name, and any other list uses indexed names. An empty
+ * list or plain object writes no entries, as in Effect. The traversal keeps its own stack, so an
+ * exception thrown while it runs came from caller code.
+ */
 function writeTree<A>(
   input: unknown,
   {
@@ -285,7 +287,15 @@ function writeTree<A>(
         refuse(step, "cannot encode undefined in a list", index);
       leaves &&= isLeaf(item);
       if (!leaves && !nestedLists)
-        refuse(step, "cannot encode a list or an object inside a list", index);
+        refuse(
+          step,
+          typeof item === "object" &&
+            item !== null &&
+            !Redacted.isRedacted(item)
+            ? "cannot encode a list or an object inside a list"
+            : notLeaf,
+          index,
+        );
       items.push([index, item]);
     }
     if (leaves) {
@@ -362,9 +372,6 @@ function writeTree<A>(
     else write(task.value, task.name, task.step);
   }
 }
-
-const isBodyWriteError = (error: unknown): error is BodyWriteError =>
-  error instanceof BodyWriteError;
 
 const multipart = new SchemaTransformation.Transformation(
   SchemaTransformation.fromFormData.decode,
@@ -529,9 +536,15 @@ export const encodeUrlParams = (input: UrlParams.UrlParams) =>
           refuseParams([name], "must be text, a number, a bigint or a boolean");
     } else if (typeof value !== "object" || value === null)
       refuseParams([], "must be UrlParams, a record or field pairs");
-    else if (typeof Reflect.get(value, Symbol.iterator) === "function")
+    else if (typeof Reflect.get(value, Symbol.iterator) === "function") {
+      // A list of pairs is read by its iterator, which a field beside its positions never reaches.
+      if (Array.isArray(value)) {
+        const extra = extraArrayField(value, value.length);
+        if (extra !== undefined)
+          refuseParams([extra], "cannot encode an extra array field");
+      }
       writeTree(value, rules, pairsOf(value as Iterable<unknown>, atPair));
-    else writeTree(value, rules);
+    } else writeTree(value, rules);
     return HttpBody.text(
       params.toString(),
       "application/x-www-form-urlencoded",

@@ -59,7 +59,7 @@ export class BodyWriteError extends WriterError {
   }
 }
 
-const isBodyWriteError = (error: WriterError): error is BodyWriteError =>
+export const isBodyWriteError = (error: unknown): error is BodyWriteError =>
   error instanceof BodyWriteError;
 
 /** Report a refusal as Effect's body error, with the path as a schema issue for other media. */
@@ -84,7 +84,8 @@ export const bodyError = (cause: BodyWriteError): HttpBody.HttpBodyError => {
 export const checkedBody = <A>(write: () => A) =>
   checked(write, isBodyWriteError, bodyError);
 
-const isPosition = (key: string, length: number): boolean => {
+/** Whether a string key is an array position below `length`, spelled as the position. */
+export const isPosition = (key: string, length: number): boolean => {
   const position = Number(key);
   return (
     Number.isInteger(position) &&
@@ -95,7 +96,7 @@ const isPosition = (key: string, length: number): boolean => {
 };
 
 /** An own field that would supply a value: enumerable, and an accessor or a defined value. */
-const supplies = (values: object, key: PropertyKey): boolean => {
+export const supplies = (values: object, key: PropertyKey): boolean => {
   const field = Object.getOwnPropertyDescriptor(values, key);
   // Do not run accessors for fields outside the positions a writer reads.
   return (

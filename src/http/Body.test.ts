@@ -387,9 +387,48 @@ const deepObject = (count: number) => {
 const jsonText = (value: unknown) =>
   textOf(Effect.runSync(Body.json.encode(value)));
 
+/** A built-in whose standard tag a tag property hides. */
+const tagged = <A extends object>(value: A): A =>
+  Object.defineProperty(value, Symbol.toStringTag, {
+    value: "Object",
+    configurable: true,
+  });
+
+/** The JSON writer as it loads without Node's brand helpers, as in a browser. */
+const portableWriter = async () => {
+  const builtin = Object.getOwnPropertyDescriptor(process, "getBuiltinModule")!;
+  try {
+    Object.defineProperty(process, "getBuiltinModule", {
+      ...builtin,
+      value: undefined,
+    });
+    vi.resetModules();
+    return await import("./internal/json-body.js");
+  } finally {
+    Object.defineProperty(process, "getBuiltinModule", builtin);
+    vi.resetModules();
+  }
+};
+
+const taggedBuiltins = () =>
+  [
+    ["Map", tagged(new Map([["k", "v"]]))],
+    ["Set", tagged(new Set(["v"]))],
+    ["WeakMap", tagged(new WeakMap())],
+    ["WeakSet", tagged(new WeakSet())],
+    ["ArrayBuffer", tagged(new ArrayBuffer(1))],
+    ["RegExp", tagged(/x/)],
+    ["Error", tagged(new Error("hidden"))],
+    ["Promise", tagged(Promise.resolve(1))],
+    ["Array Iterator", tagged([1].values())],
+    ["Map Iterator", tagged(new Map().keys())],
+    ["Generator", tagged((function* () {})())],
+  ] as const;
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/256
 describe("writers keep or refuse what they cannot write", () => {
   const symbol = Symbol("extra");
+  const supplied = () => ({ a: 1, [symbol]: "kept" });
   const form = Body.formData.pipe(
     Body.encodeSchema(Schema.fromFormData(Schema.Struct({}))),
   );
@@ -531,8 +570,133 @@ describe("writers keep or refuse what they cannot write", () => {
       expect(jsonText({ hole })).toBe(JSON.stringify({ hole }));
     } finally {
       delete (Array.prototype as { 0?: unknown })[0];
+      // Deleting a position leaves the prototype's length behind.
+      // oxlint-disable-next-line no-extend-native -- Restore the prototype after this isolated test.
+      Array.prototype.length = 0;
     }
   });
+
+  it.effect(
+    "refuses symbols a class, a linked record or the ObjectKeyword codec drops",
+    () =>
+      Effect.gen(function* () {
+        const record = Schema.Record(Schema.String, Schema.Unknown);
+        class Holder extends Schema.Class<Holder>("SymbolHolder")({
+          meta: record,
+        }) {}
+        class KeywordHolder extends Schema.Class<KeywordHolder>(
+          "KeywordHolder",
+        )({
+          o: Schema.ObjectKeyword,
+        }) {}
+        const linked = record.pipe(Schema.decodeTo(Schema.Struct({})));
+        for (const [encode, path] of [
+          [
+            Body.jsonSchema(Holder).encode({ meta: supplied() }),
+            '["meta"][Symbol(extra)]',
+          ],
+          [
+            Body.json
+              .pipe(Body.encodeSchema(Holder))
+              .encode({ meta: supplied() }),
+            '["meta"][Symbol(extra)]',
+          ],
+          [
+            Body.jsonSchema(Schema.Array(Holder)).encode([
+              { meta: supplied() },
+            ]),
+            '[0]["meta"][Symbol(extra)]',
+          ],
+          [
+            Body.jsonSchema(Holder).encode({
+              meta: {},
+              [symbol]: "kept",
+            } as never),
+            "[Symbol(extra)]",
+          ],
+          [
+            Body.jsonSchema(KeywordHolder).encode({ o: supplied() }),
+            '["o"][Symbol(extra)]',
+          ],
+          [Body.jsonSchema(linked).encode(supplied()), "[Symbol(extra)]"],
+          [
+            Body.json.pipe(Body.encodeSchema(linked)).encode(supplied()),
+            "[Symbol(extra)]",
+          ],
+          [
+            Body.jsonSchema(Schema.ObjectKeyword).encode(
+              Object.assign([1], { extra: "keep" }),
+            ),
+            '["extra"]',
+          ],
+          [
+            Body.jsonSchema(Schema.ObjectKeyword).encode(
+              Object.assign([1], { [symbol]: "keep" }),
+            ),
+            "[Symbol(extra)]",
+          ],
+        ] as const) {
+          const error = yield* Effect.flip(encode);
+          expect(error).toBeInstanceOf(Schema.SchemaError);
+          expect(error.message).toContain("at " + path);
+        }
+        const instance = new Holder({ meta: { a: 1 } });
+        expect(textOf(yield* Body.jsonSchema(Holder).encode(instance))).toBe(
+          '{"meta":{"a":1}}',
+        );
+      }),
+  );
+
+  it.effect(
+    "refuses built-ins a tag property disguises, and a reparented BigInt box with fields",
+    () =>
+      Effect.gen(function* () {
+        for (const [kind, value] of taggedBuiltins())
+          yield* jsonRefusal(
+            Body.json.encode({ v: value }),
+            `$["v"] cannot encode ${kind}`,
+          );
+        const box = Object.assign(
+          Object.setPrototypeOf(Object(1n), Object.prototype),
+          { a: 1 },
+        );
+        yield* jsonRefusal(
+          Body.json.encode({ v: box }),
+          '$["v"] cannot encode a bigint',
+        );
+      }),
+  );
+
+  it.effect(
+    "refuses a deep value in linear time",
+    () =>
+      Effect.gen(function* () {
+        // A quadratic path took about 15 s at 256,000 levels; a linear one takes about 1 s.
+        const depth = 200_000;
+        let list: unknown = Infinity;
+        let record: unknown = Infinity;
+        let nestedForm: unknown = null;
+        for (let index = 0; index < depth; index++) {
+          list = [list];
+          record = { n: record };
+          nestedForm = { n: nestedForm };
+        }
+        for (const [write, prefix] of [
+          [Body.json.encode(list), "JSON body at $[0][0]"],
+          [Body.json.encode(record), 'JSON body at $["n"]["n"]'],
+          [
+            Body.urlEncoded.encode(nestedForm as never),
+            'URL-encoded body at $["n"]["n"]',
+          ],
+        ] as const) {
+          const start = performance.now();
+          const error = yield* Effect.flip(write);
+          expect(performance.now() - start).toBeLessThan(6_000);
+          expect(error.message.startsWith(prefix)).toBe(true);
+        }
+      }),
+    60_000,
+  );
 
   it.effect("refuses extra fields on arrays and boxes", () =>
     Effect.gen(function* () {
@@ -605,32 +769,35 @@ describe("writers keep or refuse what they cannot write", () => {
     Effect.gen(function* () {
       // Engines differ: recent ones write plain data at any depth, older ones run out of stack.
       // Effect's HttpBody.json, 0.18.0's writer, is the reference, in this same pipeline.
-      const depth = 2 ** 16;
-      for (const nest of [deepArray, deepObject]) {
-        const reference = yield* Effect.exit(HttpBody.json(nest(depth)));
-        const exit = yield* Effect.exit(Body.json.encode(nest(depth)));
-        if (Exit.isSuccess(reference)) {
-          expect(Exit.isSuccess(exit) && textOf(exit.value)).toBe(
-            textOf(reference.value),
+      // 4,000 levels fit Node 24's native limit, so a limit of the writer's own fails there too.
+      for (const depth of [4_000, 2 ** 16])
+        for (const nest of [deepArray, deepObject]) {
+          const reference = yield* Effect.exit(HttpBody.json(nest(depth)));
+          const exit = yield* Effect.exit(Body.json.encode(nest(depth)));
+          if (Exit.isSuccess(reference)) {
+            expect(Exit.isSuccess(exit) && textOf(exit.value)).toBe(
+              textOf(reference.value),
+            );
+            continue;
+          }
+          expect(reference.cause.reasons[0]).toHaveProperty(
+            "error.cause",
+            expect.any(RangeError),
           );
-          continue;
+          // Where the reference runs out of stack, the writer fails with a typed error, not a defect.
+          const reason = Exit.isFailure(exit)
+            ? exit.cause.reasons[0]
+            : undefined;
+          expect(reason?._tag).toBe("Fail");
+          const failure = reason?._tag === "Fail" ? reason.error : undefined;
+          expect(failure).toBeInstanceOf(HttpBody.HttpBodyError);
+          expect(failure).toHaveProperty("reason._tag", "JsonError");
+          expect(failure).toHaveProperty("cause", expect.any(RangeError));
+          expect(failure).toHaveProperty(
+            "message",
+            expect.stringContaining("JSON body could not be written"),
+          );
         }
-        expect(reference.cause.reasons[0]).toHaveProperty(
-          "error.cause",
-          expect.any(RangeError),
-        );
-        // Where the reference runs out of stack, the writer fails with a typed error, not a defect.
-        const reason = Exit.isFailure(exit) ? exit.cause.reasons[0] : undefined;
-        expect(reason?._tag).toBe("Fail");
-        const failure = reason?._tag === "Fail" ? reason.error : undefined;
-        expect(failure).toBeInstanceOf(HttpBody.HttpBodyError);
-        expect(failure).toHaveProperty("reason._tag", "JsonError");
-        expect(failure).toHaveProperty("cause", expect.any(RangeError));
-        expect(failure).toHaveProperty(
-          "message",
-          expect.stringContaining("JSON body could not be written"),
-        );
-      }
       for (const box of [
         Object.setPrototypeOf(Object(5), null),
         Object.setPrototypeOf(Object("s"), null),
@@ -788,23 +955,7 @@ describe("writers keep or refuse what they cannot write", () => {
   );
 
   it("checks values in the portable JSON path without Node brand helpers", async () => {
-    const builtin = Object.getOwnPropertyDescriptor(
-      process,
-      "getBuiltinModule",
-    )!;
-    const portable = await (async () => {
-      try {
-        Object.defineProperty(process, "getBuiltinModule", {
-          ...builtin,
-          value: undefined,
-        });
-        vi.resetModules();
-        return await import("./internal/json-body.js");
-      } finally {
-        Object.defineProperty(process, "getBuiltinModule", builtin);
-        vi.resetModules();
-      }
-    })();
+    const portable = await portableWriter();
     const write = (value: unknown) =>
       Effect.runSync(Effect.exit(portable.encode(value)));
     const written = (value: unknown) => {
@@ -843,166 +994,8 @@ describe("writers keep or refuse what they cannot write", () => {
     ] as const)
       expect(refused({ v: runInNewContext(expression) })).toContain(message);
     expect(refused({ v: new Blob(["bytes"]) })).toContain("cannot encode Blob");
-  });
-});
-
-// https://github.com/viell-dev/slop-effect-schema-http/issues/256
-// Gaps the second #260 review found. Each pin records the current outcome.
-describe("writer gaps from the second #260 review", () => {
-  const symbol = Symbol("extra");
-  const supplied = () => ({ a: 1, [symbol]: "kept" });
-  const record = Schema.Record(Schema.String, Schema.Unknown);
-  class Holder extends Schema.Class<Holder>("PinHolder")({ meta: record }) {}
-  const linked = record.pipe(Schema.decodeTo(Schema.Struct({})));
-  const tagged = <A extends object>(value: A): A =>
-    Object.defineProperty(value, Symbol.toStringTag, {
-      value: "Object",
-      configurable: true,
-    });
-  const portable = async () => {
-    const builtin = Object.getOwnPropertyDescriptor(
-      process,
-      "getBuiltinModule",
-    )!;
-    try {
-      Object.defineProperty(process, "getBuiltinModule", {
-        ...builtin,
-        value: undefined,
-      });
-      vi.resetModules();
-      return await import("./internal/json-body.js");
-    } finally {
-      Object.defineProperty(process, "getBuiltinModule", builtin);
-      vi.resetModules();
-    }
-  };
-
-  it.effect("currently drops symbols through a class and a linked record", () =>
-    Effect.gen(function* () {
-      const body = yield* Body.jsonSchema(Holder).encode({ meta: supplied() });
-      expect(textOf(body)).toBe('{"meta":{"a":1}}');
-      expect(textOf(yield* Body.jsonSchema(linked).encode(supplied()))).toBe(
-        '{"a":1}',
-      );
-    }),
-  );
-
-  it.effect.fails("refuses symbols a class or a linked record drops", () =>
-    Effect.gen(function* () {
-      yield* Effect.flip(Body.jsonSchema(Holder).encode({ meta: supplied() }));
-      yield* Effect.flip(Body.jsonSchema(linked).encode(supplied()));
-    }),
-  );
-
-  it.effect(
-    "currently drops an extra array field through the ObjectKeyword codec",
-    () =>
-      Effect.gen(function* () {
-        const body = yield* Body.jsonSchema(Schema.ObjectKeyword).encode(
-          Object.assign([1], { extra: "keep" }),
-        );
-        expect(textOf(body)).toBe("[1]");
-      }),
-  );
-
-  it.effect.fails(
-    "refuses an extra array field the ObjectKeyword codec drops",
-    () =>
-      Effect.gen(function* () {
-        yield* Effect.flip(
-          Body.jsonSchema(Schema.ObjectKeyword).encode(
-            Object.assign([1], { extra: "keep" }),
-          ),
-        );
-      }),
-  );
-
-  it.effect(
-    "currently drops extra fields on a root URL-encoded pair list",
-    () =>
-      Effect.gen(function* () {
-        for (const extra of [{ extra: "keep" }, { [symbol]: "keep" }])
-          expect(
-            textOf(
-              yield* Body.urlEncoded.encode(
-                Object.assign([["k", "v"]], extra) as never,
-              ),
-            ),
-          ).toBe("k=v");
-      }),
-  );
-
-  it.effect.fails("refuses extra fields on a root URL-encoded pair list", () =>
-    Effect.gen(function* () {
-      yield* Effect.flip(
-        Body.urlEncoded.encode(
-          Object.assign([["k", "v"]], { extra: "keep" }) as never,
-        ),
-      );
-    }),
-  );
-
-  it.effect(
-    "currently gives a list reason for null in a URL-encoded list",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* urlEncodedRefusal({ k: ["a", null] })).toBe(
-          'URL-encoded body at $["k"][1] cannot encode a list or an object inside a list',
-        );
-      }),
-  );
-
-  it.effect.fails("gives the value reason for null in a URL-encoded list", () =>
-    Effect.gen(function* () {
-      expect(yield* urlEncodedRefusal({ k: ["a", null] })).toContain(
-        "must be text",
-      );
-    }),
-  );
-
-  it.effect(
-    "currently writes a reparented BigInt box with fields and a tagged iterator",
-    () =>
-      Effect.gen(function* () {
-        const box = Object.assign(
-          Object.setPrototypeOf(Object(1n), Object.prototype),
-          { a: 1 },
-        );
-        expect(textOf(yield* Body.json.encode({ v: box }))).toBe(
-          '{"v":{"a":1}}',
-        );
-        expect(
-          textOf(yield* Body.json.encode({ v: tagged([1].values()) })),
-        ).toBe('{"v":{}}');
-      }),
-  );
-
-  it.effect.fails(
-    "refuses a reparented BigInt box with fields and a tagged iterator",
-    () =>
-      Effect.gen(function* () {
-        const box = Object.assign(
-          Object.setPrototypeOf(Object(1n), Object.prototype),
-          { a: 1 },
-        );
-        yield* Effect.flip(Body.json.encode({ v: box }));
-      }),
-  );
-
-  it("currently writes a tagged Map on the portable path", async () => {
-    const writer = await portable();
-    const exit = Effect.runSync(
-      Effect.exit(writer.encode({ v: tagged(new Map([["k", 1]])) })),
-    );
-    expect(Exit.isSuccess(exit) && textOf(exit.value)).toBe('{"v":{}}');
-  });
-
-  it.fails("refuses a tagged Map on the portable path", async () => {
-    const writer = await portable();
-    const exit = Effect.runSync(
-      Effect.exit(writer.encode({ v: tagged(new Map([["k", 1]])) })),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
+    for (const [kind, value] of taggedBuiltins())
+      expect(refused({ v: value })).toContain(`cannot encode ${kind}`);
   });
 });
 
@@ -1315,6 +1308,15 @@ describe("Body.urlEncoded from untyped callers", () => {
             '$["k"] must be text, a number, a bigint or a boolean',
           ],
           ["k=v", "$ must be UrlParams, a record or field pairs"],
+          [{ k: ["a", null] }, `$["k"][1] ${scalar}`],
+          [
+            Object.assign([["k", "v"]], { extra: "keep" }),
+            '$["extra"] cannot encode an extra array field',
+          ],
+          [
+            Object.assign([["k", "v"]], { [Symbol.for("extra")]: "keep" }),
+            "$[Symbol(extra)] cannot encode an extra array field",
+          ],
         ] as const)
           expect(yield* urlEncodedRefusal(value)).toBe(
             `URL-encoded body at ${message}`,
