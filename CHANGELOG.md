@@ -27,6 +27,26 @@
   computed value that returns a list fails with `InvalidRequest` during preparation.
 - **Breaking:** write `Date`s using their native timestamp. Dates from another realm now use ISO
   text. Own formatting methods have no effect, and invalid dates write the literal `Invalid Date`.
+- **Breaking:** JSON request bodies refuse lossy representations with a field path
+  ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). For example,
+  `{ v: NaN }` no longer writes `{"v":null}`, and `{ v: [undefined] }` no longer writes
+  `{"v":[null]}` under an open schema. The JSON writer also refuses functions, symbols and defined
+  enumerable symbol fields. These checks use the result of `toJSON` when present and report
+  `HttpBodyError`. A schema can still refuse first with `SchemaError`. Exceptions from caller
+  getters, proxies and `toJSON` now propagate as defects from the JSON writer.
+- **Breaking:** schema-backed form writers refuse unsupported values and empty nested containers
+  with `SchemaError` naming the field
+  ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). For example, multipart
+  no longer sends only `extra=keep` for `{ v: 1, extra: "keep" }` through an open
+  `Schema.fromFormData`. Use text or a schema that encodes values to text. The direct
+  `Body.formData` and `Body.urlEncoded` encoders now have a `SchemaError` channel for invalid
+  representations. A prepared form kept by an open form schema reaches the writer with its entries
+  intact.
+- **Breaking:** query and header record writers refuse own enumerable symbol fields with defined
+  values ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). Bindings report
+  `InvalidRequest` when the symbol reaches the writer and `SchemaError` when an indexed schema loses
+  it during input construction. The public entry helpers and object forms of `Request.setQuery` and
+  `Request.setHeader` throw `TypeError`. Iterable group outputs still write their pairs.
 
 ## 0.18.0 — 2026-11-18
 

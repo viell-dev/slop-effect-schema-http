@@ -9,9 +9,15 @@ import {
   Option,
   Ref,
   Schedule,
+  Schema,
   Stream,
 } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpBody,
+  HttpClient,
+  HttpClientError,
+} from "effect/http";
 import { linesClient, listen } from "../../test/socket.js";
 import { noCookies } from "../../test/support.js";
 import * as Body from "./Body.js";
@@ -23,6 +29,43 @@ import * as Response from "./Response.js";
 // https://github.com/viell-dev/slop-effect-schema-http/issues/16
 // These are Node socket checks. Browser policy and hostile service formats belong to the separate suite.
 describe("Operation over real loopback sockets", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/256
+  it.live(
+    "refuses an unwritable open JSON field before dispatch and sends the accepted body unchanged",
+    () =>
+      Effect.gen(function* () {
+        let dispatches = 0;
+        const bodies: string[] = [];
+        const { origin } = yield* listen((request, response) => {
+          dispatches++;
+          const chunks: Buffer[] = [];
+          request.on("data", (chunk: Buffer) => chunks.push(chunk));
+          request.on("end", () => {
+            bodies.push(Buffer.concat(chunks).toString("utf8"));
+            response.writeHead(204);
+            response.end();
+          });
+        });
+        const operation = Operation.make(
+          Request.post(origin).pipe(
+            Request.body(Body.jsonSchema(Schema.Struct({}))),
+          ),
+          Response.status(204, Body.empty),
+        );
+        const send = (v: number) =>
+          operation
+            .execute({ body: { v, extra: "kept" } })
+            .pipe(Effect.provide(FetchHttpClient.layer));
+        expect(yield* Effect.flip(send(NaN))).toBeInstanceOf(
+          HttpBody.HttpBodyError,
+        );
+        expect(dispatches).toBe(0);
+        yield* send(42);
+        expect(dispatches).toBe(1);
+        expect(bodies).toEqual(['{"v":42,"extra":"kept"}']);
+      }),
+  );
+
   it.live(
     "Fetch follows redirects by default and exposes the 301 in manual mode",
     () =>

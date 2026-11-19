@@ -470,16 +470,16 @@ remaining list limits under #241 and #243.
   discarding transformations can still discard values. Class alternatives alone supply no visible
   candidate. Avoid Void in input schemas that rely on those shapes.
 - A list supplied by JavaScript or a cast to a union of a struct and Void, whose cells are all
-  non-enumerable, can still be discarded and written as `undefined` (`null` in JSON). Such a cell
-  declines Void on the strict read, but a struct cannot read a list and the field-loss check does
-  not see the cell. Beside an array member, such a cell is read, so an invalid alias in it refuses.
+  non-enumerable, can still be discarded and read as `undefined`. Such a cell declines Void on the
+  strict read, but a struct cannot read a list and the field-loss check does not see the cell.
+  Beside an array member, such a cell is read, so an invalid alias in it refuses.
 - One member union value reused where its Void is guarded and where it is not gets the grouped proof
   at neither use. An example is the same union of `Schema.Void` and a text member decoded from an
   object, placed under an any-of union and under a `oneOf` union. An invalid alias that only that
   proof would catch then keeps the constructor default, as on 0.17. A union of primitive members and
   Void keeps the proof at its guarded use. Build a separate member union for each use.
 - A proxy list whose index read answers `undefined` for a cell its descriptor holds can be taken by
-  Void beside an array member and written as `undefined` (`null` in JSON).
+  Void beside an array member and read as `undefined`.
 - A populated object constructor default can select the object member beside Void. A default of
   `{ a: 1 }` for a field `g` using `Union([Void, Struct({ a: optionalKey(Number) })])` can write
   `{"g":{"a":1}}` for an omitted `g`. With object-first order and only an undefined-valued input
@@ -494,8 +494,16 @@ remaining list limits under #241 and #243.
 - JavaScript, casts and `Schema.Any` can bypass the TypeScript requirement for a query or header
   schema to encode a group of fields. Preparation reports lost input fields first. A non-object
   group, a malformed field pair or an invalid query or header value fails with `InvalidRequest`
-  before dispatch. An unsupported query value names its field. `Transport.entries` and
-  `UrlEncoding.queryEntries` throw `TypeError` for malformed pairs and invalid values.
+  before dispatch. An unsupported query value or a defined enumerable symbol field names its field.
+  Iterable outputs supply ordered pairs. `Transport.entries` and `UrlEncoding.queryEntries` throw
+  `TypeError` for malformed pairs and invalid fields.
+- A successful open schema can hand a value to a writer that cannot represent it. JSON and form
+  writers check their actual output values and refuse with the field path. JSON applies `toJSON`
+  first, omits undefined object fields, and checks every array position below its length. These
+  checks apply when using either `Body.jsonSchema` or a composed JSON encoder. A string-indexed
+  record that loses a supplied symbol in construction reports a `SchemaError`. See the [Body
+  guide](./modules/body.md#text-json-and-finite-body-limits) for writer rules. An opaque
+  transformation can still choose its own encoded representation.
 - Once an encoded-only alias enables whole decoding of a list, a decoded-only item beside it can
   lose its decoded name and refuse. This applies to every covered container, array-shaped unions
   included.

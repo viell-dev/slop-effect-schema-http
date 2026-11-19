@@ -6,6 +6,8 @@ import {
   type UrlParams,
 } from "effect/http";
 import * as Inputs from "./internal/input.js";
+import * as FormBody from "./internal/form-body.js";
+import * as JsonBody from "./internal/json-body.js";
 
 /**
  * Turn an application value into a finite outgoing HTTP body.
@@ -127,16 +129,16 @@ const decodeFailure = (
  * Read and write JSON without schema validation.
  *
  * @remarks
- * Encoding uses Effect's `HttpBody.json`. Values omitted by `JSON.stringify`, such as
- * `undefined`, produce an empty outgoing body. An empty incoming body is a decoding failure,
- * not `null`. Use {@link jsonSchema} to validate and transform application values.
+ * Encoding follows the value's JSON reading, including `toJSON`, and refuses values JSON
+ * would silently omit or substitute. `undefined` produces an empty outgoing body. An empty
+ * incoming body is a decoding failure. Use {@link jsonSchema} to validate application values.
  */
 export const json: Codec<
   unknown,
   HttpBody.HttpBodyError,
   HttpClientError.HttpClientError
 > = make({
-  encode: (value: unknown) => HttpBody.json(value),
+  encode: JsonBody.encode,
   decode: (response) =>
     Effect.flatMap(response.text, (text) =>
       Effect.try({
@@ -186,12 +188,15 @@ export const bytes: Codec<Uint8Array, never, HttpClientError.HttpClientError> =
  * request declares replaces it, and without the boundary the body cannot be read. Decoding
  * delegates to the HTTP provider.
  */
-export const formData: Codec<FormData, never, HttpClientError.HttpClientError> =
-  make({
-    encode: (value: FormData) => Effect.sync(() => HttpBody.formData(value)),
-    decode: (response) => response.formData,
-    mediaType: "multipart/form-data",
-  });
+export const formData: Codec<
+  FormData,
+  Schema.SchemaError,
+  HttpClientError.HttpClientError
+> = make({
+  encode: FormBody.encodeFormData,
+  decode: (response) => response.formData,
+  mediaType: "multipart/form-data",
+});
 
 /**
  * Read and write form bodies using Effect's `UrlParams.UrlParams`.
@@ -202,11 +207,10 @@ export const formData: Codec<FormData, never, HttpClientError.HttpClientError> =
  */
 export const urlEncoded: Codec<
   UrlParams.UrlParams,
-  never,
+  Schema.SchemaError,
   HttpClientError.HttpClientError
 > = make({
-  encode: (value: UrlParams.UrlParams) =>
-    Effect.sync(() => HttpBody.urlParams(value)),
+  encode: FormBody.encodeUrlParams,
   decode: (response) => response.urlParamsBody,
   mediaType: "application/x-www-form-urlencoded",
 });
@@ -288,7 +292,7 @@ export const schema = <S extends Schema.Constraint>(contract: S) => {
  * the underlying encoder receives what the schema writes.
  */
 export const encodeSchema = <S extends Schema.Top>(contract: S) => {
-  const encode = Inputs.encoder(contract, contract);
+  const encode = Inputs.encoder(contract, FormBody.codec(contract));
   return <E, R>(
     self: Encoder<S["Encoded"], E, R>,
   ): Encoder<

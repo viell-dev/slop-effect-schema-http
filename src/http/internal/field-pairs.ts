@@ -7,6 +7,7 @@ export interface RecordFields {
   readonly entries: ReadonlyArray<Pair>;
   readonly record: object;
   readonly definedDataFields: ReadonlySet<string>;
+  readonly symbols: ReadonlyArray<symbol> | undefined;
 }
 
 export type Reading =
@@ -35,6 +36,7 @@ const readRecord = (input: object, iterator: unknown): RecordFields => {
   const entries: Pair[] = [];
   const record = {};
   const definedDataFields = new Set<string>();
+  let symbols: symbol[] | undefined;
   // Function outputs supply wire fields, but no generated-field evidence, as in 0.18.0.
   const canProveGeneratedFields = typeof input === "object";
   for (const key of Reflect.ownKeys(input)) {
@@ -51,17 +53,30 @@ const readRecord = (input: object, iterator: unknown): RecordFields => {
       )
         definedDataFields.add(key);
     } else {
-      // Symbol fields are visible to schema settlement, but never become wire entries.
-      Object.defineProperty(
-        record,
-        key,
-        key === Symbol.iterator
-          ? { value: iterator, enumerable: true }
-          : { get: (): unknown => Reflect.get(input, key), enumerable: true },
-      );
+      // Keep symbols visible to schema settlement. The writer decides whether it can send them.
+      (symbols ??= []).push(key);
+      if (key === Symbol.iterator) {
+        Object.defineProperty(record, key, {
+          value: iterator,
+          enumerable: true,
+        });
+      } else {
+        let value: unknown;
+        let read = false;
+        Object.defineProperty(record, key, {
+          enumerable: true,
+          get: () => {
+            if (!read) {
+              value = Reflect.get(input, key);
+              read = true;
+            }
+            return value;
+          },
+        });
+      }
     }
   }
-  return { kind: "record", entries, record, definedDataFields };
+  return { kind: "record", entries, record, definedDataFields, symbols };
 };
 
 const invalidIterator = () =>

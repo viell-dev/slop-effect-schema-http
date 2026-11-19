@@ -5,6 +5,14 @@ import { response, text } from "../../test/support.js";
 import * as Transport from "./Transport.js";
 
 describe("Transport.entries", () => {
+  it("refuses a defined enumerable symbol key in a record", () => {
+    expect(() =>
+      Transport.entries({ k: "v", [Symbol("extra")]: "keep" }),
+    ).toThrow(
+      new TypeError("The header field [Symbol(extra)] must have a string name"),
+    );
+  });
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/236
   it.each([{ input: { "x-count": [1, 2] } }, { input: [["x-count", 1]] }])(
     "throws TypeError for a non-string header value",

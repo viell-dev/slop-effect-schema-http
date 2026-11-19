@@ -451,6 +451,57 @@ export const missing = (
   });
 };
 
+const readsIndexedObjects = (ast: Ast): boolean =>
+  (ast._tag === "Objects" && ast.indexSignatures.length > 0) ||
+  partsOf(ast).some(readsIndexedObjects);
+
+/**
+ * An indexed object can erase a supplied symbol during construction, before the writer sees it.
+ * Count that as a schema loss, without changing the normal stripping of unstated struct fields.
+ */
+export const indexedSymbolLoss = (ast: Ast) => {
+  if (!readsIndexedObjects(ast)) return undefined;
+  const find = (
+    types: ReadonlyArray<Ast>,
+    input: unknown,
+    value: unknown,
+    path: Path,
+  ): ReadonlyArray<Path> => {
+    if (input === value || !isObject(input) || !isObject(value)) return [];
+    const sides = types
+      .filter(readsIndexedObjects)
+      .flatMap((type) => sidesOf(type, input));
+    const lost: Path[] = [];
+    if (
+      sides.some(
+        (side) => side._tag === "Objects" && side.indexSignatures.length > 0,
+      )
+    ) {
+      for (const key of Object.getOwnPropertySymbols(input))
+        if (
+          !(key in value) &&
+          Object.prototype.propertyIsEnumerable.call(input, key) &&
+          input[key] !== undefined
+        )
+          lost.push([...path, key]);
+    }
+    if (sides.some((side) => partsOf(side).some(readsIndexedObjects))) {
+      for (const key of keysOf(input, readAsArray(sides))) {
+        const inner = typesAt(sides, key).filter(readsIndexedObjects);
+        if (inner.length > 0)
+          lost.push(
+            ...find(inner, input[key], value[key], [
+              ...path,
+              Array.isArray(input) ? (arrayIndex(key) ?? key) : key,
+            ]),
+          );
+      }
+    }
+    return lost;
+  };
+  return (input: unknown, value: unknown) => find([ast], input, value, []);
+};
+
 const notHeld = new SchemaIssue.InvalidValue({
   message: "The schema cannot keep this field with the rest of the value",
 });

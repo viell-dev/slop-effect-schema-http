@@ -625,6 +625,8 @@ export const setHeader: {
   (name: string, value: FieldValue): Edit;
   (fields: HeaderFields): Edit;
 } = (first: string | HeaderFields, value?: FieldValue) => {
+  if (typeof first !== "string")
+    GroupEncoding.checkRecordNames("header", first);
   const entries =
     typeof first === "string"
       ? [[first, value] as const]
@@ -723,6 +725,7 @@ export const setQuery: {
   (name: string, value: FieldValue<string | null>): Edit;
   (fields: QueryFields): Edit;
 } = (first: string | QueryFields, value?: FieldValue<string | null>) => {
+  if (typeof first !== "string") GroupEncoding.checkRecordNames("query", first);
   const entries: ReadonlyArray<readonly [string, QueryFields[string]]> =
     typeof first === "string" ? [[first, value]] : Object.entries(first);
   return editQuery(
@@ -840,7 +843,7 @@ const misfit = (
 
 const invalidHeaderFields = (cause: TypeError) =>
   new InvalidRequest({
-    message: "The header schema must encode string field names and values",
+    message: GroupEncoding.headerErrorMessage(cause),
     cause,
   });
 
@@ -1015,6 +1018,13 @@ const prepareGroup = <
       // A field the schema does not write back would be lost, as a union member can lose one.
       const lost = Shapes.lost(snapshot, defaults, writable, fold);
       if (lost.length > 0) return yield* lostFields(label, lost);
+      if (defaults.length > 0) {
+        const symbol = GroupEncoding.lostSymbol(snapshot, writable);
+        if (symbol !== undefined)
+          return yield* new InvalidRequest({
+            message: `The ${label} group lost the field [${String(symbol)}] while applying declared values`,
+          });
+      }
       return { prepared, writable, names, defaults };
     },
   };

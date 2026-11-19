@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
-import { Effect, Exit, Option, Schema } from "effect";
+import { Effect, Exit, Option, Redacted, Schema } from "effect";
 import { HttpBody, HttpClientError, UrlParams } from "effect/http";
 import {
   empty as emptyReply,
@@ -39,6 +39,313 @@ const decodeErrorReason = (exit: Exit.Exit<unknown, unknown>) => {
   return error.error.reason;
 };
 
+const jsonRefusal = (
+  write: Effect.Effect<
+    HttpBody.HttpBody,
+    HttpBody.HttpBodyError | Schema.SchemaError
+  >,
+  message: string,
+) =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(write);
+    expect(error).toBeInstanceOf(HttpBody.HttpBodyError);
+    expect(error).toHaveProperty("reason._tag", "JsonError");
+    expect(error).toHaveProperty(
+      "cause.message",
+      expect.stringContaining(message),
+    );
+    expect(error.message).toContain(message);
+  });
+
+describe("writer protection for open schemas", () => {
+  const open = Schema.Struct({});
+  const json = Body.jsonSchema(open);
+  const composed = Body.json.pipe(Body.encodeSchema(open));
+  const multipart = Body.formData.pipe(
+    Body.encodeSchema(Schema.fromFormData(open)),
+  );
+  const symbol = Symbol("extra");
+  const sparse = [1, 2, 3];
+  delete sparse[1];
+  const cases = [
+    [NaN, '$["v"] must be a finite number'],
+    [Infinity, '$["v"] must be a finite number'],
+    [-Infinity, '$["v"] must be a finite number'],
+    [[1, undefined], '$["v"][1] cannot encode undefined'],
+    [sparse, '$["v"][1] cannot encode undefined'],
+    [[Symbol("v")], '$["v"][0] cannot encode a symbol'],
+    [[() => 1], '$["v"][0] cannot encode a function'],
+    [Symbol("v"), '$["v"] cannot encode a symbol'],
+    [() => 1, '$["v"] cannot encode a function'],
+    [1n, '$["v"] cannot encode a bigint'],
+    [Object(1n), '$["v"] cannot encode a bigint'],
+    [Object(NaN), '$["v"] must be a finite number'],
+  ] as const;
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/256
+  it.effect("refuses lossy positions in canonical and composed open JSON", () =>
+    Effect.gen(function* () {
+      for (const [v, message] of cases) {
+        yield* jsonRefusal(json.encode({ v }), message);
+        yield* jsonRefusal(composed.encode({ v }), message);
+      }
+    }),
+  );
+
+  it.effect("refuses a symbol field under all three open JSON readings", () =>
+    Effect.gen(function* () {
+      const input = { a: 1, [symbol]: "kept" };
+      for (const codec of [json, Body.jsonSchema(Schema.Unknown)]) {
+        yield* jsonRefusal(
+          codec.encode(input),
+          "$[Symbol(extra)] cannot encode a symbol field name",
+        );
+      }
+      const indexed = Body.jsonSchema(
+        Schema.Record(Schema.String, Schema.Unknown),
+      );
+      const error = yield* Effect.flip(indexed.encode(input));
+      expect(error).toBeInstanceOf(Schema.SchemaError);
+      expect(error.message).toContain("[Symbol(extra)]");
+      const nested = Schema.Union([
+        Schema.Struct({ p: Schema.Struct({ v: Schema.Finite }) }),
+        Schema.Struct({ p: open }),
+      ]);
+      yield* jsonRefusal(
+        Body.jsonSchema(nested).encode({ p: { v: NaN, extra: "keep" } }),
+        '$["p"]["v"] must be a finite number',
+      );
+    }),
+  );
+
+  it.effect(
+    "validates the value JSON would write without reading an array position or getter twice",
+    () =>
+      Effect.gen(function* () {
+        const hidden = Object.defineProperty([1], "0", {
+          value: NaN,
+          enumerable: false,
+        });
+        const inherited = [1];
+        delete inherited[0];
+        Object.setPrototypeOf(inherited, { 0: NaN });
+        const custom = Object.defineProperty({}, "toJSON", {
+          value: () => ({ v: NaN }),
+        });
+        for (const array of [hidden, inherited])
+          yield* jsonRefusal(
+            Body.json.encode(array),
+            "$[0] must be a finite number",
+          );
+        yield* jsonRefusal(
+          Body.json.encode(custom),
+          '$["v"] must be a finite number',
+        );
+
+        for (const first of [NaN, 1]) {
+          let reads = 0;
+          const read = () => (++reads === 1 ? first : first === 1 ? NaN : 1);
+          const changing = {
+            get v() {
+              return read();
+            },
+          };
+          if (first === 1)
+            expect(textOf(yield* Body.json.encode(changing))).toBe('{"v":1}');
+          else
+            yield* jsonRefusal(
+              Body.json.encode(changing),
+              '$["v"] must be a finite number',
+            );
+          expect(reads).toBe(1);
+        }
+
+        let calls = 0;
+        const keep = {
+          v: NaN,
+          [symbol]: "original",
+          toJSON() {
+            calls++;
+            return { v: 42 };
+          },
+        };
+        expect(
+          textOf(
+            yield* Body.json.encode({
+              keep,
+              absent: undefined,
+              [symbol]: undefined,
+            }),
+          ),
+        ).toBe('{"keep":{"v":42}}');
+        expect(calls).toBe(1);
+      }),
+  );
+
+  it.effect(
+    "preserves a typed failure for cycles and accepts shared values",
+    () =>
+      Effect.gen(function* () {
+        const shared = { v: 1 };
+        expect(textOf(yield* Body.json.encode([shared, shared]))).toBe(
+          '[{"v":1},{"v":1}]',
+        );
+        const cycle: { next?: unknown } = {};
+        cycle.next = cycle;
+        yield* jsonRefusal(
+          Body.json.encode(cycle),
+          '$["next"] contains a circular reference',
+        );
+      }),
+  );
+
+  it.effect("keeps JSON writer exceptions from caller code as defects", () =>
+    Effect.gen(function* () {
+      const defect = new TypeError("caller code");
+      const revoked = Proxy.revocable({}, {});
+      revoked.revoke();
+      for (const value of [
+        {
+          toJSON() {
+            throw defect;
+          },
+        },
+        {
+          get v() {
+            throw defect;
+          },
+        },
+        new Proxy(
+          {},
+          {
+            ownKeys() {
+              throw defect;
+            },
+          },
+        ),
+      ]) {
+        expect(yield* Effect.exit(Body.json.encode(value))).toEqual(
+          Exit.die(defect),
+        );
+      }
+      expect(yield* Effect.exit(Body.json.encode(revoked.proxy))).toMatchObject(
+        {
+          cause: { reasons: [{ _tag: "Die", defect: expect.any(TypeError) }] },
+        },
+      );
+    }),
+  );
+
+  it.effect("refuses values that multipart would omit, with their path", () =>
+    Effect.gen(function* () {
+      for (const input of [
+        { v: NaN, extra: "keep" },
+        { v: null },
+        { v: [] },
+        { v: new Date(0) },
+      ]) {
+        const error = yield* Effect.flip(multipart.encode(input));
+        expect(error).toBeInstanceOf(Schema.SchemaError);
+        expect(error.message).toContain('["v"]');
+      }
+      const nested = yield* Effect.flip(
+        multipart.encode({ v: ["keep", { inner: 1 }] }),
+      );
+      expect(nested.message).toContain('["v"][1]["inner"]');
+      const name = yield* Effect.flip(multipart.encode({ [symbol]: "v" }));
+      expect(name.message).toContain("[Symbol(extra)]");
+    }),
+  );
+
+  it.effect(
+    "writes existing multipart bracket paths, repeated values and files",
+    () =>
+      Effect.gen(function* () {
+        const file = new File(["content"], "sample.txt");
+        const body = yield* multipart.encode({
+          person: { name: "Ada", absent: undefined },
+          tags: ["first", "second"],
+          mixed: ["text", { name: "other" }],
+          file,
+        });
+        expect(
+          body._tag === "FormData" && Array.from(body.formData.entries()),
+        ).toEqual([
+          ["person[name]", "Ada"],
+          ["tags", "first"],
+          ["tags", "second"],
+          ["mixed[0]", "text"],
+          ["mixed[1][name]", "other"],
+          ["file", file],
+        ]);
+      }),
+  );
+
+  it.effect(
+    "checks a form schema through a lazy link and lets caller exceptions die",
+    () =>
+      Effect.gen(function* () {
+        const defect = new TypeError("caller getter");
+        let contract: Schema.fromFormData<typeof open> | undefined = undefined;
+        const suspended = Schema.suspend(() => {
+          if (!contract) throw new Error("encoder construction must stay lazy");
+          return contract;
+        });
+        const lazy = Body.formData.pipe(Body.encodeSchema(suspended));
+        contract = Schema.fromFormData(open);
+        const error = yield* Effect.flip(lazy.encode({ bad: true }));
+        expect(error.message).toContain('["bad"]');
+        const result = yield* Effect.exit(
+          lazy.encode({
+            nested: {
+              get bad() {
+                throw defect;
+              },
+            },
+          }),
+        );
+        expect(result).toEqual(Exit.die(defect));
+      }),
+  );
+
+  it.effect(
+    "checks both schema-backed and prepared URL-encoded form fields",
+    () =>
+      Effect.gen(function* () {
+        const fromSearchParams = Body.encoder((params: URLSearchParams) =>
+          Effect.sync(() => HttpBody.urlParams(params)),
+        ).pipe(Body.encodeSchema(Schema.fromURLSearchParams(open)));
+        const failure = yield* Effect.flip(
+          fromSearchParams.encode({ bad: false }),
+        );
+        expect(failure.message).toContain('["bad"]');
+        expect(textOf(yield* fromSearchParams.encode({ k: ["a", "b"] }))).toBe(
+          "k=a&k=b",
+        );
+        const prepared = new URLSearchParams("k=a&k=b");
+        expect(textOf(yield* fromSearchParams.encode(prepared))).toBe(
+          "k=a&k=b",
+        );
+
+        const record = Body.urlEncoded.pipe(
+          Body.encodeSchema(Schema.RecordFromUrlParams),
+        );
+        expect(textOf(yield* record.encode({ k: ["a", "b"] }))).toBe("k=a&k=b");
+        const bad = yield* Effect.flip(
+          Body.urlEncoded.encode(UrlParams.make([["k", { x: 1 } as never]])),
+        );
+        expect(bad.message).toContain('["k"]');
+        expect(
+          textOf(
+            yield* Body.urlEncoded.encode(
+              UrlParams.make([["k", Redacted.make("a+b")]]),
+            ),
+          ),
+        ).toBe("k=a%2Bb");
+      }),
+  );
+});
+
 describe("Body.json", () => {
   it.effect("encodes JSON with its content type", () =>
     Effect.gen(function* () {
@@ -55,19 +362,19 @@ describe("Body.json", () => {
     }),
   );
 
-  // Body.json delegates to HttpBody.json, whose text step deliberately turns JSON.stringify's
-  // `undefined` result into an empty body. Body.jsonSchema is the validated path.
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/8
   it.effect(
-    "encodes values JSON.stringify omits as HttpBody.json does: an empty JSON body",
+    "encodes undefined as an empty JSON body and refuses a function or symbol",
     () =>
       Effect.gen(function* () {
-        for (const value of [undefined, () => 1, Symbol("x")]) {
-          const body = yield* Body.json.encode(value);
-          const native = yield* HttpBody.json(value);
-          expect(contentTypeOf(body)).toBe("application/json");
-          expect(bytesOf(body)).toEqual(bytesOf(native));
-          expect(bytesOf(body).length).toBe(0);
+        const body = yield* Body.json.encode(undefined);
+        expect(contentTypeOf(body)).toBe("application/json");
+        expect(bytesOf(body).length).toBe(0);
+        for (const value of [() => 1, Symbol("x")]) {
+          const error = yield* Effect.flip(Body.json.encode(value));
+          expect(error).toHaveProperty(
+            "cause.message",
+            expect.stringContaining("JSON body at $"),
+          );
         }
       }),
   );
@@ -180,6 +487,27 @@ describe("Body.bytes", () => {
 });
 
 describe("Body.formData", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/256
+  it.effect(
+    "keeps a prepared form through an open schema and refuses a non-form",
+    () =>
+      Effect.gen(function* () {
+        const open = Body.formData.pipe(
+          Body.encodeSchema(Schema.fromFormData(Schema.Struct({}))),
+        );
+        const prepared = new FormData();
+        prepared.append("k", "v");
+        const body = yield* open.encode(prepared);
+        expect(
+          body._tag === "FormData" && Array.from(body.formData.entries()),
+        ).toEqual([["k", "v"]]);
+        const failure = yield* Effect.flip(
+          Body.formData.pipe(Body.encodeSchema(Schema.Any)).encode({ k: "v" }),
+        );
+        expect(failure).toBeInstanceOf(Schema.SchemaError);
+      }),
+  );
+
   it.effect(
     "encodes FormData and leaves its Content-Type to the transport",
     () =>

@@ -183,10 +183,25 @@ A body needs an encoder or a decoder, not necessarily a schema. `Body.json`, `Bo
 `Body.bytes`, `Body.formData`, `Body.urlEncoded`, and `Body.empty` cover the finite representations,
 and `Body.encodeSchema`, `Body.schema`, and `Body.jsonSchema` add validation.
 
-`Body.json` is untyped and encodes exactly as `HttpBody.json` does. That includes Effect's choice
-for a value that `JSON.stringify` omits, such as `undefined` or a function: it encodes as an empty
-`application/json` body. `Body.jsonSchema` is the validated path; it encodes through the schema's
-canonical JSON codec (`Schema.toCodecJson`), and a struct schema never produces `undefined`.
+Request writers check the representation they actually write. This applies to open schemas, the
+output of any selected union member, and encoders composed with `Body.encodeSchema`. Schema reading
+and writer validation can each refuse before dispatch. For example, a string-indexed record can lose
+a supplied symbol during construction, while an empty struct passes the symbol through to the
+writer. Both paths refuse and name the symbol.
+
+`Body.jsonSchema` first encodes through the schema's canonical JSON codec (`Schema.toCodecJson`). It
+then shares the JSON writer with raw and composed `Body.json`. That writer validates inside the
+native JSON traversal. It sees each value after `toJSON`, including hidden and inherited array
+positions, and refuses values that would be silently replaced or omitted. An undefined object
+property supplies no field, and a top-level `undefined` yields an empty `application/json` body.
+Validation errors name the position in `HttpBodyError`. Exceptions from getters, proxies and
+`toJSON` remain defects.
+
+The Effect form schema links are checked where they flatten the encoded tree into form entries. The
+same pass validates leaves and writes the entries with Effect's bracket paths and repeated names. A
+prepared `FormData` or `URLSearchParams` that an open form schema keeps retains its entries.
+Prepared forms carry the values already chosen by their creator, so an earlier custom conversion
+controls what those values are.
 
 `Body.text` delegates incoming decoding to the provider's `response.text`. Fetch-backed providers
 decode UTF-8 regardless of a `Content-Type` charset, strip a leading UTF-8 byte-order mark, and

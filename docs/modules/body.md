@@ -115,9 +115,21 @@ Fetch-backed `Body.text` decoding is lenient UTF-8: malformed bytes become repla
 and charset parameters do not select another encoding. Use `Body.bytes` with an appropriate decoder
 for strict or non-UTF-8 data.
 
-`Body.json` follows Effect's JSON encoding, including an empty outgoing body for values that
-`JSON.stringify` omits. An empty incoming body is a JSON decoding error. Choose `Body.jsonSchema` to
-validate the application shape, or `Body.empty` for a response with no useful body.
+`Body.json`, `Body.jsonSchema`, and encoders composed from `Body.json` use the same JSON writer. It
+honours `toJSON` and checks what that conversion returns. It refuses non-finite numbers, bigints,
+functions, symbols, defined enumerable symbol keys, and undefined array positions with
+`HttpBodyError` naming the position. It omits undefined object fields and encodes top-level
+`undefined` as an empty outgoing body. Exceptions thrown by getters, proxies and `toJSON` are
+defects. An empty incoming body is a decoding error. Choose `Body.jsonSchema` to validate the
+application shape, or `Body.empty` for a response with no useful body.
+
+Use `Body.formData.pipe(Body.encodeSchema(Schema.fromFormData(fields)))` when a schema supplies the
+form entries. The form writer accepts text, files and blobs, including repeated values and nested
+fields using bracket paths. If a value cannot supply a form entry, it refuses with a `SchemaError`
+naming the field. For example, a number needs a schema that encodes it to text. A prepared
+`FormData` can go directly to `Body.formData`, which reports `SchemaError` if the encoder receives a
+plain record instead. `Body.urlEncoded` writes Effect `UrlParams` text pairs, including redacted
+text values, and refuses malformed pairs or non-text values with `SchemaError`.
 
 Bodies are finite; streaming is outside the supported API. Even discarding an unmatched body can
 wait forever if the server never ends it. Set a [timeout](./policy.md#bound-execution-time) when
