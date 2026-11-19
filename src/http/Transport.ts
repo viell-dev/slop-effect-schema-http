@@ -30,8 +30,10 @@ export type HeaderInput = Headers.Input;
  * @remarks
  * Record arrays of strings become repeated lines, and `undefined` record fields are omitted.
  * Pair arrays and repeated values are read by position. Each pair must be an array of length two
- * with a string name and value. Malformed pairs and invalid values throw `TypeError`. A
- * schema-backed `Request.headers` binding reports this failure as `InvalidRequest`.
+ * with a string name and value. Malformed pairs, invalid values, a defined enumerable symbol field
+ * in a record, and an own field beside the positions of a pair, a pair list or a value list throw
+ * `TypeError`, because the lines could not carry them. A schema-backed `Request.headers` binding
+ * reports this failure as `InvalidRequest`.
  */
 export const entries = (input: HeaderInput): Lines =>
   GroupEncoding.headerEntries(FieldPairs.read(input));

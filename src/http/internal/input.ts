@@ -197,38 +197,29 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   codec: Schema.ConstraintCodec<S["Type"], A, unknown, R>,
   guarded: ReturnType<typeof guardVoidMembers>,
   write: Write<S, A, R> = Schema.encodeEffect(codec),
+  canonicalJson = false,
 ) => {
   const decoded = toDecoded(contract);
+  const ast = contract.ast;
+  const readLoss = Excess.symbolLoss(ast, "record");
+  const writeLoss = canonicalJson ? Excess.symbolLoss(ast, "json") : undefined;
+  const losses = (input: unknown, value: unknown, output: unknown) => [
+    ...(readLoss?.(input, value) ?? []),
+    ...(writeLoss?.(value, output) ?? []),
+  ];
   const written = (
+    input: unknown,
     reading: ReturnType<typeof decoded>,
     options?: SchemaAST.ParseOptions,
   ) =>
     Effect.flatMap(reading, (value) =>
       Effect.map(write(value, options), (output): Written<A> => ({
         output,
-        lost: [],
+        lost: losses(input, value, output),
       })),
     );
-  const ast = contract.ast;
-  if (guarded.ast === ast && !Excess.choosing(ast)) {
-    const indexedSymbolLoss = Excess.indexedSymbolLoss(ast);
-    if (indexedSymbolLoss === undefined)
-      return (input: Input<S>) => written(decoded(input));
-    return (input: Input<S>) =>
-      Effect.suspend(() => {
-        let constructed = false;
-        return Effect.flatMap(
-          decoded(input, () => {
-            constructed = true;
-          }),
-          (value) =>
-            Effect.map(write(value), (output): Written<A> => ({
-              output,
-              lost: constructed ? indexedSymbolLoss(input, value) : [],
-            })),
-        );
-      });
-  }
+  if (guarded.ast === ast && !Excess.choosing(ast))
+    return (input: Input<S>) => written(input, decoded(input));
   const guardWrite =
     codec.ast === ast
       ? guarded.ast
@@ -254,7 +245,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             strictWriter(value, Excess.strict),
             (output): Written<A> => ({
               output,
-              lost: [],
+              lost: losses(input, value, output),
             }),
           ),
           (failure) => ({
@@ -285,14 +276,17 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             }),
             (output): Written<A> => ({
               output,
-              lost: Excess.missing(
-                [ast],
-                given,
-                value,
-                output,
-                [],
-                constructed && voidDeclined ? guarded.choices : undefined,
-              ),
+              lost: [
+                ...Excess.missing(
+                  [ast],
+                  given,
+                  value,
+                  output,
+                  [],
+                  constructed && voidDeclined ? guarded.choices : undefined,
+                ),
+                ...losses(input, value, output),
+              ],
             }),
           ),
       );
@@ -590,18 +584,26 @@ export const refuseLost = (
 export const encoder = <S extends Schema.Top, A, R>(
   contract: S,
   codec: Schema.ConstraintCodec<S["Type"], A, unknown, R>,
+  canonicalJson = false,
 ) => {
   const guarded = guardVoidMembers(contract.ast);
   if (
     guarded.ast === contract.ast &&
     !Excess.choosing(contract.ast) &&
-    Excess.indexedSymbolLoss(contract.ast) === undefined
+    Excess.symbolLoss(contract.ast, "record") === undefined &&
+    (!canonicalJson || Excess.symbolLoss(contract.ast, "json") === undefined)
   ) {
     const decoded = toDecoded(contract);
     const write = Schema.encodeEffect(codec);
     return (input: Input<S>) => Effect.flatMap(decoded(input), write);
   }
-  const read = readerForCodec(contract, codec, guarded);
+  const read = readerForCodec(
+    contract,
+    codec,
+    guarded,
+    undefined,
+    canonicalJson,
+  );
   return (
     input: Input<S>,
   ): Effect.Effect<A, Schema.SchemaError, R | S["DecodingServices"]> =>

@@ -451,56 +451,183 @@ export const missing = (
   });
 };
 
-const readsIndexedObjects = (ast: Ast): boolean =>
-  (ast._tag === "Objects" && ast.indexSignatures.length > 0) ||
-  partsOf(ast).some(readsIndexedObjects);
+/** Compares what a caller supplied at a position with what the schema produced there. */
+type SymbolCheck = (
+  supplied: unknown,
+  result: unknown,
+  path: PropertyKey[],
+  lost: Path[],
+) => void;
+
+/** Record each defined, enumerable symbol field of `supplied` that `result` does not have. */
+function ownLostSymbols(
+  supplied: object,
+  result: object,
+  path: ReadonlyArray<PropertyKey>,
+  lost: Path[],
+) {
+  for (const key of Object.getOwnPropertySymbols(supplied))
+    if (
+      !Object.hasOwn(result, key) &&
+      Object.prototype.propertyIsEnumerable.call(supplied, key) &&
+      Reflect.get(supplied, key) !== undefined
+    )
+      lost.push([...path, key]);
+}
+
+/** Descend one position, keeping the shared path stack balanced. */
+const within = (
+  check: SymbolCheck,
+  supplied: unknown,
+  result: unknown,
+  path: PropertyKey[],
+  key: PropertyKey,
+  lost: Path[],
+) => {
+  path.push(key);
+  check(supplied, result, path, lost);
+  path.pop();
+};
+
+const symbolChecks = {
+  record: new WeakMap<
+    Ast,
+    ((supplied: unknown, result: unknown) => ReadonlyArray<Path>) | null
+  >(),
+  json: new WeakMap<
+    Ast,
+    ((supplied: unknown, result: unknown) => ReadonlyArray<Path>) | null
+  >(),
+};
 
 /**
- * An indexed object can erase a supplied symbol during construction, before the writer sees it.
- * Count that as a schema loss, without changing the normal stripping of unstated struct fields.
+ * Where Effect itself drops a supplied symbol field, before any writer can see it.
+ *
+ * @remarks
+ * An index signature rebuilds its object from string keys, so a record loses a symbol field
+ * whether it constructs or decodes the caller's value. For JSON, the canonical codec of
+ * `Schema.ObjectKeyword` also copies the top-level string fields only. Everywhere else a symbol
+ * field reaches the writer, which refuses it there.
+ *
+ * The comparison is compiled once per schema and visits only the positions where such a node can
+ * be, with one shared path that is copied only for a loss, so an array of rows checks each row
+ * without rediscovering its schema or allocating a path. A suspended schema is read on first use.
  */
-export const indexedSymbolLoss = (ast: Ast) => {
-  if (!readsIndexedObjects(ast)) return undefined;
-  const find = (
-    types: ReadonlyArray<Ast>,
-    input: unknown,
-    value: unknown,
-    path: Path,
-  ): ReadonlyArray<Path> => {
-    if (input === value || !isObject(input) || !isObject(value)) return [];
-    const sides = types
-      .filter(readsIndexedObjects)
-      .flatMap((type) => sidesOf(type, input));
-    const lost: Path[] = [];
-    if (
-      sides.some(
-        (side) => side._tag === "Objects" && side.indexSignatures.length > 0,
-      )
-    ) {
-      for (const key of Object.getOwnPropertySymbols(input))
-        if (
-          !(key in value) &&
-          Object.prototype.propertyIsEnumerable.call(input, key) &&
-          input[key] !== undefined
-        )
-          lost.push([...path, key]);
-    }
-    if (sides.some((side) => partsOf(side).some(readsIndexedObjects))) {
-      for (const key of keysOf(input, readAsArray(sides))) {
-        const inner = typesAt(sides, key).filter(readsIndexedObjects);
-        if (inner.length > 0)
-          lost.push(
-            ...find(inner, input[key], value[key], [
-              ...path,
-              Array.isArray(input) ? (arrayIndex(key) ?? key) : key,
-            ]),
-          );
-      }
-    }
-    return lost;
+export function symbolLoss(ast: Ast, phase: "record" | "json") {
+  const memo = symbolChecks[phase];
+  const known = memo.get(ast);
+  if (known !== undefined) return known ?? undefined;
+  const cache = new Map<Ast, SymbolCheck | undefined>();
+  const build = (node: Ast): SymbolCheck | undefined => {
+    if (cache.has(node)) return cache.get(node);
+    const check = make(node);
+    cache.set(node, check);
+    return check;
   };
-  return (input: unknown, value: unknown) => find([ast], input, value, []);
-};
+  const make = (node: Ast): SymbolCheck | undefined => {
+    switch (node._tag) {
+      case "ObjectKeyword":
+        if (phase !== "json" || node.encoding !== undefined) return undefined;
+        return (input, value, path, lost) => {
+          if (input !== value && isObject(input) && isObject(value))
+            ownLostSymbols(input, value, path, lost);
+        };
+      case "Objects": {
+        const indexed = phase === "record" && node.indexSignatures.length > 0;
+        const properties = node.propertySignatures.flatMap(({ name, type }) => {
+          const check = build(type);
+          return check === undefined ? [] : [[name, check] as const];
+        });
+        const indexes = node.indexSignatures.flatMap(({ type }) => {
+          const check = build(type);
+          return check === undefined ? [] : [check];
+        });
+        if (!indexed && properties.length === 0 && indexes.length === 0)
+          return undefined;
+        return (input, value, path, lost) => {
+          if (input === value || !isObject(input) || !isObject(value)) return;
+          if (indexed && !Array.isArray(input))
+            ownLostSymbols(input, value, path, lost);
+          for (const [name, check] of properties)
+            within(check, input[name], value[name], path, name, lost);
+          if (indexes.length > 0)
+            for (const name of Object.keys(input))
+              for (const check of indexes)
+                within(check, input[name], value[name], path, name, lost);
+        };
+      }
+      case "Arrays": {
+        const fixed = node.elements.map(build);
+        const rest = node.rest.map(build);
+        if (!fixed.some(Boolean) && !rest.some(Boolean)) return undefined;
+        return (input, value, path, lost) => {
+          if (input === value || !Array.isArray(input) || !Array.isArray(value))
+            return;
+          const length = Math.min(input.length, value.length);
+          const head = Math.min(fixed.length, length);
+          for (let index = 0; index < head; index++) {
+            const check = fixed[index];
+            if (check)
+              within(check, input[index], value[index], path, index, lost);
+          }
+          if (rest.length === 0) return;
+          const end = Math.max(fixed.length, length - rest.length + 1);
+          const spread = rest[0];
+          if (spread)
+            for (let index = fixed.length; index < end; index++)
+              within(spread, input[index], value[index], path, index, lost);
+          for (let index = end; index < length; index++) {
+            const check = rest[index - end + 1];
+            if (check)
+              within(check, input[index], value[index], path, index, lost);
+          }
+        };
+      }
+      case "Union": {
+        const members = node.types.flatMap((member) => {
+          const check = build(member);
+          return check === undefined ? [] : [[member, check] as const];
+        });
+        if (members.length === 0) return undefined;
+        return (input, value, path, lost) => {
+          for (const [member, check] of members)
+            if (!ruledOut(member, input)) check(input, value, path, lost);
+        };
+      }
+      case "Suspend": {
+        // Building a request must not force the thunk, whose target may be assigned later.
+        let target: SymbolCheck | undefined | null = null;
+        return (input, value, path, lost) => {
+          if (target === null) target = build(node.thunk());
+          target?.(input, value, path, lost);
+        };
+      }
+      default:
+        return undefined;
+    }
+  };
+  const check = build(ast);
+  const compare =
+    check &&
+    ((supplied: unknown, result: unknown): ReadonlyArray<Path> => {
+      const lost: Path[] = [];
+      check(supplied, result, [], lost);
+      if (lost.length < 2) return lost;
+      // Two union members can report the same position.
+      return lost.filter(
+        (path, index) =>
+          !lost
+            .slice(0, index)
+            .some(
+              (earlier) =>
+                earlier.length === path.length &&
+                earlier.every((key, position) => key === path[position]),
+            ),
+      );
+    });
+  memo.set(ast, compare ?? null);
+  return compare;
+}
 
 const notHeld = new SchemaIssue.InvalidValue({
   message: "The schema cannot keep this field with the rest of the value",

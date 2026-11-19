@@ -2688,7 +2688,7 @@ describe("pairs group output", () => {
     }),
   );
 
-  it("excludes named properties on prototype-free pair arrays from generated fields", () => {
+  it("refuses named properties on prototype-free pair arrays instead of reading them as fields", () => {
     const contract = Schema.Struct({
       generated: Schema.optionalKey(Schema.String),
     });
@@ -2699,7 +2699,10 @@ describe("pairs group output", () => {
     expect(filled(["generated"], Shapes.snapshot(record))).toEqual([
       "generated",
     ]);
-    expect(filled(["generated"], Shapes.snapshot(array))).toEqual([]);
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/256
+    expect(() => Shapes.snapshot(array)).toThrow(
+      'The field pairs list has an extra array field at $["generated"]',
+    );
   });
 
   it("uses function properties as wire fields without generated-field evidence", () => {
@@ -2854,53 +2857,98 @@ describe("pairs group output", () => {
 });
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/256
-// Gaps the #260 review found in the group writers. Each pin records the current outcome.
-describe("group writer gaps from the #260 review", () => {
-  const symbol = Symbol("extra");
-  const record = Schema.Record(Schema.String, Schema.FiniteFromString);
-  const decoded = Request.get("/x").pipe(
-    Request.query(record),
-    Request.headers(record),
-  );
-  const open = Request.get("/x").pipe(
-    Request.query(Schema.Any),
-    Request.headers(Schema.Any),
-  );
-  const list = { k: Object.assign(["a"], { extra: "keep" }) };
+describe("group writers keep or refuse symbol fields and extra list fields", () => {
+  const key = Symbol("extra");
 
-  it.effect("currently drops a symbol field a record decode loses", () =>
-    Effect.gen(function* () {
-      const fields = { k: "1", [symbol]: "kept" };
-      const result = yield* compile(decoded, {
-        query: fields,
-        headers: fields,
-      });
-      expect(result.request.url).toBe("/x?k=1");
-      expect(result.headerLines).toEqual([["k", "1"]]);
-    }),
+  it.effect(
+    "refuses a symbol a record loses on either side, and one an ObjectKeyword group writes",
+    () =>
+      Effect.gen(function* () {
+        const record = Schema.Record(Schema.String, Schema.FiniteFromString);
+        const indexed = Request.get("/x").pipe(
+          Request.query(record),
+          Request.headers(record),
+        );
+        const keyword = Request.get("/x").pipe(
+          Request.query(Schema.ObjectKeyword as never),
+          Request.headers(Schema.ObjectKeyword as never),
+        );
+        for (const value of ["1", 1]) {
+          const fields = { k: value, [key]: "kept" };
+          for (const supplied of [
+            { query: fields, headers: {} },
+            { query: {}, headers: fields },
+          ]) {
+            const failure = yield* Effect.flip(compile(indexed, supplied));
+            expect(failure).toBeInstanceOf(Schema.SchemaError);
+            expect(failure.message).toContain("[Symbol(extra)]");
+          }
+        }
+        for (const [supplied, group] of [
+          [{ query: { k: "v", [key]: "kept" }, headers: {} }, "query"],
+          [{ query: {}, headers: { k: "v", [key]: "kept" } }, "header"],
+        ] as const) {
+          const failure = yield* refusal(keyword, supplied as never);
+          expect(failure.message).toBe(
+            `The ${group} field [Symbol(extra)] must have a string name`,
+          );
+        }
+      }),
   );
 
-  it.effect.fails("refuses a symbol field a record decode loses", () =>
+  it.effect("refuses extra fields on value lists, pair lists and pairs", () =>
     Effect.gen(function* () {
-      const fields = { k: "1", [symbol]: "kept" };
-      yield* Effect.flip(compile(decoded, { query: fields, headers: {} }));
+      const query = Request.get("/x").pipe(Request.query(Schema.Any));
+      const headers = Request.get("/x").pipe(Request.headers(Schema.Any));
+      for (const [fields, message] of [
+        [
+          { k: Object.assign(["v"], { extra: "kept" }) },
+          'field "k" has an extra array field at $["extra"]',
+        ],
+        [
+          Object.assign([["k", "v"]], { extra: "kept" }),
+          'The field pairs list has an extra array field at $["extra"]',
+        ],
+        [
+          [Object.assign(["k", "v"], { [key]: "kept" })],
+          'The field pair "k" has an extra array field at $[Symbol(extra)]',
+        ],
+      ] as const)
+        for (const write of [
+          refusal(query, { query: fields }),
+          refusal(headers, { headers: fields }),
+        ]) {
+          const failure = yield* write;
+          expect(failure.cause).toMatchObject({
+            message: expect.stringContaining(message),
+          });
+        }
+      const absent = Object.assign(["v"], { extra: undefined });
+      expect(yield* urlOf(query, { query: { k: absent } })).toBe("/x?k=v");
     }),
   );
 
   it.effect(
-    "currently drops extra fields on query and header value lists",
+    "refuses a defined, enumerable, non-callable Symbol.iterator on a record",
     () =>
       Effect.gen(function* () {
-        const result = yield* compile(open, { query: list, headers: list });
-        expect(result.request.url).toBe("/x?k=a");
-        expect(result.headerLines).toEqual([["k", "a"]]);
+        const query = Request.get("/x").pipe(Request.query(Schema.Any));
+        const headers = Request.get("/x").pipe(Request.headers(Schema.Any));
+        for (const iterator of [null, 5, {}]) {
+          const fields = { k: "v", [Symbol.iterator]: iterator };
+          expect((yield* refusal(query, { query: fields })).message).toBe(
+            "The query field [Symbol(Symbol.iterator)] must have a string name",
+          );
+          expect((yield* refusal(headers, { headers: fields })).message).toBe(
+            "The header field [Symbol(Symbol.iterator)] must have a string name",
+          );
+        }
+        const hidden = Object.defineProperty({ k: "v" }, Symbol.iterator, {
+          value: 5,
+          enumerable: false,
+        });
+        expect(yield* urlOf(query, { query: hidden })).toBe("/x?k=v");
       }),
-  );
-
-  it.effect.fails("refuses extra fields on query and header value lists", () =>
-    Effect.gen(function* () {
-      yield* refusal(open, { query: list, headers: {} });
-    }),
   );
 });
 

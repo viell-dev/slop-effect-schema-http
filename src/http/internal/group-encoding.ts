@@ -1,18 +1,23 @@
 import type { Lines } from "../Transport.js";
 import type { Query } from "../UrlEncoding.js";
 import type { Reading } from "./field-pairs.js";
+import { extraArrayField, textPath, WriterError } from "./writer-error.js";
 
 /** Expand present positions, including inherited positions, as array map would. */
 const forEachValue = (
   values: ReadonlyArray<unknown>,
+  group: "query" | "header",
+  name: string,
   write: (value: unknown) => void,
 ): void => {
   const length = values.length;
+  const extra = extraArrayField(values, length);
+  if (extra !== undefined) throw new InvalidArrayField(group, name, extra);
   for (let index = 0; index < length; index++)
     if (index in values) write(values[index]);
 };
 
-class InvalidQueryValue extends TypeError {
+class InvalidQueryValue extends WriterError {
   constructor(name: string) {
     super(
       `The query field ${JSON.stringify(name)} must encode a scalar value or a list of scalar values`,
@@ -20,8 +25,10 @@ class InvalidQueryValue extends TypeError {
   }
 }
 
-export const isInvalidQueryValue = (error: unknown): error is TypeError =>
-  error instanceof InvalidQueryValue || error instanceof InvalidFieldName;
+export const isInvalidQueryValue = (error: WriterError): error is WriterError =>
+  error instanceof InvalidQueryValue ||
+  error instanceof InvalidFieldName ||
+  error instanceof InvalidArrayField;
 
 /** Read the native Date brand, including dates from another realm. */
 const dateText = (value: object): string | undefined => {
@@ -57,9 +64,17 @@ export const queryScalar = (
   throw new InvalidQueryValue(name);
 };
 
-class InvalidFieldName extends TypeError {
+class InvalidFieldName extends WriterError {
   constructor(group: "query" | "header", key: symbol) {
     super(`The ${group} field [${String(key)}] must have a string name`);
+  }
+}
+
+class InvalidArrayField extends WriterError {
+  constructor(group: "query" | "header", name: string, extra: PropertyKey) {
+    super(
+      `The ${group} field ${JSON.stringify(name)} has an extra array field at ${textPath([extra])}`,
+    );
   }
 }
 
@@ -104,23 +119,27 @@ export const queryEntries = (reading: Reading): Query => {
       const text = queryScalar(name, entry);
       if (text !== undefined) query.push([name, text]);
     };
-    if (Array.isArray(value)) forEachValue(value, write);
+    if (Array.isArray(value)) forEachValue(value, "query", name, write);
     else write(value);
   }
   return query;
 };
 
-class InvalidHeaderValue extends TypeError {
+class InvalidHeaderValue extends WriterError {
   constructor() {
     super("A header line must have a string value");
   }
 }
 
-export const isInvalidHeaderValue = (error: unknown): error is TypeError =>
-  error instanceof InvalidHeaderValue || error instanceof InvalidFieldName;
+export const isInvalidHeaderValue = (
+  error: WriterError,
+): error is WriterError =>
+  error instanceof InvalidHeaderValue ||
+  error instanceof InvalidFieldName ||
+  error instanceof InvalidArrayField;
 
 export const headerErrorMessage = (error: TypeError): string =>
-  error instanceof InvalidFieldName
+  error instanceof InvalidFieldName || error instanceof InvalidArrayField
     ? error.message
     : "The header schema must encode string field names and values";
 
@@ -141,7 +160,9 @@ export const headerEntries = (reading: Reading): Lines => {
   for (const [name, value] of entries) {
     if (value === undefined) continue;
     if (Array.isArray(value))
-      forEachValue(value, (entry) => lines.push(headerLine(name, entry)));
+      forEachValue(value, "header", name, (entry) =>
+        lines.push(headerLine(name, entry)),
+      );
     else lines.push(headerLine(name, value));
   }
   return lines;

@@ -44,9 +44,11 @@ export type QueryInput =
  *
  * @remarks
  * Omits `undefined`, keeps `null`, writes a `Date` as ISO text, and converts other scalar values to
- * strings. Pair arrays and repeated values are read by position. Each pair must be an array of
- * length two with a string name. Malformed pairs and unsupported values throw `TypeError`. URL
- * escaping happens later through the query renderer.
+ * strings. An invalid `Date` writes `Invalid Date`. Pair arrays and repeated values are read by
+ * position. Each pair must be an array of length two with a string name. Malformed pairs,
+ * unsupported values, a defined enumerable symbol field in a record, and an own field beside the
+ * positions of a pair, a pair list or a value list throw `TypeError`, because the entries could
+ * not carry them. URL escaping happens later through the query renderer.
  */
 export const queryEntries = (input: QueryInput): Query =>
   GroupEncoding.queryEntries(FieldPairs.read(input));

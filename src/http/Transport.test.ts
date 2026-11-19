@@ -13,6 +13,35 @@ describe("Transport.entries", () => {
     );
   });
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/256
+  it("refuses extra fields on value lists, pair lists and pairs", () => {
+    expect(() =>
+      Transport.entries({ k: Object.assign(["v"], { extra: "keep" }) }),
+    ).toThrow(
+      new TypeError(
+        'The header field "k" has an extra array field at $["extra"]',
+      ),
+    );
+    expect(() =>
+      Transport.entries(
+        Object.assign([["k", "v"]], { extra: "keep" }) as never,
+      ),
+    ).toThrow(
+      new TypeError(
+        'The field pairs list has an extra array field at $["extra"]',
+      ),
+    );
+    expect(() =>
+      Transport.entries([
+        Object.assign(["k", "v"], { extra: "keep" }),
+      ] as never),
+    ).toThrow(
+      new TypeError(
+        'The field pair "k" has an extra array field at $["extra"]',
+      ),
+    );
+  });
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/236
   it.each([{ input: { "x-count": [1, 2] } }, { input: [["x-count", 1]] }])(
     "throws TypeError for a non-string header value",

@@ -1,4 +1,5 @@
 import { Predicate } from "effect";
+import { extraArrayField, textPath, WriterError } from "./writer-error.js";
 
 export type Pair = readonly [string, unknown];
 
@@ -14,7 +15,7 @@ export type Reading =
   | RecordFields
   | { readonly kind: "pairs"; readonly entries: ReadonlyArray<Pair> };
 
-class MalformedPair extends TypeError {
+class MalformedPair extends WriterError {
   constructor(
     message = "A field pair must be a two-position array with a string name",
   ) {
@@ -22,13 +23,18 @@ class MalformedPair extends TypeError {
   }
 }
 
-export const isMalformedPair = (error: unknown): error is TypeError =>
+export const isMalformedPair = (error: WriterError): error is MalformedPair =>
   error instanceof MalformedPair;
 
 const readPair = (pair: unknown): Pair => {
   if (!Array.isArray(pair) || pair.length !== 2) throw new MalformedPair();
   const name: unknown = pair[0];
   if (typeof name !== "string") throw new MalformedPair();
+  const extra = extraArrayField(pair, 2);
+  if (extra !== undefined)
+    throw new MalformedPair(
+      `The field pair ${JSON.stringify(name)} has an extra array field at ${textPath([extra])}`,
+    );
   return [name, pair[1]];
 };
 
@@ -115,6 +121,11 @@ export function read(input: object, mode?: "record"): Reading | undefined {
     if (mode === "record") return undefined;
     const entries: Pair[] = [];
     const length = input.length;
+    const extra = extraArrayField(input, length);
+    if (extra !== undefined)
+      throw new MalformedPair(
+        `The field pairs list has an extra array field at ${textPath([extra])}`,
+      );
     for (let index = 0; index < length; index++)
       entries.push(readPair(input[index]));
     return { kind: "pairs", entries };
