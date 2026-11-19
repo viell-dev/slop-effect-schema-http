@@ -57,6 +57,212 @@ const jsonRefusal = (
     expect(error.message).toContain(message);
   });
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/256
+// Gaps the #260 review found in the writers. Each pin records the current outcome.
+describe("writer gaps from the #260 review", () => {
+  const symbol = Symbol("extra");
+  const form = Body.formData.pipe(
+    Body.encodeSchema(Schema.fromFormData(Schema.Struct({}))),
+  );
+  const failureOf = <E>(write: Effect.Effect<HttpBody.HttpBody, E>) =>
+    Effect.map(Effect.flip(write), (error) => error as unknown);
+  const deep = (count: number) => {
+    const root: unknown[] = [];
+    let tail = root;
+    for (let index = 0; index < count; index++) {
+      const child: unknown[] = [];
+      tail.push(child);
+      tail = child;
+    }
+    return root;
+  };
+  class OtherFormData {
+    readonly #entries: Array<[string, string]> = [["k", "v"]];
+    append(name: string, value: string) {
+      this.#entries.push([name, value]);
+    }
+    entries() {
+      return this.#entries[Symbol.iterator]();
+    }
+    get [Symbol.toStringTag]() {
+      return "FormData";
+    }
+  }
+
+  it.effect(
+    "currently drops a symbol field through the ObjectKeyword JSON codec",
+    () =>
+      Effect.gen(function* () {
+        const body = yield* Body.jsonSchema(Schema.ObjectKeyword).encode({
+          a: 1,
+          [symbol]: "kept",
+        });
+        expect(textOf(body)).toBe('{"a":1}');
+      }),
+  );
+
+  it.effect.fails(
+    "refuses a symbol field the ObjectKeyword JSON codec drops",
+    () =>
+      Effect.gen(function* () {
+        const error = yield* failureOf(
+          Body.jsonSchema(Schema.ObjectKeyword).encode({
+            a: 1,
+            [symbol]: "kept",
+          }),
+        );
+        expect(error).toBeInstanceOf(Schema.SchemaError);
+      }),
+  );
+
+  it.effect(
+    "currently writes objects whose content is not in their fields",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          textOf(yield* Body.json.encode({ v: new Map([["k", "v"]]) })),
+        ).toBe('{"v":{}}');
+        expect(
+          textOf(yield* Body.json.encode({ v: Object(Symbol("s")) })),
+        ).toBe('{"v":{}}');
+        const error = yield* failureOf(
+          Body.json.encode({ v: new Blob(["x"]) }),
+        );
+        expect(error).toHaveProperty(
+          "message",
+          expect.stringContaining("[Symbol(kHandle)]"),
+        );
+        const root = yield* form.encode(new URLSearchParams("k=v"));
+        expect(body(root).formData.has("k")).toBe(false);
+      }),
+  );
+
+  it.effect.fails("refuses objects whose content is not in their fields", () =>
+    Effect.gen(function* () {
+      for (const v of [
+        new Map([["k", "v"]]),
+        Object(Symbol("s")),
+        new Blob(["x"]),
+      ]) {
+        const error = yield* failureOf(Body.json.encode({ v }));
+        expect(error).toHaveProperty(
+          "message",
+          expect.stringContaining("cannot encode"),
+        );
+      }
+      yield* Effect.flip(form.encode(new URLSearchParams("k=v")));
+    }),
+  );
+
+  it.effect("currently refuses a FormData from another implementation", () =>
+    Effect.gen(function* () {
+      const other = new OtherFormData() as unknown as FormData;
+      const error = yield* failureOf(Body.formData.encode(other));
+      expect(error).toBeInstanceOf(Schema.SchemaError);
+      expect(body(yield* form.encode(other)).formData.has("k")).toBe(false);
+    }),
+  );
+
+  it.effect.fails("sends a FormData from another implementation as it is", () =>
+    Effect.gen(function* () {
+      const other = new OtherFormData() as unknown as FormData;
+      expect(body(yield* Body.formData.encode(other)).formData).toBe(other);
+    }),
+  );
+
+  it.effect(
+    "currently coerces or drops what text, bytes and empty receive",
+    () =>
+      Effect.gen(function* () {
+        expect(textOf(yield* Body.text.encode({ a: 1 } as never))).toBe(
+          "[object Object]",
+        );
+        expect(bytesOf(yield* Body.bytes.encode(["a"] as never))).toEqual([
+          "a",
+        ]);
+        expect((yield* Body.empty.encode("kept" as never))._tag).toBe("Empty");
+      }),
+  );
+
+  it.effect.fails("refuses what text, bytes and empty cannot write", () =>
+    Effect.gen(function* () {
+      yield* Effect.flip(Body.text.encode({ a: 1 } as never));
+    }),
+  );
+
+  it.effect("currently dies on deep arrays and a null-prototype Number", () =>
+    Effect.gen(function* () {
+      for (const value of [deep(3_000), Object.setPrototypeOf(Object(5), null)])
+        expect(
+          Exit.isFailure(yield* Effect.exit(Body.json.encode(value))),
+        ).toBe(true);
+      const exit = yield* Effect.exit(Body.json.encode(deep(3_000)));
+      expect(exit).toMatchObject({
+        cause: { reasons: [{ _tag: "Die", defect: expect.any(RangeError) }] },
+      });
+    }),
+  );
+
+  it.effect.fails("writes 4,000 nested arrays and types engine failures", () =>
+    Effect.gen(function* () {
+      expect(textOf(yield* Body.json.encode(deep(4_000)))).toHaveLength(8_002);
+    }),
+  );
+
+  it.effect(
+    "currently refuses an empty form list and keeps extra JSON array fields",
+    () =>
+      Effect.gen(function* () {
+        const error = yield* failureOf(form.encode({ k: [] }));
+        expect(error).toBeInstanceOf(Schema.SchemaError);
+        expect(
+          textOf(
+            yield* Body.json.encode({
+              v: Object.assign([1], { extra: "keep" }),
+            }),
+          ),
+        ).toBe('{"v":[1]}');
+      }),
+  );
+
+  it.effect.fails(
+    "writes nothing for an empty form list and refuses extra array fields",
+    () =>
+      Effect.gen(function* () {
+        yield* form.encode({ k: [] });
+        yield* Effect.flip(
+          Body.json.encode({ v: Object.assign([1], { extra: "keep" }) }),
+        );
+      }),
+  );
+
+  it.effect("currently reports form writer refusals as SchemaError", () =>
+    Effect.gen(function* () {
+      expect(yield* failureOf(form.encode({ v: 1 }))).toBeInstanceOf(
+        Schema.SchemaError,
+      );
+      expect(
+        yield* failureOf(
+          Body.urlEncoded.encode(UrlParams.make([["k", 1 as never]])),
+        ),
+      ).toBeInstanceOf(Schema.SchemaError);
+    }),
+  );
+
+  it.effect.fails("reports form writer refusals as HttpBodyError", () =>
+    Effect.gen(function* () {
+      expect(yield* failureOf(form.encode({ v: 1 }))).toBeInstanceOf(
+        HttpBody.HttpBodyError,
+      );
+    }),
+  );
+});
+
+const body = (value: HttpBody.HttpBody) => {
+  if (value._tag !== "FormData") throw new Error(`body is ${value._tag}`);
+  return value;
+};
+
 describe("writer protection for open schemas", () => {
   const open = Schema.Struct({});
   const json = Body.jsonSchema(open);
