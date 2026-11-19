@@ -1442,3 +1442,111 @@ describe("a value on the encoded side stays there", () => {
     }),
   );
 });
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/241
+describe("a field a part lost under a parent read field by field", () => {
+  const Filter = Schema.Struct({
+    limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+      Schema.withConstructorDefault(Effect.succeed(25)),
+    ),
+  }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+  const n = Schema.FiniteFromString;
+  const Inner = Schema.Struct({ m: n, f: Filter });
+  const Cursor = Schema.Struct({ cursor: Schema.String });
+  /** A decoded `n: 1` beside the part makes its parent read field by field. */
+  const decodedLost = [
+    [
+      Schema.Struct({ n, f: Filter }),
+      { n: 1, f: { limit: "x" } },
+      '{"n":"1","f":{"page_size":"25"}}',
+      '["f"]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, f: Schema.optionalKey(Filter) }),
+      { n: 1, f: { limit: "x" } },
+      '{"n":"1","f":{"page_size":"25"}}',
+      '["f"]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, r: Schema.Record(Schema.String, Filter) }),
+      { n: 1, r: { a: { limit: "x" } } },
+      '{"n":"1","r":{"a":{"page_size":"25"}}}',
+      '["r"]["a"]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, t: Schema.Tuple([Filter]) }),
+      { n: 1, t: [{ limit: "x" }] },
+      '{"n":"1","t":[{"page_size":"25"}]}',
+      '["t"][0]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, items: Schema.Array(Inner) }),
+      { n: 1, items: [{ m: "1", f: { limit: "x" } }] },
+      '{"n":"1","items":[{"m":"1","f":{"page_size":"25"}}]}',
+      '["items"][0]["f"]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, inner: Inner }),
+      { n: 1, inner: { m: 1, f: { limit: "x" } } },
+      '{"n":"1","inner":{"m":"1","f":{"page_size":"25"}}}',
+      '["inner"]["f"]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, f: Schema.Union([Filter, Cursor]) }),
+      { n: 1, f: { limit: "x" } },
+      '{"n":"1","f":{"page_size":"25"}}',
+      '["f"]["limit"]',
+    ],
+    [
+      Schema.Union([Schema.Struct({ n, f: Filter }), Cursor]),
+      { n: 1, f: { limit: "x" } },
+      '{"n":"1","f":{"page_size":"25"}}',
+      '["f"]["limit"]',
+    ],
+  ] as const;
+  /** Encoded names throughout, which the part's own constructor reads as excess keys. */
+  const encodedLost = [
+    [
+      Schema.Struct({ n, f: Filter }),
+      { n: "1", f: { page_size: "many" } },
+      '{"n":"1","f":{"page_size":"25"}}',
+      '["f"]["page_size"]',
+    ],
+    [
+      Schema.Struct({ n, items: Schema.Array(Filter) }),
+      { n: "1", items: [{ page_size: "many" }] },
+      '{"n":"1","items":[{"page_size":"25"}]}',
+      '["items"][0]["page_size"]',
+    ],
+  ] as const;
+  const pathed = Request.get("").pipe(
+    Request.path(decodedLost[0][0], (value) => `/${JSON.stringify(value)}`),
+  );
+
+  it.effect(
+    "currently lets a constructor default replace the field the part lost",
+    () =>
+      Effect.gen(function* () {
+        for (const [schema, input, sent] of [...decodedLost, ...encodedLost])
+          expect(yield* sentBy(schema, input as never)).toBe(sent);
+        expect(yield* urlOf(pathed, { path: decodedLost[0][1] } as never)).toBe(
+          `/${decodedLost[0][2]}`,
+        );
+      }),
+  );
+
+  it.effect.fails("refuses the field the part lost, as at the root", () =>
+    Effect.gen(function* () {
+      for (const [schema, input, , field] of [...decodedLost, ...encodedLost])
+        expect(
+          yield* schemaFailure(posted(schema), { body: input } as never),
+        ).toBe(
+          `The schema cannot keep this field with the rest of the value
+  at ${field}`,
+        );
+      expect(
+        yield* schemaFailure(pathed, { path: decodedLost[0][1] } as never),
+      ).toContain('["f"]["limit"]');
+    }),
+  );
+});

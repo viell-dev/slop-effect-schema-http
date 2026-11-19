@@ -1,5 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schema, SchemaTransformation } from "effect";
+import {
+  Effect,
+  Option,
+  Schema,
+  SchemaGetter,
+  SchemaTransformation,
+} from "effect";
+import { HttpBody, UrlParams } from "effect/http";
 import {
   bodyOf,
   compile,
@@ -1329,6 +1336,120 @@ describe("a caller's field under a union", () => {
         expect(message).toContain("Expected number");
         expect(message).not.toContain("The schema cannot keep");
       }),
+    );
+  });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+  describe("a member the write falls back to", () => {
+    const Note = Schema.Struct({ title: text, meta: Schema.Unknown });
+    const Title = Schema.Struct({ title: text });
+    /** Text whose encoded side needs two characters, so a short value fails only when written. */
+    const Code = text.pipe(
+      Schema.encodeTo(text.check(Schema.isMinLength(2)), {
+        decode: SchemaGetter.passthrough(),
+        encode: SchemaGetter.passthrough(),
+      }),
+    );
+    const Coded = Schema.Struct({ title: text, code: Code });
+    const note = { title: "a", meta: new Date(0) };
+    const coded = { title: "a", code: "x" };
+    const form = Body.encoder((value: Readonly<Record<string, string>>) =>
+      Effect.succeed(HttpBody.urlParams(UrlParams.fromInput(value))),
+    );
+    /** What a query, headers, JSON body, form body and path send for `coded`, or the refusal. */
+    const everywhere = (schema: Schema.Codec<object, Record<string, string>>) =>
+      Effect.forEach(
+        [
+          urlOf(queried(schema), { query: coded }),
+          Effect.map(
+            linesOf(Request.get("/x").pipe(Request.headers(schema)), {
+              headers: coded,
+            }),
+            (lines) => JSON.stringify(lines),
+          ),
+          bodyOf(post(schema), { body: coded }),
+          bodyOf(
+            Request.post("/x").pipe(
+              Request.body(form.pipe(Body.encodeSchema(schema))),
+            ),
+            { body: coded },
+          ),
+          urlOf(
+            Request.get("").pipe(
+              Request.path(schema, (value) => `/${JSON.stringify(value)}`),
+            ),
+            { path: coded },
+          ),
+        ] as const,
+        (prepared: Effect.Effect<string | undefined, unknown>) =>
+          Effect.catchIf(
+            prepared,
+            (error) => error instanceof Schema.SchemaError,
+            (error) => Effect.succeed(`refused: ${error.message}`),
+          ),
+      );
+
+    it.effect("currently drops a field the first member could not write", () =>
+      Effect.gen(function* () {
+        expect(yield* schemaFailure(post(Note), { body: note })).toBe(
+          'Expected JSON value\n  at ["meta"]',
+        );
+        for (const schema of [
+          Schema.Union([Note, Title]),
+          Schema.Union([Note, Schema.Void, Title]),
+          Schema.Union([Note, Title, Schema.Void]),
+        ])
+          expect(yield* bodyOf(post(schema), { body: note })).toBe(
+            '{"title":"a"}',
+          );
+        expect(
+          yield* bodyOf(
+            post(Schema.Struct({ x: Schema.Union([Note, Title]) })),
+            { body: { x: note } },
+          ),
+        ).toBe('{"x":{"title":"a"}}');
+        expect(
+          yield* bodyOf(post(Schema.Array(Schema.Union([Note, Title]))), {
+            body: [note],
+          }),
+        ).toBe('[{"title":"a"}]');
+        expect(yield* everywhere(Coded)).toEqual(
+          Array(5).fill(
+            'refused: Expected a value with a length of at least 2\n  at ["code"]',
+          ),
+        );
+        expect(yield* everywhere(Schema.Union([Coded, Title]))).toEqual([
+          "/x?title=a",
+          '[["title","a"]]',
+          '{"title":"a"}',
+          "title=a",
+          '/{"title":"a"}',
+        ]);
+      }),
+    );
+
+    it.effect.fails(
+      "refuses with the first member's error where no member keeps the field",
+      () =>
+        Effect.gen(function* () {
+          for (const schema of [
+            Schema.Union([Note, Title]),
+            Schema.Union([Note, Schema.Void, Title]),
+            Schema.Union([Note, Title, Schema.Void]),
+          ])
+            expect(yield* schemaFailure(post(schema), { body: note })).toBe(
+              'Expected JSON value\n  at ["meta"]',
+            );
+          expect(
+            yield* schemaFailure(
+              post(Schema.Struct({ x: Schema.Union([Note, Title]) })),
+              { body: { x: note } },
+            ),
+          ).toBe('Expected JSON value\n  at ["x"]["meta"]');
+          expect(yield* everywhere(Schema.Union([Coded, Title]))).toEqual(
+            yield* everywhere(Coded),
+          );
+        }),
     );
   });
 
