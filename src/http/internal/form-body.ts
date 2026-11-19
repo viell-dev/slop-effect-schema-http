@@ -178,10 +178,11 @@ interface Rules<A> {
   /** The refusal for a value that is neither a leaf nor a container. */
   readonly leaves: string;
   /**
-   * Whether a list may hold containers, written under indexed names as Effect's form links do.
-   * `UrlParams.fromInput` converts each list item to text instead, so there a list holds leaves.
+   * The refusal for a list item that is no leaf, where a list holds leaves only, as
+   * `UrlParams.fromInput` converts each item to text. Effect's form links write any other item
+   * under an indexed name instead, so they leave this out.
    */
-  readonly nestedLists: boolean;
+  readonly listItems?: string;
   /** Whether an iterable that is not a list holds field pairs, as `UrlParams.fromInput` reads it. */
   readonly iterablePairs: boolean;
   readonly append: (key: string, value: A) => void;
@@ -203,7 +204,7 @@ function writeTree<A>(
     medium,
     isLeaf,
     leaves: notLeaf,
-    nestedLists,
+    listItems,
     iterablePairs,
     append,
   }: Rules<A>,
@@ -286,14 +287,14 @@ function writeTree<A>(
       if (item === undefined)
         refuse(step, "cannot encode undefined in a list", index);
       leaves &&= isLeaf(item);
-      if (!leaves && !nestedLists)
+      if (!leaves && listItems !== undefined)
         refuse(
           step,
           typeof item === "object" &&
             item !== null &&
             !Redacted.isRedacted(item)
             ? "cannot encode a list or an object inside a list"
-            : notLeaf,
+            : listItems,
           index,
         );
       items.push([index, item]);
@@ -385,7 +386,6 @@ const multipart = new SchemaTransformation.Transformation(
           medium: "Multipart",
           isLeaf: isPart,
           leaves: "must be text, a Blob or File, or a form container",
-          nestedLists: true,
           iterablePairs: false,
           append: (key, value) => form.append(key, value),
         });
@@ -408,7 +408,6 @@ const searchParams = new SchemaTransformation.Transformation(
           medium: "URL-encoded",
           isLeaf: isText,
           leaves: "must be text or a form container",
-          nestedLists: true,
           iterablePairs: false,
           append: (key, value) => params.append(key, value),
         });
@@ -513,7 +512,7 @@ export const encodeUrlParams = (input: UrlParams.UrlParams) =>
       isLeaf: isParam,
       leaves:
         "must be text, a number, a bigint, a boolean, or a record of them",
-      nestedLists: false,
+      listItems: "must be text, a number, a bigint or a boolean",
       iterablePairs: true,
       append: (key, value) => params.append(key, paramText(value)),
     };
