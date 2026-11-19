@@ -6,8 +6,11 @@ import {
   SchemaGetter,
   SchemaTransformation,
 } from "effect";
+import { empty, synthetic } from "../../test/support.js";
 import * as Body from "./Body.js";
+import * as Operation from "./Operation.js";
 import * as Request from "./Request.js";
+import * as Response from "./Response.js";
 import type * as Transport from "./Transport.js";
 import type * as UrlEncoding from "./UrlEncoding.js";
 
@@ -435,9 +438,6 @@ const prepared = <S extends Schema.Top>(schema: S, input: unknown) =>
 const refused = ["refused", "refused"];
 const kept = (value: unknown) => [{ value }, { value }];
 
-/** A pairs list with no prototype, so no iterator to tell it by. */
-const bare = () => Object.setPrototypeOf([["k", "v"]], null) as unknown;
-
 /** Where the path and body bindings each refuse one input. */
 const refusals = <S extends Schema.Top>(schema: S, input: unknown) =>
   Effect.forEach(["path", "body"] as const, (binding) =>
@@ -699,39 +699,6 @@ describe("a caller's list beside a record member", () => {
     }),
   );
 
-  const Pairs = Schema.Array(Schema.Tuple([Schema.String, Schema.String]));
-  const Kept = Schema.Union([Schema.Struct({}), Pairs]);
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/242
-  it.effect(
-    "currently writes a pairs list without an iterator prototype under its indexes",
-    () =>
-      Effect.gen(function* () {
-        // `Struct({})` keeps the list as it is; writing then tells pairs by an iterator.
-        expect(yield* queried(Pairs, bare())).toEqual({ value: "/x?k=v" });
-        expect(yield* queried(Kept, [["k", "v"]])).toEqual({ value: "/x?k=v" });
-        expect(yield* queried(Kept, bare())).toEqual({ value: "/x?0=k&0=v" });
-        expect(yield* headed(Pairs, bare())).toEqual({ value: [["k", "v"]] });
-        expect(yield* headed(Kept, [["k", "v"]])).toEqual({
-          value: [["k", "v"]],
-        });
-        expect(yield* headed(Kept, bare())).toEqual({
-          value: [
-            ["0", "k"],
-            ["0", "v"],
-          ],
-        });
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/242
-  it.effect.fails("writes a pairs list without an iterator prototype", () =>
-    Effect.gen(function* () {
-      expect(yield* queried(Kept, bare())).toEqual({ value: "/x?k=v" });
-      expect(yield* headed(Kept, bare())).toEqual({ value: [["k", "v"]] });
-    }),
-  );
-
   it.effect("still tries union members one by one for a list", () =>
     Effect.gen(function* () {
       // Both members read the list, so the any-one rule refuses it as a whole. Only the first
@@ -783,5 +750,120 @@ describe("a caller's list beside a record member", () => {
           );
         expect(iterations).toBe(0);
       }),
+  );
+});
+
+describe("positional query and header groups", () => {
+  const Pairs = Schema.Array(Schema.Tuple([Schema.String, Schema.String]));
+  const Kept = Schema.Union([Schema.Struct({}), Pairs]);
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/242
+  it.effect(
+    "keeps order, repetition and declared defaults without array iterators",
+    () =>
+      Effect.gen(function* () {
+        const base = Request.get("https://api.test/x");
+        const fallback = base.pipe(
+          Request.setQuery("fallback", "d"),
+          Request.setQuery("k", "shadowed"),
+          Request.setHeader("fallback", "d"),
+          Request.setHeader("K", "shadowed"),
+        );
+        const original = [
+          ["k", "v"],
+          ["tag", "one"],
+          ["k", "again"],
+        ] as const;
+        let iterations = 0;
+        for (const schema of [Pairs, Kept]) {
+          for (const declaration of [base, fallback]) {
+            const request = declaration.pipe(
+              Request.query(schema),
+              Request.headers(schema),
+            );
+            const url =
+              "https://api.test/x?k=v&tag=one&k=again" +
+              (declaration === fallback ? "&fallback=d" : "");
+            const lines =
+              declaration === fallback
+                ? [...original, ["fallback", "d"]]
+                : original;
+            for (const layout of [
+              "ordinary",
+              "null prototype",
+              "own iterator",
+            ] as const) {
+              const pairs = original.map(
+                ([name, value]) => [name, value] as const,
+              );
+              if (layout === "null prototype") {
+                for (const pair of pairs) Object.setPrototypeOf(pair, null);
+                Object.setPrototypeOf(pairs, null);
+              }
+              if (layout === "own iterator") {
+                Object.defineProperty(pairs[0], Symbol.iterator, {
+                  value: function* () {
+                    iterations++;
+                    yield "substituted";
+                    yield "entry";
+                  },
+                });
+                Object.defineProperty(pairs, Symbol.iterator, {
+                  value: function* () {
+                    iterations++;
+                    yield ["substituted", "group"];
+                  },
+                });
+              }
+              const input = { query: pairs, headers: pairs };
+              const compiled = yield* Request.compile(request, input);
+              expect(compiled.request.url, layout).toBe(url);
+              expect(compiled.headerLines, layout).toEqual(lines);
+              const server = synthetic(() => empty(204));
+              yield* Operation.make(request, Response.status(204, Body.empty))
+                .execute(input)
+                .pipe(Effect.provide(server.layer));
+              expect(server.exchanges, layout).toHaveLength(1);
+              expect(server.exchanges[0]?.url, layout).toBe(url);
+              expect(server.exchanges[0]?.headerLines, layout).toEqual(lines);
+            }
+          }
+        }
+        expect(iterations).toBe(0);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/242
+  it.effect("reads each encoded array and pair position once per binding", () =>
+    Effect.gen(function* () {
+      const fetches = { entry: 0, name: 0, value: 0 };
+      const pair = ["k", "v"];
+      Object.defineProperties(pair, {
+        "0": { get: () => (++fetches.name === 1 ? "k" : "substituted") },
+        "1": { get: () => (++fetches.value === 1 ? "v" : "substituted") },
+      });
+      const pairs = [pair];
+      Object.defineProperty(pairs, "0", {
+        get: () => (++fetches.entry === 1 ? pair : ["substituted", "group"]),
+      });
+      const Group = Schema.Any.pipe(
+        Schema.decodeTo(Schema.String, {
+          decode: SchemaGetter.transform(() => "decoded"),
+          encode: SchemaGetter.transform(() => pairs),
+        }),
+      );
+      const query = Request.get("/x").pipe(Request.query(Group));
+      const headers = Request.get("/x").pipe(Request.headers(Group));
+      const result = yield* Request.compile(query, { query: "decoded" });
+      expect(result.request.url).toBe("/x?k=v");
+      expect(fetches).toEqual({ entry: 1, name: 1, value: 1 });
+
+      Object.assign(fetches, { entry: 0, name: 0, value: 0 });
+      const headerResult = yield* Request.compile(headers, {
+        headers: "decoded",
+      });
+      expect(headerResult.headerLines).toEqual([["k", "v"]]);
+      expect(fetches).toEqual({ entry: 1, name: 1, value: 1 });
+    }),
   );
 });

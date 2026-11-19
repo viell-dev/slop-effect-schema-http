@@ -22,9 +22,11 @@ import {
   Tenant,
   urlOf,
 } from "../../test/request.js";
-import { bodyText } from "../../test/support.js";
+import { bodyText, empty, synthetic } from "../../test/support.js";
 import * as Body from "./Body.js";
+import * as Operation from "./Operation.js";
 import * as Request from "./Request.js";
+import * as Response from "./Response.js";
 
 /** The names a refusal lists after its last colon. */
 const lostFrom = (message: string) =>
@@ -2274,30 +2276,85 @@ describe("group schema output", () => {
   );
 });
 
-describe("known group output limit", () => {
-  const request = Request.get("/x").pipe(Request.headers(Schema.Any));
-  const input = { headers: [1] };
-
+describe("pairs group output", () => {
   // https://github.com/viell-dev/slop-effect-schema-http/issues/236
-  it.effect("currently dies while reading malformed iterable field pairs", () =>
+  it.effect("refuses malformed field pairs before dispatch", () =>
     Effect.gen(function* () {
-      const result = yield* Effect.exit(Request.compile(request, input));
-      expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") {
-        expect(Cause.hasDies(result.cause)).toBe(true);
-        expect(Cause.pretty(result.cause)).toContain("TypeError");
+      const base = Request.get("https://api.test/x");
+      type Groups = { readonly query?: unknown; readonly headers?: unknown };
+      const requests: ReadonlyArray<
+        readonly [
+          keyof Groups,
+          Request.Request<Groups, Schema.SchemaError | Request.InvalidRequest>,
+        ]
+      > = [
+        [
+          "query",
+          base.pipe(
+            Request.setQuery("fallback", "d"),
+            Request.query(Schema.Any),
+          ),
+        ],
+        [
+          "headers",
+          base.pipe(
+            Request.setHeader("fallback", "d"),
+            Request.headers(Schema.Any),
+          ),
+        ],
+      ];
+      const sparsePair = ["k", "v"];
+      delete sparsePair[1];
+      const sparseGroup: unknown[] = [];
+      sparseGroup.length = 1;
+      const inputs = [
+        [1],
+        new Set([1]),
+        [["k", "v"], null],
+        [[1, "v"]],
+        new Map([[1, "v"]]),
+        [["k"]],
+        [sparsePair],
+        [["k", "v", "extra"]],
+        sparseGroup,
+      ];
+      for (const [key, request] of requests) {
+        const server = synthetic(() => empty(204));
+        const operation = Operation.make(
+          request,
+          Response.status(204, Body.empty),
+        );
+        const label = key === "query" ? "query" : "header";
+        for (const value of inputs) {
+          const input = { [key]: value };
+          const compileError = yield* refusal(request, input);
+          const operationError = yield* Effect.flip(
+            operation.execute(input).pipe(Effect.provide(server.layer)),
+          );
+          for (const error of [compileError, operationError]) {
+            expect(error).toBeInstanceOf(Request.InvalidRequest);
+            expect(error.message).toBe(
+              `The ${label} schema must encode a field record or field pairs`,
+            );
+          }
+        }
+        expect(server.exchanges).toEqual([]);
       }
     }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/236
-  it.effect.fails(
-    "refuses malformed iterable field pairs with a typed error",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* refusal(request, input)).toBeInstanceOf(
-          Request.InvalidRequest,
-        );
-      }),
+  it.effect("still accepts generic iterables of pairs", () =>
+    Effect.gen(function* () {
+      const base = Request.get("/x");
+      const query = base.pipe(Request.query(Schema.Any));
+      const headers = base.pipe(Request.headers(Schema.Any));
+      expect(yield* urlOf(query, { query: new Map([["k", "v"]]) })).toBe(
+        "/x?k=v",
+      );
+      expect(
+        yield* linesOf(headers, { headers: new Map([["k", "v"]]) }),
+      ).toEqual([["k", "v"]]);
+    }),
   );
 });

@@ -889,8 +889,11 @@ const prepareGroup = <
     new InvalidRequest({
       message: `The ${label} schema must encode a field record or field pairs`,
     });
+  const checkOutput = <A>(inspect: () => A) =>
+    Effect.try({ try: inspect, catch: invalidOutput });
   return {
     shape,
+    checkOutput,
     // Delegate directly so extraction adds no Effect boundary between the original steps.
     *evaluate<I, E, R>(
       self: Request<I, E, R>,
@@ -906,9 +909,19 @@ const prepareGroup = <
     ) {
       const edited = candidates(value, draft.editedFields.get(shape));
       let { output, lost: lostFromInput } = yield* read(value);
-      if (!Predicate.isObjectKeyword(output)) {
+      const initial = yield* Effect.result(
+        checkOutput(() => {
+          if (!Predicate.isObjectKeyword(output)) return undefined;
+          const fields = Shapes.snapshot(output);
+          return {
+            fields,
+            own: draft[takenKey] && taken(value, fields, lostFromInput),
+          };
+        }),
+      );
+      if (initial._tag === "Failure" || initial.success === undefined) {
         if (lostFromInput.length > 0) {
-          // A non-object output claims no fields. Another binding can still claim a root loss.
+          // An invalid output claims no fields. Another binding can still claim a root loss.
           const prepared = yield* self.prepare(input, draft);
           yield* Inputs.refuseLost(
             contract,
@@ -916,10 +929,13 @@ const prepareGroup = <
             prepared[takenKey]?.fields,
           );
         }
-        return yield* invalidOutput();
+        return yield* initial._tag === "Failure"
+          ? initial.failure
+          : invalidOutput();
       }
+      let { fields } = initial.success;
+      const { own } = initial.success;
       let conflicts = filled(edited, output);
-      const own = draft[takenKey] && taken(value, output, lostFromInput);
       let prepared = yield* self.prepare(
         input,
         own === undefined
@@ -939,6 +955,7 @@ const prepareGroup = <
         );
         if (recovered !== undefined) {
           ({ output, lost: lostFromInput } = recovered.reading);
+          fields = yield* checkOutput(() => Shapes.snapshot(output));
           conflicts = filled(edited, output);
           prepared = { ...prepared, [takenKey]: recovered.taken };
         }
@@ -950,17 +967,27 @@ const prepareGroup = <
       }
       if (conflicts.length > 0)
         return yield* preparationConflict(group, conflicts);
-      const names = Shapes.written(output, fold);
+      const names = yield* checkOutput(() => Shapes.written(fields, fold));
       const elsewhere = Shapes.others(shape, prepared[takenKey], fold);
       const defaults = defaultsFrom(prepared, names, elsewhere);
-      const settled = yield* Effect.mapError(settle(output, defaults), () =>
-        misfit(label, defaults),
-      );
-      if (!Predicate.isObjectKeyword(settled)) return yield* invalidOutput();
+      let settled = fields;
+      if (defaults.length > 0) {
+        const settlement = yield* checkOutput(() => settle(fields, defaults));
+        const result = yield* Effect.mapError(settlement, () =>
+          misfit(label, defaults),
+        );
+        if (!Predicate.isObjectKeyword(result)) return yield* invalidOutput();
+        if (result !== fields.source)
+          settled = yield* checkOutput(() => Shapes.snapshot(result));
+      }
       // A field the schema does not write back would be lost, as a union member can lose one.
-      const lost = Shapes.lost(output, defaults, settled, fold);
+      const lost = yield* checkOutput(() =>
+        Shapes.lost(fields, defaults, settled, fold),
+      );
       if (lost.length > 0) return yield* lostFields(label, lost);
-      return { prepared, settled, names, defaults };
+      // A positional snapshot has the same entry types as the encoded array it copies.
+      const writable = (settled.pairs ?? settled.source) as S["Encoded"];
+      return { prepared, settled: writable, names, defaults };
     },
   };
 };
@@ -998,7 +1025,8 @@ const prepareGroup = <
  *
  * Under a union, the defaults and what the schema wrote have to fit one member together. A field
  * that would be lost otherwise is an {@link InvalidRequest}, which names that field. The caller's
- * own value is read before that, as {@link Input} describes.
+ * own value is read before that, as {@link Input} describes. An encoded array of pairs is read by
+ * position. A malformed field pair fails with {@link InvalidRequest} before dispatch.
  *
  * Header schemas stack: a second one adds its fields, and together they state the shape. A field
  * one of them takes stays with it, whatever a union beside it leaves out. Use {@link unbind} to
@@ -1139,7 +1167,8 @@ export const headers = <
  *
  * Under a union, the defaults and what the schema wrote have to fit one member together. A field
  * that would be lost otherwise is an {@link InvalidRequest}, which names that field. The caller's
- * own value is read before that, as {@link Input} describes.
+ * own value is read before that, as {@link Input} describes. An encoded array of pairs is read by
+ * position. A malformed field pair fails with {@link InvalidRequest} before dispatch.
  *
  * A field can encode to a `Date`, which is written as ISO text. Text under a field that encodes to
  * a number, boolean, bigint or `Date` is read as one first, and a single value under a list field
@@ -1165,7 +1194,11 @@ export const query = <
 >(
   contract: S,
 ) => {
-  const { shape, evaluate } = prepareGroup(contract, "query", foldQuery);
+  const { shape, evaluate, checkOutput } = prepareGroup(
+    contract,
+    "query",
+    foldQuery,
+  );
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
@@ -1206,9 +1239,12 @@ export const query = <
               )
               .map((param) => [param[0], queryValue(prepared, param)] as const),
         );
+        const entries = yield* checkOutput(() =>
+          UrlEncoding.queryEntries(settled),
+        );
         return replaceQuery(
           prepared,
-          UrlEncoding.queryEntries(settled),
+          entries,
           new Set([...names, ...defaults.map(([name]) => name)]),
         );
       }),

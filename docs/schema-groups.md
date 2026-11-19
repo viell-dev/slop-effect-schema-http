@@ -152,10 +152,11 @@ Some things are outside the check:
   a later raw edit without refusal; the library does not guess which alias supplied that output.
 - Generated-field proof otherwise remains limited to explicit same-name fields of direct structs and
   closed unions without group encoding. Classes, declarations, suspended/unknown/open endpoints and
-  accessor/inherited input remain outside the additional empty-group proof. Iterable output uses
-  yielded entries, so own string properties prove nothing about what it sends. An absent,
-  non-enumerable, accessor or `undefined` output property supplies no generated-field evidence.
-  Ordinary schema/default and lost-field checks still apply.
+  accessor/inherited input remain outside the additional empty-group proof. Arrays of pairs use
+  entries at their indexes. Other iterables use yielded entries. Own named properties on either kind
+  supply no generated-field evidence. An absent, non-enumerable, accessor or `undefined` output
+  property supplies no generated-field evidence. Ordinary schema/default and lost-field checks still
+  apply.
 - A union outside the recovery guard keeps its initial selection. For example, the union of `{ b }`
   and `{ a, c }` stacked with `{ b }` can still refuse `{ a, b, c }` if its parent check rejects the
   initial `{ b }` read, because that failure precedes field-loss recovery. If the initial read and

@@ -1,5 +1,6 @@
 import { Effect, Schema, SchemaAST } from "effect";
 import * as Excess from "./excess.js";
+import * as FieldPairs from "./field-pairs.js";
 import type { Fold } from "./fields.js";
 
 /** What one schema says about its field group. Names are wire names, in their compared form. */
@@ -214,11 +215,24 @@ export const required = (
     shapes.some((shape) => shape.required.has(fold(name))),
   );
 
+export interface Output<W extends object = object> {
+  readonly source: W;
+  readonly pairs: ReadonlyArray<FieldPairs.Pair> | undefined;
+}
+
+/** Keep one positional read for claims, defaults and writing. Non-array outputs keep their reader. */
+export const snapshot = <W extends object>(source: W): Output<W> => ({
+  source,
+  pairs: Array.isArray(source) ? FieldPairs.fromArray(source) : undefined,
+});
+
 /** The names a schema's output holds a value under, as the schema spells them. */
-const writtenNames = (output: object): ReadonlyArray<string> =>
-  (Symbol.iterator in output
-    ? Array.from(output as Iterable<readonly [string, unknown]>)
-    : Object.entries(output)
+const writtenNames = ({ source, pairs }: Output): ReadonlyArray<string> =>
+  (
+    pairs ??
+    (Symbol.iterator in source
+      ? FieldPairs.fromIterable(source)
+      : Object.entries(source))
   )
     .filter(([, value]) => value !== undefined)
     .map(([name]) => name);
@@ -227,7 +241,7 @@ const writtenNames = (output: object): ReadonlyArray<string> =>
  * The names a schema's output writes, in their compared form. A name with no value writes nothing,
  * so a default stays, while an empty list is the caller saying there are no entries.
  */
-export const written = (output: object, fold: Fold): ReadonlySet<string> =>
+export const written = (output: Output, fold: Fold): ReadonlySet<string> =>
   new Set(writtenNames(output).map(fold));
 
 const noNames: ReadonlySet<PropertyKey> = new Set();
@@ -298,9 +312,9 @@ export const certifiedElsewhere = (
  * can write less than it was given, and that must not pass as a group that was built.
  */
 export const lost = (
-  output: object,
+  output: Output,
   defaults: ReadonlyArray<readonly [string, unknown]>,
-  settled: object,
+  settled: Output,
   fold: Fold,
 ): ReadonlyArray<string> => {
   const kept = written(settled, fold);
@@ -453,6 +467,7 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
     if (
       typeof output !== "object" ||
       output === null ||
+      Array.isArray(output) ||
       Symbol.iterator in output
     )
       return [];
@@ -473,7 +488,7 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
    */
   const taken = (
     input: unknown,
-    output: object,
+    output: Output,
     losing: ReadonlyArray<Excess.Path>,
   ): ReadonlySet<PropertyKey> =>
     new Set(
@@ -483,14 +498,13 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
       ].filter((name) => !losing.some(([key]) => key === name)),
     );
   const settle = <W extends object, A>(
-    output: W,
+    output: Output<W>,
     defaults: ReadonlyArray<readonly [string, A]>,
   ): Effect.Effect<
     W,
     Schema.SchemaError,
     S["DecodingServices"] | S["EncodingServices"]
   > => {
-    if (defaults.length === 0) return Effect.succeed(output);
     const values = new Map<string, Array<unknown>>();
     const pairs = defaults.map(([name, value]) => {
       const spelled = spelling.get(fold(name)) ?? name;
@@ -508,10 +522,13 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
           : entries[0],
       ]),
     );
+    const { source, pairs: positions } = output;
     const group =
-      Symbol.iterator in output
-        ? [...(output as unknown as Iterable<unknown>), ...pairs]
-        : { ...output, ...record };
+      positions !== undefined
+        ? [...positions, ...pairs]
+        : Symbol.iterator in source
+          ? [...(source as unknown as Iterable<unknown>), ...pairs]
+          : { ...source, ...record };
     const through = (options?: SchemaAST.ParseOptions) =>
       Effect.flatMap(
         decode(group, options),

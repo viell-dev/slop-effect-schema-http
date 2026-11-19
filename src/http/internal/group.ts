@@ -14,7 +14,7 @@ export const recovery = <S extends Schema.Top>(contract: S) => {
     token: object,
     claim: (
       input: unknown,
-      output: object,
+      output: Shapes.Output,
       lost: ReadonlyArray<Excess.Path>,
     ) => ReadonlySet<PropertyKey>,
   ) {
@@ -23,6 +23,7 @@ export const recovery = <S extends Schema.Top>(contract: S) => {
       !taken.certificates.has(token) ||
       typeof original.output !== "object" ||
       original.output === null ||
+      Array.isArray(original.output) ||
       Symbol.iterator in original.output ||
       original.lost.some((path) => path.length !== 1) ||
       original.lost.every(([name]) => taken.fields.has(name!))
@@ -38,6 +39,7 @@ export const recovery = <S extends Schema.Top>(contract: S) => {
       if (
         typeof candidate.output !== "object" ||
         candidate.output === null ||
+        Array.isArray(candidate.output) ||
         Symbol.iterator in candidate.output ||
         candidate.lost.some(
           (path) => path.length !== 1 || !elsewhere.has(path[0]!),
@@ -46,7 +48,7 @@ export const recovery = <S extends Schema.Top>(contract: S) => {
         continue;
       const next = Shapes.retaking(
         taken,
-        claim(input, candidate.output, candidate.lost),
+        claim(input, Shapes.snapshot(candidate.output), candidate.lost),
         token,
       );
       if (
