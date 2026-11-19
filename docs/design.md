@@ -223,6 +223,11 @@ recognized by its tag and `append` method, so one from another realm or implemen
 is. Prepared forms carry the values already chosen by their creator, so an earlier custom conversion
 controls what those values are.
 
+`Body.urlEncoded` writes `UrlParams` pairs and reads anything else as Effect's `UrlParams.fromInput`
+does, which is what 0.18.0 sent: records with bracket names for nested records, lists as repeated
+names, and iterables such as `URLSearchParams` as pairs. Text and the scalars `UrlParams` writes as
+text are kept, and a value that reading would drop or write as something else is refused.
+
 `Body.text`, `Body.bytes` and `Body.empty` refuse what their own representation cannot carry: a
 value that is not a string, not a `Uint8Array`, or any value at all. JavaScript or a schema such as
 `Schema.Any` can pass one.

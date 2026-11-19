@@ -52,10 +52,13 @@
   value. Circular form data used to exhaust the stack as a defect and is now refused too. An empty
   list or plain object still writes no entries. `Body.formData` refuses a value that is not a form,
   recognizing one by its `FormData` tag and `append` method, so a form from another realm or
-  implementation is sent as it is. `Body.urlEncoded` refuses a value that is not `UrlParams`, such
-  as a plain record passed from JavaScript, which used to be read as Effect's `UrlParams.fromInput`
-  reads it, and malformed or non-text pairs. `Body.formData`, `Body.urlEncoded` and every
-  `Body.encodeSchema` encoder now have `HttpBodyError` in their error type.
+  implementation is sent as it is. `Body.urlEncoded` still reads a plain record, field pairs or
+  `URLSearchParams` passed from JavaScript as Effect's `UrlParams.fromInput` does. It refuses a
+  value that reading would drop or write as something else, such as `{ k: null }`, which wrote
+  `k=null`, a `Date`, which wrote nothing, or an object in a list, which wrote `[object Object]`,
+  and malformed pairs. A number, bigint or boolean in `UrlParams` pairs, which used to fail as a
+  defect, writes its text. `Body.formData`, `Body.urlEncoded` and every `Body.encodeSchema` encoder
+  now have `HttpBodyError` in their error type.
 - **Breaking:** `Body.text`, `Body.bytes` and `Body.empty` refuse what they cannot write, with
   `HttpBodyError` ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). A value
   that is not a string, such as an object passed through `Body.encodeSchema(Schema.Any)`, used to

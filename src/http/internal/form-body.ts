@@ -6,7 +6,7 @@ import {
   SchemaIssue,
   SchemaTransformation,
 } from "effect";
-import { HttpBody, type UrlParams } from "effect/http";
+import { HttpBody, UrlParams } from "effect/http";
 import { isBlob, isBox, stateOf } from "./object-brand.js";
 import {
   BodyWriteError,
@@ -151,11 +151,61 @@ type Task =
  * list or plain object writes no entries, as in Effect. The traversal keeps its own stack, so an
  * exception thrown while it runs came from caller code.
  */
+/** Refuse the pair at a position, or one of its fields. */
+type PairRefusal = (
+  position: number,
+  reason: string,
+  field?: PropertyKey,
+) => never;
+
+/** Read an iterable of field pairs by position, as `UrlParams.fromInput` reads its entries. */
+function pairsOf(input: Iterable<unknown>, refuse: PairRefusal): Field[] {
+  const fields: Field[] = [];
+  let index = 0;
+  for (const pair of input) {
+    if (!Array.isArray(pair) || pair.length !== 2)
+      refuse(index, "must be a pair");
+    const entry = pair as unknown[];
+    const extra = extraArrayField(entry, 2);
+    if (extra !== undefined)
+      refuse(index, "cannot encode an extra array field", extra);
+    const name: unknown = entry[0];
+    if (typeof name !== "string") refuse(index, "must have a string name", 0);
+    fields.push([name as string, entry[1]]);
+    index++;
+  }
+  return fields;
+}
+
+/** A named field to write at the root, from a pair rather than a record. */
+type Field = readonly [string, unknown];
+
+interface Rules<A> {
+  readonly medium: "Multipart" | "URL-encoded";
+  readonly isLeaf: (value: unknown) => value is A;
+  /** The refusal for a value that is neither a leaf nor a container. */
+  readonly leaves: string;
+  /**
+   * Whether a list may hold containers, written under indexed names as Effect's form links do.
+   * `UrlParams.fromInput` converts each list item to text instead, so there a list holds leaves.
+   */
+  readonly nestedLists: boolean;
+  /** Whether an iterable that is not a list holds field pairs, as `UrlParams.fromInput` reads it. */
+  readonly iterablePairs: boolean;
+  readonly append: (key: string, value: A) => void;
+}
+
 function writeTree<A>(
   input: unknown,
-  medium: "Multipart" | "URL-encoded",
-  isLeaf: (value: unknown) => value is A,
-  append: (key: string, value: A) => void,
+  {
+    medium,
+    isLeaf,
+    leaves: notLeaf,
+    nestedLists,
+    iterablePairs,
+    append,
+  }: Rules<A>,
+  fields?: ReadonlyArray<Field>,
 ): void {
   const refuse = (
     step: Step | undefined,
@@ -234,6 +284,8 @@ function writeTree<A>(
       if (item === undefined)
         refuse(step, "cannot encode undefined in a list", index);
       leaves &&= isLeaf(item);
+      if (!leaves && !nestedLists)
+        refuse(step, "cannot encode a list or an object inside a list", index);
       items.push([index, item]);
     }
     if (leaves) {
@@ -252,23 +304,58 @@ function writeTree<A>(
     }
   };
 
+  /** Write an iterable's pairs as fields under its name, in the order it yields them. */
+  const pairs = (value: object, name: string, step: Step) => {
+    const read = pairsOf(
+      value as Iterable<unknown>,
+      (position, reason, field) =>
+        refuse({ key: position, parent: step }, reason, field),
+    );
+    enter(value, step);
+    for (let index = read.length - 1; index >= 0; index--) {
+      const [key, entry] = read[index]!;
+      if (entry !== undefined)
+        tasks.push({
+          kind: "write",
+          value: entry,
+          name: `${name}[${key}]`,
+          step: { key, parent: step },
+        });
+    }
+  };
+
   const write = (value: unknown, name: string, step: Step) => {
     if (isLeaf(value)) append(name, value);
     else if (Array.isArray(value)) list(value, name, step);
+    else if (
+      iterablePairs &&
+      typeof value === "object" &&
+      value !== null &&
+      typeof Reflect.get(value, Symbol.iterator) === "function"
+    )
+      pairs(value, name, step);
+    // A redacted value is a leaf when its value is one; its own object holds no fields.
+    else if (Redacted.isRedacted(value)) refuse(step, notLeaf);
     else if (typeof value === "object" && value !== null)
       object(value, name, step);
-    else
-      refuse(
-        step,
-        medium === "Multipart"
-          ? "must be text, a Blob or File, or a form container"
-          : "must be text or a form container",
-      );
+    else refuse(step, notLeaf);
   };
 
-  if (typeof input !== "object" || input === null)
+  if (fields !== undefined) {
+    for (let index = fields.length - 1; index >= 0; index--) {
+      const [name, value] = fields[index]!;
+      // A pair's undefined value supplies nothing, as Effect's reading of field pairs skips it.
+      if (value !== undefined)
+        tasks.push({
+          kind: "write",
+          value,
+          name,
+          step: { key: name, parent: undefined },
+        });
+    }
+  } else if (typeof input !== "object" || input === null)
     refuse(undefined, "must be a form object");
-  object(input as object, "", undefined);
+  else object(input, "", undefined);
   while (tasks.length > 0) {
     const task = tasks.pop()!;
     if (task.kind === "leave") active.delete(task.container);
@@ -287,9 +374,14 @@ const multipart = new SchemaTransformation.Transformation(
         // A schema can keep an already prepared form, from any implementation.
         if (isFormData(input)) return input;
         const form = new FormData();
-        writeTree(input, "Multipart", isPart, (key, value) =>
-          form.append(key, value),
-        );
+        writeTree(input, {
+          medium: "Multipart",
+          isLeaf: isPart,
+          leaves: "must be text, a Blob or File, or a form container",
+          nestedLists: true,
+          iterablePairs: false,
+          append: (key, value) => form.append(key, value),
+        });
         return form;
       },
       isBodyWriteError,
@@ -305,9 +397,14 @@ const searchParams = new SchemaTransformation.Transformation(
       () => {
         if (isSearchParams(input)) return input;
         const params = new URLSearchParams();
-        writeTree(input, "URL-encoded", isText, (key, value) =>
-          params.append(key, value),
-        );
+        writeTree(input, {
+          medium: "URL-encoded",
+          isLeaf: isText,
+          leaves: "must be text or a form container",
+          nestedLists: true,
+          iterablePairs: false,
+          append: (key, value) => params.append(key, value),
+        });
         return params;
       },
       isBodyWriteError,
@@ -369,34 +466,72 @@ const refuseParams = (path: Path, reason: string): never => {
   throw new BodyWriteError("URL-encoded", path, reason);
 };
 
-/** The direct URL-encoded writer, for Effect `UrlParams` with text or redacted text values. */
+/** A value `UrlParams` writes as its text: text, a number, a bigint, a boolean, or one redacted. */
+type Param = string | number | bigint | boolean | Redacted.Redacted;
+
+const isScalar = (
+  value: unknown,
+): value is string | number | bigint | boolean =>
+  typeof value === "string" ||
+  typeof value === "number" ||
+  typeof value === "bigint" ||
+  typeof value === "boolean";
+
+const isParam = (value: unknown): value is Param =>
+  isScalar(value) ||
+  (Redacted.isRedacted(value) && isScalar(Redacted.value(value)));
+
+const paramText = (value: Param): string =>
+  String(Redacted.isRedacted(value) ? Redacted.value(value) : value);
+
+const atPair: PairRefusal = (position, reason, field) =>
+  refuseParams(field === undefined ? [position] : [position, field], reason);
+
+/**
+ * The direct URL-encoded writer.
+ *
+ * @remarks
+ * `UrlParams` values write their pairs as they are. Anything else is read as Effect's
+ * `UrlParams.fromInput` reads it, which is what 0.18.0 sent: a record by its fields, with nested
+ * records under bracket names and lists as repeated names, and an iterable, such as
+ * `URLSearchParams` or a `Map`, by its pairs, at the root or nested. Every value is then checked as the form writers check theirs:
+ * text and the scalars `UrlParams` writes as text are kept, and a value Effect would drop or write
+ * as something else, such as `null`, a `Date` or a list inside a list, is refused.
+ */
 export const encodeUrlParams = (input: UrlParams.UrlParams) =>
   checkedBody(() => {
-    if (typeof input !== "object" || input === null)
-      refuseParams([], "must be UrlParams");
-    const pairs: unknown = input.params;
-    if (!Array.isArray(pairs))
-      return refuseParams([], "must contain an array of pairs");
-    const length = pairs.length;
-    const extra = extraArrayField(pairs, length);
-    if (extra !== undefined)
-      refuseParams([extra], "cannot encode an extra array field");
     const params = new URLSearchParams();
-    for (let index = 0; index < length; index++) {
-      const pair: unknown = pairs[index];
-      if (!Array.isArray(pair) || pair.length !== 2)
-        refuseParams([index], "must be a pair");
-      const name: unknown = (pair as unknown[])[0];
-      const value: unknown = (pair as unknown[])[1];
-      const field = extraArrayField(pair as unknown[], 2);
-      if (field !== undefined)
-        refuseParams([index, field], "cannot encode an extra array field");
-      if (typeof name !== "string")
-        return refuseParams([index, 0], "must have a string name");
-      const text = Redacted.isRedacted(value) ? Redacted.value(value) : value;
-      if (typeof text !== "string") refuseParams([name], "must be a string");
-      params.append(name, text as string);
-    }
+    const rules: Rules<Param> = {
+      medium: "URL-encoded",
+      isLeaf: isParam,
+      leaves:
+        "must be text, a number, a bigint, a boolean, or a record of them",
+      nestedLists: false,
+      iterablePairs: true,
+      append: (key, value) => params.append(key, paramText(value)),
+    };
+    const value: unknown = input;
+    if (UrlParams.isUrlParams(value)) {
+      const pairs: unknown = value.params;
+      if (!Array.isArray(pairs))
+        return refuseParams([], "must contain an array of pairs");
+      const extra = extraArrayField(pairs, pairs.length);
+      if (extra !== undefined)
+        refuseParams([extra], "cannot encode an extra array field");
+      const positions = Array.from(
+        { length: pairs.length },
+        (_, index): unknown => pairs[index],
+      );
+      // `UrlParams` writes each value with no nesting, so a value has to be text already.
+      for (const [name, param] of pairsOf(positions, atPair))
+        if (isParam(param)) rules.append(name, param);
+        else
+          refuseParams([name], "must be text, a number, a bigint or a boolean");
+    } else if (typeof value !== "object" || value === null)
+      refuseParams([], "must be UrlParams, a record or field pairs");
+    else if (typeof Reflect.get(value, Symbol.iterator) === "function")
+      writeTree(value, rules, pairsOf(value as Iterable<unknown>, atPair));
+    else writeTree(value, rules);
     return HttpBody.text(
       params.toString(),
       "application/x-www-form-urlencoded",
