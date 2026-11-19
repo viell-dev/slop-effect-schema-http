@@ -1739,4 +1739,232 @@ describe("a field a part lost under a parent read field by field", () => {
       }
     }),
   );
+
+  /** A field that only the relaxed write can send: the strict write refuses the `b` it carries. */
+  const Relaxing = Schema.Struct({ a: Schema.String }).pipe(
+    Schema.decodeTo(
+      Schema.Struct({ b: Schema.String }),
+      SchemaTransformation.transform({
+        decode: ({ a }) => ({ b: a }),
+        encode: (value) => ({ ...value, a: value.b }),
+      }),
+    ),
+  );
+  /** A field schema that needs no services. */
+  type Field = Schema.Codec<unknown, unknown>;
+  /** Each place a part can be read in, with and without a sibling that relaxes the write. */
+  const placings = [
+    [(part: Field): Field => part, (value: object) => value, ""],
+    [
+      (part: Field): Field => Schema.Struct({ part }),
+      (value: object) => ({ part: value }),
+      '["part"]',
+    ],
+    [
+      (part: Field): Field => Schema.Array(part),
+      (value: object) => [value],
+      "[0]",
+    ],
+  ] as const;
+  /**
+   * A parent read field by field around a part, as a decoded `n` beside an encoded `m` makes it, and
+   * optionally a sibling that relaxes the write.
+   */
+  const parentOf = (field: Field, relaxing: boolean) => ({
+    schema: relaxing
+      ? Schema.Struct({ n, m: n, f: field, rename: Relaxing })
+      : Schema.Struct({ n, m: n, f: field }),
+    /** The caller's value around the part's input. */
+    body: (f: object) =>
+      ({
+        n: 1,
+        m: "2",
+        f,
+        ...(relaxing && { rename: { b: "ok" } }),
+      }) as never,
+    /** What the parent sends around what the part writes. */
+    sent: (f: object) =>
+      JSON.stringify({
+        n: "1",
+        m: "2",
+        f,
+        ...(relaxing && { rename: { a: "ok" } }),
+      }),
+  });
+
+  it.effect("does not count a key a part's decoder makes as the caller's", () =>
+    Effect.gen(function* () {
+      const Scratch = Schema.Struct({ p: Schema.String }).pipe(
+        Schema.decodeTo(
+          Schema.Struct({ p: Schema.Number }),
+          SchemaTransformation.transform({
+            // The decoder leaves a working key behind on the value it makes.
+            decode: ({ p }): { readonly p: number } =>
+              Object.assign({ p: Number(p) }, { scratch: 99 }),
+            encode: ({ p }) => ({ p: String(p) }),
+          }),
+        ),
+      );
+      const Echo = Schema.Struct({ a: Schema.String }).pipe(
+        Schema.decodeTo(
+          Schema.Struct({ b: Schema.String }),
+          SchemaTransformation.transform({
+            // The decoder keeps its input's `a` beside the `b` it makes.
+            decode: ({ a }): { readonly b: string } =>
+              Object.assign({ b: a }, { a }),
+            encode: ({ b }) => ({ a: b }),
+          }),
+        ),
+      );
+      for (const [field, input] of [
+        [Scratch, { p: "2" }],
+        [Echo, { a: "x" }],
+      ] as const)
+        for (const [place, wrap] of placings)
+          for (const relaxing of [false, true]) {
+            const parent = parentOf(place(field), relaxing);
+            expect(yield* sentBy(parent.schema, parent.body(wrap(input)))).toBe(
+              parent.sent(wrap(input)),
+            );
+          }
+    }),
+  );
+
+  /** A second reading of `page_size`, as a word, which `Filter` would replace with its default. */
+  const Word = Schema.Struct({ word: Schema.String }).pipe(
+    Schema.encodeKeys({ word: "page_size" }),
+  );
+
+  it.effect(
+    "keeps the member a part was read by when its parent is made again",
+    () =>
+      Effect.gen(function* () {
+        const f = Schema.Union([Filter, Word]);
+        for (const [place, wrap] of placings) {
+          for (const relaxing of [false, true]) {
+            const parent = parentOf(place(f), relaxing);
+            expect(
+              yield* sentBy(
+                parent.schema,
+                parent.body(wrap({ page_size: "05" })),
+              ),
+            ).toBe(parent.sent(wrap({ page_size: "5" })));
+          }
+          const alone = parentOf(place(f), false);
+          expect(
+            yield* sentBy(
+              alone.schema,
+              alone.body(wrap({ page_size: "many" })),
+            ),
+          ).toBe(alone.sent(wrap({ page_size: "many" })));
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+  it.effect(
+    "currently refuses a part the relaxed write sends through an earlier member",
+    () =>
+      Effect.gen(function* () {
+        // The part reads `"many"` as a `Word`. The relaxed write takes `Filter` first, as Effect
+        // does, and `Filter` writes the word as nothing.
+        const f = Schema.Union([Filter, Word]);
+        for (const [place, wrap, at] of placings) {
+          const parent = parentOf(place(f), true);
+          expect(
+            yield* schemaFailure(posted(parent.schema), {
+              body: parent.body(wrap({ page_size: "many" })),
+            }),
+          ).toBe(
+            `The schema cannot keep this field with the rest of the value\n  at ["f"]${at}["page_size"]`,
+          );
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+  it.effect.fails(
+    "sends a part through the member it was read by beside a relaxing sibling",
+    () =>
+      Effect.gen(function* () {
+        const f = Schema.Union([Filter, Word]);
+        for (const [place, wrap] of placings) {
+          const parent = parentOf(place(f), true);
+          expect(
+            yield* sentBy(
+              parent.schema,
+              parent.body(wrap({ page_size: "many" })),
+            ),
+          ).toBe(parent.sent(wrap({ page_size: "many" })));
+        }
+      }),
+  );
+
+  /** Two fields, one decoded and one encoded, which no single side reads. */
+  const Pair = Schema.Struct({ p: n, q: n });
+  const pair = { p: 1, q: "2" };
+
+  it.effect(
+    "takes a later member's lossless reading over an earlier lossy one",
+    () =>
+      Effect.gen(function* () {
+        // `Short` reads the pair by dropping `q`, but cannot write `p` as one character.
+        const Short = Schema.Struct({
+          p: n.pipe(
+            Schema.encodeTo(Schema.String.check(Schema.isMinLength(2)), {
+              decode: SchemaGetter.passthrough(),
+              encode: SchemaGetter.passthrough(),
+            }),
+          ),
+        });
+        for (const relaxing of [false, true]) {
+          const parent = parentOf(Schema.Union([Short, Pair]), relaxing);
+          expect(yield* sentBy(parent.schema, parent.body(pair))).toBe(
+            parent.sent({ p: "1", q: "2" }),
+          );
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+  it.effect(
+    "currently refuses a lossless reading the relaxed write sends through a stripping member",
+    () =>
+      Effect.gen(function* () {
+        // The part reads the pair as `Pair`; the relaxed write takes `MaybeCursor` first, as
+        // Effect does, and it states neither field.
+        const MaybeCursor = Schema.Struct({
+          cursor: Schema.optionalKey(Schema.String),
+        });
+        const f = Schema.Union([MaybeCursor, Pair]);
+        const alone = parentOf(f, false);
+        expect(yield* sentBy(alone.schema, alone.body(pair))).toBe(
+          alone.sent({ p: "1", q: "2" }),
+        );
+        const relaxed = parentOf(f, true);
+        expect(
+          yield* schemaFailure(posted(relaxed.schema), {
+            body: relaxed.body(pair),
+          }),
+        ).toBe(
+          'The schema cannot keep this field with the rest of the value\n  at ["f"]["p"]\n' +
+            'The schema cannot keep this field with the rest of the value\n  at ["f"]["q"]',
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+  it.effect.fails(
+    "sends a lossless reading through its member beside a relaxing sibling",
+    () =>
+      Effect.gen(function* () {
+        const MaybeCursor = Schema.Struct({
+          cursor: Schema.optionalKey(Schema.String),
+        });
+        const parent = parentOf(Schema.Union([MaybeCursor, Pair]), true);
+        expect(yield* sentBy(parent.schema, parent.body(pair))).toBe(
+          parent.sent({ p: "1", q: "2" }),
+        );
+      }),
+  );
 });

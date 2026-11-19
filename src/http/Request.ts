@@ -89,9 +89,11 @@ export type QueryFields = Readonly<
  * copies a list into an object keyed by its indexes, so a record or struct member cannot take such
  * a copy; Effect's own readings, such as an empty `Schema.Class`, still apply. On that route each
  * field accounts for what it was given, so a supplied field its reading dropped is a `SchemaError`
- * rather than replaced by a constructor default. Unsupported constructor-default paths below can
- * still ignore a supplied alias. A weak schema can accept more values. `Schema.NumberFromString`
- * turns `"many"` into `NaN` and `Schema.FiniteFromString` refuses it.
+ * rather than replaced by a constructor default. A key a decoder adds is not the caller's, and the
+ * object is built again strictly first, so a union field keeps the member it was read by. A
+ * relaxed write can still take another member and refuse. Unsupported constructor-default paths
+ * below can still ignore a supplied alias. A weak schema can accept more values.
+ * `Schema.NumberFromString` turns `"many"` into `NaN` and `Schema.FiniteFromString` refuses it.
  *
  * A value that fits the decoded side is read as decoded. Under a schema whose two sides share a
  * type, such as one from text to text, an already encoded value fits the decoded side, so it is
@@ -128,7 +130,8 @@ export type QueryFields = Readonly<
  * Beside a visible object or list candidate in an any-of union, the strict read declines built-in
  * `Schema.Void` for defined enumerable own fields and defined own array cells. The strict write
  * declines Void for every object and array, including when it retries without strict excess
- * checking. A struct member that retry takes has to state every supplied field it was given.
+ * checking. That retry selects members by kind and literal tags as Effect does, and a struct
+ * member it takes has to state every supplied field it was given.
  * Otherwise the first member that could not write the value gives its own `SchemaError`. The
  * guard includes annotated and checked Void and unencoded any-of member unions.
  * The read keeps first-fit order when it sees no defined fields or cells. A union of Void and

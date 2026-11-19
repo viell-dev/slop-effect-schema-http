@@ -40,7 +40,12 @@
   strictly, then field by field, so `{ page_size: "05" }` beside a value that the strict pass
   refuses now writes `5`, where 0.18.0 wrote `25`. A decoding default no longer stands in for a
   field that a field's loose decoder stripped, and a field given under both its names, such as
-  `{ page_size: "3", limit: 5 }`, now refuses there; 0.18.0 sent `5`.
+  `{ page_size: "3", limit: 5 }`, now refuses there; 0.18.0 sent `5`. A key a field's decoder adds
+  is not counted as the caller's. A union field takes its first member reading that keeps
+  everything, and the parent is built strictly first, so it keeps that member. Under
+  `Union([Filter, Word])`, where `Word` reads `page_size` as text, `{ page_size: "05" }` beside a
+  sibling that only the relaxed write can send now writes `5`, and `"many"` refuses there; 0.18.0
+  wrote `25` for both.
 - **Breaking:** stop the write fallback from taking a later union member that drops a supplied field
   ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)). With
   `Note = Schema.Struct({ title: Schema.String, meta: Schema.Unknown })` and
@@ -49,10 +54,14 @@
   own `Expected JSON value at ["meta"]`, as `Note` alone does. The same holds with Void before or
   after `Title`, inside a field or list, through grouped and suspended unions, with a decoding
   default on `meta`, beside a member that writes another field under the name `meta`, and for a
-  member whose encoded check fails in query, header, form and path bindings. The fallback write
-  notes which member wrote each value and never decodes what it sends. A field another stacked
-  schema takes is still not lost. A choice Effect makes after middleware or a transformation on the
-  union itself is still the schema's own.
+  member whose encoded check fails in query, header, form and path bindings. It also holds through
+  enclosing structs, lists and records, elements after a rest, suspended members, a nested union
+  that fails its own check or one-of rule, and one object given to two fields. The fallback write
+  selects members by kind and literal tags as Effect does, so a member Effect rules out never runs.
+  It notes which member wrote each value and never decodes what it sends. A struct that states no
+  field keeps every key. A field another stacked schema takes is still not lost, and a refusal names
+  the field none took. A choice Effect makes after middleware or a transformation on the union
+  itself is still the schema's own, as is a union whose only other member is an opaque declaration.
 
 ## 0.18.0 — 2026-11-18
 

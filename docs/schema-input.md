@@ -272,7 +272,15 @@ that names it, including under `Union([Filter, Cursor])`, where `Cursor` would r
 object. A decoder that can read the field only by stripping a supplied key is the last route, and
 that key is refused even where a decoding default fills its name again. A field given under both its
 names cannot keep both, so it is refused too. A value the constructor returns unchanged, as an
-opaque declaration's is, lost nothing, and nothing inside it is read again.
+opaque declaration's is, lost nothing, and nothing inside it is read again. A key that a decoder or
+transformation adds to the value it makes is not the caller's, so it is never counted as lost.
+
+A union field read field by field takes its first member reading that keeps everything, ahead of an
+earlier one that loses a field. The object's constructor then runs again over the fields' results,
+strictly first, so each union field keeps the member it was read by. Loosely, it could take an
+earlier member that strips the value and fill that member's default instead. Only if the strict pass
+fails does it run as Effect runs it. The write can still take another member, as [Active
+limits](#active-limits-and-recovery) describes.
 
 ### A union keeps what the caller gave
 
@@ -342,10 +350,15 @@ takes is not lost, as the rule on stacked schemas below says.
 Writing keeps the same rule. A value is written strictly first. When the member that read it cannot
 write it, the relaxed write that follows can take a later member. That write notes which member
 wrote each value, and a struct member reads only the names it states, so a supplied field it does
-not state is lost, whatever else it writes under that name. Nothing is decoded from what was sent.
-When no member can both keep and write the value, the refusal is the error of the first member that
-could not write it, the error that member alone gives. That holds through grouped and suspended
-unions:
+not state is lost, whatever else it writes under that name. A struct that states no field keeps
+every key, and a record keeps the keys its key schema takes. Nothing is decoded from what was sent.
+The relaxed write selects the members to try by kind of value and literal tags, as Effect does,
+before it runs any of them, so a member Effect rules out runs none of its encoders, middleware or
+checks. A nested union that fails its own check or one-of rule credits none of its members, and each
+place a value is written from is checked on its own, so one object given to two fields is checked
+against each field's member. When no member can both keep and write the value, the refusal is the
+error of the first member that could not write it, the error that member alone gives. That holds
+through grouped and suspended unions:
 
 ```ts
 import { Schema } from "effect";
@@ -509,15 +522,28 @@ remaining list limit under #243.
 - The relaxed write's check sees the members a union chose for the value itself. A class or other
   declaration member is the schema's own reading, and so is a choice Effect makes again after a
   transformation or middleware on the union itself, which no caller field can be traced to:
-  `Union([Coded, Title]).pipe(Schema.middlewareDecoding(...))` can still send `{"title":"a"}`. When
-  the member the relaxed write takes loses a supplied field, the request is refused; a later member
-  that strips only unsupplied keys is not tried. In that write, each member of a union is tried in
-  order without Effect's tag pre-selection, so a member whose tag does not match can start its own
-  encoding steps before it fails.
+  `Union([Coded, Title]).pipe(Schema.middlewareDecoding(...))` can still send `{"title":"a"}`. A
+  union in which only one member reads keys is written as Effect writes it, so in
+  `Union([Opaque, Title])`, where `Opaque` is a declaration that cannot be written as JSON, `Title`
+  can still drop `meta` ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)).
+  When the member the relaxed write takes loses a supplied field, the request is refused; a later
+  member that strips only unsupplied keys is not tried.
+- The relaxed write selects each union's members by kind and literal tags with Effect 4.1.4's rules,
+  before it runs any member. A member with encoding middleware or a suspension is tried for every
+  input, as Effect tries it, so its own steps can run before it fails. Effect 4.0.7 also reads a tag
+  named after an `Object.prototype` member, such as `constructor`, from the prototype when the value
+  lacks it; there the relaxed write follows 4.1.4 instead.
+- Beside a field that only the relaxed write can send, such as one whose encoder hands on a key its
+  struct does not state, that write chooses each union's member as Effect does. That can be an
+  earlier member than the one the field's reading or the strict write took, and where it drops a
+  field the request is refused. Under `Union([Filter, Word])`, where `Word` reads `page_size` as
+  text, `{ page_size: "many" }` is sent as text where nothing else relaxes the write, and refused
+  beside such a field ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)).
 - Reading field by field, a field's constructor can run, fill its defaults and then give way to the
   field's decoder or a field-by-field reading, which constructs again. A default can therefore run
   more than once, and a decoder can run strictly and then loosely when the strict read named an
-  unstated key.
+  unstated key. A union field's later members are read after an earlier member's reading that lost a
+  field, and the object's constructor can run strictly and then as Effect runs it.
 - Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
   name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that
   choice for the whole value. The [0.14 migration](./release-notes/0.14.md#account-for-both-names)
