@@ -130,48 +130,42 @@ evidence protect that rule across unions and stacked bindings; opaque values ret
 reading. Known violations, conflicting aliases and unsupported recovery remain explicit in the
 [active limits](./schema-input.md#active-limits-and-recovery).
 
-Normalization and field-loss accounting count only members that can read the caller's container, as
-Effect's own parsers tell them apart with `Array.isArray`. A record or a struct that states a field
-holds none of a list's cells, and an array or tuple holds none of an object's keys, wherever in a
-union or under whichever parent member that schema comes from. Each schema node is judged alone, so
-every other reading stays: an empty struct reads a list, and a codec's other steps keep theirs. A
-class has no list reading either. Its struct refuses a list once it states a field, and an empty
-class's struct lets Effect copy the cells into an instance keyed by their indexes, the copy
-preparation never makes itself. So a class states nothing for a list's cells; ruling out its struct
-leaves a codec's later steps, such as a tuple the class is decoded from. This does not change member
-choice. An empty class that takes a list by first fit reads the cells as given, as an empty struct
-does. Normalization follows Effect's member order through grouped any-of unions and suspended
-members, however deeply suspended; when an earlier reader refuses the list at run time and a later
-empty class takes it, the reading shows that, and the class's cells are put back from the caller's
-list at that value alone. Sibling values keep their own reading, and no caller code runs again.
-Elsewhere the list member reads the list, with its unstated cell keys left out.
+Two rules decide how normalization and field-loss accounting read a value, and they apply only where
+what each alternative reads from an object or a list is known from the schema alone. That holds when
+every alternative at the value is a struct, a record, a list or a tuple, including an empty struct
+and a struct renamed with `Schema.encodeKeys`. An alternative that takes no object, such as text, a
+number or `null`, and built-in `Schema.Void`, which the Void rule below decides, leave that set
+known. Field types can be anything: each child value is judged again at its own level. Anywhere else
+the value keeps 0.18.0's reading. That covers any alternative that is a class, a declaration, an
+open schema, middleware or a codec with any other transformation, and every value inside one that
+middleware reads, because a recovery can turn a failure anywhere inside into a value of its own.
+Suspended schemas are read as what they stand for once a value is read, as Effect reads them.
 
-A codec Effect reads through an encoded side this library cannot see into, an opaque declaration or
-an open schema, holds what it reads as given, as an empty struct does, including through a
-suspension or a union on that side. So a key it holds is not unstated; if it cannot take the value,
-the key is refused rather than left out. Middleware that turns a refusal into a value keeps the
-reading it had before container kinds were judged: nothing inside it is ruled out for a container,
-so a recovery is not judged before it runs. Its result is then held to the field-loss check for a
-caller's list, so a recovery that keeps none of its cells is refused; one that puts a value of its
-own at a cell's index is not checked yet, as the [active
-limits](./schema-input.md#active-limits-and-recovery) give. Field-loss accounting does not walk into
-a value a member reads as given. A schema question that needs a suspended schema waits until a value
-is read, so a binding can be made before the suspension's target is defined. A rebuilt list keeps
-every cell the caller supplied, hidden or inherited, beside any member, and reads the list's
-prototype only when its own positions do not cover its length.
+The first rule counts only members that can read the caller's container, as Effect's own parsers
+tell them apart with `Array.isArray`. A record or a struct that states a field holds none of a
+list's cells, and an array or tuple holds none of an object's keys, wherever in a union or under
+whichever parent member that schema comes from. Each side is judged alone, so an empty struct still
+reads a list. This does not change member choice; only normalization and loss accounting see the
+filtered sides.
 
-An empty struct, alone or as an empty class's fields, keeps every key of the value it reads, at
-every depth. Beside a member that states fields, it is the member that keeps them all, so a key only
-it holds is kept rather than stripped as unstated. The kept-or-refused rule prefers it for that
-reason. Effect's own first-fit reading keeps the key when the empty struct comes first, and an open
-record, `Schema.Unknown` or `Schema.Object` already won over a stated member this way at the value
-it reads. When both members keep the whole value, first fit decides. A kept value the request cannot
-carry is refused before dispatch. That includes a field its writer would leave out or replace, such
-as a symbol key, or `NaN`, which JSON writes as `null`: the writer checks the kept fields beside a
-stated member against what it writes as given, the way Effect's JSON codec checks an open record's
-values. Below a stated member's field, `Unknown`, `Any` and `Object` do not yet keep such a key, and
-`Schema.Struct({})` alone keeps the writer's own reading; the [active
-limits](./schema-input.md#active-limits-and-recovery) give both.
+A schema question that needs a suspended schema waits until a value is read, so a binding can be
+made before the suspension's target is defined. A rebuilt list keeps every cell the caller supplied,
+hidden or inherited, beside any member, and reads the list's prototype only when its own positions
+do not cover its length.
+
+The second rule: an empty struct keeps every key of the value it reads, at every depth. Beside a
+member that states fields, it is the member that keeps them all, so a key only it holds is kept
+rather than stripped as unstated. The kept-or-refused rule prefers it for that reason. Effect's own
+first-fit reading keeps the key when the empty struct comes first, and an open record,
+`Schema.Unknown` or `Schema.Object` already won over a stated member this way at the value it reads.
+An empty class is a class, so it keeps 0.18.0's reading, as the [active
+limits](./schema-input.md#active-limits-and-recovery) give. When both members keep the whole value,
+first fit decides. A kept value the request cannot carry is refused before dispatch. That includes a
+field its writer would leave out or replace, such as a symbol key, or `NaN`, which JSON writes as
+`null`: the writer checks the kept fields beside a stated member against what it writes as given,
+the way Effect's JSON codec checks an open record's values. Below a stated member's field,
+`Unknown`, `Any` and `Object` do not yet keep such a key, and `Schema.Struct({})` alone keeps the
+writer's own reading; the [active limits](./schema-input.md#active-limits-and-recovery) give both.
 
 Within a visible any-of union beside an object or list candidate, the strict read declines built-in
 `Schema.Void` for an object with a defined enumerable own field or a list with a defined own cell.

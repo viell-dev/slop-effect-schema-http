@@ -253,17 +253,20 @@ actually went. The strict pass also protects visible fields beside Void as descr
 with none of these choices reads as it always did. A schema's own steps can run more than once when
 the strict pass refuses.
 
-An empty struct, alone or as an empty `Schema.Class`'s fields, keeps every key of the value it
-reads, as given and at every depth. Beside members that state fields it is the member that keeps
-them all, in either order. Under `Union([A, Schema.Struct({})])` with
-`A = Schema.Struct({ a: Schema.String })`, `{ a: "x", z: 1 }` sends `{"a":"x","z":1}`, and under
-`Union([Schema.Struct({ b: A }), Schema.Struct({})])`, `{ b: { a: "x", z: 1 } }` keeps the nested
-`z`. When both members can keep a value, member order decides, as in Effect's first fit: a value the
-stated member keeps whole, such as `{ a: "x" }`, goes through it when it comes first, with its names
-and constructor defaults, and through the empty struct as given when that comes first. A class
-instance the empty struct keeps reaches a path renderer as the same instance, unless a stated member
-names a field the instance holds as an inherited accessor: then it is a plain copy that holds that
-field with the instance's own keys. An empty struct query or header binding still states no names.
+An empty struct keeps every key of the value it reads, as given and at every depth. Beside members
+that state fields it is the member that keeps them all, in either order, where every alternative at
+the value is a struct, a record, a list or a tuple, as [A list stays a list](#a-list-stays-a-list)
+describes. An empty `Schema.Class` is a class, so beside a stated member it keeps 0.18.0's reading,
+which the [active limits](#active-limits-and-recovery) give. Under `Union([A, Schema.Struct({})])`
+with `A = Schema.Struct({ a: Schema.String })`, `{ a: "x", z: 1 }` sends `{"a":"x","z":1}`, and
+under `Union([Schema.Struct({ b: A }), Schema.Struct({})])`, `{ b: { a: "x", z: 1 } }` keeps the
+nested `z`. When both members can keep a value, member order decides, as in Effect's first fit: a
+value the stated member keeps whole, such as `{ a: "x" }`, goes through it when it comes first, with
+its names and constructor defaults, and through the empty struct as given when that comes first. A
+class instance the empty struct keeps reaches a path renderer as the same instance, unless a stated
+member names a field the instance holds as an inherited accessor: then it is a plain copy that holds
+that field with the instance's own keys. An empty struct query or header binding still states no
+names.
 
 What the empty struct keeps goes to the writer as given, so beside a stated member a kept field the
 writer would leave out or replace is a `SchemaError` before dispatch that names it. No writer has a
@@ -382,28 +385,20 @@ parent members give a field those schemas. So beside the record above, `[{ page_
 does; 0.18.0 refused both. In the same way, `{ "0": { limit: "x", extra: 1 } }` beside an array or
 tuple member is read as its object member alone reads it.
 
-The rule covers only the copy this route would make. Effect's own readings still apply:
-`Schema.Struct({})` keeps a list as it is, and an empty `Schema.Class` builds an instance keyed by a
-list's indexes. A class has no list reading, so it states nothing for a list's cells, and beside a
-list member placed before it a list keeps the list member's reading. An empty class before every
-other member that reads lists takes the list, as Effect's first fit does, and reads every cell as
-given. Members of a grouped any-of union and a suspended member keep their place in that order. An
-empty class placed later takes the list only when every earlier reader refuses it, as
-`Schema.Tuple([Schema.Number, Schema.Number])` refuses a one-item list; it then reads every cell as
-given too. Put the list member first to keep a list a list. Ruling out a class's own struct for a
-list leaves the codec's other steps, so a class decoded from `Schema.Tuple([Schema.Unknown])` still
-reads a list through the tuple.
+This reading, and the empty-struct rule above, apply only where what each alternative reads from an
+object or a list is known from the schema alone: every alternative at the value is a struct, a
+record, a list or a tuple, an empty struct and a struct renamed with `Schema.encodeKeys` included.
+An alternative that takes no object, such as text, a number or `null`, and built-in `Schema.Void` do
+not change that. Field types can be anything; each child value is judged again at its own level.
+`Schema.Struct({})` keeps a list as it is there.
 
-A codec Effect reads through an encoded side this library cannot see into, such as `Schema.declare`
-or `Schema.Unknown`, holds what it reads as given, as an empty struct does, including through
-`Schema.suspend` or a union on that side. So beside a list member it keeps a cell key that member
-does not state, and when it cannot take the value, such as when its own JSON reading refuses an
-`undefined` inside the cell, that key is refused rather than left out. `Schema.catchDecoding`
-middleware keeps its 0.18.0 reading: a record that recovers is not ruled out for a list before it
-runs. When it takes a caller's list, a recovery that leaves out the list's cells, such as one that
-returns a value of its own under other keys, is refused. One that puts a value of its own at a
-cell's index is not refused yet, as the [active limits](#active-limits-and-recovery) give. For any
-other value, middleware gives its own reading, as Effect's does. These limits remain:
+Anywhere else a value keeps 0.18.0's reading. That covers any alternative that is a class, a
+declaration such as `Schema.Date`, an open schema such as `Schema.Unknown`, `Schema.catchDecoding`
+middleware or a codec with any other transformation, and every value inside one that middleware
+reads, since a recovery can turn a failure anywhere inside into a value of its own. So beside an
+empty `Schema.Class`, a class decoded from a tuple, a codec decoded from `Schema.declare` or
+`Schema.Unknown`, or a record with a recovery, a list and its cells read as they did on 0.18.0.
+These limits remain:
 
 - When another field makes a parent read field by field, a constructor default can still replace an
   invalid decoded item value, with or without the record: `{ n: 1, items: [{ limit: "x" }] }` under
@@ -529,18 +524,23 @@ remaining list limit under #241.
   leaves out symbol keys and symbol values
   ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). Beside a stated member
   the same fields are refused, as above.
-- A `Schema.catchDecoding` recovery that takes a caller's list is checked only for the cells it
-  leaves out, not for what it puts in them. A record beside `Schema.Array(Plain)` whose recovery
-  returns `{ 0: { limit: "altered" } }` sends that for `[{ limit: 5, extra: 1 }]`
-  ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). Have the recovery
-  return the caller's cells or fail.
-- An empty `Schema.Class` under one parent member loses the cells' unstated keys when a list member
-  under another parent member reads the same field. With
-  `Union([Schema.Struct({ items: Bare }), Schema.Struct({ items: Schema.Array(Plain) })])`, where
-  `Bare` is an empty class, `{ items: [{ limit: "x", extra: 1 }] }` sends
-  `{"items":{"0":{"limit":"x"}}}`, although Effect's first fit gives the class every cell
-  ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). Put both in one union,
-  as in `Schema.Struct({ items: Schema.Union([Bare, Schema.Array(Plain)]) })`, which keeps them.
+- A record with a `Schema.catchDecoding` recovery beside a list member keeps 0.18.0's reading, in
+  which the record's values hold a cell key the list member does not state. The list member then
+  refuses a valid list, and the recovery's value is sent instead: under
+  `Union([Schema.Array(Plain), Recovering])`, where `Recovering` recovers `{ recovered: true }`,
+  `[{ limit: "x", extra: 1 }]` sends `{"recovered":true}`, where Effect reads `[{"limit":"x"}]`. A
+  recovery's value is not checked against the cells it was given either: one that returns
+  `{ 0: { limit: "altered" } }` sends that for `[{ limit: 5, extra: 1 }]`
+  ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). Leave out keys the list
+  member does not state, and have a recovery return the caller's cells or fail.
+- An empty `Schema.Class` keeps 0.18.0's reading beside a list member or a member that states
+  fields. `Union([Bare, Schema.Array(Plain)])`, where `Bare` is an empty class, sends
+  `{"0":{"limit":"x"}}` for `[{ limit: "x", extra: 1 }]`, although Effect's first fit gives the
+  class every cell, and so does the same pair under two parent members
+  ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). `Union([A, Bare])` and
+  `Union([Bare, A])` send `{"a":"x"}` for `{ a: "x", z: 1 }`
+  ([#249](https://github.com/viell-dev/slop-effect-schema-http/issues/249)). `Schema.Struct({})` in
+  the class's place keeps the cells and the key.
 - Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
   name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that
   choice for the whole value. The [0.14 migration](./release-notes/0.14.md#account-for-both-names)

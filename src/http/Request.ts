@@ -136,11 +136,13 @@ export type QueryFields = Readonly<
  * either order.
  * Avoid Void in input schemas that rely on classes, opaque or suspended values, encoded member
  * unions, other union modes, standalone Void or custom discarding transformations.
- * Closed structs strip keys no member states and keys a tag rules out. A member that cannot read
- * the caller's container, such as a record beside a list or a list beside an object, states none
- * of its keys. An empty struct keeps every key of what it reads, at any depth, so beside members
- * that state fields it is the member that keeps them all. There, a kept field its writer would leave
- * out or replace, such as a symbol key or `NaN` in JSON, is a `SchemaError` before dispatch.
+ * Closed structs strip keys no member states and keys a tag rules out. Where every alternative at a
+ * value is a struct, a record, a list or a tuple, a member that cannot read the caller's container,
+ * such as a record beside a list or a list beside an object, states none of its keys, and an empty
+ * struct keeps every key of what it reads, at any depth, so beside members that state fields it is
+ * the member that keeps them all. There, a kept field its writer would leave out or replace, such as
+ * a symbol key or `NaN` in JSON, is a `SchemaError` before dispatch. Beside a class, a declaration,
+ * an open schema, middleware or another codec, a value keeps 0.18.0's reading.
  * A required literal tag can choose by its decoded or encoded name. Both views must rule a member
  * out before its fields go; a constructor default is not guessed to make that choice.
  * A key set to `undefined` is no field, and an accessor on a class is one, as it is to a struct. In a

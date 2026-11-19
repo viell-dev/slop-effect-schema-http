@@ -236,9 +236,6 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       : write;
   const preserving =
     guarded.ast === ast ? contract : Schema.make<S>(guarded.ast);
-  // A suspended schema may name one defined after this binding, so resolve these on first use.
-  const recovers = Excess.lazily(() => Excess.recovers(ast));
-  const holdsEmptyClass = Excess.lazily(() => Excess.holdsEmptyClass(ast));
   const exact = toDecoded(preserving, Excess.strict);
   const kept = (input: Input<S>, options: SchemaAST.ParseOptions) =>
     Effect.flatMap(
@@ -252,11 +249,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             strictWriter(value, Excess.strict),
             (output): Written<A> => ({
               output,
-              // A strict read strips nothing it can see, but middleware can recover a value that
-              // holds none of the cells of the caller's list.
-              lost: recovers()
-                ? Excess.lostCells([ast], input, value, output)
-                : [],
+              lost: [],
             }),
           ),
           (failure) => ({
@@ -381,25 +374,14 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     const seen = (
       given === input ? input : Excess.exposed([ast], input)
     ) as Input<S>;
-    // An empty class after a list member takes a list only when that member refuses it. It reads
-    // the caller's cells as given, so its output gets them back at that list; nothing is read again.
-    const forClasses = (read: Written<A>): Written<A> =>
-      holdsEmptyClass()
-        ? {
-            ...read,
-            output: Excess.restoredCells([ast], given, input, read.output) as A,
-          }
-        : read;
     const attempt = (options: SchemaAST.ParseOptions) =>
       given === input
         ? kept(input, options)
-        : Effect.catch(
-            Effect.map(kept(given as Input<S>, options), forClasses),
-            (first) =>
-              Effect.mapError(kept(seen, options), (last) => ({
-                ...last,
-                reading: first.reading && last.reading,
-              })),
+        : Effect.catch(kept(given as Input<S>, options), (first) =>
+            Effect.mapError(kept(seen, options), (last) => ({
+              ...last,
+              reading: first.reading && last.reading,
+            })),
           );
     const strictRead =
       guarded.ast === ast
