@@ -207,9 +207,10 @@ its own `toJSON` returns, where a query writes the text
 [`Invalid Date`](#a-query-value-can-be-a-date). A `toJSON` returning `undefined` omits an object
 field and is refused in an array. An undefined object field supplies nothing, and a top-level
 `undefined` yields an empty `application/json` body. The engine's `JSON.stringify` then writes the
-copy. It runs no caller code and keeps its own nesting limit, about 4,700 levels on Node 24.
-Refusals and engine failures are `HttpBodyError` with the position. Exceptions from getters, proxies
-and `toJSON` remain defects.
+copy. It runs no caller code and keeps its own nesting limit, which depends on the stack size: Node
+24's default allows about 4,700 levels on Windows and several times more on Linux. Refusals and
+engine failures are `HttpBodyError` with the position. Exceptions from getters, proxies and `toJSON`
+remain defects.
 
 The Effect form schema links are checked where they flatten the encoded tree into form entries. The
 same pass validates leaves and writes the entries with Effect's bracket paths and repeated names. An

@@ -36,12 +36,12 @@
   collections, binary data, `RegExp`, `Error`, `URLSearchParams`, `FormData`, `Headers`, `Blob`,
   `File` and boxed symbols. Plain objects, class instances and values with `toJSON`, such as
   `Option` and `DateTime`, write as before, and an invalid `Date` still writes `null`. The checks
-  use the result of `toJSON` and report `HttpBodyError`, as nesting beyond the engine's limit, about
-  4,700 levels on Node 24, still does. A schema can still refuse first with `SchemaError`.
-  Exceptions from caller getters, proxies and `toJSON` now propagate as defects. The writer now
-  reads enumerable symbol-keyed fields, including getters, to see whether they supply a value. It
-  does more work than `HttpBody.json`: on Node 24, a large body takes about two to three times as
-  long to encode as on 0.18.0, and the same without Node's brand helpers, as in a browser.
+  use the result of `toJSON` and report `HttpBodyError`, as nesting beyond the engine's own
+  `JSON.stringify` limit still does. A schema can still refuse first with `SchemaError`. Exceptions
+  from caller getters, proxies and `toJSON` now propagate as defects. The writer now reads
+  enumerable symbol-keyed fields, including getters, to see whether they supply a value. It does
+  more work than `HttpBody.json`: on Node 24, a large body takes about two to three times as long to
+  encode as on 0.18.0, and the same without Node's brand helpers, as in a browser.
 - **Breaking:** form writers refuse values they would silently skip, with `HttpBodyError` naming the
   field ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). For example,
   multipart no longer sends only `extra=keep` for `{ v: 1, extra: "keep" }` through an open
