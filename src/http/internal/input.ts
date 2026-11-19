@@ -201,12 +201,14 @@ const readerForCodec = <S extends Schema.Top, A, R>(
 ) => {
   const decoded = toDecoded(contract);
   const ast = contract.ast;
-  const readLoss = Excess.symbolLoss(ast, "record");
-  const writeLoss = canonicalJson ? Excess.symbolLoss(ast, "json") : undefined;
-  const losses = (input: unknown, value: unknown, output: unknown) => [
-    ...(readLoss?.(input, value) ?? []),
-    ...(writeLoss?.(value, output) ?? []),
-  ];
+  // The same positions, compared on the way in and on the way out of the schema.
+  const readLoss = Excess.symbolLoss(ast, false);
+  const writeLoss = Excess.symbolLoss(ast, canonicalJson);
+  const losses = (input: unknown, value: unknown, output: unknown) =>
+    Excess.uniquePaths([
+      ...(readLoss?.(input, value) ?? []),
+      ...(writeLoss?.(value, output) ?? []),
+    ]);
   const written = (
     input: unknown,
     reading: ReturnType<typeof decoded>,
@@ -276,7 +278,8 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             }),
             (output): Written<A> => ({
               output,
-              lost: [
+              // A field both comparisons report is named once.
+              lost: Excess.uniquePaths([
                 ...Excess.missing(
                   [ast],
                   given,
@@ -286,7 +289,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
                   constructed && voidDeclined ? guarded.choices : undefined,
                 ),
                 ...losses(input, value, output),
-              ],
+              ]),
             }),
           ),
       );
@@ -590,8 +593,8 @@ export const encoder = <S extends Schema.Top, A, R>(
   if (
     guarded.ast === contract.ast &&
     !Excess.choosing(contract.ast) &&
-    Excess.symbolLoss(contract.ast, "record") === undefined &&
-    (!canonicalJson || Excess.symbolLoss(contract.ast, "json") === undefined)
+    Excess.symbolLoss(contract.ast, false) === undefined &&
+    Excess.symbolLoss(contract.ast, canonicalJson) === undefined
   ) {
     const decoded = toDecoded(contract);
     const write = Schema.encodeEffect(codec);

@@ -17,7 +17,10 @@ const forEachValue = (
     if (index in values) write(values[index]);
 };
 
-class InvalidQueryValue extends WriterError {
+/** A refusal of a field name or a list position, which reads the same in both groups. */
+export class InvalidGroupField extends WriterError {}
+
+export class InvalidQueryValue extends WriterError {
   constructor(name: string) {
     super(
       `The query field ${JSON.stringify(name)} must encode a scalar value or a list of scalar values`,
@@ -25,10 +28,10 @@ class InvalidQueryValue extends WriterError {
   }
 }
 
-export const isInvalidQueryValue = (error: WriterError): error is WriterError =>
-  error instanceof InvalidQueryValue ||
-  error instanceof InvalidFieldName ||
-  error instanceof InvalidArrayField;
+export const isInvalidQueryValue = (
+  error: WriterError,
+): error is InvalidQueryValue | InvalidGroupField =>
+  error instanceof InvalidQueryValue || error instanceof InvalidGroupField;
 
 /** Read the native Date brand, including dates from another realm. */
 const dateText = (value: object): string | undefined => {
@@ -64,13 +67,13 @@ export const queryScalar = (
   throw new InvalidQueryValue(name);
 };
 
-class InvalidFieldName extends WriterError {
+class InvalidFieldName extends InvalidGroupField {
   constructor(group: "query" | "header", key: symbol) {
     super(`The ${group} field [${String(key)}] must have a string name`);
   }
 }
 
-class InvalidArrayField extends WriterError {
+class InvalidArrayField extends InvalidGroupField {
   constructor(group: "query" | "header", name: string, extra: PropertyKey) {
     super(
       `The ${group} field ${JSON.stringify(name)} has an extra array field at ${textPath([extra])}`,
@@ -125,7 +128,7 @@ export const queryEntries = (reading: Reading): Query => {
   return query;
 };
 
-class InvalidHeaderValue extends WriterError {
+export class InvalidHeaderValue extends WriterError {
   constructor() {
     super("A header line must have a string value");
   }
@@ -133,13 +136,11 @@ class InvalidHeaderValue extends WriterError {
 
 export const isInvalidHeaderValue = (
   error: WriterError,
-): error is WriterError =>
-  error instanceof InvalidHeaderValue ||
-  error instanceof InvalidFieldName ||
-  error instanceof InvalidArrayField;
+): error is InvalidHeaderValue | InvalidGroupField =>
+  error instanceof InvalidHeaderValue || error instanceof InvalidGroupField;
 
 export const headerErrorMessage = (error: TypeError): string =>
-  error instanceof InvalidFieldName || error instanceof InvalidArrayField
+  error instanceof InvalidGroupField
     ? error.message
     : "The header schema must encode string field names and values";
 

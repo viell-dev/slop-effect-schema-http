@@ -1,4 +1,5 @@
 import { Equal, Schema, SchemaAST, SchemaIssue } from "effect";
+import { extraArrayField } from "./writer-error.js";
 
 /** Where a key sits in a value, one step for each level. */
 export type Path = ReadonlyArray<PropertyKey>;
@@ -451,7 +452,7 @@ export const missing = (
   });
 };
 
-/** Compares what a caller supplied at a position with what the schema produced there. */
+/** Compares what went into a schema step at a position with what came out there. */
 type SymbolCheck = (
   supplied: unknown,
   result: unknown,
@@ -489,32 +490,57 @@ const within = (
   path.pop();
 };
 
+/** An object rebuilt from string keys: a record, or a struct with an index signature. */
+const isIndexed = (ast: Ast): boolean =>
+  ast._tag === "Objects" && ast.indexSignatures.length > 0;
+
+/** A class: a declaration whose first encoding link leads to the struct of its fields. */
+const classFields = (ast: Ast): Ast | undefined =>
+  ast._tag === "Declaration" && ast.encoding?.[0]?.to._tag === "Objects"
+    ? ast.encoding[0].to
+    : undefined;
+
+/** The same path once, even when two members or two checks report it. */
+export const uniquePaths = (paths: ReadonlyArray<Path>): ReadonlyArray<Path> =>
+  paths.length < 2
+    ? paths
+    : paths.filter(
+        (path, index) =>
+          !paths
+            .slice(0, index)
+            .some(
+              (earlier) =>
+                earlier.length === path.length &&
+                earlier.every((key, position) => key === path[position]),
+            ),
+      );
+
+type Comparison = (supplied: unknown, result: unknown) => ReadonlyArray<Path>;
+
 const symbolChecks = {
-  record: new WeakMap<
-    Ast,
-    ((supplied: unknown, result: unknown) => ReadonlyArray<Path>) | null
-  >(),
-  json: new WeakMap<
-    Ast,
-    ((supplied: unknown, result: unknown) => ReadonlyArray<Path>) | null
-  >(),
+  schema: new WeakMap<Ast, Comparison | null>(),
+  json: new WeakMap<Ast, Comparison | null>(),
 };
 
 /**
  * Where Effect itself drops a supplied symbol field, before any writer can see it.
  *
  * @remarks
- * An index signature rebuilds its object from string keys, so a record loses a symbol field
- * whether it constructs or decodes the caller's value. For JSON, the canonical codec of
- * `Schema.ObjectKeyword` also copies the top-level string fields only. Everywhere else a symbol
- * field reaches the writer, which refuses it there.
+ * The comparison runs twice, at the same positions: from the caller's value to the decoded value,
+ * and from the decoded value to what the schema writes. An index signature rebuilds its object
+ * from string keys, so a record drops a symbol field on either step. So does a class, which keeps
+ * only its fields, and a link whose encoded end is a record, such as a record decoded to a struct.
+ * For JSON, the canonical codec of `Schema.ObjectKeyword` also copies only the top-level string
+ * fields of an object and the positions of an array. Everywhere else a symbol field reaches the
+ * writer, which refuses it there. Built-ins that an open schema rebuilds, such as a `Date` read by
+ * `Schema.ObjectKeyword`, are not covered here (#261).
  *
  * The comparison is compiled once per schema and visits only the positions where such a node can
  * be, with one shared path that is copied only for a loss, so an array of rows checks each row
  * without rediscovering its schema or allocating a path. A suspended schema is read on first use.
  */
-export function symbolLoss(ast: Ast, phase: "record" | "json") {
-  const memo = symbolChecks[phase];
+export function symbolLoss(ast: Ast, json: boolean): Comparison | undefined {
+  const memo = symbolChecks[json ? "json" : "schema"];
   const known = memo.get(ast);
   if (known !== undefined) return known ?? undefined;
   const cache = new Map<Ast, SymbolCheck | undefined>();
@@ -524,16 +550,42 @@ export function symbolLoss(ast: Ast, phase: "record" | "json") {
     cache.set(node, check);
     return check;
   };
-  const make = (node: Ast): SymbolCheck | undefined => {
+  /** Symbols compared at this very position, where the node rebuilds the object. */
+  const here = (node: Ast): SymbolCheck | undefined => {
+    const end = encodedEnd(node);
+    const rebuilds =
+      isIndexed(node) ||
+      (end !== node && isIndexed(end)) ||
+      classFields(node) !== undefined;
+    if (rebuilds)
+      return (supplied, result, path, lost) => {
+        if (
+          supplied !== result &&
+          isObject(supplied) &&
+          isObject(result) &&
+          !Array.isArray(supplied)
+        )
+          ownLostSymbols(supplied, result, path, lost);
+      };
+    if (!json || node._tag !== "ObjectKeyword" || node.encoding !== undefined)
+      return undefined;
+    return (supplied, result, path, lost) => {
+      if (supplied === result || !isObject(supplied) || !isObject(result))
+        return;
+      if (!Array.isArray(supplied))
+        return ownLostSymbols(supplied, result, path, lost);
+      const extra = extraArrayField(supplied, supplied.length);
+      if (extra !== undefined && !Object.hasOwn(result, extra))
+        lost.push([...path, extra]);
+    };
+  };
+  const inner = (node: Ast): SymbolCheck | undefined => {
     switch (node._tag) {
-      case "ObjectKeyword":
-        if (phase !== "json" || node.encoding !== undefined) return undefined;
-        return (input, value, path, lost) => {
-          if (input !== value && isObject(input) && isObject(value))
-            ownLostSymbols(input, value, path, lost);
-        };
+      case "Declaration": {
+        const fields = classFields(node);
+        return fields === undefined ? undefined : build(fields);
+      }
       case "Objects": {
-        const indexed = phase === "record" && node.indexSignatures.length > 0;
         const properties = node.propertySignatures.flatMap(({ name, type }) => {
           const check = build(type);
           return check === undefined ? [] : [[name, check] as const];
@@ -542,44 +594,46 @@ export function symbolLoss(ast: Ast, phase: "record" | "json") {
           const check = build(type);
           return check === undefined ? [] : [check];
         });
-        if (!indexed && properties.length === 0 && indexes.length === 0)
-          return undefined;
-        return (input, value, path, lost) => {
-          if (input === value || !isObject(input) || !isObject(value)) return;
-          if (indexed && !Array.isArray(input))
-            ownLostSymbols(input, value, path, lost);
+        if (properties.length === 0 && indexes.length === 0) return undefined;
+        return (supplied, result, path, lost) => {
+          if (supplied === result || !isObject(supplied) || !isObject(result))
+            return;
           for (const [name, check] of properties)
-            within(check, input[name], value[name], path, name, lost);
+            within(check, supplied[name], result[name], path, name, lost);
           if (indexes.length > 0)
-            for (const name of Object.keys(input))
+            for (const name of Object.keys(supplied))
               for (const check of indexes)
-                within(check, input[name], value[name], path, name, lost);
+                within(check, supplied[name], result[name], path, name, lost);
         };
       }
       case "Arrays": {
         const fixed = node.elements.map(build);
         const rest = node.rest.map(build);
         if (!fixed.some(Boolean) && !rest.some(Boolean)) return undefined;
-        return (input, value, path, lost) => {
-          if (input === value || !Array.isArray(input) || !Array.isArray(value))
+        return (supplied, result, path, lost) => {
+          if (
+            supplied === result ||
+            !Array.isArray(supplied) ||
+            !Array.isArray(result)
+          )
             return;
-          const length = Math.min(input.length, value.length);
+          const length = Math.min(supplied.length, result.length);
           const head = Math.min(fixed.length, length);
           for (let index = 0; index < head; index++) {
             const check = fixed[index];
             if (check)
-              within(check, input[index], value[index], path, index, lost);
+              within(check, supplied[index], result[index], path, index, lost);
           }
           if (rest.length === 0) return;
           const end = Math.max(fixed.length, length - rest.length + 1);
           const spread = rest[0];
           if (spread)
             for (let index = fixed.length; index < end; index++)
-              within(spread, input[index], value[index], path, index, lost);
+              within(spread, supplied[index], result[index], path, index, lost);
           for (let index = end; index < length; index++) {
             const check = rest[index - end + 1];
             if (check)
-              within(check, input[index], value[index], path, index, lost);
+              within(check, supplied[index], result[index], path, index, lost);
           }
         };
       }
@@ -589,22 +643,32 @@ export function symbolLoss(ast: Ast, phase: "record" | "json") {
           return check === undefined ? [] : [[member, check] as const];
         });
         if (members.length === 0) return undefined;
-        return (input, value, path, lost) => {
+        return (supplied, result, path, lost) => {
           for (const [member, check] of members)
-            if (!ruledOut(member, input)) check(input, value, path, lost);
+            if (!ruledOut(member, supplied))
+              check(supplied, result, path, lost);
         };
       }
       case "Suspend": {
         // Building a request must not force the thunk, whose target may be assigned later.
         let target: SymbolCheck | undefined | null = null;
-        return (input, value, path, lost) => {
+        return (supplied, result, path, lost) => {
           if (target === null) target = build(node.thunk());
-          target?.(input, value, path, lost);
+          target?.(supplied, result, path, lost);
         };
       }
       default:
         return undefined;
     }
+  };
+  const make = (node: Ast): SymbolCheck | undefined => {
+    const first = here(node);
+    const second = inner(node);
+    if (first === undefined || second === undefined) return first ?? second;
+    return (supplied, result, path, lost) => {
+      first(supplied, result, path, lost);
+      second(supplied, result, path, lost);
+    };
   };
   const check = build(ast);
   const compare =
@@ -612,18 +676,7 @@ export function symbolLoss(ast: Ast, phase: "record" | "json") {
     ((supplied: unknown, result: unknown): ReadonlyArray<Path> => {
       const lost: Path[] = [];
       check(supplied, result, [], lost);
-      if (lost.length < 2) return lost;
-      // Two union members can report the same position.
-      return lost.filter(
-        (path, index) =>
-          !lost
-            .slice(0, index)
-            .some(
-              (earlier) =>
-                earlier.length === path.length &&
-                earlier.every((key, position) => key === path[position]),
-            ),
-      );
+      return uniquePaths(lost);
     });
   memo.set(ast, compare ?? null);
   return compare;

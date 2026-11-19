@@ -178,6 +178,91 @@ function portableState(value: object): string | undefined {
   }
 }
 
+const prototypeOf = (make: () => unknown): object | undefined => {
+  try {
+    const value = make();
+    return typeof value === "object" && value !== null
+      ? (Object.getPrototypeOf(value) as object)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const constructorPrototype = (name: string): object | undefined => {
+  const constructor: unknown = Reflect.get(globalThis, name);
+  const prototype: unknown =
+    typeof constructor === "function" ? constructor.prototype : undefined;
+  return typeof prototype === "object" && prototype !== null
+    ? prototype
+    : undefined;
+};
+
+/**
+ * The prototypes of built-ins whose state is internal, most specific first, so an object that a
+ * tag property disguises is still known by what it inherits from.
+ */
+const builtinPrototypes: ReadonlyArray<readonly [object, string]> = [
+  ...(
+    ["File", "Blob", "FormData", "URLSearchParams", "Headers"] as const
+  ).flatMap((name) => {
+    const prototype = constructorPrototype(name);
+    return prototype === undefined ? [] : [[prototype, name] as const];
+  }),
+  ...(
+    [
+      ["Map", Map.prototype],
+      ["Set", Set.prototype],
+      ["WeakMap", WeakMap.prototype],
+      ["WeakSet", WeakSet.prototype],
+      ["WeakRef", constructorPrototype("WeakRef")],
+      ["FinalizationRegistry", constructorPrototype("FinalizationRegistry")],
+      ["ArrayBuffer", ArrayBuffer.prototype],
+      ["SharedArrayBuffer", constructorPrototype("SharedArrayBuffer")],
+      ["DataView", DataView.prototype],
+      ["RegExp", RegExp.prototype],
+      ["Error", Error.prototype],
+      ["Date", Date.prototype],
+      ["Promise", Promise.prototype],
+      ["Map Iterator", prototypeOf(() => new Map().keys())],
+      ["Set Iterator", prototypeOf(() => new Set().keys())],
+      ["Array Iterator", prototypeOf(() => [].keys())],
+      ["String Iterator", prototypeOf(() => ""[Symbol.iterator]())],
+      ["RegExp String Iterator", prototypeOf(() => "".matchAll(/x/g))],
+      [
+        "Iterator Helper",
+        prototypeOf(() =>
+          (
+            [].keys() as unknown as {
+              map(f: (value: unknown) => unknown): unknown;
+            }
+          ).map((value) => value),
+        ),
+      ],
+      [
+        "Generator",
+        // A generator object inherits from its function's prototype, then from this one.
+        prototypeOf(
+          () => Object.getPrototypeOf((function* () {})()) as unknown,
+        ),
+      ],
+    ] as const
+  ).flatMap(([name, prototype]) =>
+    prototype === undefined ? [] : [[prototype, name] as const],
+  ),
+];
+
+const isPrototypeOf = Object.prototype.isPrototypeOf;
+
+/** A built-in kind an object inherits from, unless its prototype is the plain one or `null`. */
+function inheritedState(value: object): string | undefined {
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype === null || prototype === Object.prototype) return undefined;
+  for (const [builtin, name] of builtinPrototypes)
+    if (Reflect.apply(isPrototypeOf, builtin, [value])) return name;
+  return undefined;
+}
+
 /**
  * What an object holds outside its own enumerable fields.
  *
@@ -191,22 +276,26 @@ export function stateOf(
   fieldless: boolean,
 ): Box | string | undefined {
   if (ArrayBuffer.isView(value)) return viewName(value);
+  // Node reads a box's brand directly, even after a prototype change hid its tag and gave it fields.
+  const box = types === undefined ? undefined : nodeBox(value);
+  if (box !== undefined) return box;
   const tag = tagOf.call(value);
   if (tag !== "[object Object]") {
     const name = tag.slice(8, -1);
     if (internalState.has(name)) return name;
     if (
+      types === undefined &&
       isBoxName(name) &&
-      (types === undefined
-        ? hasBrand(boxBrands[name], value)
-        : nodeBox(value) === name)
+      hasBrand(boxBrands[name], value)
     )
       return name;
   }
-  // Only a prototype change or a tag property hides the standard tag of a built-in. A changed
-  // prototype also leaves a BigInt or symbol box with fields of its own looking ordinary.
+  // Only a prototype change or a tag property hides the standard tag of a built-in.
   if (!fieldless && !(Symbol.toStringTag in value)) return undefined;
-  if (types !== undefined) return nodeBox(value) ?? nodeState(value);
+  // A tag property leaves the prototype, which names the built-in without running anything.
+  const inherited = inheritedState(value);
+  if (inherited !== undefined) return inherited;
+  if (types !== undefined) return nodeState(value);
   if (fieldless) return portableState(value);
   // With fields of its own, only a box is checked: JSON then writes its primitive, not the fields.
   return brandOf(value, boxes);
