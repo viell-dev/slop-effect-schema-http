@@ -149,13 +149,14 @@ The [active limits](./schema-input.md#active-limits-and-recovery) give the mixed
 The alias proof ignores a Void alternative only where the strict pass guards it, for an object cell
 and for a list beside one array-reading member, including inside a grouped any-of member union. The
 existing alias checks can then refuse input a nested constructor default would otherwise replace. A
-query or header binding that writes a non-object group reports any lost input fields before refusing
-the output with `InvalidRequest`. Header records must contain strings, arrays of strings or omitted
-values. Each encoded array of pairs is read once by position. The binding uses that reading to
-collect names, append declared defaults and write the group. Other iterables yield their pairs
-through the iterator protocol. The binding collects names from validated pairs and refuses a
-malformed pair with `InvalidRequest` before dispatch. Direct calls to `Transport.entries` and
-`UrlEncoding.queryEntries` throw `TypeError` for malformed pairs.
+query or header binding reports lost input fields before refusing a non-object group or malformed
+pair with `InvalidRequest`. Header records must contain strings, arrays of strings or omitted
+values. Each encoded group is read once for name collection, declared defaults and writing. Arrays
+of pairs are read by position. Other objects with a callable iterator yield pairs through it, so
+one-shot iterators supply their fields. Each pair must be an array of length two with a string name.
+The binding refuses malformed pairs with `InvalidRequest` before dispatch. Direct calls to
+`Transport.entries` and `UrlEncoding.queryEntries` throw `TypeError` for malformed pairs. Repeated
+value arrays are also expanded by position.
 
 #### A last constructor attempt
 

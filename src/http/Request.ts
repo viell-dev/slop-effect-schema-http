@@ -14,7 +14,9 @@ import {
   UrlParams,
 } from "effect/http";
 import type * as Body from "./Body.js";
+import * as FieldPairs from "./internal/field-pairs.js";
 import * as Fields from "./internal/fields.js";
+import * as GroupEncoding from "./internal/group-encoding.js";
 import * as Inputs from "./internal/input.js";
 import * as Groups from "./internal/group.js";
 import * as Shapes from "./internal/shape.js";
@@ -824,6 +826,13 @@ const invalidHeaderFields = (cause: unknown) =>
     cause,
   });
 
+const invalidQueryValues = (cause: unknown) =>
+  new InvalidRequest({
+    message:
+      "The query schema must encode values that can be written as query text",
+    cause,
+  });
+
 /** Names only, and only those that would go: what the schema kept fits it. */
 const lostFields = (
   group: string,
@@ -885,15 +894,24 @@ const prepareGroup = <
   );
   const takenKey = group === "headers" ? "takenHeaders" : "takenQuery";
   const label = group === "headers" ? "header" : "query";
-  const invalidOutput = () =>
+  const invalidOutput = (cause?: TypeError) =>
     new InvalidRequest({
       message: `The ${label} schema must encode a field record or field pairs`,
+      ...(cause === undefined ? {} : { cause }),
     });
-  const checkOutput = <A>(inspect: () => A) =>
-    Effect.try({ try: inspect, catch: invalidOutput });
+  const takeSnapshot = (source: object) =>
+    Effect.try({
+      try: () => Shapes.snapshot(source),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.catch((cause) =>
+        FieldPairs.isMalformedPair(cause)
+          ? Effect.fail(invalidOutput(cause))
+          : Effect.die(cause),
+      ),
+    );
   return {
     shape,
-    checkOutput,
     // Delegate directly so extraction adds no Effect boundary between the original steps.
     *evaluate<I, E, R>(
       self: Request<I, E, R>,
@@ -908,34 +926,31 @@ const prepareGroup = <
       ) => ReadonlyArray<readonly [string, unknown]>,
     ) {
       const edited = candidates(value, draft.editedFields.get(shape));
-      let { output, lost: lostFromInput } = yield* read(value);
-      const initial = yield* Effect.result(
-        checkOutput(() => {
-          if (!Predicate.isObjectKeyword(output)) return undefined;
-          const fields = Shapes.snapshot(output);
-          return {
-            fields,
-            own: draft[takenKey] && taken(value, fields, lostFromInput),
-          };
-        }),
+      const initial = yield* read(value);
+      const { output } = initial;
+      let lostFromInput = initial.lost;
+      // An invalid output claims no fields. Another binding can still claim a root loss.
+      const refuseInvalidOutput = (error: InvalidRequest) =>
+        lostFromInput.length === 0
+          ? Effect.fail(error)
+          : Effect.flatMap(self.prepare(input, draft), (prepared) =>
+              Effect.andThen(
+                Inputs.refuseLost(
+                  contract,
+                  lostFromInput,
+                  prepared[takenKey]?.fields,
+                ),
+                Effect.fail(error),
+              ),
+            );
+      if (!Predicate.isObjectKeyword(output))
+        return yield* refuseInvalidOutput(invalidOutput());
+      let snapshot = yield* Effect.catch(
+        takeSnapshot(output),
+        refuseInvalidOutput,
       );
-      if (initial._tag === "Failure" || initial.success === undefined) {
-        if (lostFromInput.length > 0) {
-          // An invalid output claims no fields. Another binding can still claim a root loss.
-          const prepared = yield* self.prepare(input, draft);
-          yield* Inputs.refuseLost(
-            contract,
-            lostFromInput,
-            prepared[takenKey]?.fields,
-          );
-        }
-        return yield* initial._tag === "Failure"
-          ? initial.failure
-          : invalidOutput();
-      }
-      let { fields } = initial.success;
-      const { own } = initial.success;
-      let conflicts = filled(edited, output);
+      let conflicts = filled(edited, snapshot);
+      const own = draft[takenKey] && taken(value, snapshot, lostFromInput);
       let prepared = yield* self.prepare(
         input,
         own === undefined
@@ -948,15 +963,15 @@ const prepareGroup = <
       if (lostFromInput.length > 0) {
         const recovered = yield* recover(
           value,
-          { output, lost: lostFromInput },
+          { output, lost: lostFromInput, snapshot },
           prepared[takenKey],
           token,
           taken,
         );
         if (recovered !== undefined) {
-          ({ output, lost: lostFromInput } = recovered.reading);
-          fields = yield* checkOutput(() => Shapes.snapshot(output));
-          conflicts = filled(edited, output);
+          lostFromInput = recovered.reading.lost;
+          snapshot = recovered.snapshot;
+          conflicts = filled(edited, snapshot);
           prepared = { ...prepared, [takenKey]: recovered.taken };
         }
         yield* Inputs.refuseLost(
@@ -967,27 +982,22 @@ const prepareGroup = <
       }
       if (conflicts.length > 0)
         return yield* preparationConflict(group, conflicts);
-      const names = yield* checkOutput(() => Shapes.written(fields, fold));
+      const names = Shapes.written(snapshot, fold);
       const elsewhere = Shapes.others(shape, prepared[takenKey], fold);
       const defaults = defaultsFrom(prepared, names, elsewhere);
-      let settled = fields;
+      // With no defaults there is no schema round trip or second output to read.
+      let writable = snapshot;
       if (defaults.length > 0) {
-        const settlement = yield* checkOutput(() => settle(fields, defaults));
-        const result = yield* Effect.mapError(settlement, () =>
+        const settled = yield* Effect.mapError(settle(snapshot, defaults), () =>
           misfit(label, defaults),
         );
-        if (!Predicate.isObjectKeyword(result)) return yield* invalidOutput();
-        if (result !== fields.source)
-          settled = yield* checkOutput(() => Shapes.snapshot(result));
+        if (!Predicate.isObjectKeyword(settled)) return yield* invalidOutput();
+        writable = yield* takeSnapshot(settled);
       }
       // A field the schema does not write back would be lost, as a union member can lose one.
-      const lost = yield* checkOutput(() =>
-        Shapes.lost(fields, defaults, settled, fold),
-      );
+      const lost = Shapes.lost(snapshot, defaults, writable, fold);
       if (lost.length > 0) return yield* lostFields(label, lost);
-      // A positional snapshot has the same entry types as the encoded array it copies.
-      const writable = (settled.pairs ?? settled.source) as S["Encoded"];
-      return { prepared, settled: writable, names, defaults };
+      return { prepared, writable, names, defaults };
     },
   };
 };
@@ -1076,7 +1086,7 @@ export const headers = <
         const value = (
           input.headers === undefined ? {} : input.headers
         ) as Input<S>;
-        const { prepared, settled, names, defaults } = yield* evaluate(
+        const { prepared, writable, names, defaults } = yield* evaluate(
           self,
           input,
           value,
@@ -1091,7 +1101,7 @@ export const headers = <
             ),
         );
         const lines = yield* Effect.try({
-          try: () => Transport.entries(settled),
+          try: () => GroupEncoding.headerEntries(writable),
           catch: invalidHeaderFields,
         });
         const replaced = new Set([
@@ -1194,11 +1204,7 @@ export const query = <
 >(
   contract: S,
 ) => {
-  const { shape, evaluate, checkOutput } = prepareGroup(
-    contract,
-    "query",
-    foldQuery,
-  );
+  const { shape, evaluate } = prepareGroup(contract, "query", foldQuery);
   return <I, E, R>(
     self: Request<I, E, R>,
   ): Request<
@@ -1221,7 +1227,7 @@ export const query = <
         const value = (
           input.query === undefined ? {} : input.query
         ) as Input<S>;
-        const { prepared, settled, names, defaults } = yield* evaluate(
+        const { prepared, writable, names, defaults } = yield* evaluate(
           self,
           input,
           value,
@@ -1239,9 +1245,10 @@ export const query = <
               )
               .map((param) => [param[0], queryValue(prepared, param)] as const),
         );
-        const entries = yield* checkOutput(() =>
-          UrlEncoding.queryEntries(settled),
-        );
+        const entries = yield* Effect.try({
+          try: () => GroupEncoding.queryEntries(writable),
+          catch: invalidQueryValues,
+        });
         return replaceQuery(
           prepared,
           entries,

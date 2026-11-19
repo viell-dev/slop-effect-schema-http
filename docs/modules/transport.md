@@ -17,6 +17,10 @@ A normalized header value and the original header lines carry different informat
 header collection without merging repetitions. `Transport.toHeaders` produces the lowercase,
 comma-joined view used by Effect client middleware.
 
+`Transport.entries` reads pair arrays and record arrays of repeated values by position. Each pair
+must be an array of length two with a string name and value. Malformed pairs and invalid header
+values throw `TypeError`.
+
 Lines keep the spelling they were written with, from `Request.setHeader`, `Request.appendHeader` and
 header schemas alike. Comparing two names folds their case, so `Request.setHeader("X-Thing", …)`
 replaces an earlier `x-thing` line. A header a schema covers takes the schema's spelling.

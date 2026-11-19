@@ -694,7 +694,7 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
       }),
   );
 
-  it.effect("keeps empty generators and later raw removals", () =>
+  it.effect("reads an empty generator once and keeps later raw removals", () =>
     Effect.gen(function* () {
       let iterations = 0;
       const schema = Schema.Struct({
@@ -722,7 +722,7 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
           query: { page_size: "many", count: "07", offset: 9 },
         })).request.url,
       ).toBe("/x");
-      expect(iterations).toBe(4);
+      expect(iterations).toBe(1);
     }),
   );
 

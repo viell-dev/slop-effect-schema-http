@@ -424,22 +424,20 @@ describe("generated fields in finite closed unions", () => {
       },
     });
     expect(candidates(accessor, edits)).toEqual([]);
+    expect(reads).toBe(0);
     for (const output of [
       {},
       { limit: undefined },
       Object.create({ limit: "25" }),
       Object.defineProperty({}, "limit", { value: "25" }),
       accessor,
-      {
-        limit: "25",
-        [Symbol.iterator]: () => {
-          throw new Error("iterator evaluated");
-        },
-      },
+      Object.assign(new Map(), { limit: "25" }),
     ])
-      expect(filled(["limit"], output)).toEqual([]);
-    expect(filled(["limit"], { limit: "25" })).toEqual(["limit"]);
-    expect(reads).toBe(0);
+      expect(filled(["limit"], Shapes.snapshot(output))).toEqual([]);
+    expect(filled(["limit"], Shapes.snapshot({ limit: "25" }))).toEqual([
+      "limit",
+    ]);
+    expect(reads).toBe(1);
   });
 
   it.effect(

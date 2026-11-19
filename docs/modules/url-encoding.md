@@ -24,6 +24,10 @@ entries, `null` means a bare key, and `undefined` omits an entry:
 
 <<< ../../examples/modules/url-encoding.ts#entries
 
+Pair arrays and arrays of repeated values are read by position, including arrays with a `null`
+prototype or a custom iterator. A pair must be an array of length two with a string name.
+`queryEntries` throws `TypeError` for malformed pairs.
+
 Numbers, bigints and booleans become strings, and a `Date` becomes its ISO text. An invalid `Date`
 has no ISO text, so it goes out as `Invalid Date`, and a schema such as `Schema.Date` refuses it
 before that. An empty string remains an empty value. Use an iterable of pairs when you need explicit

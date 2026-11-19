@@ -740,7 +740,7 @@ describe("remaining group-field recovery", () => {
   );
 
   it.effect(
-    "does not use iterable output or a legacy custom draft as recovery evidence",
+    "does not use pair output or a legacy custom draft as recovery evidence",
     () =>
       Effect.gen(function* () {
         const token = {};
@@ -754,23 +754,39 @@ describe("remaining group-field recovery", () => {
           ]),
         };
         const { taken: claim } = Shapes.bind(bare, (name) => name);
-        const original = { output: { b: "y" }, lost: [["a"], ["c"]] };
+        const record = { b: "y" };
+        const original = {
+          output: record,
+          lost: [["a"], ["c"]],
+          snapshot: Shapes.snapshot(record),
+        };
         const recover = Groups.recovery(bare);
+        let iterations = 0;
         const iterableOutput = {
           ...original.output,
-          [Symbol.iterator]: () => {
-            throw new Error("must not iterate");
+          *[Symbol.iterator]() {
+            iterations++;
+            yield ["b", "y"];
           },
         };
-        expect(
-          yield* recover(
-            input.query,
-            { ...original, output: iterableOutput },
-            taken,
-            token,
-            claim,
-          ),
-        ).toBeUndefined();
+        const arrayOutput = [["b", "y"]];
+        Object.setPrototypeOf(arrayOutput, null);
+        for (const output of [iterableOutput, arrayOutput]) {
+          expect(
+            yield* recover(
+              input.query,
+              {
+                ...original,
+                output: output as never,
+                snapshot: Shapes.snapshot(output),
+              },
+              taken,
+              token,
+              claim,
+            ),
+          ).toBeUndefined();
+        }
+        expect(iterations).toBe(1);
         const legacy: Request.Taken = {
           fields: taken.fields,
           settled: taken.settled,
@@ -782,6 +798,37 @@ describe("remaining group-field recovery", () => {
           (yield* recover(input.query, original, taken, token, claim))?.reading
             .output,
         ).toEqual({ a: "x", c: "z" });
+      }),
+  );
+
+  it.effect(
+    "excludes a prototype-free array produced by a recovery candidate",
+    () =>
+      Effect.gen(function* () {
+        const token = {};
+        const output = { b: "y" };
+        const onlyRecord = Schema.Union([B, Schema.Struct({})]);
+        const value = [["k", "v"]];
+        Object.setPrototypeOf(value, null);
+        // The empty struct can return the exact array even though this is a closed struct union.
+        expect((yield* Inputs.reader(onlyRecord)(value)).output).toBe(value);
+        let claims = 0;
+        const result = yield* Groups.recovery(onlyRecord)(
+          value,
+          { output, lost: [["a"]], snapshot: Shapes.snapshot(output) },
+          {
+            fields: new Set(["b"]),
+            settled: new Set(),
+            certificates: new Map([[token, new Set(["b"])]]),
+          },
+          token,
+          () => {
+            claims++;
+            return new Set(["a", "b"]);
+          },
+        );
+        expect(result).toBeUndefined();
+        expect(claims).toBe(0);
       }),
   );
 

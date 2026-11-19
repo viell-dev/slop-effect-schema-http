@@ -264,16 +264,17 @@ describe("preparation proof from a strictly empty transformed group", () => {
         return "25";
       },
     });
-    expect(filled(["page_size"], output)).toEqual([]);
-    expect(
-      filled(["page_size"], {
-        page_size: "25",
-        [Symbol.iterator]: () => {
-          throw new Error("iterator was read");
-        },
-      }),
-    ).toEqual([]);
     expect(reads).toBe(0);
+    const snapshot = Shapes.snapshot(output);
+    expect(reads).toBe(1);
+    expect(filled(["page_size"], snapshot)).toEqual([]);
+    expect(
+      filled(
+        ["page_size"],
+        Shapes.snapshot(Object.assign(new Map(), { page_size: "25" })),
+      ),
+    ).toEqual([]);
+    expect(reads).toBe(1);
   });
 
   it.effect(
