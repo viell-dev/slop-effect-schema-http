@@ -373,13 +373,23 @@ const deepArray = (count: number) => {
   return root;
 };
 
-/** Whether native `JSON.stringify` runs out of stack on this many nested arrays. */
-const nativeOverflows = (depth: number) => {
+const deepObject = (count: number) => {
+  const root: Record<string, unknown> = {};
+  let tail = root;
+  for (let index = 0; index < count; index++) {
+    const child: Record<string, unknown> = {};
+    tail["n"] = child;
+    tail = child;
+  }
+  return root;
+};
+
+/** Native JSON's text for a value, or `undefined` where the engine runs out of stack. */
+const nativeJson = (value: unknown): string | undefined => {
   try {
-    JSON.stringify(deepArray(depth));
-    return false;
+    return JSON.stringify(value);
   } catch (error) {
-    if (error instanceof RangeError) return true;
+    if (error instanceof RangeError) return undefined;
     throw error;
   }
 };
@@ -565,46 +575,44 @@ describe("writers keep or refuse what they cannot write", () => {
     }),
   );
 
-  it.effect("keeps the native depth limit and types engine failures", () =>
+  it.effect("adds no depth limit of its own and types the engine's", () =>
     Effect.gen(function* () {
-      // The limit depends on the stack size, so measure native JSON in this process.
-      const limit = yield* Effect.sync(() => {
-        let fits = 1;
-        let fails = 1_000;
-        while (!nativeOverflows(fails)) {
-          if (fails >= 2 ** 20)
-            throw new Error(
-              "Native JSON accepted 2 ** 20 nested arrays; revisit this test",
-            );
-          [fits, fails] = [fails, fails * 2];
+      // The engine's limit depends on its version and stack; some engines have none at this depth.
+      // Native JSON scans its open containers at each level, so its time grows with the square of
+      // the depth. This depth keeps an engine without a limit here well under a second.
+      const depth = 2 ** 14;
+      for (const nest of [deepArray, deepObject]) {
+        const native = nativeJson(nest(depth));
+        if (native !== undefined) {
+          expect(textOf(yield* Body.json.encode(nest(depth)))).toBe(native);
+          continue;
         }
+        // Where native JSON runs out of stack, the writer fails with a typed error, not a defect.
+        const exit = yield* Effect.exit(Body.json.encode(nest(depth)));
+        const reason = Exit.isFailure(exit) ? exit.cause.reasons[0] : undefined;
+        expect(reason?._tag).toBe("Fail");
+        const failure = reason?._tag === "Fail" ? reason.error : undefined;
+        expect(failure).toBeInstanceOf(HttpBody.HttpBodyError);
+        expect(failure).toHaveProperty("reason._tag", "JsonError");
+        expect(failure).toHaveProperty("cause", expect.any(RangeError));
+        expect(failure).toHaveProperty(
+          "message",
+          expect.stringContaining("JSON body could not be written"),
+        );
+        // Find where native JSON starts failing, within the fixed depth.
+        let fits = 0;
+        let fails = depth;
         while (fails - fits > 1) {
           const middle = Math.floor((fits + fails) / 2);
-          if (nativeOverflows(middle)) fails = middle;
+          if (nativeJson(nest(middle)) === undefined) fails = middle;
           else fits = middle;
         }
-        return fits;
-      });
-      // The writer's own call sits beneath Effect's frames, which share that stack.
-      const kept = limit - 128;
-      expect(kept).toBeGreaterThan(1_000);
-      expect(textOf(yield* Body.json.encode(deepArray(kept)))).toBe(
-        "[".repeat(kept + 1) + "]".repeat(kept + 1),
-      );
-      const beyond = limit * 2;
-      expect(nativeOverflows(beyond)).toBe(true);
-      // A typed failure, not a defect.
-      const exit = yield* Effect.exit(Body.json.encode(deepArray(beyond)));
-      const reason = Exit.isFailure(exit) ? exit.cause.reasons[0] : undefined;
-      expect(reason?._tag).toBe("Fail");
-      const failure = reason?._tag === "Fail" ? reason.error : undefined;
-      expect(failure).toBeInstanceOf(HttpBody.HttpBodyError);
-      expect(failure).toHaveProperty("reason._tag", "JsonError");
-      expect(failure).toHaveProperty("cause", expect.any(RangeError));
-      expect(failure).toHaveProperty(
-        "message",
-        expect.stringContaining("JSON body could not be written"),
-      );
+        // The writer's native call runs beneath Effect's frames, which share that stack.
+        const below = Math.max(0, fits - 128);
+        expect(textOf(yield* Body.json.encode(nest(below)))).toBe(
+          JSON.stringify(nest(below)),
+        );
+      }
       for (const box of [
         Object.setPrototypeOf(Object(5), null),
         Object.setPrototypeOf(Object("s"), null),
