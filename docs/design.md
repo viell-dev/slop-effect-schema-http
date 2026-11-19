@@ -122,8 +122,10 @@ A schema-backed input accepts constructor input, encoded input or a supported mi
 request carries what the schema writes. Preparation prioritizes construction, whole decoding and
 then fieldwise recovery; it must not invent a conversion or replay construction just to classify
 input. Fieldwise recovery reads objects; it never rebuilds a list as an object keyed by its indexes.
-The [input reference](./schema-input.md) owns the detailed rules, type boundaries and
-constructor-default validation.
+It keeps each field's own result beside the object it builds, so a default the object's constructor
+fills cannot hide a supplied field the field's reading dropped. The [input
+reference](./schema-input.md) owns the detailed rules, type boundaries and constructor-default
+validation.
 
 For visible fields the intended rule is kept or refused. Strict reads and actual-consumption
 evidence protect that rule across unions and stacked bindings; opaque values retain their schema's
@@ -133,9 +135,11 @@ reading. Known violations, conflicting aliases and unsupported recovery remain e
 Within a visible any-of union beside an object or list candidate, the strict read declines built-in
 `Schema.Void` for an object with a defined enumerable own field or a list with a defined own cell.
 The strict write refuses every object or list at that Void member. Its fallback relaxes excess
-checking and keeps the Void guard. A structural encoding failure remains a `SchemaError` if no other
-member can take the value. Both passes use the value at the union site, including through
-transformations, fieldwise reads and unencoded any-of alternatives. Normalization removes
+checking and keeps the Void guard. That fallback can take a later member, so its output must still
+hold every supplied field, read back through Effect where it sends one under another name. A
+structural encoding failure remains that member's `SchemaError` if no other member can write the
+value without dropping a supplied field. Both passes use the value at the union site, including
+through transformations, fieldwise reads and unencoded any-of alternatives. Normalization removes
 undefined-valued keys and keeps arbitrary keys when every object candidate at a value has no
 property or index signatures. This contributes no names to query or header group shape. The object
 read keeps first-fit order for a union of Void and plain, unchecked empty structs unless grouped

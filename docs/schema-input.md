@@ -234,6 +234,40 @@ const search = Request.get("https://api.example.test/things").pipe(
 // Input: { query: { A: "x" } }; URL query: ?A=x
 ```
 
+### A field keeps what its own reading lost
+
+The last route reads each field of an object on its own, then builds the object with the schema's
+constructor. That constructor fills a default for any field that a field's own reading did not
+produce, so preparation compares what went in with each field's own result too. A supplied field
+that a field's own reading dropped is a `SchemaError` naming it, as the same value at the root would
+be. This holds at any depth and in struct, list, tuple, record and union fields:
+
+```ts
+import { Effect, Schema } from "effect";
+import { Body, Request } from "viell-effect-schema-http";
+
+const Filter = Schema.Struct({
+  limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+    Schema.withConstructorDefault(Effect.succeed(25)),
+  ),
+}).pipe(Schema.encodeKeys({ limit: "page_size" }));
+const Page = Schema.Struct({
+  n: Schema.FiniteFromString,
+  items: Schema.Array(Filter),
+});
+const send = Request.post("https://api.example.test/pages").pipe(
+  Request.body(Body.jsonSchema(Page)),
+);
+// Input: { body: { n: 1, items: [{ limit: 5 }, {}] } }
+// JSON body: {"n":"1","items":[{"page_size":"5"},{"page_size":"25"}]}
+// Input: { body: { n: 1, items: [{ limit: "x" }] } }
+// SchemaError: The schema cannot keep this field ... at ["items"][0]["limit"]
+```
+
+A field's own constructor reads the decoded side and strips the rest, such as an encoded name. Where
+it would drop a supplied field, that field is read by its decoder instead, so a valid
+`{ page_size: "05" }` writes `5`, and `{ page_size: "many" }` is a `SchemaError` that names it.
+
 ### A union keeps what the caller gave
 
 Effect takes the first member that fits and strips what that member does not state, when it reads a
@@ -260,10 +294,11 @@ list candidate in a visible any-of union, the strict read declines Void for an o
 enumerable own field or a list with a defined own cell. The strict write declines Void for every
 object or list, including when its cells decoded to `undefined`. The fallback write keeps that guard
 while relaxing excess-property handling. If the structural member cannot encode a value, such as
-JSON metadata containing a `Date` under `Schema.Unknown`, preparation fails with a `SchemaError`
-when no other member can take the value. The guard includes annotated and checked Void and paths
-through unencoded any-of member unions. The read uses original member order when it sees no defined
-fields or cells.
+JSON metadata containing a `Date` under `Schema.Unknown`, preparation fails with that member's
+`SchemaError` unless another member can write the value without dropping a supplied field, as
+[below](#a-field-no-member-can-keep-is-an-error) describes. The guard includes annotated and checked
+Void and paths through unencoded any-of member unions. The read uses original member order when it
+sees no defined fields or cells.
 
 A union made up solely of Void and plain, unchecked empty structs keeps first-fit object reading. A
 leading Void can take the object and a leading empty struct can keep it. Adding another kind of
@@ -297,6 +332,26 @@ the field that would go. The types allow that value, and whichever member took i
 the schema states, so the choice cannot be made for the caller. A field a wider member states and
 refuses the value of is the same case. Only a real loss counts: a field another schema in the group
 takes is not lost, as the rule on stacked schemas below says.
+
+Writing keeps the same rule. A value is written strictly first. When the member that read it cannot
+write it, the relaxed write that follows can take a later member, and that member still has to send
+every supplied field. Effect reads back what was sent to check a field sent under another name. When
+no member can both keep and write the value, the refusal is the error of the first member that could
+not write it, the error that member alone gives:
+
+```ts
+import { Schema } from "effect";
+import { Body, Request } from "viell-effect-schema-http";
+
+const Note = Schema.Struct({ title: Schema.String, meta: Schema.Unknown });
+const Title = Schema.Struct({ title: Schema.String });
+const send = Request.post("https://api.example.test/notes").pipe(
+  Request.body(Body.jsonSchema(Schema.Union([Note, Title]))),
+);
+// Input: { body: { title: "a", meta: 1 } }; JSON body: {"title":"a","meta":1}
+// Input: { body: { title: "a", meta: new Date(0) } }
+// SchemaError: Expected JSON value at ["meta"]
+```
 
 ### A list stays a list
 
@@ -332,16 +387,11 @@ index-keyed object explicitly.
 
 The rule covers only the copy this route would make. Effect's own readings still apply:
 `Schema.Struct({})` keeps a list as it is, and an empty `Schema.Class` builds an instance keyed by a
-list's indexes. These limits remain:
+list's indexes. This limit remains:
 
 - Beside a record, a key the list member does not state can refuse instead of being stripped: with
   the record above, `[{ page_size: "05" }]` is refused, where `Schema.Array(Plain)` alone writes
   `[{}]` ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)).
-- When another field makes a parent read field by field, a constructor default can still replace an
-  invalid decoded item value, with or without the record: `{ n: 1, items: [{ limit: "x" }] }` under
-  a struct with `n: Schema.FiniteFromString`
-  ([#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241)). The all-encoded
-  `{ n: "1", items: [{ page_size: "many" }] }` gets the default under that parent too.
 
 A query or header group that encodes to an array of field pairs is read by position, including when
 `Schema.Struct({})` keeps the original array. Both the list and its pairs can have a `null`
@@ -445,9 +495,14 @@ bounded case.
 The kept-or-refused rule is the intended contract. Known violations remain under
 [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143) and
 [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170); an unsupported proof is not
-a guarantee that preparation refuses safely. [A list stays a list](#a-list-stays-a-list) lists the
-remaining list limits under #241 and #243.
+a guarantee that preparation refuses safely. [A list stays a list](#a-list-stays-a-list) records the
+remaining list limit under #243.
 
+- After a relaxed write, a supplied field sent only under another name is checked by reading back
+  what was sent. If Effect cannot read that output back, such as through an encode-only
+  transformation, the field is refused. Reading back can run the schema's decoding steps and
+  services again. When the first member that strips can take the value but loses a supplied field,
+  the request is refused; a later member that strips only unsupplied keys is not tried.
 - Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
   name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that
   choice for the whole value. The [0.14 migration](./release-notes/0.14.md#account-for-both-names)

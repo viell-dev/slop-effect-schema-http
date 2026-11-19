@@ -87,10 +87,11 @@ export type QueryFields = Readonly<
  * is not a list, the decoder field by field. If all fail, it reports the decoded side's error, a
  * `SchemaError` before dispatch. Both routes validate the values they consume. The last route never
  * copies a list into an object keyed by its indexes, so a record or struct member cannot take such
- * a copy; Effect's own readings, such as an empty `Schema.Class`, still apply. Unsupported
- * constructor-default paths below can still ignore a supplied alias, and a default can replace an
- * invalid list item under a parent read field by field (issue #241). A weak schema can accept more
- * values. `Schema.NumberFromString` turns `"many"` into `NaN` and `Schema.FiniteFromString` refuses it.
+ * a copy; Effect's own readings, such as an empty `Schema.Class`, still apply. That route keeps
+ * each field's own result, so a supplied field that a field's reading dropped is a `SchemaError`
+ * rather than replaced by a constructor default. Unsupported constructor-default paths below can
+ * still ignore a supplied alias. A weak schema can accept more values. `Schema.NumberFromString`
+ * turns `"many"` into `NaN` and `Schema.FiniteFromString` refuses it.
  *
  * A value that fits the decoded side is read as decoded. Under a schema whose two sides share a
  * type, such as one from text to text, an already encoded value fits the decoded side, so it is
@@ -127,8 +128,9 @@ export type QueryFields = Readonly<
  * Beside a visible object or list candidate in an any-of union, the strict read declines built-in
  * `Schema.Void` for defined enumerable own fields and defined own array cells. The strict write
  * declines Void for every object and array, including when it retries without strict excess
- * checking. A structural encoding failure gives a `SchemaError` if no other member can take
- * the value. The guard includes annotated and checked Void and unencoded any-of member unions.
+ * checking. That retry can take a later member only if what it sends holds every supplied field.
+ * Otherwise the first member that could not write the value gives its own `SchemaError`. The
+ * guard includes annotated and checked Void and unencoded any-of member unions.
  * The read keeps first-fit order when it sees no defined fields or cells. A union of Void and
  * plain, unchecked empty structs keeps first-fit object reading unless grouped inside an enclosing
  * guarded union. A defined own list cell still declines Void. Some mixed-side inputs refuse in
@@ -947,6 +949,7 @@ const prepareGroup = <
       const initial = yield* read(value);
       const { output } = initial;
       let lostFromInput = initial.lost;
+      let unwritten = initial.unwritten;
       // An invalid output claims no fields. Another binding can still claim a root loss.
       const refuseInvalidOutput = (error: InvalidRequest) =>
         lostFromInput.length === 0
@@ -957,6 +960,7 @@ const prepareGroup = <
                   contract,
                   lostFromInput,
                   prepared[takenKey]?.fields,
+                  unwritten,
                 ),
                 Effect.fail(error),
               ),
@@ -988,6 +992,7 @@ const prepareGroup = <
         );
         if (recovered !== undefined) {
           lostFromInput = recovered.reading.lost;
+          unwritten = recovered.reading.unwritten;
           snapshot = recovered.snapshot;
           conflicts = filled(edited, snapshot);
           prepared = { ...prepared, [takenKey]: recovered.taken };
@@ -996,6 +1001,7 @@ const prepareGroup = <
           contract,
           lostFromInput,
           prepared[takenKey]?.fields,
+          unwritten,
         );
       }
       if (conflicts.length > 0)

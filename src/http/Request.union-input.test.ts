@@ -1356,29 +1356,32 @@ describe("a caller's field under a union", () => {
     const form = Body.encoder((value: Readonly<Record<string, string>>) =>
       Effect.succeed(HttpBody.urlParams(UrlParams.fromInput(value))),
     );
-    /** What a query, headers, JSON body, form body and path send for `coded`, or the refusal. */
-    const everywhere = (schema: Schema.Codec<object, Record<string, string>>) =>
+    /** What a query, headers, JSON body, form body and path send, or the refusal. */
+    const everywhere = (
+      schema: Schema.Codec<object, Record<string, string>>,
+      input: Readonly<Record<string, string>> = coded,
+    ) =>
       Effect.forEach(
         [
-          urlOf(queried(schema), { query: coded }),
+          urlOf(queried(schema), { query: input }),
           Effect.map(
             linesOf(Request.get("/x").pipe(Request.headers(schema)), {
-              headers: coded,
+              headers: input,
             }),
             (lines) => JSON.stringify(lines),
           ),
-          bodyOf(post(schema), { body: coded }),
+          bodyOf(post(schema), { body: input }),
           bodyOf(
             Request.post("/x").pipe(
               Request.body(form.pipe(Body.encodeSchema(schema))),
             ),
-            { body: coded },
+            { body: input },
           ),
           urlOf(
             Request.get("").pipe(
               Request.path(schema, (value) => `/${JSON.stringify(value)}`),
             ),
-            { path: coded },
+            { path: input },
           ),
         ] as const,
         (prepared: Effect.Effect<string | undefined, unknown>) =>
@@ -1389,56 +1392,19 @@ describe("a caller's field under a union", () => {
           ),
       );
 
-    it.effect("currently drops a field the first member could not write", () =>
-      Effect.gen(function* () {
-        expect(yield* schemaFailure(post(Note), { body: note })).toBe(
-          'Expected JSON value\n  at ["meta"]',
-        );
-        for (const schema of [
-          Schema.Union([Note, Title]),
-          Schema.Union([Note, Schema.Void, Title]),
-          Schema.Union([Note, Title, Schema.Void]),
-        ])
-          expect(yield* bodyOf(post(schema), { body: note })).toBe(
-            '{"title":"a"}',
-          );
-        expect(
-          yield* bodyOf(
-            post(Schema.Struct({ x: Schema.Union([Note, Title]) })),
-            { body: { x: note } },
-          ),
-        ).toBe('{"x":{"title":"a"}}');
-        expect(
-          yield* bodyOf(post(Schema.Array(Schema.Union([Note, Title]))), {
-            body: [note],
-          }),
-        ).toBe('[{"title":"a"}]');
-        expect(yield* everywhere(Coded)).toEqual(
-          Array(5).fill(
-            'refused: Expected a value with a length of at least 2\n  at ["code"]',
-          ),
-        );
-        expect(yield* everywhere(Schema.Union([Coded, Title]))).toEqual([
-          "/x?title=a",
-          '[["title","a"]]',
-          '{"title":"a"}',
-          "title=a",
-          '/{"title":"a"}',
-        ]);
-      }),
-    );
-
-    it.effect.fails(
+    it.effect(
       "refuses with the first member's error where no member keeps the field",
       () =>
         Effect.gen(function* () {
+          const alone = yield* schemaFailure(post(Note), { body: note });
+          expect(alone).toBe('Expected JSON value\n  at ["meta"]');
           for (const schema of [
             Schema.Union([Note, Title]),
             Schema.Union([Note, Schema.Void, Title]),
             Schema.Union([Note, Title, Schema.Void]),
           ])
             expect(yield* schemaFailure(post(schema), { body: note })).toBe(
-              'Expected JSON value\n  at ["meta"]',
+              alone,
             );
           expect(
             yield* schemaFailure(
@@ -1446,10 +1412,105 @@ describe("a caller's field under a union", () => {
               { body: { x: note } },
             ),
           ).toBe('Expected JSON value\n  at ["x"]["meta"]');
+          expect(
+            yield* schemaFailure(
+              post(Schema.Array(Schema.Union([Note, Title]))),
+              { body: [note] },
+            ),
+          ).toBe('Expected JSON value\n  at [0]["meta"]');
+          const refused = yield* everywhere(Coded);
+          expect(refused).toEqual(
+            Array(5).fill(
+              'refused: Expected a value with a length of at least 2\n  at ["code"]',
+            ),
+          );
           expect(yield* everywhere(Schema.Union([Coded, Title]))).toEqual(
-            yield* everywhere(Coded),
+            refused,
           );
         }),
+    );
+
+    it.effect("keeps a member that writes every supplied field", () =>
+      Effect.gen(function* () {
+        const either = Schema.Union([Note, Title]);
+        expect(
+          yield* bodyOf(post(either), { body: { title: "a", meta: 1 } }),
+        ).toBe('{"title":"a","meta":1}');
+        expect(yield* bodyOf(post(either), { body: { title: "a" } })).toBe(
+          '{"title":"a"}',
+        );
+        expect(
+          yield* everywhere(Schema.Union([Coded, Title]), {
+            title: "a",
+            code: "xy",
+          }),
+        ).toEqual([
+          "/x?title=a&code=xy",
+          '[["title","a"],["code","xy"]]',
+          '{"title":"a","code":"xy"}',
+          "title=a&code=xy",
+          '/{"title":"a","code":"xy"}',
+        ]);
+      }),
+    );
+
+    it.effect("keeps a field the relaxed write sends under its wire name", () =>
+      Effect.gen(function* () {
+        // The member writes `b` as `a`, and hands its whole input on, so the strict write
+        // refuses the `b` it carries. The relaxed write sends `a`, which reads back as `b`.
+        const Renamer = Schema.Struct({ a: text }).pipe(
+          Schema.decodeTo(
+            Schema.Struct({ b: text }),
+            SchemaTransformation.transform({
+              decode: (value): { readonly b: string } => ({
+                ...value,
+                b: value.a,
+              }),
+              encode: (value): { readonly a: string } => ({
+                ...value,
+                a: value.b,
+              }),
+            }),
+          ),
+        );
+        const schema = Schema.Union([Renamer, Schema.Struct({ c: text })]);
+        expect(yield* bodyOf(post(schema), { body: { b: "x" } })).toBe(
+          '{"a":"x"}',
+        );
+        expect(yield* urlOf(queried(schema), { query: { b: "x" } })).toBe(
+          "/x?a=x",
+        );
+      }),
+    );
+
+    it.effect(
+      "refuses a field sent under another name that cannot be read back",
+      () =>
+        Effect.gen(function* () {
+          const OneWay = Schema.Struct({ a: text }).pipe(
+            Schema.decodeTo(Schema.Struct({ b: text }), {
+              decode: SchemaGetter.forbidden(() => "written only"),
+              encode: SchemaGetter.transform(
+                (value: { readonly b: string }) => ({ ...value, a: value.b }),
+              ),
+            }),
+          );
+          expect(yield* schemaFailure(post(OneWay), { body: { b: "x" } })).toBe(
+            'The schema cannot keep this field with the rest of the value\n  at ["b"]',
+          );
+        }),
+    );
+
+    it.effect("lets a stacked schema take the field the write lost", () =>
+      Effect.gen(function* () {
+        const request = stacked(
+          Schema.Union([Coded, Title]),
+          Schema.Struct({ code: text }),
+        );
+        expect(yield* urlOf(request, { query: coded })).toBe(
+          "/x?title=a&code=x",
+        );
+      }),
     );
   });
 

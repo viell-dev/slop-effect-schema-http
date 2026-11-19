@@ -618,27 +618,21 @@ describe("a caller's list beside a record member", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/241
-  it.effect(
-    "currently replaces an invalid item with a default under a fieldwise parent",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* prepared(Schema.Array(Filter), [{ limit: "x" }])).toEqual(
-          refused,
-        );
-        for (const schema of parents)
-          expect(
-            yield* prepared(schema, { n: 1, items: [{ limit: "x" }] }),
-          ).toEqual(kept({ n: "1", items: [{ page_size: "25" }] }));
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
-  it.effect.fails("refuses an invalid item under a fieldwise parent", () =>
+  it.effect("refuses an invalid item under a fieldwise parent", () =>
     Effect.gen(function* () {
-      for (const schema of parents)
+      expect(yield* prepared(Schema.Array(Filter), [{ limit: "x" }])).toEqual(
+        refused,
+      );
+      for (const schema of parents) {
         expect(
           yield* prepared(schema, { n: 1, items: [{ limit: "x" }] }),
         ).toEqual(refused);
+        expect(
+          yield* prepared(schema, { n: 1, items: [{ limit: 5 }, {}] }),
+        ).toEqual(
+          kept({ n: "1", items: [{ page_size: "5" }, { page_size: "25" }] }),
+        );
+      }
     }),
   );
 

@@ -1458,49 +1458,41 @@ describe("a field a part lost under a parent read field by field", () => {
     [
       Schema.Struct({ n, f: Filter }),
       { n: 1, f: { limit: "x" } },
-      '{"n":"1","f":{"page_size":"25"}}',
       '["f"]["limit"]',
     ],
     [
       Schema.Struct({ n, f: Schema.optionalKey(Filter) }),
       { n: 1, f: { limit: "x" } },
-      '{"n":"1","f":{"page_size":"25"}}',
       '["f"]["limit"]',
     ],
     [
       Schema.Struct({ n, r: Schema.Record(Schema.String, Filter) }),
       { n: 1, r: { a: { limit: "x" } } },
-      '{"n":"1","r":{"a":{"page_size":"25"}}}',
       '["r"]["a"]["limit"]',
     ],
     [
       Schema.Struct({ n, t: Schema.Tuple([Filter]) }),
       { n: 1, t: [{ limit: "x" }] },
-      '{"n":"1","t":[{"page_size":"25"}]}',
       '["t"][0]["limit"]',
     ],
     [
       Schema.Struct({ n, items: Schema.Array(Inner) }),
       { n: 1, items: [{ m: "1", f: { limit: "x" } }] },
-      '{"n":"1","items":[{"m":"1","f":{"page_size":"25"}}]}',
       '["items"][0]["f"]["limit"]',
     ],
     [
       Schema.Struct({ n, inner: Inner }),
       { n: 1, inner: { m: 1, f: { limit: "x" } } },
-      '{"n":"1","inner":{"m":"1","f":{"page_size":"25"}}}',
       '["inner"]["f"]["limit"]',
     ],
     [
       Schema.Struct({ n, f: Schema.Union([Filter, Cursor]) }),
       { n: 1, f: { limit: "x" } },
-      '{"n":"1","f":{"page_size":"25"}}',
       '["f"]["limit"]',
     ],
     [
       Schema.Union([Schema.Struct({ n, f: Filter }), Cursor]),
       { n: 1, f: { limit: "x" } },
-      '{"n":"1","f":{"page_size":"25"}}',
       '["f"]["limit"]',
     ],
   ] as const;
@@ -1509,44 +1501,94 @@ describe("a field a part lost under a parent read field by field", () => {
     [
       Schema.Struct({ n, f: Filter }),
       { n: "1", f: { page_size: "many" } },
-      '{"n":"1","f":{"page_size":"25"}}',
       '["f"]["page_size"]',
     ],
     [
       Schema.Struct({ n, items: Schema.Array(Filter) }),
       { n: "1", items: [{ page_size: "many" }] },
-      '{"n":"1","items":[{"page_size":"25"}]}',
       '["items"][0]["page_size"]',
     ],
   ] as const;
-  const pathed = Request.get("").pipe(
-    Request.path(decodedLost[0][0], (value) => `/${JSON.stringify(value)}`),
-  );
+  /** Valid fields on either side, and defaults for fields the caller left out. */
+  const kept = [
+    [
+      Schema.Struct({ n, f: Filter }),
+      { n: 1, f: {} },
+      '{"n":"1","f":{"page_size":"25"}}',
+    ],
+    [
+      Schema.Struct({ n, items: Schema.Array(Filter) }),
+      { n: 1, items: [{ limit: 5 }, {}] },
+      '{"n":"1","items":[{"page_size":"5"},{"page_size":"25"}]}',
+    ],
+    // A second decoded field keeps the whole decode from reading the valid alias.
+    [
+      Schema.Struct({ n, m: n, f: Filter }),
+      { n: "1", m: 1, f: { page_size: "05" } },
+      '{"n":"1","m":"1","f":{"page_size":"5"}}',
+    ],
+    [
+      Schema.Struct({ n, inner: Inner }),
+      { n: 1, inner: { m: 1, f: { page_size: "03" } } },
+      '{"n":"1","inner":{"m":"1","f":{"page_size":"3"}}}',
+    ],
+    [
+      Schema.Struct({ n, m: n, e: Schema.Struct({}) }),
+      { n: "1", m: 1, e: { tag: "a" } },
+      '{"n":"1","m":"1","e":{"tag":"a"}}',
+    ],
+  ] as const;
 
-  it.effect(
-    "currently lets a constructor default replace the field the part lost",
-    () =>
-      Effect.gen(function* () {
-        for (const [schema, input, sent] of [...decodedLost, ...encodedLost])
-          expect(yield* sentBy(schema, input as never)).toBe(sent);
-        expect(yield* urlOf(pathed, { path: decodedLost[0][1] } as never)).toBe(
-          `/${decodedLost[0][2]}`,
-        );
-      }),
-  );
-
-  it.effect.fails("refuses the field the part lost, as at the root", () =>
+  it.effect("refuses the field the part lost, as at the root", () =>
     Effect.gen(function* () {
-      for (const [schema, input, , field] of [...decodedLost, ...encodedLost])
+      for (const [schema, input, field] of [...decodedLost, ...encodedLost])
         expect(
           yield* schemaFailure(posted(schema), { body: input } as never),
         ).toBe(
-          `The schema cannot keep this field with the rest of the value
-  at ${field}`,
+          `The schema cannot keep this field with the rest of the value\n  at ${field}`,
         );
+      const pathed = Request.get("").pipe(
+        Request.path(decodedLost[0][0], () => "/x"),
+      );
       expect(
         yield* schemaFailure(pathed, { path: decodedLost[0][1] } as never),
       ).toContain('["f"]["limit"]');
     }),
+  );
+
+  it.effect("keeps valid parts and fills defaults for omitted fields", () =>
+    Effect.gen(function* () {
+      for (const [schema, input, sent] of kept)
+        expect(yield* sentBy(schema, input as never)).toBe(sent);
+    }),
+  );
+
+  it.effect(
+    "reads a part on its encoded side where its constructor would lose a field",
+    () =>
+      Effect.gen(function* () {
+        // The instance's own property fails the strict write, so the whole value is read again
+        // as Effect reads it. The part's constructor then strips `page_size` for a default.
+        class Counted extends Schema.Class<Counted>("Counted")({
+          a: Schema.String,
+        }) {
+          readonly reads = 1;
+        }
+        const schema = Schema.Struct({ n, m: n, f: Filter, c: Counted });
+        const c = new Counted({ a: "x" });
+        expect(
+          yield* sentBy(schema, { n: "1", m: 1, f: { page_size: "05" }, c }),
+        ).toBe('{"n":"1","m":"1","f":{"page_size":"5"},"c":{"a":"x"}}');
+        expect(
+          yield* schemaFailure(posted(schema), {
+            body: { n: "1", m: 1, f: { page_size: "many" }, c },
+          }),
+        ).toContain('["f"]["page_size"]');
+        expect(
+          yield* schemaFailure(posted(schema), {
+            body: { n: 1, m: 1, f: { limit: "x" }, c } as never,
+          }),
+        ).toContain('["f"]["limit"]');
+      }),
   );
 });
