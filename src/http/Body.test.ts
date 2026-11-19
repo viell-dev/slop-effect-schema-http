@@ -1058,6 +1058,72 @@ describe("Body.urlEncoded", () => {
   );
 });
 
+/** The message of `Body.urlEncoded`'s refusal of a value only JavaScript can pass. */
+const urlEncodedRefusal = (value: unknown) =>
+  Effect.map(
+    Effect.flip(Body.urlEncoded.encode(value as never)),
+    (error) => error.message,
+  );
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/256
+// 0.18.0 read these through Effect's `UrlParams.fromInput`. Each pin records the current outcome.
+describe("Body.urlEncoded from untyped callers", () => {
+  it.effect("currently refuses a plain record and URLSearchParams", () =>
+    Effect.gen(function* () {
+      for (const value of [{ k: "v", n: 1 }, new URLSearchParams("k=v&k=w")])
+        expect(yield* urlEncodedRefusal(value)).toBe(
+          "URL-encoded body at $ must contain an array of pairs",
+        );
+    }),
+  );
+
+  it.effect.fails(
+    "writes a plain record and URLSearchParams as 0.18.0 did",
+    () =>
+      Effect.gen(function* () {
+        expect(textOf(yield* Body.urlEncoded.encode({ k: "v" } as never))).toBe(
+          "k=v",
+        );
+      }),
+  );
+
+  it.effect("currently refuses a record field without naming it", () =>
+    Effect.gen(function* () {
+      expect(yield* urlEncodedRefusal({ k: "v", d: new Date(0) })).toBe(
+        "URL-encoded body at $ must contain an array of pairs",
+      );
+    }),
+  );
+
+  it.effect.fails(
+    "refuses a record field that would be dropped, naming it",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* urlEncodedRefusal({ k: "v", d: new Date(0) })).toBe(
+          'URL-encoded body at $["d"] cannot encode Date',
+        );
+      }),
+  );
+
+  it.effect("currently refuses a number in UrlParams pairs", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* urlEncodedRefusal(UrlParams.make([["n", 1 as never]])),
+      ).toBe('URL-encoded body at $["n"] must be a string');
+    }),
+  );
+
+  it.effect.fails("writes a number in UrlParams pairs as its text", () =>
+    Effect.gen(function* () {
+      expect(
+        textOf(
+          yield* Body.urlEncoded.encode(UrlParams.make([["n", 1 as never]])),
+        ),
+      ).toBe("n=1");
+    }),
+  );
+});
+
 describe("Body.empty", () => {
   it.effect("encodes no body", () =>
     Effect.gen(function* () {
