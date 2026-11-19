@@ -37,6 +37,10 @@ const posted = <
   schema: S,
 ) => Request.post("/x").pipe(Request.body(Body.jsonSchema(schema)));
 
+/** A value that inherits a field from its own prototype, beside its own fields. */
+const inheriting = (name: string, fields: object): object =>
+  Object.assign(Object.create({ [name]: "x" }) as object, fields);
+
 /** The body a JSON schema sends for a value. */
 const sentBy = <
   S extends Schema.Top & {
@@ -2011,6 +2015,132 @@ describe("a field a part lost under a parent read field by field", () => {
             Exit.succeed('{"a":{"a":1,"w_b":"1"},"rename":{"a":"go"}}'),
           );
         else expect(Exit.isFailure(sent)).toBe(true);
+      }),
+  );
+
+  it.effect(
+    "reads a field a part's value inherits from its own prototype as Effect reads it",
+    () =>
+      Effect.gen(function* () {
+        // Effect 4.1.4 reads a field named after an `Object.prototype` member only as the value's
+        // own; Effect 4.0.7 also reads one the value inherits from its own prototype. Each part
+        // reads the field as the installed Effect does, wherever the part is.
+        for (const name of [
+          "toString",
+          "constructor",
+          "valueOf",
+          "hasOwnProperty",
+        ]) {
+          const read = Object.hasOwn(
+            Schema.decodeUnknownSync(
+              Schema.Struct({ [name]: Schema.optionalKey(Schema.String) }),
+            )(inheriting(name, {})),
+            name,
+          );
+          const Item = Schema.Struct({
+            a: n,
+            [name]: Schema.optionalKey(Schema.String),
+          }) as unknown as Field;
+          const item = () => inheriting(name, { a: "6" });
+          const written = read ? { a: "6", [name]: "x" } : { a: "6" };
+          for (const [field, value, sent] of [
+            [
+              Schema.Tuple([Item, n]) as unknown as Field,
+              () => [item(), "1"],
+              [written, "1"],
+            ],
+            [Schema.Array(Item) as Field, () => [item()], [written]],
+            [
+              Schema.Record(Schema.String, Item) as Field,
+              () => ({ k: item() }),
+              { k: written },
+            ],
+            [
+              Schema.Union([Schema.Array(Item), Schema.String]) as Field,
+              () => [item()],
+              [written],
+            ],
+          ] as const) {
+            const parent = parentOf(field, true);
+            expect(yield* sentBy(parent.schema, parent.body(value()))).toBe(
+              parent.sent(sent),
+            );
+          }
+          // The same tuple where only the relaxing sibling makes the root read field by field.
+          expect(
+            yield* sentBy(
+              Schema.Struct({
+                f: Schema.Tuple([Item, n]) as unknown as Field,
+                rename: Relaxing,
+              }),
+              { f: [item(), "1"], rename: { b: "ok" } } as never,
+            ),
+          ).toBe(JSON.stringify({ f: [written, "1"], rename: { a: "ok" } }));
+          // A field whose wire name is the inherited one: Effect 4.1.4 sees no `text` there.
+          const Wire = Schema.Struct({ text: Schema.String, a: n }).pipe(
+            Schema.encodeKeys({ text: name } as never),
+          ) as unknown as Field;
+          const parent = parentOf(Wire, true);
+          const outcome = yield* Effect.exit(
+            sentBy(parent.schema, parent.body(inheriting(name, { a: "5" }))),
+          );
+          if (read)
+            expect(outcome).toEqual(
+              Exit.succeed(parent.sent({ [name]: "x", a: "5" })),
+            );
+          else expect(Exit.isFailure(outcome)).toBe(true);
+        }
+      }),
+  );
+
+  it.effect(
+    "reads a class value's getter field without its class's constructor or another read",
+    () =>
+      Effect.gen(function* () {
+        for (const name of ["label", "constructor", "toString"]) {
+          let reads = 0;
+          // Every class's prototype links back to its class as `constructor`, which is no field.
+          class Holder {
+            readonly a = "5";
+            get text() {
+              reads++;
+              return "x";
+            }
+          }
+          const Wire = Schema.Struct({ text: Schema.String, a: n }).pipe(
+            Schema.encodeKeys({ text: name } as never),
+          ) as unknown as Field;
+          for (const relaxing of [false, true]) {
+            reads = 0;
+            const parent = parentOf(Wire, relaxing);
+            expect(
+              yield* sentBy(parent.schema, parent.body(new Holder())),
+            ).toBe(parent.sent({ [name]: "x", a: "5" }));
+            // Effect's own reads run the getter. The view each part reads runs it no more.
+            expect(reads).toBeLessThanOrEqual(7);
+          }
+        }
+      }),
+  );
+
+  it.effect(
+    "refuses a field given under both names, an inherited one too",
+    () =>
+      Effect.gen(function* () {
+        // Both of a field's names cannot be kept, whether or not every object inherits the wire name.
+        for (const name of ["label", "toString", "constructor"]) {
+          const Wire = Schema.Struct({ text: Schema.String, a: n }).pipe(
+            Schema.encodeKeys({ text: name } as never),
+          ) as unknown as Field;
+          const parent = parentOf(Wire, false);
+          expect(
+            yield* schemaFailure(posted(parent.schema), {
+              body: parent.body({ text: "x", [name]: "y", a: "5" }),
+            }),
+          ).toBe(
+            `The schema cannot keep this field with the rest of the value\n  at ["f"]["${name}"]`,
+          );
+        }
       }),
   );
 });

@@ -273,9 +273,12 @@ object. A decoder that can read the field only by stripping a supplied key is th
 that key is refused even where a decoding default fills its name again. A field given under both its
 names cannot keep both, so it is refused too. A value the constructor returns unchanged, as an
 opaque declaration's is, lost nothing, and nothing inside it is read again. A key that a decoder or
-transformation adds to the value it makes is not the caller's, so it is never counted as lost.
-Neither is a name every object inherits, such as `constructor`, where the caller's value does not
-hold it as its own.
+transformation adds to the value it makes is not the caller's, so it is never counted as lost. A
+field the caller's value inherits counts where the installed Effect reads it. Effect 4.1.4 reads a
+field named after an `Object.prototype` member, such as `toString`, only as the value's own
+property, and Effect 4.0.7 also reads one the value inherits from its own prototype. What the
+language gives every value under such a name, `Object.prototype`'s members and a class's
+`constructor`, is never the caller's.
 
 A union field read field by field takes its first member reading that keeps everything, ahead of an
 earlier one that loses a field. The object's constructor then runs again over the fields' results,
@@ -357,13 +360,13 @@ every key, and a record keeps the keys its key schema takes. Nothing is decoded 
 The relaxed write selects the members to try by kind of value and literal tags, as the installed
 Effect does, before it runs any of them, so a member Effect rules out runs none of its encoders,
 middleware or checks. Like Effect, it follows each tag field through its encoding before it asks
-whether the tag is required. A name every object inherits, such as `toString`, is no field of a
-value that does not hold it as its own, so a member that does not state it loses nothing. A nested
-union that fails its own check or one-of rule credits none of its members, and each place a value is
-written from is checked on its own, so one object given to two fields is checked against each
-field's member. When no member can both keep and write the value, the refusal is the error of the
-first member that could not write it, the error that member alone gives. That holds through grouped
-and suspended unions:
+whether the tag is required. A name `Object.prototype` has, such as `toString`, is a field of a
+written value only as its own property, so a member that does not state it loses nothing where the
+value only inherits it. A nested union that fails its own check or one-of rule credits none of its
+members, and each place a value is written from is checked on its own, so one object given to two
+fields is checked against each field's member. When no member can both keep and write the value, the
+refusal is the error of the first member that could not write it, the error that member alone gives.
+That holds through grouped and suspended unions:
 
 ```ts
 import { Schema } from "effect";
@@ -545,6 +548,13 @@ remaining list limit under #243.
   field the request is refused. Under `Union([Filter, Word])`, where `Word` reads `page_size` as
   text, `{ page_size: "many" }` is sent as text where nothing else relaxes the write, and refused
   beside such a field ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)).
+- The relaxed write's check follows a struct's decoded fields. A struct renamed with
+  `Schema.encodeKeys` writes each field again on its encoded side, so a union there can take another
+  member, and a field that member drops is not seen. Where `Dropping` is
+  `Union([Struct({ d }).pipe(encodeKeys({ d: "w_d" })), Struct({ e: Unknown }), Struct({ c: optionalKey(String) })])`,
+  `Struct({ d: Dropping }).pipe(Schema.encodeKeys({ d: "w_d" }))` sends `{ d: { e: new Date(0) } }`
+  as `{"w_d":{}}`, which the same struct without the rename refuses
+  ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)).
 - Reading field by field, a field's constructor can run, fill its defaults and then give way to the
   field's decoder or a field-by-field reading, which constructs again. A default can therefore run
   more than once, and a decoder can run strictly and then loosely when the strict read named an

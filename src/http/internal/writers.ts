@@ -359,9 +359,9 @@ export interface Dropped {
  * A struct's type side reads only the names it states, so every struct the write goes through drops
  * the other keys of the value before any of its own steps run. A struct that states no key keeps
  * them all. A key counts when the caller supplied it and the decoded value holds it as a field under
- * the same name; one a decoder made is in neither, and a name every object inherits, such as
- * `toString`, is no field of a value that does not hold it. Each union is followed into the member that wrote the
- * value at that place, as the write noted it. A class or other declaration, and a union no member
+ * the same name; one a decoder made is in neither, and a name `Object.prototype` has, such as
+ * `toString`, is a field of the value only as its own property. Each union is followed into the
+ * member that wrote the value at that place, as the write noted it. A class or other declaration, and a union no member
  * of which wrote there, is the schema's own reading. Only the structure the writer states is
  * followed, so nothing inside an opaque value is read.
  */

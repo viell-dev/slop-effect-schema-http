@@ -166,28 +166,33 @@ const prototypeKeys = new Set<PropertyKey>(
 ).add("__proto__");
 
 /**
- * Whether a value holds a field: an own property, or one it inherits from somewhere other than
- * `Object.prototype`, as an accessor on a class is. A name every object inherits, such as
- * `toString`, is no field of the value. This is also how Effect 4.1.4 looks for a tag.
+ * Whether a value holds a field by Effect 4.1.4's rule, which goes by name: an own property, or an
+ * inherited one whose name `Object.prototype` does not have, as an accessor on a class is. A name
+ * `Object.prototype` has, such as `toString`, counts only as an own property, wherever the value
+ * inherits it from. Effect 4.1.4 looks for tags and struct fields this way.
  */
 export const hasField = (input: object, key: PropertyKey): boolean =>
   Object.hasOwn(input, key) ||
   (key in input &&
     !prototypeKeys.has(typeof key === "number" ? String(key) : key));
 
-/** Effect 4.0.7's rule: any name the value has through `in`, but `__proto__` only as its own. */
+/**
+ * Effect 4.0.7's rule for tags and struct fields: any name the value has through `in`, but
+ * `__proto__` only as its own.
+ */
 const hasName = (input: object, key: PropertyKey): boolean =>
   key === "__proto__" ? Object.hasOwn(input, key) : key in input;
 
 let installedRule: typeof hasField | undefined;
 
 /**
- * How the installed Effect looks for a tag, found once by encoding through a union whose two
- * readings differ. Under {@link hasField} the first member's tag named `constructor` is missing, so
- * that member is tried and its first field's middleware runs; under {@link hasName} every object
- * has a `constructor`, which does not match, so that member is never tried.
+ * How the installed Effect looks for a tag or a struct field, found once by encoding through a
+ * union whose two readings differ. Under {@link hasField} the first member's tag named
+ * `constructor` is missing, so that member is tried and its first field's middleware runs; under
+ * {@link hasName} every object has a `constructor`, which does not match, so that member is never
+ * tried.
  */
-const tagRule = (): typeof hasField => {
+const fieldRule = (): typeof hasField => {
   if (installedRule !== undefined) return installedRule;
   let tried = false;
   const Tagged = Schema.Struct({
@@ -205,6 +210,42 @@ const tagRule = (): typeof hasField => {
   )({ seen: "", kind: "a" });
   return (installedRule = tried ? hasField : hasName);
 };
+
+/**
+ * Whether the language gives a value this name, not the caller: `Object.prototype`'s members, which
+ * every plain object has, and the `constructor` that links every class's prototype to its class.
+ */
+const fromLanguage = (input: object, key: PropertyKey): boolean => {
+  if (Object.hasOwn(input, key)) return false;
+  for (
+    let holder: object | null = Object.getPrototypeOf(input) as object | null;
+    holder !== null;
+    holder = Object.getPrototypeOf(holder) as object | null
+  ) {
+    if (!Object.hasOwn(holder, key)) continue;
+    if (holder === Object.prototype) return true;
+    const linked: unknown = Object.getOwnPropertyDescriptor(
+      holder,
+      "constructor",
+    )?.value;
+    return (
+      key === "constructor" &&
+      typeof linked === "function" &&
+      (linked as { readonly prototype?: unknown }).prototype === holder
+    );
+  }
+  return false;
+};
+
+/**
+ * Whether a value holds a field that the installed Effect's struct reads from it, and that the
+ * caller gave it. Effect 4.1.4 reads only {@link hasField}'s fields. Effect 4.0.7 also reads a field
+ * named after an `Object.prototype` member that the value inherits from its own prototype, so that
+ * one counts too there. What the language gives every value under such a name, from
+ * `Object.prototype` or as a class's `constructor`, never does.
+ */
+export const readsField = (input: object, key: PropertyKey): boolean =>
+  fieldRule()(input, key) && !fromLanguage(input, key);
 
 const none: ReadonlyArray<number> = [];
 
@@ -225,7 +266,7 @@ export const candidates = (
   members: ReadonlyArray<SchemaAST.AST>,
 ): ((input: unknown) => ReadonlyArray<number>) => {
   type Index = [Map<unknown, Set<number>>, Set<number>];
-  const has = tagRule();
+  const has = fieldRule();
   const fieldOf = (input: object, key: PropertyKey): unknown =>
     has(input, key) ? (input as Record<PropertyKey, unknown>)[key] : undefined;
   let bySentinel: Map<PropertyKey, Index> | undefined;

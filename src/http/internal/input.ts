@@ -1,5 +1,5 @@
 import { Effect, Schema, SchemaAST, SchemaIssue } from "effect";
-import { hasField } from "./candidates.js";
+import { readsField } from "./candidates.js";
 import { encodedInput } from "./encoded-input.js";
 import * as Excess from "./excess.js";
 import { nestedEncodedInput } from "./nested-input.js";
@@ -169,38 +169,54 @@ const sliceOf = (given: unknown, name: PropertyKey): unknown =>
     : undefined;
 
 /**
- * The normalised input without the names it brought out that the caller's value does not hold.
+ * The normalised input without the names it brought out that are no fields the caller gave.
  *
  * @remarks
  * Normalising brings a field the value inherits out as a key under a name the schema states, as an
- * accessor on a class is. A name every object inherits from `Object.prototype`, such as
- * `constructor`, is not a field the caller gave, and a struct does not read it from a value that
- * lacks it. Parts read this view, so a strict read does not refuse such a name as a wrong value.
- * Whatever is unchanged is returned as it was.
+ * accessor on a class is. A key stays where the installed Effect's struct reads it from the caller's
+ * value, as {@link readsField} says. What the language gives every value under such a name, from
+ * `Object.prototype` or as a class's `constructor`, is not one the caller gave. Parts read this
+ * view, and the root's comparison does too, so a strict read does not refuse such a name as a
+ * wrong value and a comparison does not count it as lost. Whatever is unchanged is returned as it
+ * was; a field read through an accessor is not walked, so its accessor does not run again.
  */
 const ownFields = (given: unknown, caller: unknown): unknown => {
   if (!isKeyed(given) || !isKeyed(caller) || given === caller) return given;
+  let changed = false;
+  /** One field of the view, kept and walked into where it is an object of the caller's. */
+  const inner = (item: unknown, key: PropertyKey): unknown => {
+    // Only an object can hold names to take out; reading it through an accessor would run it again.
+    const kept = isKeyed(item) ? ownFields(item, dataAt(caller, key)) : item;
+    if (kept !== item) changed = true;
+    return kept;
+  };
   if (Array.isArray(given)) {
-    let changed = false;
-    const items = given.map((item: unknown, index) => {
-      const kept = ownFields(item, caller[index]);
-      if (kept !== item) changed = true;
-      return kept;
-    });
+    const items = given.map((item: unknown, index) => inner(item, index));
     return changed ? items : given;
   }
-  let changed = false;
   const entries: Array<readonly [PropertyKey, unknown]> = [];
   for (const key of Reflect.ownKeys(given)) {
-    if (!hasField(caller, key)) {
+    if (!readsField(caller, key)) {
       changed = true;
       continue;
     }
-    const kept = ownFields(given[key], caller[key]);
-    if (kept !== given[key]) changed = true;
-    entries.push([key, kept]);
+    entries.push([key, inner(given[key], key)]);
   }
   return changed ? Object.fromEntries(entries) : given;
+};
+
+/** A field's value where the caller's value holds it as data, without running an accessor. */
+const dataAt = (value: object, key: PropertyKey): unknown => {
+  for (
+    let holder: object | null = value;
+    holder !== null;
+    holder = Object.getPrototypeOf(holder) as object | null
+  ) {
+    const property = Object.getOwnPropertyDescriptor(holder, key);
+    if (property !== undefined)
+      return "value" in property ? property.value : undefined;
+  }
+  return undefined;
 };
 
 /** The normalised input without the fields a parent already read as parts. */
@@ -799,8 +815,16 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             ({ output, strict, writers }): Written<A> => {
               const choices =
                 constructed && voidDeclined ? guarded.choices : undefined;
+              // Only a field the caller gave can be lost, as for each part.
               const lost = mergePaths(
-                Excess.missing([ast], given, value, output, [], choices),
+                Excess.missing(
+                  [ast],
+                  ownFields(given, input),
+                  value,
+                  output,
+                  [],
+                  choices,
+                ),
                 lostByParts,
               );
               const dropped =

@@ -2208,6 +2208,59 @@ describe("a caller's field under a union", () => {
         ).toBe('Expected a value with a length of at least 9\n  at ["choice"]');
       }),
     );
+
+    /** A union that `Struct({ c })` writes for `{ e: new Date(0) }` once `{ e }` cannot be JSON. */
+    const Dropping = Schema.Union([
+      Schema.Struct({ d: text }).pipe(Schema.encodeKeys({ d: "w_d" })),
+      Schema.Struct({ e: Schema.Unknown }),
+      Schema.Struct({ c: Schema.optionalKey(text) }),
+    ]);
+    const dated = { d: { e: new Date(0) } };
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+    it.effect(
+      "currently lets a renamed struct's encoded side drop a field its union writes",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* schemaFailure(post(Schema.Struct({ d: Dropping })), {
+              body: dated,
+            } as never),
+          ).toBe(
+            'The schema cannot keep this field with the rest of the value\n  at ["d"]["e"]',
+          );
+          // Renamed, the struct writes `d` through `{ e }`, then its encoded side writes it again,
+          // through `Struct({ c })`, which the check does not follow.
+          expect(
+            yield* bodyOf(
+              post(
+                Schema.Struct({ d: Dropping }).pipe(
+                  Schema.encodeKeys({ d: "w_d" }),
+                ),
+              ),
+              { body: dated } as never,
+            ),
+          ).toBe('{"w_d":{}}');
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+    it.effect.fails(
+      "refuses a field a renamed struct's encoded side drops",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* schemaFailure(
+              post(
+                Schema.Struct({ d: Dropping }).pipe(
+                  Schema.encodeKeys({ d: "w_d" }),
+                ),
+              ),
+              { body: dated } as never,
+            ),
+          ).toContain('["d"]["e"]');
+        }),
+    );
   });
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143

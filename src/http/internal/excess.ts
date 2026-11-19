@@ -1,4 +1,5 @@
 import { Equal, Schema, SchemaAST, SchemaIssue } from "effect";
+import { hasField } from "./candidates.js";
 
 /** Where a key sits in a value, one step for each level. */
 export type Path = ReadonlyArray<PropertyKey>;
@@ -397,7 +398,7 @@ export const statedFields = (
 };
 
 const has = (value: unknown, key: PropertyKey): boolean =>
-  isObject(value) && key in value && value[key] !== undefined;
+  isObject(value) && hasField(value, key) && value[key] !== undefined;
 
 const at = (value: unknown, key: PropertyKey): unknown =>
   isObject(value) ? value[key] : undefined;
