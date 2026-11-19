@@ -27,6 +27,27 @@
   computed value that returns a list fails with `InvalidRequest` during preparation.
 - **Breaking:** write `Date`s using their native timestamp. Dates from another realm now use ISO
   text. Own formatting methods have no effect, and invalid dates write the literal `Invalid Date`.
+- **Breaking:** keep the keys an empty struct member holds beside members that state fields, in
+  either order and at any depth (#249). `Union([A, Schema.Struct({})])` with
+  `A = Schema.Struct({ a: Schema.String })` now sends `{ a: "x", z: 1 }` as `{"a":"x","z":1}`, where
+  0.18.0 sent `{"a":"x"}`, and `Union([Filter, Schema.Struct({})])` sends `?tag=a` for
+  `{ tag: "a" }` instead of the stated member's default `?page_size=25`. The same holds for an empty
+  `Schema.Class`, and a class instance the empty struct keeps reaches a path renderer as given. Such
+  a kept value the request cannot carry now refuses before dispatch, as under the empty struct
+  alone: a header value that is not a string is `InvalidRequest`, and a BigInt in a JSON body is
+  `HttpBodyError`. Bind the stated member directly to keep its reading. See the [migration
+  note](https://viell-dev.github.io/slop-effect-schema-http/schema-input#a-union-keeps-what-the-caller-gave).
+- **Breaking:** count only members that can read the caller's container during normalization and
+  field-loss accounting (#243). A record or a struct that states a field holds none of a list's
+  cells, and an array or tuple holds none of an object's keys, including schemas different parent
+  members give one field. Beside `Schema.Record(Schema.String, Schema.Unknown)`,
+  `[{ page_size: "05" }]` now writes `[{}]`, as the list member alone does, where 0.18.0 refused it.
+  A numeric-keyed object beside an array or tuple member is read as its object member alone reads
+  it, so beside an empty struct as well, `{ "0": { limit: "x", extra: 1 } }` keeps `extra`, which
+  0.18.0 left out. A class has no list reading: it states nothing for a list's cells, and where it
+  takes a list, alone or first in a union, Effect's reading still applies. A query or header schema
+  that only a cast admits, with a list member that writes objects, can now reach the documented
+  writer failure for malformed pairs instead of refusing earlier.
 
 ## 0.18.0 — 2026-11-18
 

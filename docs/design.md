@@ -130,21 +130,40 @@ evidence protect that rule across unions and stacked bindings; opaque values ret
 reading. Known violations, conflicting aliases and unsupported recovery remain explicit in the
 [active limits](./schema-input.md#active-limits-and-recovery).
 
+Normalization and field-loss accounting count only members that can read the caller's container, as
+Effect's own parsers tell them apart with `Array.isArray`. A record or a struct that states a field
+holds none of a list's cells, and an array or tuple holds none of an object's keys, wherever in a
+union or under whichever parent member that schema comes from. Each schema node is judged alone, so
+every other reading stays: an empty struct reads a list, and a codec's other steps keep theirs. A
+class has no list reading either. Its struct refuses a list once it states a field, and an empty
+class's struct lets Effect copy the cells into an instance keyed by their indexes, the copy
+preparation never makes itself. So a class states nothing for a list's cells. This does not change
+member choice: where a class takes a list, alone or first in a union, Effect's reading applies.
+
+An empty struct, alone or as an empty class's fields, keeps every key of the value it reads, at
+every depth. Beside a member that states fields, it is the member that keeps them all, so a key only
+it holds is kept rather than stripped as unstated. The kept-or-refused rule prefers it for that
+reason. Effect's own first-fit reading keeps the key when the empty struct comes first, and an open
+record, `Schema.Unknown` or `Schema.Object` already won over a stated member this way at the value
+it reads. A kept value the request cannot carry is refused before dispatch, as it is under the empty
+struct alone. Below a stated member's field, those open members do not yet keep such a key; the
+[active limits](./schema-input.md#active-limits-and-recovery) give the example.
+
 Within a visible any-of union beside an object or list candidate, the strict read declines built-in
 `Schema.Void` for an object with a defined enumerable own field or a list with a defined own cell.
 The strict write refuses every object or list at that Void member. Its fallback relaxes excess
 checking and keeps the Void guard. A structural encoding failure remains a `SchemaError` if no other
 member can take the value. Both passes use the value at the union site, including through
 transformations, fieldwise reads and unencoded any-of alternatives. Normalization removes
-undefined-valued keys and keeps arbitrary keys when every object candidate at a value has no
-property or index signatures. This contributes no names to query or header group shape. The object
-read keeps first-fit order for a union of Void and plain, unchecked empty structs unless grouped
-inside an enclosing guarded union. A defined own list cell still declines Void. With no defined
-field or cell, the read keeps member order. The ordinary read and field-loss check can refuse inputs
-the strict pass cannot keep, including some otherwise valid mixed-side inputs. Avoid Void in request
-input schemas that rely on standalone Void, class-only or opaque alternatives, class fields, opaque
-or suspended values, encoded member unions, other union modes, or custom discard transformations.
-The [active limits](./schema-input.md#active-limits-and-recovery) give the mixed-side example.
+undefined-valued keys and keeps the keys an empty struct holds, as above. This contributes no names
+to query or header group shape. The object read keeps first-fit order for a union of Void and plain,
+unchecked empty structs unless grouped inside an enclosing guarded union. A defined own list cell
+still declines Void. With no defined field or cell, the read keeps member order. The ordinary read
+and field-loss check can refuse inputs the strict pass cannot keep, including some otherwise valid
+mixed-side inputs. Avoid Void in request input schemas that rely on standalone Void, class-only or
+opaque alternatives, class fields, opaque or suspended values, encoded member unions, other union
+modes, or custom discard transformations. The [active
+limits](./schema-input.md#active-limits-and-recovery) give the mixed-side example.
 
 The alias proof ignores a Void alternative only where the strict pass guards it, for an object cell
 and for a list beside one array-reading member, including inside a grouped any-of member union. The

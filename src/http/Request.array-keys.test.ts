@@ -508,40 +508,20 @@ describe("a caller's list beside a record member", () => {
     }),
   );
 
+  // The record cannot read a list, so its open values hold nothing at the list's positions.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/243
-  it.effect(
-    "currently refuses an item key only the record's values could hold",
-    () =>
-      Effect.gen(function* () {
-        // The record cannot read a list, yet loss accounting still counts its open values at the
-        // list's positions, so a key the list member strips counts as lost.
-        for (const [input, output, at] of [
-          [[{ page_size: "05" }], [{}], '[0]["page_size"]'],
-          [[{ page_size: "many" }], [{}], '[0]["page_size"]'],
-          [[{ limit: "x", extra: 1 }], [{ limit: "x" }], '[0]["extra"]'],
-        ] as const) {
-          expect(yield* prepared(Schema.Array(Plain), input)).toEqual(
-            kept(output),
-          );
-          for (const schema of plainUnions)
-            expect(yield* refusals(schema, input)).toEqual([
-              expect.stringContaining(at),
-              expect.stringContaining(at),
-            ]);
-        }
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
-  it.effect.fails("reads a list as its list member alone reads it", () =>
+  it.effect("reads a list as its list member alone reads it", () =>
     Effect.gen(function* () {
-      for (const schema of plainUnions) {
-        expect(yield* prepared(schema, [{ page_size: "05" }])).toEqual(
-          kept([{}]),
+      for (const [input, output] of [
+        [[{ page_size: "05" }], [{}]],
+        [[{ page_size: "many" }], [{}]],
+        [[{ limit: "x", extra: 1 }], [{ limit: "x" }]],
+      ] as const) {
+        expect(yield* prepared(Schema.Array(Plain), input)).toEqual(
+          kept(output),
         );
-        expect(yield* prepared(schema, [{ limit: "x", extra: 1 }])).toEqual(
-          kept([{ limit: "x" }]),
-        );
+        for (const schema of plainUnions)
+          expect(yield* prepared(schema, input)).toEqual(kept(output));
       }
     }),
   );
@@ -865,6 +845,159 @@ describe("positional query and header groups", () => {
       });
       expect(headerResult.headerLines).toEqual([["k", "v"]]);
       expect(fetches).toEqual({ entry: 1, name: 1, value: 1 });
+    }),
+  );
+});
+
+/** A union of two members, in each order. */
+const either = <A extends Schema.Top, B extends Schema.Top>(a: A, b: B) => [
+  Schema.Union([a, b]),
+  Schema.Union([b, a]),
+];
+
+/** A list whose one item has a key no list item states. */
+const row = () => [{ limit: "x", extra: 1 }];
+
+/** The same item under an index-like key of an object. */
+const cell = () => ({ 0: { limit: "x", extra: 1 } });
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/243
+describe("members that cannot read the caller's container", () => {
+  const Plain = Schema.Struct({ limit: Schema.optionalKey(Schema.String) });
+  const Open = Schema.Record(Schema.String, Schema.Unknown);
+  const Indexed = Schema.Record(Schema.String, Plain);
+  const Zero = Schema.Struct({ 0: Plain });
+  const Rows = Schema.Array(Plain);
+  class Limited extends Schema.Class<Limited>("Limited")({
+    limit: Schema.optionalKey(Schema.String),
+  }) {}
+  class Bare extends Schema.Class<Bare>("Bare")({}) {}
+
+  it("relies on Effect's parsers telling containers apart", () => {
+    const list = [{ limit: "x" }];
+    const object = { 0: { limit: "x" } };
+    for (const schema of [Open, Indexed, Zero, Plain, Limited]) {
+      expect(Exit.isFailure(Schema.decodeUnknownExit(schema)(list))).toBe(true);
+      expect(Exit.isFailure(Schema.encodeUnknownExit(schema)(list))).toBe(true);
+    }
+    for (const schema of [
+      Schema.Array(Schema.Unknown),
+      Schema.Tuple([Schema.Unknown]),
+    ]) {
+      expect(Exit.isFailure(Schema.decodeUnknownExit(schema)(object))).toBe(
+        true,
+      );
+      expect(Exit.isFailure(Schema.encodeUnknownExit(schema)(object))).toBe(
+        true,
+      );
+    }
+    // An empty struct reads a list as it is; an empty class copies its cells by index.
+    expect(Schema.decodeUnknownSync(Schema.Struct({}))(list)).toBe(list);
+    const instance = Schema.decodeUnknownSync(Bare)(list);
+    expect(instance).toBeInstanceOf(Bare);
+    expect({ ...instance }).toEqual(object);
+  });
+
+  it.effect("reads an object as its object member alone reads it", () =>
+    Effect.gen(function* () {
+      for (const object of [Indexed, Zero])
+        for (const list of [
+          Schema.Array(Schema.Unknown),
+          Schema.Tuple([Schema.Unknown]),
+        ]) {
+          for (const [input, output] of [
+            [cell(), { 0: { limit: "x" } }],
+            [{ 0: { page_size: "05" } }, { 0: {} }],
+          ] as const) {
+            expect(yield* prepared(object, input)).toEqual(kept(output));
+            for (const schema of either(object, list))
+              expect(yield* prepared(schema, input)).toEqual(kept(output));
+          }
+          // The array member still reads a list the object member cannot.
+          for (const schema of either(object, list))
+            expect(yield* prepared(schema, [{ limit: "x", extra: 1 }])).toEqual(
+              kept([{ limit: "x", extra: 1 }]),
+            );
+        }
+    }),
+  );
+
+  it.effect("rules out a child schema another parent member gives", () =>
+    Effect.gen(function* () {
+      for (const schema of either(
+        Schema.Struct({ items: Rows }),
+        Schema.Struct({ items: Open }),
+      )) {
+        expect(yield* prepared(schema, { items: row() })).toEqual(
+          kept({ items: [{ limit: "x" }] }),
+        );
+        expect(yield* prepared(schema, { items: cell() })).toEqual(
+          kept({ items: cell() }),
+        );
+      }
+      for (const schema of either(
+        Schema.Struct({ items: Indexed }),
+        Schema.Struct({ items: Schema.Array(Schema.Unknown) }),
+      )) {
+        expect(yield* prepared(schema, { items: cell() })).toEqual(
+          kept({ items: { 0: { limit: "x" } } }),
+        );
+        expect(yield* prepared(schema, { items: row() })).toEqual(
+          kept({ items: row() }),
+        );
+      }
+    }),
+  );
+
+  it.effect("names only what the list member loses", () =>
+    Effect.gen(function* () {
+      for (const schema of either(Schema.Array(Filter), Open))
+        for (const message of yield* refusals(schema, row())) {
+          expect(message).toContain('[0]["limit"]');
+          expect(message).not.toContain("extra");
+        }
+    }),
+  );
+
+  it.effect("keeps every member that can read the container", () =>
+    Effect.gen(function* () {
+      // An empty struct reads a list, so it keeps the cells' keys beside the record.
+      for (const schema of [
+        Schema.Union([Rows, Open, Schema.Struct({})]),
+        Schema.Union([Schema.Struct({}), Open, Rows]),
+      ])
+        expect(yield* prepared(schema, row())).toEqual(kept(row()));
+      // A codec that recovers from a refused list is still a member; beside it, the list member reads.
+      const Recovering = Open.pipe(
+        Schema.catchDecoding(() => Effect.succeedSome({ recovered: true })),
+      );
+      for (const schema of either(Rows, Recovering))
+        expect(yield* prepared(schema, row())).toEqual(kept([{ limit: "x" }]));
+    }),
+  );
+
+  it.effect("rules out a class for a list beside a member that reads it", () =>
+    Effect.gen(function* () {
+      for (const schema of [
+        ...either(Rows, Limited),
+        Schema.Union([Rows, Bare]),
+      ])
+        expect(yield* prepared(schema, row())).toEqual(kept([{ limit: "x" }]));
+      for (const binding of ["path", "body"] as const)
+        expect(
+          yield* Effect.flip(prepare(Limited, row(), binding)),
+        ).toBeInstanceOf(Schema.SchemaError);
+    }),
+  );
+
+  it.effect("keeps Effect's reading where an empty class takes a list", () =>
+    Effect.gen(function* () {
+      expect(yield* prepared(Bare, row())).toEqual(kept(cell()));
+      // First in a union, Effect's first fit gives it the list. It states none of the cells' keys,
+      // so the list member's unstated key is left out first.
+      expect(yield* prepared(Schema.Union([Bare, Rows]), row())).toEqual(
+        kept({ 0: { limit: "x" } }),
+      );
     }),
   );
 });

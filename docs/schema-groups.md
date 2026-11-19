@@ -63,7 +63,10 @@ an error: `Request.InvalidRequest` before anything is sent.
 - **Schemas stack.** A second `Request.query` or `Request.headers` adds its fields, and together the
   schemas state the shape. Each takes its own fields from one input, and a default goes through
   every schema that allows its name. An open schema sees every field, so its value type has to
-  accept the others.
+  accept the others. It also writes them as the caller gave them. Bound after a schema that states a
+  field, a record or `Schema.Struct({})`, or a union that keeps the field through such a member,
+  writes that field in the other schema's place, so `?z=05` goes out where `Schema.FiniteFromString`
+  would write `?z=5`. Bind the open schema first to keep the other schema's encoding.
 - **A field stays with the schema that took it.** Each applied binding records actual consumption;
   stating that a name is allowed supplies no certificate that it kept caller input. A union's lost
   group fields are checked against the other bindings' records. Caller-key evidence stays exact;

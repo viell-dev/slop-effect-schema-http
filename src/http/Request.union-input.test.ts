@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Schema, SchemaTransformation } from "effect";
+import { HttpBody } from "effect/http";
 import {
   bodyOf,
   compile,
@@ -57,33 +58,137 @@ describe("signature-less object candidates under unions", () => {
       }),
   );
 
+  // An empty struct keeps every key of what it reads, so it is the member that keeps them all.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/249
-  it.effect(
-    "currently strips unstated keys when a stated member is available",
-    () =>
-      Effect.gen(function* () {
-        const schema = Schema.Union([A, Empty]);
-        const input = { a: "x", z: 1 };
-        expect(yield* bodyOf(post(schema), { body: input })).toBe('{"a":"x"}');
-        expect(yield* urlOf(queried(schema), { query: input })).toBe("/x?a=x");
-      }),
+  it.effect("keeps a key only an empty member holds, in either order", () =>
+    Effect.gen(function* () {
+      class EmptyClass extends Schema.Class<EmptyClass>("EmptyClass")({}) {}
+      const input = { a: "x", z: 1 };
+      for (const keeping of [Empty, EmptyClass])
+        for (const schema of [
+          Schema.Union([A, keeping]),
+          Schema.Union([keeping, A]),
+        ]) {
+          expect(yield* bodyOf(post(schema), { body: input })).toBe(
+            '{"a":"x","z":1}',
+          );
+          expect(yield* urlOf(queried(schema), { query: input })).toBe(
+            "/x?a=x&z=1",
+          );
+        }
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/249
-  it.effect(
-    "currently uses the stated member's query default beside an empty struct",
-    () =>
-      Effect.gen(function* () {
-        const Filter = Schema.Struct({
-          limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
-            Schema.withConstructorDefault(Effect.succeed(25)),
-          ),
-        }).pipe(Schema.encodeKeys({ limit: "page_size" }));
-        const schema = Schema.Union([Filter, Empty]);
-        expect(yield* urlOf(queried(schema), { query: { tag: "a" } })).toBe(
-          "/x?page_size=25",
+  it.effect("keeps such a key at any depth below a stated member", () =>
+    Effect.gen(function* () {
+      const nested = { b: { a: "x", z: 1 } };
+      for (const schema of [
+        Schema.Union([Schema.Struct({ b: A }), Empty]),
+        Schema.Union([Empty, Schema.Struct({ b: A })]),
+      ])
+        expect(yield* bodyOf(post(schema), { body: nested })).toBe(
+          '{"b":{"a":"x","z":1}}',
         );
-      }),
+      // A member that reads no `b` holds nothing below it, so the stated member's reading applies.
+      const other = Schema.Union([
+        Schema.Struct({ b: A }),
+        Schema.Struct({ c: Empty }),
+      ]);
+      expect(yield* bodyOf(post(other), { body: nested })).toBe(
+        '{"b":{"a":"x"}}',
+      );
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/249
+  it.effect("keeps a stated member's reading where it keeps every key", () =>
+    Effect.gen(function* () {
+      const Filter = Schema.Struct({
+        limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+          Schema.withConstructorDefault(Effect.succeed(25)),
+        ),
+      }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+      const schema = Schema.Union([Filter, Empty]);
+      const tagged = { tag: "a" };
+      const undefinedKey = { limit: 5, tag: undefined };
+      expect(yield* urlOf(queried(schema), { query: {} })).toBe(
+        "/x?page_size=25",
+      );
+      expect(yield* urlOf(queried(schema), { query: undefinedKey })).toBe(
+        "/x?page_size=5",
+      );
+      // The stated member would drop `tag` and send its default in the caller's place.
+      expect(yield* urlOf(queried(schema), { query: tagged })).toBe("/x?tag=a");
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/249
+  it.effect("refuses a kept value the request cannot carry", () =>
+    Effect.gen(function* () {
+      const Named = Schema.Struct({ "x-a": Schema.String });
+      const counted = { "x-a": "1", "x-count": 2 };
+      for (const schema of [Empty, Schema.Union([Named, Empty])]) {
+        const headed = Request.get("/x").pipe(Request.headers(schema));
+        const failure = yield* refusal(headed, { headers: counted });
+        expect(failure.message).toBe(
+          "The header schema must encode string field names and values",
+        );
+      }
+      // JSON has no BigInt, as with the empty struct alone.
+      const big = { a: "x", n: 1n };
+      for (const schema of [Empty, Schema.Union([A, Empty])])
+        expect(
+          yield* Effect.flip(compile(post(schema), { body: big })),
+        ).toBeInstanceOf(HttpBody.HttpBodyError);
+    }),
+  );
+
+  // A stacked schema's field reaches the union too, and the empty member keeps it as given.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/249
+  it.effect("writes a field as given when bound after its stated schema", () =>
+    Effect.gen(function* () {
+      const Count = Schema.Struct({ z: Schema.FiniteFromString });
+      const Either = Schema.Union([A, Empty]);
+      const query = { a: "x", z: "05" };
+      expect(yield* urlOf(stacked(Either, Count), { query })).toBe(
+        "/x?a=x&z=5",
+      );
+      expect(yield* urlOf(stacked(Count, Either), { query })).toBe(
+        "/x?a=x&z=05",
+      );
+      // The empty struct alone behaves the same way.
+      expect(yield* urlOf(stacked(Count, Empty), { query: { z: "05" } })).toBe(
+        "/x?z=05",
+      );
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/249
+  it.effect("passes a class instance an empty member keeps as given", () =>
+    Effect.gen(function* () {
+      class Thing {
+        readonly a = "x";
+        readonly z = 1;
+      }
+      const thing = new Thing();
+      for (const schema of [
+        Schema.Union([Empty, Schema.Void]),
+        Schema.Union([A, Empty]),
+      ]) {
+        let seen: unknown;
+        yield* compile(
+          Request.get("/x").pipe(
+            Request.path(schema, (value) => {
+              seen = value;
+              return "/ok";
+            }),
+          ),
+          { path: thing },
+        );
+        expect(seen).toBe(thing);
+      }
+    }),
   );
 });
 

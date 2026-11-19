@@ -1,4 +1,5 @@
 import { Equal, Schema, SchemaAST, SchemaIssue } from "effect";
+import { stageRefuses } from "./primitive.js";
 
 /** Where a key sits in a value, one step for each level. */
 export type Path = ReadonlyArray<PropertyKey>;
@@ -214,17 +215,49 @@ const ruledOut = (member: Ast, value: unknown): boolean => {
   );
 };
 
-/** The schemas a value can be read against here: each member its tag leaves, on each side. */
-const sidesOf = (ast: Ast, value: unknown): ReadonlyArray<Ast> => [
-  ...(ast._tag === "Union"
-    ? ast.types
-        .filter((member) => !ruledOut(member, value))
-        .flatMap((member) => sidesOf(member, value))
-    : ast._tag === "Suspend"
-      ? sidesOf(ast.thunk(), value)
-      : [ast]),
-  ...(ast.encoding ?? []).flatMap(({ to }) => sidesOf(to, value)),
-];
+/** A declaration built from what a struct reads, as a class is; {@link fieldsOf} gives its fields. */
+const isStructDeclaration = (ast: Ast): boolean =>
+  ast._tag === "Declaration" && ast.encoding?.[0]?.to._tag === "Objects";
+
+/**
+ * Whether this one node can read a value of this kind of container, as Effect's own parser for it
+ * tells them apart: a record or a struct that states a field refuses an actual array, and an array
+ * or tuple refuses any other object. Such a node holds none of the value's keys, wherever in a union
+ * or under whichever parent it comes from. Each side is judged alone, so a member keeps every other
+ * side that can read the value: an empty struct reads a list, and a codec's other steps keep theirs.
+ *
+ * A class has no list reading either. Its struct refuses a list once it states a field, and an empty
+ * class's struct lets Effect copy the cells into an instance keyed by their indexes, the copy a list
+ * never gets from preparation. So for a list's cells it states nothing, as a record does not, and
+ * where it takes the list, Effect's reading of it applies.
+ */
+const readsContainer = (side: Ast, value: unknown): boolean =>
+  !isObject(value) ||
+  (Array.isArray(value)
+    ? !stageRefuses(side, "array") && !isStructDeclaration(side)
+    : !stageRefuses(side, "record"));
+
+/**
+ * The schemas a value can be read against here: each member its tag leaves, on each side that can
+ * read the value's container.
+ */
+const sidesOf = (ast: Ast, value: unknown): ReadonlyArray<Ast> => {
+  const reads = readsContainer(ast, value);
+  // A class ruled out for a list goes with the struct it is built from.
+  if (!reads && ast._tag === "Declaration") return [];
+  return [
+    ...(ast._tag === "Union"
+      ? ast.types
+          .filter((member) => !ruledOut(member, value))
+          .flatMap((member) => sidesOf(member, value))
+      : ast._tag === "Suspend"
+        ? sidesOf(ast.thunk(), value)
+        : reads
+          ? [ast]
+          : []),
+    ...(ast.encoding ?? []).flatMap(({ to }) => sidesOf(to, value)),
+  ];
+};
 
 /** The schemas of what these sides hold under one key. */
 const typesAt = (
@@ -256,20 +289,47 @@ const decodedNames = (ast: Ast, value?: unknown): ReadonlyArray<string> =>
         .flatMap((member) => decodedNames(member, value))
     : ast._tag === "Suspend"
       ? decodedNames(ast.thunk(), value)
-      : fieldsOf(ast).map(({ name }) => String(name));
-
-/** Whether these sides leave a value's keys open, so none can be called unstated. */
-const leaveKeysOpen = (sides: ReadonlyArray<Ast>): boolean =>
-  sides.some(
-    ({ _tag }) =>
-      _tag === "Any" || _tag === "Unknown" || _tag === "ObjectKeyword",
-  ) || !sides.some(({ _tag }) => _tag === "Objects" || _tag === "Arrays");
+      : readsContainer(ast, value)
+        ? fieldsOf(ast).map(({ name }) => String(name))
+        : [];
 
 /** Effect's empty struct has no shape checks on the keys of a supplied value. */
 export const isSignaturelessObject = (ast: Ast): boolean =>
   ast._tag === "Objects" &&
   ast.propertySignatures.length === 0 &&
   ast.indexSignatures.length === 0;
+
+/** Whether these sides leave a value's keys open, so none can be called unstated. */
+const leaveKeysOpen = (sides: ReadonlyArray<Ast>): boolean =>
+  sides.some(
+    (side) =>
+      side._tag === "Any" ||
+      side._tag === "Unknown" ||
+      side._tag === "ObjectKeyword" ||
+      isSignaturelessObject(side),
+  ) || !sides.some(({ _tag }) => _tag === "Objects" || _tag === "Arrays");
+
+/**
+ * An empty struct keeps the value it reads as given, so it holds each key's value as given too, at
+ * every depth: as an empty struct would read it again.
+ */
+const asGiven = Schema.Struct({}).ast;
+
+/**
+ * What these sides hold under one key: the schemas they state for it, and, beside an empty struct,
+ * the value as given. An empty struct is then the member that keeps a key the others leave out, at
+ * any depth, so that key is not unstated. With no stated schema nothing here can strip below the
+ * key, so the empty struct's reading needs no walk through the value.
+ */
+const heldAt = (
+  sides: ReadonlyArray<Ast>,
+  key: PropertyKey,
+): ReadonlyArray<Ast> => {
+  const stated = typesAt(sides, key);
+  return stated.length > 0 && sides.some(isSignaturelessObject)
+    ? [...stated, asGiven]
+    : stated;
+};
 
 /**
  * The names a struct here reads from a value although they are no keys of it, as an accessor on a
@@ -310,12 +370,6 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     const sides = types.flatMap((type) => sidesOf(type, value));
     const hidden = unlisted(sides, value);
     const open = leaveKeysOpen(sides);
-    const keepKeys =
-      open ||
-      (sides.some(isSignaturelessObject) &&
-        !sides.some(
-          (side) => side._tag === "Objects" && !isSignaturelessObject(side),
-        ));
     const plain = isPlain(value);
     const asStruct = !plain && readAsStruct(sides, open);
     const asArray = readAsArray(sides);
@@ -323,10 +377,10 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     const keys = [...keysOf(value, asArray), ...hidden];
     const entries = keys.flatMap((key) => {
       const item = value[key];
-      const inner = typesAt(sides, key);
+      const inner = heldAt(sides, key);
       return (plain || asStruct) &&
         !isList &&
-        drops(item, keepKeys || inner.length > 0)
+        drops(item, open || inner.length > 0)
         ? []
         : [[key, rewrite(inner, item)] as const];
     });
@@ -440,7 +494,7 @@ export const missing = (
     ];
     return given[key] === undefined || has(value, key) || holdsAsWritten(key)
       ? missing(
-          typesAt(sides, key),
+          heldAt(sides, key),
           given[key],
           at(value, key),
           at(output, key),

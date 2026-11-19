@@ -250,10 +250,41 @@ actually went. The strict pass also protects visible fields beside Void as descr
 with none of these choices reads as it always did. A schema's own steps can run more than once when
 the strict pass refuses.
 
-In strict normalization, when every candidate object at a value has no property or index signatures,
-its supplied keys are kept at any depth within the chosen union member, as `Schema.Struct({})` alone
-keeps them. The 0.17.0 strict pass removed those keys. An empty struct query or header binding still
-states no names.
+An empty struct, alone or as an empty `Schema.Class`'s fields, keeps every key of the value it
+reads, as given and at every depth. Beside members that state fields it is the member that keeps
+them all, in either order. Under `Union([A, Schema.Struct({})])` with
+`A = Schema.Struct({ a: Schema.String })`, `{ a: "x", z: 1 }` sends `{"a":"x","z":1}`, and under
+`Union([Schema.Struct({ b: A }), Schema.Struct({})])`, `{ b: { a: "x", z: 1 } }` keeps the nested
+`z`. A value the stated member keeps whole, such as `{ a: "x" }`, still goes through that member,
+with its names and constructor defaults. A kept value the request cannot carry is refused before
+dispatch, as under the empty struct alone: a header value that is not a string is `InvalidRequest`,
+and a BigInt in a JSON body is `HttpBodyError`. An empty struct query or header binding still states
+no names.
+
+0.18.0 kept such keys only where every object candidate was empty, and otherwise left them out,
+sometimes sending the stated member's constructor default in the caller's place. A decoded name
+beside a key only the empty struct holds is now sent as given, because the empty struct takes the
+whole value:
+
+```ts
+import { Effect, Schema } from "effect";
+import { Request } from "viell-effect-schema-http";
+
+const Filter = Schema.Struct({
+  limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+    Schema.withConstructorDefault(Effect.succeed(25)),
+  ),
+}).pipe(Schema.encodeKeys({ limit: "page_size" }));
+const search = Request.get("https://api.example.test/things").pipe(
+  Request.query(Schema.Union([Filter, Schema.Struct({})])),
+);
+// Input: { query: { tag: "a" } }; 0.18.0: ?page_size=25; now: ?tag=a
+// Input: { query: { limit: 5, tag: "a" } }; 0.18.0: ?page_size=5; now: ?limit=5&tag=a
+// Input: { query: { limit: 5 } }; both: ?page_size=5
+```
+
+To keep a stated member's reading, bind that member directly, or leave out the keys it does not
+state before preparation.
 
 Built-in `Schema.Void` ordinarily accepts an object and returns `undefined`. Beside an object or
 list candidate in a visible any-of union, the strict read declines Void for an object with a defined
@@ -330,13 +361,20 @@ query or header group given as a list of pairs. The [0.18
 migration](./release-notes/0.18.md#refuse-a-list-given-to-an-object-schema) shows how to build an
 index-keyed object explicitly.
 
+Field-loss accounting reads the same way. A record or a struct that states a field holds none of a
+list's cells, and an array or tuple member holds none of an object's keys, including where different
+parent members give a field those schemas. So beside the record above, `[{ page_size: "05" }]` and
+`[{ limit: "x", extra: 1 }]` write `[{}]` and `[{"limit":"x"}]`, as `Schema.Array(Plain)` alone
+does; 0.18.0 refused both. In the same way, `{ "0": { limit: "x", extra: 1 } }` beside an array or
+tuple member is read as its object member alone reads it.
+
 The rule covers only the copy this route would make. Effect's own readings still apply:
 `Schema.Struct({})` keeps a list as it is, and an empty `Schema.Class` builds an instance keyed by a
-list's indexes. These limits remain:
+list's indexes. A class has no list reading, so it states nothing for a list's cells, and beside a
+list member placed before it a list keeps the list member's reading. An empty class placed first
+still takes the list, as Effect's first fit does, after the cells' keys the list member does not
+state are left out. Put the list member first to keep a list a list. These limits remain:
 
-- Beside a record, a key the list member does not state can refuse instead of being stripped: with
-  the record above, `[{ page_size: "05" }]` is refused, where `Schema.Array(Plain)` alone writes
-  `[{}]` ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)).
 - When another field makes a parent read field by field, a constructor default can still replace an
   invalid decoded item value, with or without the record: `{ n: 1, items: [{ limit: "x" }] }` under
   a struct with `n: Schema.FiniteFromString`
@@ -375,16 +413,18 @@ can fall back to Effect's own reading, so a field can go with no error, and vali
 
 That is not a union choosing badly. The types did not allow the key, and a stacked schema's fields
 reach every schema in the group this way. So is a key only a member with another tag states, because
-the tag has already chosen. A required literal tag can choose by its decoded or encoded name,
-including when a whole-object transformation changes its name or literal. Both views must rule a
-member out before its fields go. A missing tag with a constructor default leaves that view possible;
-its default is not run to guess a member. A key set to `undefined` is no field at all, so
-`{ a, b: undefined, c }` reads as `{ a, c }`, and a member that states `b` cannot take the value
-from one that states `c`. An encoded name beside its decoded twin can be stripped on a
-constructor/decoded route, under a union as under a struct. A whole encoded read instead uses the
-encoded name, including when an ignored alias elsewhere establishes the added validation route. Name
-selection does not prove that supplied values agree; general conflicting-alias refusal remains under
-#143.
+the tag has already chosen, and a key only a member that cannot read the value's container states,
+such as a record beside a list. A key an empty struct member holds is not unstated, as [A union
+keeps what the caller gave](#a-union-keeps-what-the-caller-gave) describes. A required literal tag
+can choose by its decoded or encoded name, including when a whole-object transformation changes its
+name or literal. Both views must rule a member out before its fields go. A missing tag with a
+constructor default leaves that view possible; its default is not run to guess a member. A key set
+to `undefined` is no field at all, so `{ a, b: undefined, c }` reads as `{ a, c }`, and a member
+that states `b` cannot take the value from one that states `c`. An encoded name beside its decoded
+twin can be stripped on a constructor/decoded route, under a union as under a struct. A whole
+encoded read instead uses the encoded name, including when an ignored alias elsewhere establishes
+the added validation route. Name selection does not prove that supplied values agree; general
+conflicting-alias refusal remains under #143.
 
 ### A weak schema lets more through
 
@@ -446,8 +486,13 @@ The kept-or-refused rule is the intended contract. Known violations remain under
 [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143) and
 [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170); an unsupported proof is not
 a guarantee that preparation refuses safely. [A list stays a list](#a-list-stays-a-list) lists the
-remaining list limits under #241 and #243.
+remaining list limit under #241.
 
+- Beside `Schema.Unknown`, `Schema.Any` or `Schema.Object`, a stated member's nested value can still
+  lose a key only the open member would hold. With
+  `Union([Schema.Struct({ b: A }), Schema.Unknown])`, `{ b: { a: "x", z: 1 } }` sends
+  `{"b":{"a":"x"}}`. A key at the open member's own value is kept, and an empty struct keeps such
+  keys at every depth.
 - Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
   name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that
   choice for the whole value. The [0.14 migration](./release-notes/0.14.md#account-for-both-names)

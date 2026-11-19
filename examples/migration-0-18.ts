@@ -194,7 +194,8 @@ assert.equal(
   await prepared(labelled),
   '{"labels":{"tag":"a"},"wire_title":"item"}',
 );
-// A union mixing a stated and an empty member still strips unstated keys.
+// The article retains 0.18's output, `{"a":"x"}`; the unreleased batch keeps the key the empty
+// member holds.
 const Mixed = Schema.Union([
   Schema.Struct({ a: Schema.String }),
   Schema.Struct({}),
@@ -204,7 +205,7 @@ const sendMixed = Request.post("/mixed").pipe(
 );
 assert.equal(
   await prepared(Request.compile(sendMixed, { body: { a: "x", z: 1 } })),
-  '{"a":"x"}',
+  '{"a":"x","z":1}',
 );
 
 // A header schema that encodes a non-string value fails with a typed error,
@@ -294,7 +295,9 @@ const stripped = Effect.gen(function* () {
   return yield* Request.compile(save, { body });
 });
 // #endregion unstated-keys
-assert.match(await refused(unstated), /at \[0\]\["extra"\]/);
+// The article retains 0.18's refusal at `[0]["extra"]`; the unreleased batch writes what the list
+// member alone writes.
+assert.equal(await prepared(unstated), '[{"limit":"x"}]');
 assert.equal(await prepared(stripped), '[{"limit":"x"}]');
 
 // #region alias-schema
