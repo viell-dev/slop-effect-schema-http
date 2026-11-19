@@ -1,5 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schema, SchemaTransformation } from "effect";
+import {
+  Effect,
+  Option,
+  Schema,
+  SchemaGetter,
+  SchemaIssue,
+  SchemaTransformation,
+} from "effect";
+import { HttpBody, UrlParams } from "effect/http";
 import {
   bodyOf,
   compile,
@@ -1331,6 +1339,1061 @@ describe("a caller's field under a union", () => {
       }),
     );
   });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+  describe("a member the write falls back to", () => {
+    const Note = Schema.Struct({ title: text, meta: Schema.Unknown });
+    const Title = Schema.Struct({ title: text });
+    /** Text whose encoded side needs two characters, so a short value fails only when written. */
+    const Code = text.pipe(
+      Schema.encodeTo(text.check(Schema.isMinLength(2)), {
+        decode: SchemaGetter.passthrough(),
+        encode: SchemaGetter.passthrough(),
+      }),
+    );
+    const Coded = Schema.Struct({ title: text, code: Code });
+    const note = { title: "a", meta: new Date(0) };
+    const coded = { title: "a", code: "x" };
+    const form = Body.encoder((value: Readonly<Record<string, string>>) =>
+      Effect.succeed(HttpBody.urlParams(UrlParams.fromInput(value))),
+    );
+    /** What a query, headers, JSON body, form body and path send, or the refusal. */
+    const everywhere = (
+      schema: Schema.Codec<object, Record<string, string>>,
+      input: Readonly<Record<string, string>> = coded,
+    ) =>
+      Effect.forEach(
+        [
+          urlOf(queried(schema), { query: input }),
+          Effect.map(
+            linesOf(Request.get("/x").pipe(Request.headers(schema)), {
+              headers: input,
+            }),
+            (lines) => JSON.stringify(lines),
+          ),
+          bodyOf(post(schema), { body: input }),
+          bodyOf(
+            Request.post("/x").pipe(
+              Request.body(form.pipe(Body.encodeSchema(schema))),
+            ),
+            { body: input },
+          ),
+          urlOf(
+            Request.get("").pipe(
+              Request.path(schema, (value) => `/${JSON.stringify(value)}`),
+            ),
+            { path: input },
+          ),
+        ] as const,
+        (prepared: Effect.Effect<string | undefined, unknown>) =>
+          Effect.catchIf(
+            prepared,
+            (error) => error instanceof Schema.SchemaError,
+            (error) => Effect.succeed(`refused: ${error.message}`),
+          ),
+      );
+
+    it.effect(
+      "refuses with the first member's error where no member keeps the field",
+      () =>
+        Effect.gen(function* () {
+          const alone = yield* schemaFailure(post(Note), { body: note });
+          expect(alone).toBe('Expected JSON value\n  at ["meta"]');
+          for (const schema of [
+            Schema.Union([Note, Title]),
+            Schema.Union([Note, Schema.Void, Title]),
+            Schema.Union([Note, Title, Schema.Void]),
+          ])
+            expect(yield* schemaFailure(post(schema), { body: note })).toBe(
+              alone,
+            );
+          expect(
+            yield* schemaFailure(
+              post(Schema.Struct({ x: Schema.Union([Note, Title]) })),
+              { body: { x: note } },
+            ),
+          ).toBe('Expected JSON value\n  at ["x"]["meta"]');
+          expect(
+            yield* schemaFailure(
+              post(Schema.Array(Schema.Union([Note, Title]))),
+              { body: [note] },
+            ),
+          ).toBe('Expected JSON value\n  at [0]["meta"]');
+          const refused = yield* everywhere(Coded);
+          expect(refused).toEqual(
+            Array(5).fill(
+              'refused: Expected a value with a length of at least 2\n  at ["code"]',
+            ),
+          );
+          expect(yield* everywhere(Schema.Union([Coded, Title]))).toEqual(
+            refused,
+          );
+        }),
+    );
+
+    it.effect("keeps a member that writes every supplied field", () =>
+      Effect.gen(function* () {
+        const either = Schema.Union([Note, Title]);
+        expect(
+          yield* bodyOf(post(either), { body: { title: "a", meta: 1 } }),
+        ).toBe('{"title":"a","meta":1}');
+        expect(yield* bodyOf(post(either), { body: { title: "a" } })).toBe(
+          '{"title":"a"}',
+        );
+        expect(
+          yield* everywhere(Schema.Union([Coded, Title]), {
+            title: "a",
+            code: "xy",
+          }),
+        ).toEqual([
+          "/x?title=a&code=xy",
+          '[["title","a"],["code","xy"]]',
+          '{"title":"a","code":"xy"}',
+          "title=a&code=xy",
+          '/{"title":"a","code":"xy"}',
+        ]);
+      }),
+    );
+
+    it.effect("keeps a field the relaxed write sends under its wire name", () =>
+      Effect.gen(function* () {
+        // The member writes `b` as `a`, and hands its whole input on, so the strict write
+        // refuses the `b` it carries. The relaxed write sends `a`, which reads back as `b`.
+        const Renamer = Schema.Struct({ a: text }).pipe(
+          Schema.decodeTo(
+            Schema.Struct({ b: text }),
+            SchemaTransformation.transform({
+              decode: (value): { readonly b: string } => ({
+                ...value,
+                b: value.a,
+              }),
+              encode: (value): { readonly a: string } => ({
+                ...value,
+                a: value.b,
+              }),
+            }),
+          ),
+        );
+        const schema = Schema.Union([Renamer, Schema.Struct({ c: text })]);
+        expect(yield* bodyOf(post(schema), { body: { b: "x" } })).toBe(
+          '{"a":"x"}',
+        );
+        expect(yield* urlOf(queried(schema), { query: { b: "x" } })).toBe(
+          "/x?a=x",
+        );
+      }),
+    );
+
+    it.effect(
+      "keeps a field an encode-only member sends under another name",
+      () =>
+        Effect.gen(function* () {
+          // Nothing reads the output back, so a member that cannot be decoded can still write.
+          const OneWay = Schema.Struct({ a: text }).pipe(
+            Schema.decodeTo(Schema.Struct({ b: text }), {
+              decode: SchemaGetter.forbidden(() => "written only"),
+              encode: SchemaGetter.transform(
+                (value: { readonly b: string }) => ({ ...value, a: value.b }),
+              ),
+            }),
+          );
+          for (const schema of [
+            OneWay,
+            Schema.Union([OneWay, Schema.Struct({ c: text })]),
+          ])
+            expect(yield* bodyOf(post(schema), { body: { b: "x" } })).toBe(
+              '{"a":"x"}',
+            );
+        }),
+    );
+
+    it.effect("lets a stacked schema take the field the write lost", () =>
+      Effect.gen(function* () {
+        const request = stacked(
+          Schema.Union([Coded, Title]),
+          Schema.Struct({ code: text }),
+        );
+        expect(yield* urlOf(request, { query: coded })).toBe(
+          "/x?title=a&code=x",
+        );
+      }),
+    );
+
+    it.effect("never runs a decoder on what it sends", () =>
+      Effect.gen(function* () {
+        for (const type of [
+          Schema.Unknown,
+          Schema.declare((input): input is ReadonlyArray<string> =>
+            Array.isArray(input),
+          ),
+        ]) {
+          let reads = 0;
+          // A decoder that reverses its list in place would change a list it was handed.
+          const Reversed = Schema.Struct({ a: type }).pipe(
+            Schema.decodeTo(
+              Schema.Struct({ b: type }),
+              SchemaTransformation.transform({
+                decode: ({ a }) => {
+                  reads++;
+                  // oxlint-disable-next-line unicorn/no-array-reverse -- The decoder must change the list it is handed.
+                  return { b: (a as Array<string>).reverse() as unknown };
+                },
+                encode: (value) => ({
+                  ...value,
+                  a: (value.b as ReadonlyArray<string>).toReversed(),
+                }),
+              }),
+            ),
+          );
+          const body = { b: ["one", "two"] };
+          expect(yield* bodyOf(post(Reversed), { body })).toBe(
+            '{"a":["two","one"]}',
+          );
+          expect(
+            yield* urlOf(
+              Request.get("").pipe(
+                Request.path(Reversed, (value) => `/${JSON.stringify(value)}`),
+              ),
+              { path: body },
+            ),
+          ).toBe('/{"a":["two","one"]}');
+          expect(reads).toBe(0);
+        }
+      }),
+    );
+
+    it.effect(
+      "does not count a decoding default as a field that was written",
+      () =>
+        Effect.gen(function* () {
+          const Defaulted = Schema.Struct({
+            title: text,
+            meta: Schema.Unknown.pipe(
+              Schema.withDecodingDefaultKey(Effect.succeed("default")),
+            ),
+          });
+          expect(
+            yield* schemaFailure(post(Schema.Union([Defaulted, Title])), {
+              body: note,
+            }),
+          ).toBe('Expected JSON value\n  at ["meta"]');
+          const DefaultCode = Schema.Struct({
+            title: text,
+            code: Code.pipe(
+              Schema.withDecodingDefaultKey(Effect.succeed("OK")),
+            ),
+          });
+          expect(
+            yield* schemaFailure(post(Schema.Union([DefaultCode, Title])), {
+              body: coded,
+            }),
+          ).toBe('Expected a value with a length of at least 2\n  at ["code"]');
+        }),
+    );
+
+    it.effect(
+      "refuses a member that writes another field under the supplied name",
+      () =>
+        Effect.gen(function* () {
+          const Labelled = Schema.Struct({
+            title: text,
+            meta: Schema.Unknown,
+            label: text.pipe(
+              Schema.withConstructorDefault(Effect.succeed("fallback")),
+            ),
+          });
+          // `label` goes out as `meta`, so the wire name alone cannot show the caller's `meta` went.
+          const Narrow = Schema.Struct({ title: text, label: text }).pipe(
+            Schema.encodeKeys({ label: "meta" }),
+          );
+          expect(
+            yield* schemaFailure(post(Schema.Union([Labelled, Narrow])), {
+              body: note,
+            }),
+          ).toBe('Expected JSON value\n  at ["meta"]');
+        }),
+    );
+
+    it.effect("keeps a later member that states the supplied field", () =>
+      Effect.gen(function* () {
+        const Renamer = Schema.Struct({ a: text }).pipe(
+          Schema.decodeTo(
+            Schema.Struct({ b: text }),
+            SchemaTransformation.transform({
+              decode: ({ a, ...rest }) => ({ ...rest, b: a }),
+              encode: (value) => ({ ...value, a: value.b }),
+            }),
+          ),
+        );
+        // The output also fits the earlier member's shape, which no longer matters.
+        expect(
+          yield* bodyOf(
+            post(Schema.Union([Schema.Struct({ a: text }), Renamer])),
+            {
+              body: { b: "x" },
+            },
+          ),
+        ).toBe('{"a":"x"}');
+      }),
+    );
+
+    it.effect(
+      "reports the first member's error through grouped and suspended unions",
+      () =>
+        Effect.gen(function* () {
+          const expected = yield* schemaFailure(post(Coded), { body: coded });
+          for (const schema of [
+            Schema.Union([Schema.Union([Coded, Title]), Schema.String]),
+            Schema.Union([Schema.Union([Coded, Title]), Schema.Null]),
+            Schema.Union([Schema.Union([Coded, Title]), Schema.Void]),
+            Schema.Union([
+              Schema.Union([Coded, Title]),
+              Schema.Struct({ title: Schema.Number, code: Schema.Number }),
+            ]),
+            Schema.Union([
+              Schema.Union([Coded, Title]),
+              Schema.Struct({ title: text, code: Schema.Number }),
+            ]),
+            Schema.Union([Schema.Union([Coded, Schema.Void]), Title]),
+            Schema.suspend(() => Schema.Union([Coded, Title])),
+          ])
+            expect(yield* schemaFailure(post(schema), { body: coded })).toBe(
+              expected,
+            );
+        }),
+    );
+
+    /** A field that only the relaxed write can send: the strict write refuses the `b` it carries. */
+    const Relaxing = Schema.Struct({ a: text }).pipe(
+      Schema.decodeTo(
+        Schema.Struct({ b: text }),
+        SchemaTransformation.transform({
+          decode: ({ a }) => ({ b: a }),
+          encode: (value) => ({ ...value, a: value.b }),
+        }),
+      ),
+    );
+    const relaxed = { b: "ok" };
+
+    it.effect("runs only the members Effect selects by tag", () =>
+      Effect.gen(function* () {
+        let runs = 0;
+        const Counted = Schema.Struct({
+          v: text.pipe(
+            Schema.middlewareEncoding((effect) =>
+              Effect.andThen(
+                Effect.sync(() => {
+                  runs++;
+                }),
+                effect,
+              ),
+            ),
+          ),
+          tag: Schema.Literal("A"),
+        });
+        const Thrown = Schema.Struct({
+          v: text.pipe(
+            Schema.middlewareEncoding((effect) =>
+              Effect.andThen(
+                Effect.sync(() => {
+                  throw new Error("ran a member its tag rules out");
+                }),
+                effect,
+              ),
+            ),
+          ),
+          tag: Schema.Literal("A"),
+        });
+        // The selected member writes how many times the other one ran.
+        const Selected = Schema.Struct({
+          v: text.pipe(
+            Schema.encodeTo(text, {
+              decode: SchemaGetter.passthrough(),
+              encode: SchemaGetter.transform((value) => `${value}-${runs}`),
+            }),
+          ),
+          tag: Schema.Literal("B"),
+        });
+        const body = {
+          choice: { tag: "B", v: "right" },
+          rename: relaxed,
+        } as const;
+        expect(
+          yield* bodyOf(
+            post(
+              Schema.Struct({
+                choice: Schema.Union([Counted, Selected]),
+                rename: Relaxing,
+              }),
+            ),
+            { body },
+          ),
+        ).toBe('{"choice":{"v":"right-0","tag":"B"},"rename":{"a":"ok"}}');
+        expect(runs).toBe(0);
+        expect(
+          yield* bodyOf(
+            post(
+              Schema.Struct({
+                choice: Schema.Union([Thrown, Selected]),
+                rename: Relaxing,
+              }),
+            ),
+            { body },
+          ),
+        ).toBe('{"choice":{"v":"right-0","tag":"B"},"rename":{"a":"ok"}}');
+      }),
+    );
+
+    it.effect(
+      "tries a member whose middleware can answer any input, as Effect does",
+      () =>
+        Effect.gen(function* () {
+          const Recovering = Schema.Struct({
+            v: text,
+            tag: Schema.Literal("A"),
+          }).pipe(
+            Schema.middlewareEncoding((effect) =>
+              Effect.catch(effect, () =>
+                Effect.succeed(Option.some({ v: "wrong", tag: "A" })),
+              ),
+            ),
+          );
+          const Other = Schema.Struct({ v: text, tag: Schema.Literal("B") });
+          const schema = Schema.Struct({
+            choice: Schema.Union([Recovering, Other]),
+            rename: Relaxing,
+          });
+          expect(
+            yield* bodyOf(post(schema), {
+              body: { choice: { tag: "B", v: "right" }, rename: relaxed },
+            }),
+          ).toBe('{"choice":{"v":"wrong","tag":"A"},"rename":{"a":"ok"}}');
+        }),
+    );
+
+    it.effect("keeps every field a member that states none writes", () =>
+      Effect.gen(function* () {
+        for (const other of [Schema.Struct({}), Schema.Unknown])
+          expect(
+            yield* bodyOf(
+              post(
+                Schema.Struct({
+                  choice: Schema.Union([Coded, other]),
+                  rename: Relaxing,
+                }),
+              ),
+              { body: { choice: coded, rename: relaxed } },
+            ),
+          ).toBe('{"choice":{"title":"a","code":"x"},"rename":{"a":"ok"}}');
+      }),
+    );
+
+    it.effect("names the field no stacked schema took", () =>
+      Effect.gen(function* () {
+        const Wide = Schema.Struct({ title: text, code: Code, x: Code });
+        const group = Schema.Union([Wide, Title]);
+        const Taken = Schema.Struct({ code: text });
+        const lost =
+          'The schema cannot keep this field with the rest of the value\n  at ["x"]';
+        const both = { title: "a", code: "x", x: "t" };
+        for (const [first, second] of [
+          [group, Taken],
+          [Taken, group],
+        ] as const) {
+          const query = Request.get("/x").pipe(
+            Request.query(first),
+            Request.query(second),
+          );
+          const headers = Request.get("/x").pipe(
+            Request.headers(first),
+            Request.headers(second),
+          );
+          expect(yield* schemaFailure(query, { query: both })).toBe(lost);
+          expect(yield* schemaFailure(headers, { headers: both })).toBe(lost);
+          // With `code` valid, `Wide` fails on `x` alone, and its own error names it.
+          const fair = { ...both, code: "ok" };
+          expect(yield* schemaFailure(query, { query: fair })).toBe(
+            'Expected a value with a length of at least 2\n  at ["x"]',
+          );
+          expect(yield* schemaFailure(headers, { headers: fair })).toBe(
+            'Expected a value with a length of at least 2\n  at ["x"]',
+          );
+        }
+        expect(
+          yield* urlOf(stacked(group, Schema.Struct({ code: text, x: text })), {
+            query: both,
+          }),
+        ).toBe("/x?title=a&code=x&x=t");
+      }),
+    );
+
+    it.effect(
+      "credits no member of a nested union that failed its own rule",
+      () =>
+        Effect.gen(function* () {
+          const Plain = Schema.Struct({ title: text, code: text });
+          const Wider = Schema.Struct({
+            title: text,
+            code: text,
+            extra: Schema.optionalKey(text),
+          });
+          // Both nested members write the value, which `oneOf` refuses, and the check refuses it too.
+          for (const nested of [
+            Schema.Union([Plain, Wider], { mode: "oneOf" }),
+            Schema.Union([Plain, Wider]).check(Schema.makeFilter(() => false)),
+          ])
+            expect(
+              yield* schemaFailure(post(Schema.Union([Coded, nested, Title])), {
+                body: coded,
+              }),
+            ).toBe(
+              'Expected a value with a length of at least 2\n  at ["code"]',
+            );
+        }),
+    );
+
+    it.effect("forgets what a member noted in an attempt that failed", () =>
+      Effect.gen(function* () {
+        // Each run of `Gate` fails and flips whether `Kept` can write. The first relaxed attempt
+        // writes `x` through `Title` before `Gate` fails it; the second writes it through `Kept`.
+        let closed = false;
+        const failed = Effect.fail(
+          new SchemaIssue.InvalidValue({ message: "closed" }),
+        );
+        const Kept = Schema.Struct({
+          title: text,
+          meta: Schema.Unknown.pipe(
+            Schema.middlewareEncoding((effect) => (closed ? failed : effect)),
+          ),
+        });
+        const Gate = text.pipe(
+          Schema.middlewareEncoding(() =>
+            Effect.andThen(
+              Effect.sync(() => {
+                closed = !closed;
+              }),
+              failed,
+            ),
+          ),
+        );
+        const x = Schema.Union([Kept, Title]);
+        const schema = Schema.Union([
+          Schema.Struct({ x, y: Gate }),
+          Schema.Struct({ x, y: text }),
+        ]);
+        expect(
+          yield* bodyOf(post(schema), {
+            body: { x: { title: "a", meta: 1 }, y: "z" },
+          }),
+        ).toBe('{"x":{"title":"a","meta":1},"y":"z"}');
+      }),
+    );
+
+    it.effect("follows each place one object is written from", () =>
+      Effect.gen(function* () {
+        const Dated = Schema.Struct({
+          title: text,
+          meta: Schema.DateFromString,
+        });
+        const box = { title: "a", meta: new Date(0) };
+        // `Dated` keeps `meta` on the left; `Title` drops it on the right.
+        expect(
+          yield* schemaFailure(
+            post(
+              Schema.Struct({
+                left: Schema.Union([Dated, Title]),
+                right: Schema.Union([Note, Title]),
+              }),
+            ),
+            { body: { left: box, right: box } },
+          ),
+        ).toBe('Expected JSON value\n  at ["right"]["meta"]');
+        expect(
+          yield* schemaFailure(
+            post(
+              Schema.Struct({
+                left: Schema.Union([Schema.Unknown, Dated]),
+                right: Schema.Union([Schema.Unknown, Note, Title]),
+              }),
+            ),
+            { body: { left: box, right: box } },
+          ),
+        ).toBe('Expected JSON value\n  at ["right"]');
+      }),
+    );
+
+    it.effect(
+      "follows the writing member through structs, lists, records, rest elements and suspensions",
+      () =>
+        Effect.gen(function* () {
+          // A struct of tagged keys beside `title`, and a list of text followed by one union.
+          const [byTemplate, byNumber, byPattern] = [
+            Schema.TemplateLiteral(["tag-", Schema.String]),
+            Schema.Number,
+            Schema.String.check(Schema.isPattern(/^tag-/)),
+          ].map((key) =>
+            Schema.StructWithRest(Title, [Schema.Record(key, text)]),
+          );
+          const [trailingNote, trailingCode] = [
+            Schema.Union([Note, Title]),
+            Schema.Union([Coded, Title]),
+          ].map((last) => Schema.TupleWithRest(Schema.Tuple([]), [text, last]));
+          const [inNote, inTitle] = [Note, Title].map((child) =>
+            Schema.Struct({ child }),
+          );
+          const meta = 'Expected JSON value\n  at ["meta"]';
+          const code =
+            'Expected a value with a length of at least 2\n  at ["code"]';
+          for (const [schema, body, failure] of [
+            [
+              Schema.Union([inNote!, inTitle!]),
+              { child: note },
+              'Expected JSON value\n  at ["child"]["meta"]',
+            ],
+            [
+              Schema.Union([inNote!, Schema.Void, inTitle!]),
+              { child: note },
+              'Expected JSON value\n  at ["child"]["meta"]',
+            ],
+            [
+              Schema.Union([Schema.Array(Note), Schema.Array(Title)]),
+              [note],
+              'Expected JSON value\n  at [0]["meta"]',
+            ],
+            [
+              Schema.Union([
+                Schema.Record(text, Note),
+                Schema.Record(text, Title),
+              ]),
+              { k: note },
+              'Expected JSON value\n  at ["k"]["meta"]',
+            ],
+            [Schema.Union([Note, Schema.suspend(() => Title)]), note, meta],
+            [Schema.Union([Coded, Schema.suspend(() => Title)]), coded, code],
+            [
+              Schema.Union([Schema.Unknown, Title]),
+              note,
+              "Expected JSON value",
+            ],
+            [Schema.Union([Note, byTemplate!]), note, meta],
+            [Schema.Union([Note, byNumber!]), note, meta],
+            [Schema.Union([Note, byPattern!]), note, meta],
+            [
+              trailingNote!,
+              ["ok", note],
+              'Expected JSON value\n  at [1]["meta"]',
+            ],
+            [
+              trailingCode!,
+              ["ok", coded],
+              'Expected a value with a length of at least 2\n  at [1]["code"]',
+            ],
+          ] as const)
+            expect(
+              yield* schemaFailure(post(schema as Schema.Codec<unknown>), {
+                body: body as never,
+              }),
+            ).toBe(failure);
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+    it.effect(
+      "currently lets a struct beside an opaque declaration drop a field",
+      () =>
+        Effect.gen(function* () {
+          // No member but `Title` reads keys, so the union is written as Effect writes it.
+          const Opaque = Schema.declare(
+            (input): input is object =>
+              typeof input === "object" && input !== null,
+          );
+          expect(
+            yield* bodyOf(post(Schema.Union([Opaque, Title])), { body: note }),
+          ).toBe('{"title":"a"}');
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+    it.effect.fails(
+      "refuses with an opaque declaration's error where a struct after it drops a field",
+      () =>
+        Effect.gen(function* () {
+          const Opaque = Schema.declare(
+            (input): input is object =>
+              typeof input === "object" && input !== null,
+          );
+          expect(
+            yield* schemaFailure(post(Schema.Union([Opaque, Title])), {
+              body: note,
+            }),
+          ).toBe("Expected JSON value");
+        }),
+    );
+
+    it.effect(
+      "selects by a tag that is optional on one side only, as Effect does",
+      () =>
+        Effect.gen(function* () {
+          let runs = 0;
+          const Counted = Schema.Struct({
+            v: text.pipe(
+              Schema.middlewareEncoding((effect) =>
+                Effect.andThen(
+                  Effect.sync(() => {
+                    runs++;
+                  }),
+                  effect,
+                ),
+              ),
+            ),
+            _tag: Schema.tagDefaultOmit("A"),
+          });
+          const Thrown = Schema.Struct({
+            v: text.pipe(
+              Schema.middlewareEncoding((effect) =>
+                Effect.andThen(
+                  Effect.sync(() => {
+                    throw new Error("ran a member its tag rules out");
+                  }),
+                  effect,
+                ),
+              ),
+            ),
+            _tag: Schema.tagDefaultOmit("A"),
+          });
+          // The selected member writes how many times the other one ran.
+          const Selected = Schema.Struct({
+            v: text.pipe(
+              Schema.encodeTo(text, {
+                decode: SchemaGetter.passthrough(),
+                encode: SchemaGetter.transform((value) => `${value}-${runs}`),
+              }),
+            ),
+            _tag: Schema.tagDefaultOmit("B"),
+          });
+          const body = {
+            choice: { _tag: "B", v: "right" },
+            rename: relaxed,
+          } as const;
+          for (const other of [Counted, Thrown])
+            expect(
+              yield* bodyOf(
+                post(
+                  Schema.Struct({
+                    choice: Schema.Union([other, Selected]),
+                    rename: Relaxing,
+                  }),
+                ),
+                { body },
+              ),
+            ).toBe('{"choice":{"v":"right-0"},"rename":{"a":"ok"}}');
+          expect(runs).toBe(0);
+          // A tag the wire gives a default is not one in the value, so it selects nothing there.
+          const K1 = Schema.Struct({
+            kind: Schema.Literal("k1").pipe(
+              Schema.withDecodingDefaultKey(Effect.succeed("k1")),
+            ),
+            b: text,
+          });
+          const Other = Schema.Struct({
+            a: Schema.FiniteFromString,
+            b: Schema.optionalKey(text),
+          });
+          expect(
+            yield* bodyOf(
+              post(
+                Schema.Struct({
+                  d: Schema.Union([K1, Other]),
+                  rename: Relaxing,
+                }),
+              ),
+              { body: { d: { a: 5, b: "z" }, rename: relaxed } },
+            ),
+          ).toBe('{"d":{"a":"5","b":"z"},"rename":{"a":"ok"}}');
+          expect(
+            yield* bodyOf(
+              post(Schema.Struct({ d: Schema.Union([K1, Relaxing]) })),
+              { body: { d: { b: "go" } } },
+            ),
+          ).toBe('{"d":{"a":"go"}}');
+          // A tag the value may leave out but the wire always carries does select there.
+          const stamped = Schema.optionalKey(Schema.Literal("a")).pipe(
+            Schema.encodeTo(Schema.Literal("a"), {
+              decode: SchemaGetter.passthrough(),
+              encode: SchemaGetter.transformOptional(() =>
+                Option.some("a" as const),
+              ),
+            }),
+          );
+          const Stamped = Schema.Struct({ kind: stamped, p: text });
+          for (const other of [
+            Schema.Struct({ q: text }),
+            Schema.Struct({ p: text }),
+          ])
+            expect(
+              yield* bodyOf(
+                post(
+                  Schema.Struct({
+                    choice: Schema.Union([Stamped, other]),
+                    rename: Relaxing,
+                  }),
+                ),
+                { body: { choice: { p: "x" }, rename: relaxed } },
+              ),
+            ).toBe('{"choice":{"kind":"a","p":"x"},"rename":{"a":"ok"}}');
+        }),
+    );
+
+    // The write's check runs only where the caller's value is plain data and the schema there names
+    // no field every object has. Elsewhere the value is written as Effect writes it.
+    it.effect(
+      "writes a union that names a field every object has as Effect writes it",
+      () =>
+        Effect.gen(function* () {
+          // The value `{ c: false }` inherits `toString` and `constructor`, which it was not given.
+          for (const Named of [
+            Schema.Struct({ toString: text }),
+            Schema.Struct({ constructor: text }),
+          ])
+            expect(
+              yield* bodyOf(
+                post(
+                  Schema.Struct({
+                    choice: Schema.Union([
+                      Schema.Struct({ c: Schema.Boolean }),
+                      Named,
+                    ]),
+                    rename: Relaxing,
+                  }),
+                ),
+                { body: { choice: { c: false }, rename: relaxed } },
+              ),
+            ).toBe('{"choice":{"c":false},"rename":{"a":"ok"}}');
+          const Wire = Schema.Struct({ text }).pipe(
+            Schema.encodeKeys({ text: "constructor" }),
+          );
+          const schema = Schema.Struct({
+            any: Schema.Union([
+              Schema.Struct({ a: text }),
+              Schema.Struct({ b: text }),
+            ]),
+            rename: Relaxing,
+            f: Wire,
+          });
+          for (const f of [{ constructor: "x" }, { text: "x" }])
+            expect(
+              yield* bodyOf(post(schema), {
+                body: { any: { a: "x" }, rename: relaxed, f } as never,
+              }),
+            ).toBe(
+              '{"any":{"a":"x"},"rename":{"a":"ok"},"f":{"constructor":"x"}}',
+            );
+        }),
+    );
+
+    it.effect(
+      "writes a union whose first member takes anything under such a name as Effect writes it",
+      () =>
+        Effect.gen(function* () {
+          for (const name of ["toString", "constructor", "valueOf"]) {
+            const Open = Schema.Union([
+              Schema.Struct({ [name]: Schema.Unknown }),
+              Schema.Struct({ a: Schema.optionalKey(Schema.Number) }),
+            ]);
+            expect(
+              yield* bodyOf(
+                post(Schema.Struct({ f: Open, rename: Relaxing })),
+                { body: { f: {}, rename: relaxed } } as never,
+              ),
+            ).toBe('{"f":{},"rename":{"a":"ok"}}');
+          }
+        }),
+    );
+
+    it.effect("writes a class instance as Effect writes it", () =>
+      Effect.gen(function* () {
+        for (const name of ["toString", "valueOf"]) {
+          // The class has a method under a name another member states as a field.
+          class Methods {
+            readonly a = "";
+            readonly b = true;
+          }
+          Object.defineProperty(Methods.prototype, name, {
+            value: () => "v",
+            configurable: true,
+          });
+          const members = Schema.Union([
+            Schema.Struct({
+              b: Schema.FiniteFromString,
+              [name]: Schema.Boolean,
+            }),
+            Schema.Struct({ a: text, b: Schema.Boolean }),
+          ]);
+          expect(
+            yield* bodyOf(
+              post(Schema.Struct({ f: members, rename: Relaxing })),
+              { body: { f: new Methods(), rename: relaxed } } as never,
+            ),
+          ).toBe('{"f":{"a":"","b":true},"rename":{"a":"ok"}}');
+          class Kept extends Schema.Class<Kept>(`Kept-${name}`)({
+            a: text,
+            b: Schema.Boolean,
+          }) {}
+          const withClass = Schema.Union([
+            text,
+            Schema.Struct({
+              b: Schema.FiniteFromString,
+              [name]: Schema.Boolean,
+            }),
+            Kept,
+          ]);
+          expect(
+            yield* bodyOf(
+              post(Schema.Struct({ f: withClass, rename: Relaxing })),
+              {
+                body: { f: new Kept({ a: "", b: true }), rename: relaxed },
+              } as never,
+            ),
+          ).toBe('{"f":{"a":"","b":true},"rename":{"a":"ok"}}');
+        }
+      }),
+    );
+
+    /** The #250 value, in a class instance, which is not plain data. */
+    class Dated {
+      readonly title = "a";
+      readonly meta = new Date(0);
+    }
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+    it.effect(
+      "currently lets a member drop a field of a value that is not plain data",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* bodyOf(post(Schema.Union([Note, Title])), {
+              body: new Dated(),
+            } as never),
+          ).toBe('{"title":"a"}');
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+    it.effect.fails(
+      "refuses a field a member drops of a value that is not plain data",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* schemaFailure(post(Schema.Union([Note, Title])), {
+              body: new Dated(),
+            } as never),
+          ).toBe('Expected JSON value\n  at ["meta"]');
+        }),
+    );
+
+    it.effect("offers no struct for null, as Effect does not", () =>
+      Effect.gen(function* () {
+        const NullText = Schema.Null.pipe(
+          Schema.encodeTo(text.check(Schema.isMinLength(9)), {
+            decode: SchemaGetter.transform(() => null),
+            encode: SchemaGetter.transform(() => "null"),
+          }),
+        );
+        expect(
+          yield* schemaFailure(
+            post(
+              Schema.Struct({
+                choice: Schema.Union([Schema.Struct({}), NullText]),
+                rename: Relaxing,
+              }),
+            ),
+            { body: { choice: null, rename: relaxed } },
+          ),
+        ).toBe('Expected a value with a length of at least 9\n  at ["choice"]');
+      }),
+    );
+
+    /** A union that `Struct({ c })` writes for `{ e: new Date(0) }` once `{ e }` cannot be JSON. */
+    const Dropping = Schema.Union([
+      Schema.Struct({ d: text }).pipe(Schema.encodeKeys({ d: "w_d" })),
+      Schema.Struct({ e: Schema.Unknown }),
+      Schema.Struct({ c: Schema.optionalKey(text) }),
+    ]);
+    const dated = { d: { e: new Date(0) } };
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+    it.effect(
+      "currently lets a renamed struct's encoded side drop a field its union writes",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* schemaFailure(post(Schema.Struct({ d: Dropping })), {
+              body: dated,
+            } as never),
+          ).toBe(
+            'The schema cannot keep this field with the rest of the value\n  at ["d"]["e"]',
+          );
+          // Renamed, the struct writes `d` through `{ e }`, then its encoded side writes it again,
+          // through `Struct({ c })`, which the check does not follow.
+          expect(
+            yield* bodyOf(
+              post(
+                Schema.Struct({ d: Dropping }).pipe(
+                  Schema.encodeKeys({ d: "w_d" }),
+                ),
+              ),
+              { body: dated } as never,
+            ),
+          ).toBe('{"w_d":{}}');
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+    it.effect.fails(
+      "refuses a field a renamed struct's encoded side drops",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* schemaFailure(
+              post(
+                Schema.Struct({ d: Dropping }).pipe(
+                  Schema.encodeKeys({ d: "w_d" }),
+                ),
+              ),
+              { body: dated } as never,
+            ),
+          ).toContain('["d"]["e"]');
+        }),
+    );
+  });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "currently lets middleware on a union write through a member that drops a field",
+    () =>
+      Effect.gen(function* () {
+        const Watched = Schema.Union([
+          Schema.Struct({ title: text, code: text }),
+          Schema.Struct({ title: text }),
+        ]).pipe(Schema.middlewareDecoding((effect) => effect));
+        const Code = text.pipe(
+          Schema.encodeTo(text.check(Schema.isMinLength(2)), {
+            decode: SchemaGetter.passthrough(),
+            encode: SchemaGetter.passthrough(),
+          }),
+        );
+        const Coded = Schema.Union([
+          Schema.Struct({ title: text, code: Code }),
+          Schema.Struct({ title: text }),
+        ]).pipe(Schema.middlewareDecoding((effect) => effect));
+        expect(
+          yield* bodyOf(post(Watched), { body: { title: "a", code: "x" } }),
+        ).toBe('{"title":"a","code":"x"}');
+        expect(
+          yield* bodyOf(post(Coded), { body: { title: "a", code: "x" } }),
+        ).toBe('{"title":"a"}');
+      }),
+  );
 
   describe("a field the schema never held is not this refusal", () => {
     it.effect("stripping a key no member states, as a struct does", () =>
