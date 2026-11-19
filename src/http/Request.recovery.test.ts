@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   Cause,
   Context,
@@ -802,33 +802,49 @@ describe("remaining group-field recovery", () => {
   );
 
   it.effect(
-    "excludes a prototype-free array produced by a recovery candidate",
+    "excludes arrays and iterables produced by recovery candidates",
     () =>
       Effect.gen(function* () {
         const token = {};
         const output = { b: "y" };
         const onlyRecord = Schema.Union([B, Schema.Struct({})]);
-        const value = [["k", "v"]];
-        Object.setPrototypeOf(value, null);
-        // The empty struct can return the exact array even though this is a closed struct union.
-        expect((yield* Inputs.reader(onlyRecord)(value)).output).toBe(value);
-        let claims = 0;
-        const result = yield* Groups.recovery(onlyRecord)(
-          value,
-          { output, lost: [["a"]], snapshot: Shapes.snapshot(output) },
-          {
-            fields: new Set(["b"]),
-            settled: new Set(),
-            certificates: new Map([[token, new Set(["b"])]]),
-          },
-          token,
-          () => {
-            claims++;
-            return new Set(["a", "b"]);
-          },
-        );
-        expect(result).toBeUndefined();
-        expect(claims).toBe(0);
+        const array = [["k", "v"]];
+        Object.setPrototypeOf(array, null);
+        // An empty struct can return the original array even in a closed struct union.
+        expect((yield* Inputs.reader(onlyRecord)(array)).output).toBe(array);
+        for (const value of [array, new Map([["k", "v"]])]) {
+          // The empty struct writes a Map input as a record. Inject a Map candidate to test
+          // recovery's iterable guard independently of the schema's object normalization.
+          const readers =
+            value instanceof Map
+              ? vi
+                  .spyOn(Inputs, "reorderedReaders")
+                  .mockReturnValue([
+                    () => Effect.succeed({ output: value, lost: [] }),
+                  ])
+              : undefined;
+          let claims = 0;
+          try {
+            const result = yield* Groups.recovery(onlyRecord)(
+              value,
+              { output, lost: [["a"]], snapshot: Shapes.snapshot(output) },
+              {
+                fields: new Set(["b"]),
+                settled: new Set(),
+                certificates: new Map([[token, new Set(["b"])]]),
+              },
+              token,
+              () => {
+                claims++;
+                return new Set(["a", "b"]);
+              },
+            );
+            expect(result).toBeUndefined();
+          } finally {
+            readers?.mockRestore();
+          }
+          expect(claims).toBe(0);
+        }
       }),
   );
 

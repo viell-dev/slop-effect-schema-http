@@ -680,6 +680,16 @@ export const removeHeader = (name: string, value?: string) =>
       value === undefined ? new Set([...names, foldHeader(name)]) : names,
   );
 
+const computedQueryValue =
+  (name: string, compute: () => UrlEncoding.QueryValue) => () => {
+    const value = compute();
+    if (Array.isArray(value))
+      throw new TypeError(
+        `The computed query field ${JSON.stringify(name)} must return a scalar value`,
+      );
+    return GroupEncoding.queryScalar(name, value);
+  };
+
 /**
  * Set a raw query field, replacing entries with the same case-sensitive name, or set several from
  * an object.
@@ -705,7 +715,9 @@ export const removeHeader = (name: string, value?: string) =>
  * supplies and encodes it after the caller leaves it out, as {@link query} describes.
  *
  * The object form takes {@link QueryFields}. Each key replaces its name as above, in key order, and
- * other names stay. Use {@link appendQuery} for exact order across repeated names.
+ * other names stay. Both forms throw `TypeError` when a fixed value cannot be written. A computed
+ * value must return a scalar or `undefined`. Use {@link appendQuery} for exact order across
+ * repeated names.
  */
 export const setQuery: {
   (name: string, value: FieldValue<string | null>): Edit;
@@ -722,7 +734,7 @@ export const setQuery: {
             result,
             name,
             typeof entry === "function"
-              ? [() => UrlEncoding.queryEntries([[name, entry()]])[0]?.[1]]
+              ? [computedQueryValue(name, entry)]
               : UrlEncoding.queryEntries([[name, entry]]).map(
                   ([, text]) => text,
                 ),
@@ -740,7 +752,13 @@ export const setQuery: {
  * same way.
  */
 export const appendQuery = (name: string, value: FieldValue<string | null>) =>
-  editQuery([name], (fields) => Fields.append(fields, name, value));
+  editQuery([name], (fields) => {
+    const entry =
+      typeof value === "function"
+        ? computedQueryValue(name, value)
+        : GroupEncoding.queryScalar(name, value);
+    return entry === undefined ? fields : Fields.append(fields, name, entry);
+  });
 
 /**
  * Remove a raw query field, or only declarations with the supplied fixed value.
@@ -820,19 +838,23 @@ const misfit = (
     message: `The ${group} group cannot be built against its schema with these declared values: ${listNames(defaults.map(([name]) => name))}.`,
   });
 
-const invalidHeaderFields = (cause: unknown) =>
+const invalidHeaderFields = (cause: TypeError) =>
   new InvalidRequest({
     message: "The header schema must encode string field names and values",
     cause,
   });
 
-const invalidQueryValues = (cause: unknown) =>
-  new InvalidRequest({
-    message: GroupEncoding.isInvalidQueryValue(cause)
-      ? cause.message
-      : "The query schema must encode values that can be written as query text",
-    cause,
-  });
+/** Convert the expected validation error at each boundary, preserving caller-code defects. */
+const checkGroup = <A>(
+  read: () => A,
+  isInvalid: (cause: unknown) => cause is TypeError,
+  invalid: (cause: TypeError) => InvalidRequest,
+) =>
+  Effect.try({ try: read, catch: (cause) => cause }).pipe(
+    Effect.catch((cause) =>
+      isInvalid(cause) ? Effect.fail(invalid(cause)) : Effect.die(cause),
+    ),
+  );
 
 /** Names only, and only those that would go: what the schema kept fits it. */
 const lostFields = (
@@ -901,15 +923,10 @@ const prepareGroup = <
       ...(cause === undefined ? {} : { cause }),
     });
   const takeSnapshot = (source: object) =>
-    Effect.try({
-      try: () => Shapes.snapshot(source),
-      catch: (cause) => cause,
-    }).pipe(
-      Effect.catch((cause) =>
-        FieldPairs.isMalformedPair(cause)
-          ? Effect.fail(invalidOutput(cause))
-          : Effect.die(cause),
-      ),
+    checkGroup(
+      () => Shapes.snapshot(source),
+      FieldPairs.isMalformedPair,
+      invalidOutput,
     );
   return {
     shape,
@@ -1101,10 +1118,11 @@ export const headers = <
                 Shapes.allows(shape, foldHeader(name)),
             ),
         );
-        const lines = yield* Effect.try({
-          try: () => GroupEncoding.headerEntries(writable),
-          catch: invalidHeaderFields,
-        });
+        const lines = yield* checkGroup(
+          () => GroupEncoding.headerEntries(writable),
+          GroupEncoding.isInvalidHeaderValue,
+          invalidHeaderFields,
+        );
         const replaced = new Set([
           ...names,
           ...defaults.map(([name]) => foldHeader(name)),
@@ -1249,10 +1267,11 @@ export const query = <
               )
               .map((param) => [param[0], queryValue(prepared, param)] as const),
         );
-        const entries = yield* Effect.try({
-          try: () => GroupEncoding.queryEntries(writable),
-          catch: invalidQueryValues,
-        });
+        const entries = yield* checkGroup(
+          () => GroupEncoding.queryEntries(writable),
+          GroupEncoding.isInvalidQueryValue,
+          (cause) => new InvalidRequest({ message: cause.message, cause }),
+        );
         return replaceQuery(
           prepared,
           entries,

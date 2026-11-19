@@ -9,7 +9,9 @@ describe("Transport.entries", () => {
   it.each([{ input: { "x-count": [1, 2] } }, { input: [["x-count", 1]] }])(
     "throws TypeError for a non-string header value",
     ({ input }) => {
-      expect(() => Transport.entries(input as never)).toThrow(TypeError);
+      expect(() => Transport.entries(input as never)).toThrow(
+        new TypeError("A header line must have a string value"),
+      );
     },
   );
 
@@ -72,13 +74,36 @@ describe("Transport.entries", () => {
     ]);
   });
 
+  it("skips holes in repeated header values", () => {
+    const k = ["a", "b", "c"];
+    delete k[1];
+    expect(Transport.entries({ k })).toEqual([
+      ["k", "a"],
+      ["k", "c"],
+    ]);
+  });
+
   it.each([
     { input: [["k", "v", "extra"]] },
     { input: ["ab"] },
     { input: [["k"]] },
     { input: [[1, "v"]] },
   ])("throws TypeError for a malformed array entry", ({ input }) => {
-    expect(() => Transport.entries(input as never)).toThrow(TypeError);
+    expect(() => Transport.entries(input as never)).toThrow(
+      new TypeError(
+        "A field pair must be a two-position array with a string name",
+      ),
+    );
+  });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
+  it("reports its own error for an invalid iterator", () => {
+    const invalid = { [Symbol.iterator]: () => 5 };
+    expect(() => Transport.entries(invalid as never)).toThrow(
+      new TypeError(
+        "A field pairs iterable must return an iterator with a callable next method",
+      ),
+    );
   });
 
   it("keeps a value that contains a comma as one line", () => {

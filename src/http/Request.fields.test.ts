@@ -312,6 +312,33 @@ describe("raw query", () => {
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/85
 describe("declaring fields from a plain object", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/255
+  it("refuses unsupported fixed query values when applying the edit", () => {
+    const base = Request.get("/x");
+    const value = { x: 1 } as never;
+    for (const makeEdit of [
+      () => Request.appendQuery("b", value),
+      () => Request.setQuery("b", value),
+      () => Request.setQuery({ b: value }),
+    ])
+      expect(() => base.pipe(makeEdit())).toThrow(
+        'The query field "b" must encode a scalar value or a list of scalar values',
+      );
+  });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/255
+  it.effect("refuses a list from a scalar query computation", () =>
+    Effect.gen(function* () {
+      const request = Request.get("/x").pipe(
+        Request.setQuery({ b: (() => ["a", "b"]) as never }),
+      );
+      const error = yield* refusal(request, undefined);
+      expect(error.cause).toMatchObject({
+        message: 'The computed query field "b" must return a scalar value',
+      });
+    }),
+  );
+
   describe("Request.setQuery", () => {
     it.effect("applies each value rule, in key order", () =>
       Effect.gen(function* () {

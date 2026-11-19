@@ -24,16 +24,23 @@ export const isInvalidQueryValue = (error: unknown): error is TypeError =>
   error instanceof InvalidQueryValue;
 
 /** Read the native Date brand, including dates from another realm. */
-const isDate = (value: object): value is Date => {
+const dateText = (value: object): string | undefined => {
+  let time: number;
   try {
-    Date.prototype.getTime.call(value);
-    return true;
+    time = Date.prototype.getTime.call(value);
   } catch {
-    return false;
+    return undefined;
   }
+  return Number.isNaN(time)
+    ? "Invalid Date"
+    : Date.prototype.toISOString.call(value);
 };
 
-const queryText = (name: string, value: unknown): string => {
+export const queryScalar = (
+  name: string,
+  value: unknown,
+): string | null | undefined => {
+  if (value === null || value === undefined) return value;
   switch (typeof value) {
     case "string":
       return value;
@@ -41,11 +48,11 @@ const queryText = (name: string, value: unknown): string => {
     case "boolean":
     case "bigint":
       return String(value);
-    case "object":
-      if (value !== null && isDate(value))
-        return Number.isNaN(value.getTime())
-          ? String(value)
-          : value.toISOString();
+    case "object": {
+      const text = dateText(value);
+      if (text !== undefined) return text;
+      break;
+    }
   }
   throw new InvalidQueryValue(name);
 };
@@ -54,8 +61,8 @@ export const queryEntries = ({ entries }: Reading): Query => {
   const query: Array<readonly [string, string | null]> = [];
   for (const [name, value] of entries) {
     const write = (entry: unknown) => {
-      if (entry !== undefined)
-        query.push([name, entry === null ? null : queryText(name, entry)]);
+      const text = queryScalar(name, entry);
+      if (text !== undefined) query.push([name, text]);
     };
     if (Array.isArray(value)) forEachValue(value, write);
     else write(value);
@@ -63,12 +70,20 @@ export const queryEntries = ({ entries }: Reading): Query => {
   return query;
 };
 
+class InvalidHeaderValue extends TypeError {
+  constructor() {
+    super("A header line must have a string value");
+  }
+}
+
+export const isInvalidHeaderValue = (error: unknown): error is TypeError =>
+  error instanceof InvalidHeaderValue;
+
 const headerLine = (
   name: string,
   value: unknown,
 ): readonly [string, string] => {
-  if (typeof value !== "string")
-    throw new TypeError("A header line must have a string value");
+  if (typeof value !== "string") throw new InvalidHeaderValue();
   return [name, value];
 };
 

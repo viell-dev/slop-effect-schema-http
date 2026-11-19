@@ -486,11 +486,11 @@ caller gives its decoded side:
 | `Schema.DateFromString`                                                            | A `Date`, or its text | ISO text        |
 | A schema from `Date` to an application's own type, as `Schema.DateTimeUtcFromDate` | Its type, or a `Date` | ISO text        |
 
-An invalid `Date` has no ISO text, so it goes out as `String(value)`, which is `Invalid Date`. A
-schema such as `Schema.Date` refuses it before that, with a `SchemaError`. A raw record takes a
-`Date` too, in the object form of `Request.setQuery`, which turns it into text when the request is
-defined, so a later change to that `Date` changes nothing. As a default it goes through the schema
-like any other [raw value](#a-schema-states-the-shape-of-its-group).
+An invalid `Date` has no ISO text, so it goes out as the literal `Invalid Date`. A schema such as
+`Schema.Date` refuses it before that, with a `SchemaError`. A raw record takes a `Date` too, in the
+object form of `Request.setQuery`, which turns it into text when the request is defined, so a later
+change to that `Date` changes nothing. As a default it goes through the schema like any other [raw
+value](#a-schema-states-the-shape-of-its-group).
 
 Headers stay text. Date headers such as `If-Modified-Since` use the HTTP date format, not ISO, so
 `Transport.HeaderInput` has no `Date`, and a header schema writes its own text.
