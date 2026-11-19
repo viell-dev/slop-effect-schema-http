@@ -1,5 +1,14 @@
-import { describe, expect, expectTypeOf, it } from "@effect/vitest";
-import { Effect, Exit, Option, Redacted, Schema } from "effect";
+import { runInNewContext } from "node:vm";
+import { describe, expect, expectTypeOf, it, vi } from "@effect/vitest";
+import {
+  Chunk,
+  DateTime,
+  Effect,
+  Exit,
+  Option,
+  Redacted,
+  Schema,
+} from "effect";
 import { HttpBody, HttpClientError, UrlParams } from "effect/http";
 import {
   empty as emptyReply,
@@ -56,212 +65,6 @@ const jsonRefusal = (
     );
     expect(error.message).toContain(message);
   });
-
-// https://github.com/viell-dev/slop-effect-schema-http/issues/256
-// Gaps the #260 review found in the writers. Each pin records the current outcome.
-describe("writer gaps from the #260 review", () => {
-  const symbol = Symbol("extra");
-  const form = Body.formData.pipe(
-    Body.encodeSchema(Schema.fromFormData(Schema.Struct({}))),
-  );
-  const failureOf = <E>(write: Effect.Effect<HttpBody.HttpBody, E>) =>
-    Effect.map(Effect.flip(write), (error) => error as unknown);
-  const deep = (count: number) => {
-    const root: unknown[] = [];
-    let tail = root;
-    for (let index = 0; index < count; index++) {
-      const child: unknown[] = [];
-      tail.push(child);
-      tail = child;
-    }
-    return root;
-  };
-  class OtherFormData {
-    readonly #entries: Array<[string, string]> = [["k", "v"]];
-    append(name: string, value: string) {
-      this.#entries.push([name, value]);
-    }
-    entries() {
-      return this.#entries[Symbol.iterator]();
-    }
-    get [Symbol.toStringTag]() {
-      return "FormData";
-    }
-  }
-
-  it.effect(
-    "currently drops a symbol field through the ObjectKeyword JSON codec",
-    () =>
-      Effect.gen(function* () {
-        const body = yield* Body.jsonSchema(Schema.ObjectKeyword).encode({
-          a: 1,
-          [symbol]: "kept",
-        });
-        expect(textOf(body)).toBe('{"a":1}');
-      }),
-  );
-
-  it.effect.fails(
-    "refuses a symbol field the ObjectKeyword JSON codec drops",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* failureOf(
-          Body.jsonSchema(Schema.ObjectKeyword).encode({
-            a: 1,
-            [symbol]: "kept",
-          }),
-        );
-        expect(error).toBeInstanceOf(Schema.SchemaError);
-      }),
-  );
-
-  it.effect(
-    "currently writes objects whose content is not in their fields",
-    () =>
-      Effect.gen(function* () {
-        expect(
-          textOf(yield* Body.json.encode({ v: new Map([["k", "v"]]) })),
-        ).toBe('{"v":{}}');
-        expect(
-          textOf(yield* Body.json.encode({ v: Object(Symbol("s")) })),
-        ).toBe('{"v":{}}');
-        const error = yield* failureOf(
-          Body.json.encode({ v: new Blob(["x"]) }),
-        );
-        expect(error).toHaveProperty(
-          "message",
-          expect.stringContaining("[Symbol(kHandle)]"),
-        );
-        const root = yield* form.encode(new URLSearchParams("k=v"));
-        expect(body(root).formData.has("k")).toBe(false);
-      }),
-  );
-
-  it.effect.fails("refuses objects whose content is not in their fields", () =>
-    Effect.gen(function* () {
-      for (const v of [
-        new Map([["k", "v"]]),
-        Object(Symbol("s")),
-        new Blob(["x"]),
-      ]) {
-        const error = yield* failureOf(Body.json.encode({ v }));
-        expect(error).toHaveProperty(
-          "message",
-          expect.stringContaining("cannot encode"),
-        );
-      }
-      yield* Effect.flip(form.encode(new URLSearchParams("k=v")));
-    }),
-  );
-
-  it.effect("currently refuses a FormData from another implementation", () =>
-    Effect.gen(function* () {
-      const other = new OtherFormData() as unknown as FormData;
-      const error = yield* failureOf(Body.formData.encode(other));
-      expect(error).toBeInstanceOf(Schema.SchemaError);
-      expect(body(yield* form.encode(other)).formData.has("k")).toBe(false);
-    }),
-  );
-
-  it.effect.fails("sends a FormData from another implementation as it is", () =>
-    Effect.gen(function* () {
-      const other = new OtherFormData() as unknown as FormData;
-      expect(body(yield* Body.formData.encode(other)).formData).toBe(other);
-    }),
-  );
-
-  it.effect(
-    "currently coerces or drops what text, bytes and empty receive",
-    () =>
-      Effect.gen(function* () {
-        expect(textOf(yield* Body.text.encode({ a: 1 } as never))).toBe(
-          "[object Object]",
-        );
-        expect(bytesOf(yield* Body.bytes.encode(["a"] as never))).toEqual([
-          "a",
-        ]);
-        expect((yield* Body.empty.encode("kept" as never))._tag).toBe("Empty");
-      }),
-  );
-
-  it.effect.fails("refuses what text, bytes and empty cannot write", () =>
-    Effect.gen(function* () {
-      yield* Effect.flip(Body.text.encode({ a: 1 } as never));
-    }),
-  );
-
-  it.effect("currently dies on deep arrays and a null-prototype Number", () =>
-    Effect.gen(function* () {
-      for (const value of [deep(3_000), Object.setPrototypeOf(Object(5), null)])
-        expect(
-          Exit.isFailure(yield* Effect.exit(Body.json.encode(value))),
-        ).toBe(true);
-      const exit = yield* Effect.exit(Body.json.encode(deep(3_000)));
-      expect(exit).toMatchObject({
-        cause: { reasons: [{ _tag: "Die", defect: expect.any(RangeError) }] },
-      });
-    }),
-  );
-
-  it.effect.fails("writes 4,000 nested arrays and types engine failures", () =>
-    Effect.gen(function* () {
-      expect(textOf(yield* Body.json.encode(deep(4_000)))).toHaveLength(8_002);
-    }),
-  );
-
-  it.effect(
-    "currently refuses an empty form list and keeps extra JSON array fields",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* failureOf(form.encode({ k: [] }));
-        expect(error).toBeInstanceOf(Schema.SchemaError);
-        expect(
-          textOf(
-            yield* Body.json.encode({
-              v: Object.assign([1], { extra: "keep" }),
-            }),
-          ),
-        ).toBe('{"v":[1]}');
-      }),
-  );
-
-  it.effect.fails(
-    "writes nothing for an empty form list and refuses extra array fields",
-    () =>
-      Effect.gen(function* () {
-        yield* form.encode({ k: [] });
-        yield* Effect.flip(
-          Body.json.encode({ v: Object.assign([1], { extra: "keep" }) }),
-        );
-      }),
-  );
-
-  it.effect("currently reports form writer refusals as SchemaError", () =>
-    Effect.gen(function* () {
-      expect(yield* failureOf(form.encode({ v: 1 }))).toBeInstanceOf(
-        Schema.SchemaError,
-      );
-      expect(
-        yield* failureOf(
-          Body.urlEncoded.encode(UrlParams.make([["k", 1 as never]])),
-        ),
-      ).toBeInstanceOf(Schema.SchemaError);
-    }),
-  );
-
-  it.effect.fails("reports form writer refusals as HttpBodyError", () =>
-    Effect.gen(function* () {
-      expect(yield* failureOf(form.encode({ v: 1 }))).toBeInstanceOf(
-        HttpBody.HttpBodyError,
-      );
-    }),
-  );
-});
-
-const body = (value: HttpBody.HttpBody) => {
-  if (value._tag !== "FormData") throw new Error(`body is ${value._tag}`);
-  return value;
-};
 
 describe("writer protection for open schemas", () => {
   const open = Schema.Struct({});
@@ -444,22 +247,22 @@ describe("writer protection for open schemas", () => {
 
   it.effect("refuses values that multipart would omit, with their path", () =>
     Effect.gen(function* () {
-      for (const input of [
-        { v: NaN, extra: "keep" },
-        { v: null },
-        { v: [] },
-        { v: new Date(0) },
-      ]) {
+      const leaf = "must be text, a Blob or File, or a form container";
+      for (const [input, message] of [
+        [{ v: NaN, extra: "keep" }, `$["v"] ${leaf}`],
+        [{ v: null }, `$["v"] ${leaf}`],
+        [{ v: new Date(0) }, '$["v"] cannot encode Date'],
+        [{ v: ["keep", { inner: 1 }] }, `$["v"][1]["inner"] ${leaf}`],
+        [
+          { v: ["keep", undefined] },
+          '$["v"][1] cannot encode undefined in a list',
+        ],
+        [{ [symbol]: "v" }, "$[Symbol(extra)] must have a string field name"],
+      ] as const) {
         const error = yield* Effect.flip(multipart.encode(input));
-        expect(error).toBeInstanceOf(Schema.SchemaError);
-        expect(error.message).toContain('["v"]');
+        expect(error).toBeInstanceOf(HttpBody.HttpBodyError);
+        expect(error.message).toBe(`Multipart body at ${message}`);
       }
-      const nested = yield* Effect.flip(
-        multipart.encode({ v: ["keep", { inner: 1 }] }),
-      );
-      expect(nested.message).toContain('["v"][1]["inner"]');
-      const name = yield* Effect.flip(multipart.encode({ [symbol]: "v" }));
-      expect(name.message).toContain("[Symbol(extra)]");
     }),
   );
 
@@ -550,6 +353,411 @@ describe("writer protection for open schemas", () => {
         ).toBe("k=a%2Bb");
       }),
   );
+});
+
+const bodyError = <A>(write: Effect.Effect<A, unknown>, message: string) =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(write);
+    expect(error).toBeInstanceOf(HttpBody.HttpBodyError);
+    expect(error).toHaveProperty("message", message);
+  });
+
+const deepArray = (count: number) => {
+  const root: unknown[] = [];
+  let tail = root;
+  for (let index = 0; index < count; index++) {
+    const child: unknown[] = [];
+    tail.push(child);
+    tail = child;
+  }
+  return root;
+};
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/256
+describe("writers keep or refuse what they cannot write", () => {
+  const symbol = Symbol("extra");
+  const form = Body.formData.pipe(
+    Body.encodeSchema(Schema.fromFormData(Schema.Struct({}))),
+  );
+  const urlForm = Body.encoder((params: URLSearchParams) =>
+    Effect.sync(() =>
+      HttpBody.text(params.toString(), "application/x-www-form-urlencoded"),
+    ),
+  ).pipe(Body.encodeSchema(Schema.fromURLSearchParams(Schema.Struct({}))));
+  it.effect("refuses JSON objects whose content is not in their fields", () =>
+    Effect.gen(function* () {
+      for (const [kind, value] of [
+        ["Map", new Map([["k", "v"]])],
+        ["Set", new Set(["v"])],
+        ["WeakMap", new WeakMap()],
+        ["WeakSet", new WeakSet()],
+        ["ArrayBuffer", new ArrayBuffer(1)],
+        ["Uint8Array", new Uint8Array([65])],
+        ["Float64Array", new Float64Array([1])],
+        ["DataView", new DataView(new ArrayBuffer(1))],
+        ["RegExp", /x/],
+        ["Error", new Error("hidden")],
+        ["URLSearchParams", new URLSearchParams("k=v")],
+        ["FormData", new FormData()],
+        ["Headers", new Headers({ k: "v" })],
+        ["Blob", new Blob(["bytes"])],
+        ["File", new File(["bytes"], "sample.txt")],
+        ["Promise", Promise.resolve(1)],
+        ["a boxed symbol", Object(Symbol("s")) as object],
+      ] as const) {
+        const message = `JSON body at $["v"] cannot encode ${kind}`;
+        yield* jsonRefusal(Body.json.encode({ v: value }), message);
+        yield* jsonRefusal(
+          Body.json.encode({ v: { toJSON: () => value } }),
+          message,
+        );
+      }
+      const reparented = Object.setPrototypeOf(new Map([["k", 1]]), null);
+      yield* jsonRefusal(
+        Body.json.encode([reparented]),
+        "$[0] cannot encode Map",
+      );
+      const map = Body.json.pipe(
+        Body.encodeSchema(Schema.ReadonlyMap(Schema.String, Schema.Number)),
+      );
+      yield* jsonRefusal(
+        map.encode(new Map([["k", 1]])),
+        "$ cannot encode Map",
+      );
+    }),
+  );
+
+  it.effect(
+    "writes objects whose content is their fields or their toJSON",
+    () =>
+      Effect.gen(function* () {
+        class Point {
+          constructor(
+            readonly x: number,
+            readonly y: number,
+          ) {}
+        }
+        class Person extends Schema.Class<Person>("Person")({
+          name: Schema.String,
+        }) {}
+        const omitted = { toJSON: () => undefined };
+        const value = {
+          plain: { a: 1 },
+          empty: {},
+          bare: Object.assign(Object.create(null) as object, { a: 1 }),
+          point: new Point(1, 2),
+          person: new Person({ name: "Ada" }),
+          option: Option.some(1),
+          chunk: Chunk.make("value"),
+          stamp: DateTime.makeUnsafe("2026-01-01"),
+          invalid: new Date(NaN),
+          boxes: [Object(1), Object("s"), Object(false)],
+          omitted,
+        };
+        const text = textOf(yield* Body.json.encode(value));
+        expect(text).toBe(JSON.stringify(value));
+        expect(JSON.parse(text)).toMatchObject({ invalid: null });
+        yield* jsonRefusal(
+          Body.json.encode([omitted]),
+          "$[0] cannot encode undefined in an array",
+        );
+      }),
+  );
+
+  it("calls an inherited toJSON once per value, as native JSON does", () => {
+    let calls = 0;
+    Object.defineProperty(Object.prototype, "toJSON", {
+      value(this: unknown) {
+        calls++;
+        return this;
+      },
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const value = { a: [1, { b: 2 }] };
+      const text = textOf(Effect.runSync(Body.json.encode(value)));
+      const written = calls;
+      calls = 0;
+      expect(text).toBe(JSON.stringify(value));
+      expect(written).toBe(calls);
+    } finally {
+      delete (Object.prototype as { toJSON?: unknown }).toJSON;
+    }
+  });
+
+  it.effect("refuses extra fields on arrays and boxes", () =>
+    Effect.gen(function* () {
+      const converted = Object.assign(Object(1), {
+        [Symbol.toPrimitive]: () => 5,
+      });
+      expect(textOf(yield* Body.json.encode({ v: converted }))).toBe('{"v":5}');
+      yield* jsonRefusal(
+        Body.json.encode({ v: Object.assign([1], { extra: "kept" }) }),
+        '$["v"]["extra"] cannot encode an extra array field',
+      );
+      yield* jsonRefusal(
+        Body.json.encode({ v: Object.assign([1], { [symbol]: "kept" }) }),
+        '$["v"][Symbol(extra)] cannot encode an extra array field',
+      );
+      yield* jsonRefusal(
+        Body.json.encode({ v: Object.assign(Object(1), { extra: "kept" }) }),
+        '$["v"]["extra"] cannot encode a field of a boxed number',
+      );
+      const accessor = Object.defineProperty([1], "extra", {
+        get: () => {
+          throw new Error("an accessor outside the positions is not read");
+        },
+        enumerable: true,
+      });
+      yield* jsonRefusal(
+        Body.json.encode(accessor),
+        '$["extra"] cannot encode an extra array field',
+      );
+      const absent = Object.assign([1], { extra: undefined });
+      expect(textOf(yield* Body.json.encode(absent))).toBe("[1]");
+    }),
+  );
+
+  it.effect("refuses symbol fields Effect drops before the JSON writer", () =>
+    Effect.gen(function* () {
+      const keyword = Body.jsonSchema(Schema.ObjectKeyword);
+      const nested = Body.jsonSchema(
+        Schema.Struct({ p: Schema.Array(Schema.ObjectKeyword) }),
+      );
+      const indexed = Body.jsonSchema(
+        Schema.Record(Schema.String, Schema.FiniteFromString),
+      );
+      const suspended = Body.jsonSchema(
+        Schema.suspend(() => Schema.Record(Schema.String, Schema.Unknown)),
+      );
+      for (const [encode, path] of [
+        [keyword.encode({ a: "1", [symbol]: "kept" }), "at [Symbol(extra)]"],
+        [
+          nested.encode({ p: [{ a: "1", [symbol]: "kept" }] }),
+          'at ["p"][0][Symbol(extra)]',
+        ],
+        [indexed.encode({ a: "1", [symbol]: "kept" }), "at [Symbol(extra)]"],
+        [indexed.encode({ a: 1, [symbol]: "kept" }), "at [Symbol(extra)]"],
+        [suspended.encode({ a: 1, [symbol]: "kept" }), "at [Symbol(extra)]"],
+      ] as const) {
+        const error = yield* Effect.flip(encode);
+        expect(error).toBeInstanceOf(Schema.SchemaError);
+        expect(error.message).toContain(path);
+      }
+      // A nested value keeps its identity through the ObjectKeyword codec, so the writer sees it.
+      yield* jsonRefusal(
+        keyword.encode({ a: { [symbol]: "kept" } }),
+        '$["a"][Symbol(extra)] cannot encode a symbol field name',
+      );
+    }),
+  );
+
+  it.effect("keeps the native depth limit and types engine failures", () =>
+    Effect.gen(function* () {
+      expect(textOf(yield* Body.json.encode(deepArray(4_000)))).toBe(
+        "[".repeat(4_001) + "]".repeat(4_001),
+      );
+      const failure = yield* Effect.flip(Body.json.encode(deepArray(20_000)));
+      expect(failure.reason._tag).toBe("JsonError");
+      expect(failure.cause).toBeInstanceOf(RangeError);
+      expect(failure.message).toContain("JSON body could not be written");
+      for (const box of [
+        Object.setPrototypeOf(Object(5), null),
+        Object.setPrototypeOf(Object("s"), null),
+      ])
+        yield* jsonRefusal(Body.json.encode(box), "$ cannot convert a boxed");
+    }),
+  );
+
+  it.effect("refuses what text, bytes and empty bodies cannot write", () =>
+    Effect.gen(function* () {
+      for (const [write, message] of [
+        [
+          Body.text.encode({ a: "1" } as never),
+          "Text body at $ must be a string",
+        ],
+        [
+          Body.bytes.encode(["a", "b"] as never),
+          "Bytes body at $ must be a Uint8Array",
+        ],
+        [
+          Body.bytes.encode(new Uint16Array([1]) as never),
+          "Bytes body at $ must be a Uint8Array",
+        ],
+        [
+          Body.empty.encode("kept" as never),
+          "Empty body at $ must have no value",
+        ],
+        [
+          Body.text.pipe(Body.encodeSchema(Schema.Any)).encode({ a: 1 }),
+          "Text body at $ must be a string",
+        ],
+      ] as const)
+        yield* bodyError(write, message);
+      const bytes = runInNewContext("new Uint8Array([65])") as Uint8Array;
+      expect(textOf(yield* Body.bytes.encode(bytes))).toBe("A");
+      expect(textOf(yield* Body.bytes.encode(Buffer.from("B")))).toBe("B");
+      expect((yield* Body.empty.encode(undefined))._tag).toBe("Empty");
+    }),
+  );
+
+  it.effect(
+    "sends a form from another implementation and refuses a non-form",
+    () =>
+      Effect.gen(function* () {
+        class OtherFormData {
+          readonly #entries: Array<[string, string]> = [["k", "v"]];
+          append(name: string, value: string) {
+            this.#entries.push([name, value]);
+          }
+          entries() {
+            return this.#entries[Symbol.iterator]();
+          }
+          get [Symbol.toStringTag]() {
+            return "FormData";
+          }
+        }
+        const other = new OtherFormData() as unknown as FormData;
+        for (const write of [Body.formData.encode(other), form.encode(other)]) {
+          const body = yield* write;
+          expect(body._tag === "FormData" && body.formData).toBe(other);
+        }
+        for (const value of [{ k: "v" }, new URLSearchParams("k=v"), "k=v"])
+          yield* bodyError(
+            Body.formData.encode(value as never),
+            "Multipart body at $ must be FormData",
+          );
+      }),
+  );
+
+  it.effect(
+    "writes empty form containers as no entries and refuses what forms drop",
+    () =>
+      Effect.gen(function* () {
+        const body = yield* form.encode({
+          none: [],
+          nothing: {},
+          bare: Object.create(null) as object,
+          foreign: runInNewContext("({})") as object,
+          k: "v",
+        });
+        expect(
+          body._tag === "FormData" && Array.from(body.formData.entries()),
+        ).toEqual([["k", "v"]]);
+        const cycle: Record<string, unknown> = { k: "v" };
+        cycle["self"] = cycle;
+        for (const [input, message] of [
+          [
+            { v: Object.assign(["a"], { extra: "keep" }) },
+            '$["v"]["extra"] cannot encode an extra array field',
+          ],
+          [cycle, '$["self"] contains circular form data'],
+          [new URLSearchParams("k=v"), "$ cannot encode URLSearchParams"],
+          [new Map([["k", "v"]]), "$ cannot encode Map"],
+          [{ v: Object("s") as object }, '$["v"] cannot encode a boxed string'],
+          [
+            { v: Redacted.make("secret") },
+            '$["v"] has no own fields a form can write',
+          ],
+        ] as const)
+          yield* bodyError(form.encode(input), `Multipart body at ${message}`);
+        yield* bodyError(
+          urlForm.encode({ v: new Blob(["x"]) }),
+          'URL-encoded body at $["v"] cannot encode Blob',
+        );
+        yield* bodyError(
+          urlForm.encode({ v: 1 }),
+          'URL-encoded body at $["v"] must be text or a form container',
+        );
+        let nested: Record<string, unknown> = { leaf: "v" };
+        for (let index = 0; index < 5_000; index++) nested = { n: nested };
+        const deepForm = yield* form.encode(nested);
+        expect(
+          deepForm._tag === "FormData" &&
+            Array.from(deepForm.formData.keys()).map((key) => key.length),
+        ).toEqual(["n".length + "[n]".length * 4_999 + "[leaf]".length]);
+      }),
+  );
+
+  it.effect("reports URL-encoded pair refusals with their path", () =>
+    Effect.gen(function* () {
+      for (const [params, message] of [
+        [UrlParams.make([["k", 1 as never]]), '$["k"] must be a string'],
+        [
+          { params: Object.assign([["k", "v"]], { extra: "keep" }) },
+          '$["extra"] cannot encode an extra array field',
+        ],
+        [
+          { params: [Object.assign(["k", "v"], { extra: "keep" })] },
+          '$[0]["extra"] cannot encode an extra array field',
+        ],
+        [{ k: "v" }, "$ must contain an array of pairs"],
+      ] as const)
+        yield* bodyError(
+          Body.urlEncoded.encode(params as never),
+          `URL-encoded body at ${message}`,
+        );
+    }),
+  );
+
+  it("checks values in the portable JSON path without Node brand helpers", async () => {
+    const builtin = Object.getOwnPropertyDescriptor(
+      process,
+      "getBuiltinModule",
+    )!;
+    const portable = await (async () => {
+      try {
+        Object.defineProperty(process, "getBuiltinModule", {
+          ...builtin,
+          value: undefined,
+        });
+        vi.resetModules();
+        return await import("./internal/json-body.js");
+      } finally {
+        Object.defineProperty(process, "getBuiltinModule", builtin);
+        vi.resetModules();
+      }
+    })();
+    const write = (value: unknown) =>
+      Effect.runSync(Effect.exit(portable.encode(value)));
+    const written = (value: unknown) => {
+      const exit = write(value);
+      if (!Exit.isSuccess(exit)) throw new Error("expected a body");
+      return textOf(exit.value);
+    };
+    const refused = (value: unknown) => {
+      const exit = write(value);
+      const reason = Exit.isFailure(exit) ? exit.cause.reasons[0] : undefined;
+      return reason?._tag === "Fail" ? reason.error.message : "written";
+    };
+    expect(
+      written(runInNewContext("({ k: new Number(4), other: { x: 1 } })")),
+    ).toBe('{"k":4,"other":{"x":1}}');
+    expect(written({ empty: {}, bare: Object.create(null) as object })).toBe(
+      '{"empty":{},"bare":{}}',
+    );
+    for (const [expression, message] of [
+      [
+        "Object.setPrototypeOf(Object(2n), Object.prototype)",
+        "cannot encode a bigint",
+      ],
+      ["Object.setPrototypeOf(Object(2n), null)", "cannot encode a bigint"],
+      [
+        'Object.setPrototypeOf(Object(Symbol("x")), null)',
+        "cannot encode a boxed symbol",
+      ],
+      ["Object.setPrototypeOf(new Map([[1, 2]]), null)", "cannot encode Map"],
+      [
+        "Object.defineProperty(new Number(NaN), Symbol.toStringTag, { value: 'Plain' })",
+        "must be a finite number",
+      ],
+      ["new Number(NaN)", "must be a finite number"],
+      ['new Map([["k", "v"]])', "cannot encode Map"],
+    ] as const)
+      expect(refused({ v: runInNewContext(expression) })).toContain(message);
+    expect(refused({ v: new Blob(["bytes"]) })).toContain("cannot encode Blob");
+  });
 });
 
 describe("Body.json", () => {
@@ -710,7 +918,8 @@ describe("Body.formData", () => {
         const failure = yield* Effect.flip(
           Body.formData.pipe(Body.encodeSchema(Schema.Any)).encode({ k: "v" }),
         );
-        expect(failure).toBeInstanceOf(Schema.SchemaError);
+        expect(failure).toBeInstanceOf(HttpBody.HttpBodyError);
+        expect(failure.message).toBe("Multipart body at $ must be FormData");
       }),
   );
 
@@ -1119,7 +1328,7 @@ describe("a schema's value is built before it is encoded", () => {
   it("keeps an annotation with five parameters valid", () => {
     const codec: Body.Codec<
       string,
-      never,
+      HttpBody.HttpBodyError,
       HttpClientError.HttpClientError,
       never,
       never

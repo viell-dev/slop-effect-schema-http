@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { HttpClientRequest } from "effect/http";
+import { HttpBody, HttpClientRequest } from "effect/http";
 import { compile } from "../../test/request.js";
 import { bodyText } from "../../test/support.js";
 import * as Body from "./Body.js";
@@ -331,7 +331,7 @@ describe("Request.body", () => {
   it("takes a body as input on the GET and HEAD helpers", () => {
     for (const helper of [Request.get, Request.head]) {
       expectTypeOf(helper("/").pipe(Request.body(Body.text))).toEqualTypeOf<
-        Request.Request<{ readonly body: string }>
+        Request.Request<{ readonly body: string }, HttpBody.HttpBodyError>
       >();
     }
   });

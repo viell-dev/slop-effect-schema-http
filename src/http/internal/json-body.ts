@@ -1,138 +1,282 @@
 import { Effect } from "effect";
 import { HttpBody } from "effect/http";
+import { type Box, isBox, stateOf } from "./object-brand.js";
+import {
+  BodyWriteError,
+  checkedBody,
+  extraArrayField,
+  type Path,
+} from "./writer-error.js";
 
-const validationErrors = new WeakSet<object>();
-
-class InvalidJson extends TypeError {
-  constructor(message: string) {
-    super(message);
-    validationErrors.add(this);
-  }
-  static is(error: unknown): error is InvalidJson {
-    return (
-      typeof error === "object" && error !== null && validationErrors.has(error)
-    );
-  }
-}
-
-const numberValue = Number.prototype.valueOf;
-const bigintValue = BigInt.prototype.valueOf;
-// Node supplies non-observable brand tests. The fallback also works without Node globals.
-const boxed = globalThis.process?.getBuiltinModule?.("node:util")?.types;
-
-// Intrinsic valueOf reads the native brand even on reparented or cross-realm boxes.
-const hasBrand = (
-  value: object,
-  read: (this: object) => number | bigint,
-): boolean => {
-  try {
-    read.call(value);
-    return true;
-  } catch {
-    return false;
-  }
+const { isRawJSON } = JSON as JSON & {
+  isRawJSON?: (value: unknown) => boolean;
 };
 
-function segment(array: boolean | undefined, key: string | symbol): string {
-  return typeof key === "symbol"
-    ? "[" + String(key) + "]"
-    : "[" + (array ? key : JSON.stringify(key)) + "]";
+type Container = Record<string, unknown>;
+
+/**
+ * The prototype of a copied object. Its own prototype is `null`, so the final write finds no
+ * `toJSON` even if `Object.prototype` gains one, and a `__proto__` field stays a field. Objects
+ * made from it keep the engine's fast property layout, which `Object.create(null)` gives up.
+ */
+const copied = Object.create(null) as object;
+
+const isObject = (value: unknown): value is object =>
+  (typeof value === "object" && value !== null) || typeof value === "function";
+
+/** JSON's conversion of a boxed number or string, with caller conversions left unguarded. */
+function toPrimitive(value: object, hint: "number" | "string"): unknown {
+  const exotic: unknown = Reflect.get(value, Symbol.toPrimitive);
+  if (exotic !== undefined && exotic !== null) {
+    if (typeof exotic !== "function") return value;
+    const result: unknown = Reflect.apply(exotic, value, [hint]);
+    return isObject(result) ? value : result;
+  }
+  for (const name of hint === "string"
+    ? ["toString", "valueOf"]
+    : ["valueOf", "toString"]) {
+    const method: unknown = Reflect.get(value, name);
+    if (typeof method !== "function") continue;
+    const result: unknown = Reflect.apply(method, value, []);
+    if (!isObject(result)) return result;
+  }
+  return value;
 }
 
-const stringify = (input: unknown): string | undefined => {
-  const parents: object[] = [];
-  const names: string[] = [];
-  const arrays: boolean[] = [];
-  let deep: WeakSet<object> | undefined;
+/** Whether an own symbol field supplies a value: enumerable, and not `undefined` when read. */
+const supplies = (source: object, field: symbol): boolean =>
+  Object.prototype.propertyIsEnumerable.call(source, field) &&
+  Reflect.get(source, field) !== undefined;
 
-  function unwind(holder: object) {
-    while (parents.length > 0 && parents[parents.length - 1] !== holder) {
-      const parent = parents.pop()!;
-      deep?.delete(parent);
+/** The array length JSON reads, as `ToLength` gives it. */
+function lengthOf(array: ReadonlyArray<unknown>): number {
+  const length = Math.trunc(Number(array.length));
+  return Number.isNaN(length) || length < 0 ? 0 : length;
+}
+
+/** Positions of a string box are its characters, not fields JSON would drop. */
+const isStringPosition = (key: string, length: number) => {
+  const position = Number(key);
+  return (
+    Number.isInteger(position) &&
+    position >= 0 &&
+    position < length &&
+    String(position) === key
+  );
+};
+
+/** An open container: the value being read, its copy, and the next field or position to fill. */
+class Frame {
+  next = 0;
+  constructor(
+    readonly source: object,
+    readonly target: unknown[] | Container,
+    readonly fields: ReadonlyArray<string> | undefined,
+    readonly end: number,
+    readonly name: string | number,
+    readonly parent: Frame | undefined,
+    readonly depth: number,
+  ) {}
+}
+
+/**
+ * Read a value the way native JSON does, once, and copy what it would write.
+ *
+ * @remarks
+ * Every getter, proxy trap and `toJSON` runs here, in the native order: a field's value is read
+ * and written before the next field is read. The copy holds only primitives, prototype-free
+ * objects and arrays, so the native writer that serializes it runs no caller code and keeps its
+ * own depth limit. The traversal keeps its own stack, so an exception thrown while it runs came
+ * from caller code, and an exception from the native writer is the engine's.
+ */
+function snapshot(input: unknown): unknown {
+  let top: Frame | undefined;
+  let active: Set<object> | undefined;
+  // A polluted array prototype would offer the final write a `toJSON` for each copied array.
+  const shieldArrays = "toJSON" in Array.prototype;
+
+  const refuse = (
+    key: string | number,
+    explanation: string,
+    field?: PropertyKey,
+  ): never => {
+    const path: PropertyKey[] = field === undefined ? [] : [field];
+    if (top !== undefined) path.unshift(key);
+    for (let frame = top; frame?.parent !== undefined; frame = frame.parent)
+      path.unshift(frame.name);
+    throw new BodyWriteError("JSON", path as Path, explanation);
+  };
+
+  const open = (
+    source: object,
+    target: unknown[] | Container,
+    fields: ReadonlyArray<string> | undefined,
+    end: number,
+    key: string | number,
+  ) => {
+    const depth = top === undefined ? 0 : top.depth + 1;
+    if (active !== undefined) {
+      if (active.has(source))
+        return refuse(key, "contains a circular reference");
+    } else {
+      for (let frame = top; frame !== undefined; frame = frame.parent)
+        if (frame.source === source)
+          return refuse(key, "contains a circular reference");
+      // Deep values switch from a scan of the open containers to a set.
+      if (depth >= 32) {
+        active = new Set();
+        for (let frame = top; frame !== undefined; frame = frame.parent)
+          active.add(frame.source);
+      }
     }
-  }
+    active?.add(source);
+    top = new Frame(source, target, fields, end, key, top, depth);
+    return target;
+  };
 
-  function refuse(position: string | symbol, reason: string): never {
-    let path = "$";
-    for (let index = 1; index < parents.length; index++)
-      path += segment(arrays[index - 1], names[index]!);
-    if (parents.length > 0)
-      path += segment(arrays[parents.length - 1], position);
-    throw new InvalidJson("JSON body at " + path + " " + reason);
-  }
-
-  function checkSymbols(value: object) {
-    for (const key of Object.getOwnPropertySymbols(value)) {
-      if (
-        Object.prototype.propertyIsEnumerable.call(value, key) &&
-        Reflect.get(value, key) !== undefined
-      )
-        refuse(key, "cannot encode a symbol field name");
+  const object = (source: object, key: string | number): unknown => {
+    if (Array.isArray(source)) {
+      const length = lengthOf(source);
+      if (length > 0xffffffff)
+        return refuse(key, "has a length no array can hold");
+      const extra = extraArrayField(source, length);
+      if (extra !== undefined)
+        return refuse(key, "cannot encode an extra array field", extra);
+      const target: unknown[] = [];
+      if (shieldArrays) Object.setPrototypeOf(target, null);
+      return open(source, target, undefined, length, key);
     }
-  }
+    const fields = Object.keys(source);
+    // A raw JSON value is a frozen object whose one field is its text.
+    if (fields.length === 1 && fields[0] === "rawJSON" && isRawJSON?.(source))
+      return source;
+    const symbols = Object.getOwnPropertySymbols(source);
+    // Classify before reading any symbol field, so each one is read at most once.
+    const state = stateOf(source, fields.length === 0 && symbols.length === 0);
+    if (state !== undefined && !isBox(state))
+      return refuse(key, "cannot encode " + state);
+    if (state !== undefined) return unbox(source, state, fields, symbols, key);
+    const symbol = symbols.find((field) => supplies(source, field));
+    if (symbol !== undefined)
+      return refuse(key, "cannot encode a symbol field name", symbol);
+    return open(
+      source,
+      Object.create(copied) as Container,
+      fields,
+      fields.length,
+      key,
+    );
+  };
 
-  // The native traversal reads each position and applies toJSON before calling the replacer.
-  return JSON.stringify(input, function (this: object, key, value: unknown) {
-    if (value === null) return value;
+  const unbox = (
+    source: object,
+    box: Box,
+    fields: ReadonlyArray<string>,
+    symbols: ReadonlyArray<symbol>,
+    key: string | number,
+  ): unknown => {
+    if (box === "BigInt") return refuse(key, "cannot encode a bigint");
+    if (box === "Symbol") return refuse(key, "cannot encode a boxed symbol");
+    const kind = "a boxed " + box.toLowerCase();
+    const extra =
+      fields.find(
+        (field) =>
+          box !== "String" ||
+          !isStringPosition(field, (source as { length: number }).length),
+      ) ??
+      // The conversion of a boxed number or string reads its own `Symbol.toPrimitive`.
+      symbols.find(
+        (field) =>
+          (box === "Boolean" || field !== Symbol.toPrimitive) &&
+          supplies(source, field),
+      );
+    if (extra !== undefined)
+      return refuse(key, `cannot encode a field of ${kind}`, extra);
+    if (box === "Boolean") return Boolean.prototype.valueOf.call(source);
+    const primitive = toPrimitive(
+      source,
+      box === "String" ? "string" : "number",
+    );
+    if (isObject(primitive) || typeof primitive === "symbol")
+      return refuse(key, "cannot convert " + kind);
+    if (box === "String") return String(primitive);
+    if (typeof primitive === "bigint")
+      return refuse(key, "cannot convert " + kind);
+    const number = Number(primitive);
+    return Number.isFinite(number)
+      ? number
+      : refuse(key, "must be a finite number");
+  };
+
+  const read = (value: unknown, key: string | number, inArray: boolean) => {
+    if (isObject(value) || typeof value === "bigint") {
+      const toJSON: unknown =
+        typeof value === "bigint"
+          ? Reflect.get(Object(value), "toJSON", value)
+          : (value as { readonly toJSON?: unknown }).toJSON;
+      if (typeof toJSON === "function")
+        value = Reflect.apply(toJSON, value, [String(key)]);
+    }
     switch (typeof value) {
       case "string":
       case "boolean":
         return value;
       case "number":
-        if (Number.isFinite(value)) return value;
-        unwind(this);
-        return refuse(key, "must be a finite number");
+        return Number.isFinite(value)
+          ? value
+          : refuse(key, "must be a finite number");
       case "undefined":
-        unwind(this);
-        if (parents.length === 0 || !arrays[parents.length - 1]) return value;
-        return refuse(key, "cannot encode undefined in an array");
-      case "object": {
-        unwind(this);
-        const array = Array.isArray(value);
-        const maybeBox =
-          !array && (boxed === undefined || boxed.isBoxedPrimitive(value));
-        if (
-          maybeBox &&
-          (boxed?.isBigIntObject(value) ?? hasBrand(value, bigintValue))
-        )
-          return refuse(key, "cannot encode a bigint");
-        const unboxNumber =
-          maybeBox &&
-          (boxed?.isNumberObject(value) ?? hasBrand(value, numberValue));
-        if (deep?.has(value) ?? parents.includes(value))
-          return refuse(key, "contains a circular reference");
-        if (parents.length === 32 && deep === undefined)
-          deep = new WeakSet(parents);
-        if (deep !== undefined) deep.add(value);
-        names[parents.length] = key;
-        arrays[parents.length] = array;
-        parents.push(value);
-        checkSymbols(value);
-        if (!unboxNumber) return value;
-        // Match JSON's ToNumber, including any caller-defined conversion.
-        const number = +(value as unknown as number);
-        if (Number.isFinite(number)) return number;
-        unwind(this);
-        return refuse(key, "must be a finite number");
-      }
+        return inArray
+          ? refuse(key, "cannot encode undefined in an array")
+          : undefined;
+      case "object":
+        return value === null ? null : object(value, key);
       default:
-        unwind(this);
         return refuse(key, "cannot encode a " + typeof value);
     }
-  });
-};
+  };
+
+  const output = read(input, "", false);
+  while (top !== undefined) {
+    const frame = top;
+    const index = frame.next;
+    if (index === frame.end) {
+      active?.delete(frame.source);
+      top = frame.parent;
+      continue;
+    }
+    frame.next = index + 1;
+    const source = frame.source as Record<PropertyKey, unknown>;
+    const fields = frame.fields;
+    if (fields === undefined) {
+      (frame.target as unknown[])[index] = read(source[index], index, true);
+    } else {
+      const field = fields[index]!;
+      const value = read(source[field], field, false);
+      if (value !== undefined) (frame.target as Container)[field] = value;
+    }
+  }
+  return output;
+}
+
+/** The JSON writer shared by `Body.json`, composed JSON encoders and `Body.jsonSchema`. */
 export const encode = (value: unknown) =>
-  Effect.try({
-    try: () => HttpBody.text(stringify(value) ?? "", "application/json"),
-    catch: (cause) => cause,
-  }).pipe(
-    Effect.catch((cause) => {
-      if (!InvalidJson.is(cause)) return Effect.die(cause);
-      const error = new HttpBody.HttpBodyError({
-        reason: { _tag: "JsonError" },
-        cause,
-      });
-      error.message = cause.message;
-      return Effect.fail(error);
-    }),
+  Effect.flatMap(
+    checkedBody(() => snapshot(value)),
+    (output) =>
+      // Caller code ran in the snapshot. A throw here comes from the engine, such as its depth limit.
+      Effect.try({
+        try: () =>
+          HttpBody.text(JSON.stringify(output) ?? "", "application/json"),
+        catch: (cause) => {
+          const error = new HttpBody.HttpBodyError({
+            reason: { _tag: "JsonError" },
+            cause,
+          });
+          error.message =
+            "JSON body could not be written: " +
+            (cause instanceof Error ? cause.message : String(cause));
+          return error;
+        },
+      }),
   );
