@@ -131,8 +131,9 @@ which is its own `toJSON` result. The writer omits undefined object fields and e
 `undefined` as an empty outgoing body. Exceptions thrown by getters, proxies and `toJSON` are
 defects. A value an open schema rebuilds before the writer, such as a `Date` read by
 `Schema.ObjectKeyword`, is not covered
-([#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261)). The checks add no nesting
-limit of their own. Nesting deeper than the engine's own `JSON.stringify` allows fails with
+([#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261)), nor, as on 0.18.0, a
+symbol inside a declaration's type parameter, such as a record in an `Option`. The checks add no
+nesting limit of their own. Nesting deeper than the engine's own `JSON.stringify` allows fails with
 `HttpBodyError` too. That limit depends on the engine and its stack: Node 24 on Windows stops at
 about 4,700 levels, while Node 26 on Linux writes over a million. An empty incoming body is a
 decoding error. Choose `Body.jsonSchema` to validate the application shape, or `Body.empty` for a

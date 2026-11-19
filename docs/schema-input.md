@@ -501,12 +501,15 @@ remaining list limits under #241 and #243.
   and header writer checks its actual output values and refuses with the field path. JSON applies
   `toJSON` first, omits undefined object fields, and checks every array position below its length.
   These checks apply when using either `Body.jsonSchema` or a composed JSON encoder. A
-  string-indexed record that loses a supplied symbol, on either side of the schema, a class or a
-  link whose encoded end is such a record, and the canonical JSON codec of `Schema.ObjectKeyword`,
-  which copies only the string fields of an object and the positions of an array, report a
-  `SchemaError`. Not covered:
+  string-indexed record that loses a supplied symbol, on either side of the schema, including one
+  among a class's fields, a link whose encoded end is such a record, and the canonical JSON codec of
+  `Schema.ObjectKeyword`, which copies only the string fields of an object and the positions of an
+  array, report a `SchemaError`. Not covered:
   [#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261), a built-in that an open
-  schema rebuilds before the writer, such as a `Date` read by `Schema.ObjectKeyword`. See the [Body
+  schema rebuilds before the writer, such as a `Date` read by `Schema.ObjectKeyword`. Also not
+  covered, as on 0.18.0: a symbol inside a declaration's type parameter, such as
+  `Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`. A symbol key the schema
+  declares is written as it chooses, and one at a class's root is stripped. See the [Body
   guide](./modules/body.md#text-json-and-finite-body-limits) for writer rules. An opaque
   transformation can still choose its own encoded representation.
 - Once an encoded-only alias enables whole decoding of a list, a decoded-only item beside it can

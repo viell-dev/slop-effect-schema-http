@@ -190,14 +190,18 @@ representation it actually writes, in the same pass, so the check cannot disagre
 This applies to open schemas, the output of any selected union member, and encoders composed with
 `Body.encodeSchema`. Where Effect's schema reading itself drops a supplied value before any writer
 sees it, the schema read refuses instead. For example, a string-indexed record loses a supplied
-symbol field whether it constructs or decodes the value. So do a class, which keeps only its fields,
-and a link whose encoded end is such a record, as when a record decodes to a struct.
-`Schema.toCodecJson` of `Schema.ObjectKeyword` copies only the string fields of an object and the
-positions of an array. Those fail with `SchemaError`. An empty struct passes the symbol through, and
-the writer refuses it with `HttpBodyError`. Both name the symbol. Not covered:
+symbol field whether it constructs or decodes the value, including such a record among a class's
+fields, and so does a link whose encoded end is such a record, as when a record decodes to a struct.
+A symbol key the schema declares is the schema's to write, under whatever name it chooses, and one
+at a class's root is stripped, as a struct strips any key it does not state. `Schema.toCodecJson` of
+`Schema.ObjectKeyword` copies only the string fields of an object and the positions of an array.
+Those fail with `SchemaError`. An empty struct passes the symbol through, and the writer refuses it
+with `HttpBodyError`. Both name the symbol. Not covered:
 [#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261), a built-in that an open
 schema rebuilds before any writer sees it, such as a `Date` that `Schema.ObjectKeyword` turns into
-`{}`.
+`{}`. Also not covered, as on 0.18.0: a symbol inside a declaration's type parameter, such as
+`Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`, which the declaration's own
+codec reads and drops.
 
 `Body.jsonSchema` first encodes through the schema's canonical JSON codec (`Schema.toCodecJson`). It
 then shares the JSON writer with raw and composed `Body.json`. That writer reads each value once, in
@@ -207,8 +211,11 @@ in an array, including a hole, a defined enumerable symbol field, an own field b
 positions, and a non-array object whose content is not in its own enumerable fields. That last group
 covers built-in collections, binary data, `RegExp`, `Error`, `URLSearchParams`, `FormData`,
 `Headers`, `Blob`, `File` and boxed symbols, recognized by brand where a changed prototype or tag
-property hides them. A `toJSON` result follows the same rules; an invalid `Date` writes `null`, as
-its own `toJSON` returns, where a query writes the text
+property hides them. Without Node's `util.types`, as in a browser, two cases differ: a BigInt or
+symbol box whose prototype was changed and that has fields of its own is written as its fields, and
+an object with no fields that only inherits from a built-in's prototype, such as `Error.prototype`,
+is refused as that built-in. A `toJSON` result follows the same rules; an invalid `Date` writes
+`null`, as its own `toJSON` returns, where a query writes the text
 [`Invalid Date`](#a-query-value-can-be-a-date). A `toJSON` returning `undefined` omits an object
 field and is refused in an array. An undefined object field supplies nothing, and a top-level
 `undefined` yields an empty `application/json` body. The engine's `JSON.stringify` then writes the
