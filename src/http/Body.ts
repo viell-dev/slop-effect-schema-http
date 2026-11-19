@@ -8,6 +8,8 @@ import {
 import * as Inputs from "./internal/input.js";
 import * as FormBody from "./internal/form-body.js";
 import * as JsonBody from "./internal/json-body.js";
+import { isBytes } from "./internal/object-brand.js";
+import { BodyWriteError, checkedBody } from "./internal/writer-error.js";
 
 /**
  * Turn an application value into a finite outgoing HTTP body.
@@ -129,9 +131,18 @@ const decodeFailure = (
  * Read and write JSON without schema validation.
  *
  * @remarks
- * Encoding follows the value's JSON reading, including `toJSON`, and refuses values JSON
- * would silently omit or substitute. `undefined` produces an empty outgoing body. An empty
- * incoming body is a decoding failure. Use {@link jsonSchema} to validate application values.
+ * Encoding follows the value's own JSON reading, including `toJSON`, and fails with
+ * `HttpBodyError`, naming the position, for a value JSON would omit or replace: a non-finite
+ * number, a bigint, a function or symbol, `undefined` in an array, a defined enumerable symbol
+ * field, an array's own field beside its positions, or an object whose content is not in its own
+ * fields, such as a `Map`, binary data, a `Blob` or an `Error`. A `toJSON` result is checked the
+ * same way; an invalid `Date` writes `null`, as its `toJSON` returns. An `undefined` object field
+ * supplies nothing, and top-level `undefined` produces an empty outgoing body. Exceptions thrown
+ * by getters, proxies and `toJSON` are defects. Nesting deeper than the JavaScript engine's JSON
+ * writer allows, about 4,700 levels on Node 24, also fails with `HttpBodyError`.
+ *
+ * An empty incoming body is a decoding failure. Use {@link jsonSchema} to validate application
+ * values.
  */
 export const json: Codec<
   unknown,
@@ -153,32 +164,50 @@ export const json: Codec<
  * Read and write text, with `text/plain` as the media type.
  *
  * @remarks
- * Outgoing text is UTF-8. Incoming decoding delegates to the provider's `response.text`.
- * Fetch-backed providers ignore charset parameters, strip a leading UTF-8 BOM, and replace
- * malformed bytes with U+FFFD. Use {@link bytes} for strict or non-UTF-8 decoding.
+ * Outgoing text is UTF-8. Encoding a value that is not a string, which JavaScript or a schema such
+ * as `Schema.Any` can pass, fails with `HttpBodyError` instead of writing its string conversion.
+ * Incoming decoding delegates to the provider's `response.text`. Fetch-backed providers ignore
+ * charset parameters, strip a leading UTF-8 BOM, and replace malformed bytes with U+FFFD. Use
+ * {@link bytes} for strict or non-UTF-8 decoding.
  */
-export const text: Codec<string, never, HttpClientError.HttpClientError> = make(
-  {
-    encode: (value: string) => Effect.sync(() => HttpBody.text(value)),
-    decode: (response) => response.text,
-    mediaType: "text/plain",
-  },
-);
+export const text: Codec<
+  string,
+  HttpBody.HttpBodyError,
+  HttpClientError.HttpClientError
+> = make({
+  encode: (value: string) =>
+    checkedBody(() => {
+      if (typeof value !== "string")
+        throw new BodyWriteError("Text", [], "must be a string");
+      return HttpBody.text(value);
+    }),
+  decode: (response) => response.text,
+  mediaType: "text/plain",
+});
 
 /**
  * Read and write `Uint8Array` bodies as `application/octet-stream`.
  *
  * @remarks
- * Incoming bytes are buffered. Use a schema or custom decoder to interpret another encoding.
+ * Encoding a value that is not a `Uint8Array`, from any realm, fails with `HttpBodyError`. A Node
+ * `Buffer` is one. Incoming bytes are buffered. Use a schema or custom decoder to interpret another
+ * encoding.
  */
-export const bytes: Codec<Uint8Array, never, HttpClientError.HttpClientError> =
-  make<Uint8Array, never, HttpClientError.HttpClientError>({
-    encode: (value: Uint8Array) =>
-      Effect.sync(() => HttpBody.uint8Array(value)),
-    decode: (response) =>
-      Effect.map(response.arrayBuffer, (buffer) => new Uint8Array(buffer)),
-    mediaType: "application/octet-stream",
-  });
+export const bytes: Codec<
+  Uint8Array,
+  HttpBody.HttpBodyError,
+  HttpClientError.HttpClientError
+> = make({
+  encode: (value: Uint8Array) =>
+    checkedBody(() => {
+      if (!isBytes(value))
+        throw new BodyWriteError("Bytes", [], "must be a Uint8Array");
+      return HttpBody.uint8Array(value);
+    }),
+  decode: (response) =>
+    Effect.map(response.arrayBuffer, (buffer) => new Uint8Array(buffer)),
+  mediaType: "application/octet-stream",
+});
 
 /**
  * Read and write Web `FormData` as multipart form data.
@@ -187,10 +216,16 @@ export const bytes: Codec<Uint8Array, never, HttpClientError.HttpClientError> =
  * The transport supplies the outgoing multipart boundary and its Content-Type. A Content-Type the
  * request declares replaces it, and without the boundary the body cannot be read. Decoding
  * delegates to the HTTP provider.
+ *
+ * A form is recognized as Fetch implementations recognize one, by its `FormData` tag and its
+ * `append` method, so a form from another realm or implementation, such as the `undici` package
+ * used with its own `fetch`, is sent as it is. Encoding anything else fails with `HttpBodyError`.
+ * To build the form from a schema's fields, compose {@link encodeSchema} with
+ * `Schema.fromFormData`.
  */
 export const formData: Codec<
   FormData,
-  Schema.SchemaError,
+  HttpBody.HttpBodyError,
   HttpClientError.HttpClientError
 > = make({
   encode: FormBody.encodeFormData,
@@ -203,11 +238,14 @@ export const formData: Codec<
  *
  * @remarks
  * Construct values with `UrlParams.fromInput` from `effect/http`. The media type is
- * `application/x-www-form-urlencoded`.
+ * `application/x-www-form-urlencoded`. Each pair writes its text, or a redacted text's value.
+ * Encoding a value that is not `UrlParams`, such as a plain record from JavaScript, or a pair that
+ * is malformed, has a value other than text, or has an own field beside its positions, fails with
+ * `HttpBodyError` naming the position.
  */
 export const urlEncoded: Codec<
   UrlParams.UrlParams,
-  Schema.SchemaError,
+  HttpBody.HttpBodyError,
   HttpClientError.HttpClientError
 > = make({
   encode: FormBody.encodeUrlParams,
@@ -222,11 +260,21 @@ const isEmptyBody = (error: HttpClientError.HttpClientError) =>
  * Send no body, or discard an incoming body when its content is not needed.
  *
  * @remarks
- * Decoding drains even unexpected incoming bytes without buffering them. Draining has no
- * intrinsic timeout; use an attempt or operation timeout for an unbounded response.
+ * Encoding takes no value. One that JavaScript or a schema supplies fails with `HttpBodyError`
+ * instead of being dropped. Decoding drains even unexpected incoming bytes without buffering them.
+ * Draining has no intrinsic timeout; use an attempt or operation timeout for an unbounded response.
  */
-export const empty: Codec<void, never, HttpClientError.HttpClientError> = make({
-  encode: () => Effect.succeed(HttpBody.empty),
+export const empty: Codec<
+  void,
+  HttpBody.HttpBodyError,
+  HttpClientError.HttpClientError
+> = make({
+  encode: (value: void) =>
+    checkedBody(() => {
+      if (value !== undefined)
+        throw new BodyWriteError("Empty", [], "must have no value");
+      return HttpBody.empty;
+    }),
   decode: (response) =>
     Stream.runDrain(response.stream).pipe(
       Effect.catchIf(isEmptyBody, () => Effect.void),
@@ -289,7 +337,16 @@ export const schema = <S extends Schema.Constraint>(contract: S) => {
  * The schema's encoded type must match the underlying encoder's input. Returns an encoder only;
  * use {@link schema} for the decoding direction. The input takes either side of the schema, or a
  * mix by field, as `Request.Input` describes, so a plain object works for a `Schema.Class`, and
- * the underlying encoder receives what the schema writes.
+ * the underlying encoder receives what the schema writes. The schema's failures are
+ * `SchemaError`, including a supplied symbol field a record would drop.
+ *
+ * `Schema.fromFormData` and `Schema.fromURLSearchParams` write their entries with the bracket
+ * paths and repeated names Effect uses. Each leaf must be text, or for multipart a `Blob` or
+ * `File`; an empty list or plain object writes no entries. A value those links would skip instead,
+ * such as a number, `null`, a `Date`, an object of another kind with no own fields, an own field
+ * beside a list's positions or a symbol field, fails with `HttpBodyError` naming its field, as the
+ * direct form encoders do. A form that is already
+ * prepared, from any implementation, is kept as it is.
  */
 export const encodeSchema = <S extends Schema.Top>(contract: S) => {
   const encode = Inputs.encoder(contract, FormBody.codec(contract));
@@ -297,11 +354,14 @@ export const encodeSchema = <S extends Schema.Top>(contract: S) => {
     self: Encoder<S["Encoded"], E, R>,
   ): Encoder<
     Inputs.Input<S>,
-    E | Schema.SchemaError,
+    E | Schema.SchemaError | HttpBody.HttpBodyError,
     R | S["EncodingServices"] | S["DecodingServices"]
   > =>
     encoder((value: Inputs.Input<S>) =>
-      Effect.flatMap(encode(value), self.encode),
+      Effect.flatMap(
+        Effect.mapError(encode(value), FormBody.encodingError),
+        self.encode,
+      ),
     );
 };
 
@@ -335,7 +395,7 @@ export const jsonSchema = <S extends Schema.Top>(
   Inputs.Input<S>
 > => {
   const codec = Schema.toCodecJson(contract);
-  const encode = Inputs.encoder(contract, codec);
+  const encode = Inputs.encoder(contract, codec, true);
   return make({
     encode: (value: Inputs.Input<S>) =>
       Effect.flatMap(encode(value), json.encode),

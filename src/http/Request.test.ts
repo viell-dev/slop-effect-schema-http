@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option, Redacted, Schema } from "effect";
-import { HttpClientRequest, UrlParams } from "effect/http";
+import { HttpBody, HttpClientRequest, UrlParams } from "effect/http";
 import { compile, urlOf } from "../../test/request.js";
 import { bodyText } from "../../test/support.js";
 import * as Body from "./Body.js";
@@ -495,7 +495,7 @@ describe("reusable request transforms", () => {
   it("keeps the request's input, errors and services", () => {
     const afterBody = Request.del("/").pipe(Request.body(Body.text), tunnel);
     expectTypeOf(afterBody).toEqualTypeOf<
-      Request.Request<{ readonly body: string }>
+      Request.Request<{ readonly body: string }, HttpBody.HttpBodyError>
     >();
     expectTypeOf(Request.get("/").pipe(tunnel)).toEqualTypeOf<
       Request.Request<unknown>
