@@ -15,6 +15,7 @@ import {
 } from "effect/http";
 import type * as Body from "./Body.js";
 import * as FieldPairs from "./internal/field-pairs.js";
+import { checked as checkGroup } from "./internal/writer-error.js";
 import * as Fields from "./internal/fields.js";
 import * as GroupEncoding from "./internal/group-encoding.js";
 import * as Inputs from "./internal/input.js";
@@ -619,7 +620,8 @@ const editQuery =
  *
  * In the object form each key replaces its name as above, in key order, and other names stay. A key
  * set to `undefined` removes that name's declarations and stops no automatic value, which is what
- * {@link removeHeader} is for.
+ * {@link removeHeader} is for. A defined enumerable symbol field throws `TypeError`, because no
+ * header line can carry it.
  */
 export const setHeader: {
   (name: string, value: FieldValue): Edit;
@@ -717,9 +719,10 @@ const computedQueryValue =
  * supplies and encodes it after the caller leaves it out, as {@link query} describes.
  *
  * The object form takes {@link QueryFields}. Each key replaces its name as above, in key order, and
- * other names stay. Both forms throw `TypeError` when a fixed value cannot be written. A computed
- * value must return a scalar or `undefined`. Use {@link appendQuery} for exact order across
- * repeated names.
+ * other names stay. Both forms throw `TypeError` when a fixed value cannot be written, as
+ * `UrlEncoding.queryEntries` describes, and the object form also for a defined enumerable symbol
+ * field. A computed value must return a scalar or `undefined`. Use {@link appendQuery} for exact
+ * order across repeated names.
  */
 export const setQuery: {
   (name: string, value: FieldValue<string | null>): Edit;
@@ -846,18 +849,6 @@ const invalidHeaderFields = (cause: TypeError) =>
     message: GroupEncoding.headerErrorMessage(cause),
     cause,
   });
-
-/** Convert the expected validation error at each boundary, preserving caller-code defects. */
-const checkGroup = <A>(
-  read: () => A,
-  isInvalid: (cause: unknown) => cause is TypeError,
-  invalid: (cause: TypeError) => InvalidRequest,
-) =>
-  Effect.try({ try: read, catch: (cause) => cause }).pipe(
-    Effect.catch((cause) =>
-      isInvalid(cause) ? Effect.fail(invalid(cause)) : Effect.die(cause),
-    ),
-  );
 
 /** Names only, and only those that would go: what the schema kept fits it. */
 const lostFields = (
