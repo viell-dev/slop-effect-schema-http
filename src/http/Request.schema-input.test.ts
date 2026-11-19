@@ -1589,6 +1589,99 @@ describe("a field a part lost under a parent read field by field", () => {
             body: { n: 1, m: 1, f: { limit: "x" }, c } as never,
           }),
         ).toContain('["f"]["limit"]');
+        // Both names for one field cannot both be kept.
+        expect(
+          yield* schemaFailure(posted(schema), {
+            body: { n: "1", m: 1, f: { page_size: "3", limit: 5 }, c } as never,
+          }),
+        ).toContain('["f"]["page_size"]');
       }),
+  );
+
+  it.effect(
+    "keeps a member's loss when another member reads the field loosely",
+    () =>
+      Effect.gen(function* () {
+        // A loose read gives `{}` through `MaybeCursor`, and the parent's constructor would then fill
+        // the default through `Filter`.
+        const MaybeCursor = Schema.Struct({
+          cursor: Schema.optionalKey(Schema.String),
+        });
+        const f = Schema.Union([Filter, MaybeCursor]);
+        for (const [schema, wrap, field] of [
+          [Schema.Struct({ n, m: n, f }), (item: object) => item, '["f"]'],
+          [
+            Schema.Struct({ n, m: n, f: Schema.Array(f) }),
+            (item: object) => [item],
+            '["f"][0]',
+          ],
+        ] as const) {
+          expect(
+            yield* schemaFailure(posted(schema), {
+              body: { n: 1, m: "1", f: wrap({ page_size: "many" }) },
+            } as never),
+          ).toBe(
+            `The schema cannot keep this field with the rest of the value\n  at ${field}["page_size"]`,
+          );
+          expect(
+            JSON.parse(
+              (yield* sentBy(schema, {
+                n: 1,
+                m: "1",
+                f: wrap({ page_size: "05" }),
+              } as never))!,
+            ),
+          ).toEqual({ n: "1", m: "1", f: wrap({ page_size: "5" }) });
+        }
+      }),
+  );
+
+  it.effect("does not count a decoding default as the field a part lost", () =>
+    Effect.gen(function* () {
+      const Defaulted = Schema.Struct({
+        limit: n.pipe(
+          Schema.withDecodingDefaultKey(Effect.succeed("25")),
+          Schema.withConstructorDefault(Effect.succeed(25)),
+        ),
+      }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+      expect(
+        yield* schemaFailure(posted(Schema.Struct({ n, m: n, f: Defaulted })), {
+          body: { n: 1, m: "1", f: { limit: "x" } },
+        } as never),
+      ).toContain('["f"]["limit"]');
+    }),
+  );
+
+  it.effect("reads nothing inside an opaque field it does not change", () =>
+    Effect.gen(function* () {
+      const opaque = Schema.declare(
+        (input): input is object => typeof input === "object" && input !== null,
+      );
+      const schema = Schema.Struct({ n, m: n, opaque });
+      const path = Request.get("").pipe(
+        Request.path(schema, ({ n: first, m }) => `/${first}/${m}`),
+      );
+      let reads = 0;
+      for (const get of [
+        () => {
+          reads++;
+          return "v";
+        },
+        () => {
+          throw new Error("read an opaque field");
+        },
+      ]) {
+        const value = Object.defineProperty({}, "annotation", {
+          enumerable: true,
+          get,
+        });
+        expect(
+          yield* urlOf(path, {
+            path: { n: 1, m: "2", opaque: value },
+          } as never),
+        ).toBe("/1/2");
+      }
+      expect(reads).toBe(0);
+    }),
   );
 });

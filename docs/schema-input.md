@@ -237,10 +237,10 @@ const search = Request.get("https://api.example.test/things").pipe(
 ### A field keeps what its own reading lost
 
 The last route reads each field of an object on its own, then builds the object with the schema's
-constructor. That constructor fills a default for any field that a field's own reading did not
-produce, so preparation compares what went in with each field's own result too. A supplied field
-that a field's own reading dropped is a `SchemaError` naming it, as the same value at the root would
-be. This holds at any depth and in struct, list, tuple, record and union fields:
+constructor. That constructor runs again over each field's result and fills a default where the
+field's reading produced nothing, so each field's reading has to account for what the caller gave
+it. A supplied field that a field's reading dropped is a `SchemaError` naming it, as the same value
+at the root would be. This holds at any depth and in struct, list, tuple, record and union fields:
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -264,9 +264,15 @@ const send = Request.post("https://api.example.test/pages").pipe(
 // SchemaError: The schema cannot keep this field ... at ["items"][0]["limit"]
 ```
 
-A field's own constructor reads the decoded side and strips the rest, such as an encoded name. Where
-it would drop a supplied field, that field is read by its decoder instead, so a valid
-`{ page_size: "05" }` writes `5`, and `{ page_size: "many" }` is a `SchemaError` that names it.
+A field's own constructor reads the decoded side and strips the rest, such as an encoded name, so
+what it made has to hold every supplied field. Where it would drop one, the field is read by its
+decoder, strictly, so a union field takes its first member that keeps everything. Then it is read
+field by field. A valid `{ page_size: "05" }` writes `5`. `{ page_size: "many" }` is a `SchemaError`
+that names it, including under `Union([Filter, Cursor])`, where `Cursor` would read it as an empty
+object. A decoder that can read the field only by stripping a supplied key is the last route, and
+that key is refused even where a decoding default fills its name again. A field given under both its
+names cannot keep both, so it is refused too. A value the constructor returns unchanged, as an
+opaque declaration's is, lost nothing, and nothing inside it is read again.
 
 ### A union keeps what the caller gave
 
@@ -334,10 +340,12 @@ refuses the value of is the same case. Only a real loss counts: a field another 
 takes is not lost, as the rule on stacked schemas below says.
 
 Writing keeps the same rule. A value is written strictly first. When the member that read it cannot
-write it, the relaxed write that follows can take a later member, and that member still has to send
-every supplied field. Effect reads back what was sent to check a field sent under another name. When
-no member can both keep and write the value, the refusal is the error of the first member that could
-not write it, the error that member alone gives:
+write it, the relaxed write that follows can take a later member. That write notes which member
+wrote each value, and a struct member reads only the names it states, so a supplied field it does
+not state is lost, whatever else it writes under that name. Nothing is decoded from what was sent.
+When no member can both keep and write the value, the refusal is the error of the first member that
+could not write it, the error that member alone gives. That holds through grouped and suspended
+unions:
 
 ```ts
 import { Schema } from "effect";
@@ -498,11 +506,18 @@ The kept-or-refused rule is the intended contract. Known violations remain under
 a guarantee that preparation refuses safely. [A list stays a list](#a-list-stays-a-list) records the
 remaining list limit under #243.
 
-- After a relaxed write, a supplied field sent only under another name is checked by reading back
-  what was sent. If Effect cannot read that output back, such as through an encode-only
-  transformation, the field is refused. Reading back can run the schema's decoding steps and
-  services again. When the first member that strips can take the value but loses a supplied field,
-  the request is refused; a later member that strips only unsupplied keys is not tried.
+- The relaxed write's check sees the members a union chose for the value itself. A class or other
+  declaration member is the schema's own reading, and so is a choice Effect makes again after a
+  transformation or middleware on the union itself, which no caller field can be traced to:
+  `Union([Coded, Title]).pipe(Schema.middlewareDecoding(...))` can still send `{"title":"a"}`. When
+  the member the relaxed write takes loses a supplied field, the request is refused; a later member
+  that strips only unsupplied keys is not tried. In that write, each member of a union is tried in
+  order without Effect's tag pre-selection, so a member whose tag does not match can start its own
+  encoding steps before it fails.
+- Reading field by field, a field's constructor can run, fill its defaults and then give way to the
+  field's decoder or a field-by-field reading, which constructs again. A default can therefore run
+  more than once, and a decoder can run strictly and then loosely when the strict read named an
+  unstated key.
 - Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
   name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that
   choice for the whole value. The [0.14 migration](./release-notes/0.14.md#account-for-both-names)

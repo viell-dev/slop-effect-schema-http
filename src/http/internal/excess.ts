@@ -420,7 +420,8 @@ export const missing = (
   path: Path = [],
   voidChoices?: WeakSet<Ast>,
 ): ReadonlyArray<Path> => {
-  if (!isObject(given)) return [];
+  // A value kept as given holds every key in it; reading it again could only run its accessors.
+  if (!isObject(given) || given === value) return [];
   const sides = types.flatMap((type) => sidesOf(type, given));
   if (!comparable(sides, given)) return [];
   const decoded = new Set(types.flatMap((type) => decodedNames(type, given)));

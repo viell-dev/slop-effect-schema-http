@@ -4,6 +4,12 @@ import * as Excess from "./excess.js";
 import { nestedEncodedInput } from "./nested-input.js";
 import { snapshotter } from "./snapshot.js";
 import { guardVoidMembers, observeVoid } from "./void-member.js";
+import {
+  dropped as droppedBy,
+  recordingInto,
+  recordingWriter,
+  type Writers,
+} from "./writers.js";
 
 /** What a schema's constructor takes. This is the one place that names the `~`-prefixed key. */
 type ConstructorInput<S extends Schema.Top> = S["~type.make.in"];
@@ -64,41 +70,83 @@ export type Input<S extends Schema.Top> = EitherSide<
   S["Encoded"]
 >;
 
-/**
- * A decoded value, and what reading it field by field shows that the value cannot.
- *
- * @remarks
- * A fieldwise read builds its value with the schema's constructor over what each part read. That
- * constructor runs again over a part's result, so it fills a default where the part lost the
- * caller's field, and the value then looks as if the field was kept.
- */
+/** A decoded value, and the fields its parts were given and did not keep, from this value. */
 interface Decoded<A> {
   readonly value: A;
-  /** The value with each part's own result in place, or `value` itself where no part was read. */
-  readonly view: unknown;
-  /** Fields, from this value, that a part's own constructor was given and did not keep. */
   readonly lost: ReadonlyArray<Excess.Path>;
 }
 
-const whole = <A>(value: A): Decoded<A> => ({ value, view: value, lost: [] });
+const whole = <A>(value: A): Decoded<A> => ({ value, lost: [] });
 
-/** A value with each part's result in front of its own properties, which stay underneath. */
-const withParts = (
-  value: unknown,
-  parts: ReadonlyArray<readonly [PropertyKey, unknown]>,
+/** Where a failure first names a key the schema does not state, at any depth. */
+const excessAt = (
+  issue: SchemaIssue.Issue,
+  path: Excess.Path = [],
+): Excess.Path | undefined => {
+  switch (issue._tag) {
+    case "UnexpectedKey":
+      return path;
+    case "Pointer":
+      return excessAt(issue.issue, [...path, ...issue.path]);
+    case "Encoding":
+    case "Filter":
+      return excessAt(issue.issue, path);
+    case "Composite":
+    case "AnyOf":
+      for (const inner of issue.issues) {
+        const found = excessAt(inner, path);
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    default:
+      return undefined;
+  }
+};
+
+/** A part's input as the parent's normalised input holds it, which names only stated fields. */
+const sliceOf = (given: unknown, name: PropertyKey): unknown =>
+  typeof given === "object" && given !== null
+    ? (given as Record<PropertyKey, unknown>)[name]
+    : undefined;
+
+/** The normalised input without the fields a parent already read as parts. */
+const withoutFields = (
+  given: unknown,
+  read: ReadonlyArray<PropertyKey>,
 ): unknown => {
-  if (parts.length === 0 || typeof value !== "object" || value === null)
-    return value;
-  const view = Object.create(value) as object;
-  for (const [name, part] of parts)
-    Object.defineProperty(view, name, { value: part, enumerable: true });
-  return view;
+  if (read.length === 0 || typeof given !== "object" || given === null)
+    return given;
+  const fields: Record<PropertyKey, unknown> = given as never;
+  return Object.fromEntries(
+    Reflect.ownKeys(given)
+      .filter(
+        (name) =>
+          !read.includes(name) &&
+          Object.prototype.propertyIsEnumerable.call(given, name),
+      )
+      .map((name) => [name, fields[name]]),
+  );
 };
 
 /**
  * Bring a value to its decoded side, as {@link toDecoded} does, and keep the evidence of what its
- * parts lost. A part is a field read on its own: `part` makes its constructor prove that it kept
- * every field it was given, or give way to the routes after it.
+ * parts lost.
+ *
+ * @remarks
+ * A part is a field read on its own. Given the parent's normalised input for it, every route a part
+ * takes accounts for what it was given, because the parent's constructor runs again over the part's
+ * result and would fill a default where the part lost a field:
+ *
+ * - The constructor reads the decoded side and strips the rest, such as an encoded name, so what it
+ *   made has to hold every supplied field. A value it returned unchanged lost nothing.
+ * - The decoder reads the normalised input strictly, so it consumes every name or fails. Effect's
+ *   strict read takes a union's first member that keeps everything.
+ * - Read field by field, each field is a part, and what the parent's constructor took as given has
+ *   to be in what it made.
+ * - A decoder that has to strip is the last route, and what it lost is kept.
+ *
+ * A route that keeps everything wins. Otherwise the constructor's loss, or the first later route's,
+ * is kept, so the request is refused. Without that input, a part reads as Effect reads it.
  */
 const decodedReading = <S extends Schema.Top>(
   contract: S,
@@ -114,73 +162,62 @@ const decodedReading = <S extends Schema.Top>(
       (issue) => new Schema.SchemaError(issue),
     );
   const decode = Schema.decodeUnknownEffect(contract);
-  /**
-   * The fields a constructor was given and did not keep, leaving out those read as parts. It reads
-   * the decoded side and strips the rest, such as an encoded name, so what it made has to hold
-   * every field it took as given. A parent's constructor runs over the result and cannot tell.
-   */
-  const unkept = (
-    input: unknown,
-    value: unknown,
-    read: ReadonlySet<PropertyKey> = new Set(),
-  ) => {
-    const given = Excess.normalised([contract.ast], input);
-    if (read.size === 0 || typeof given !== "object" || given === null)
-      return Excess.missing([contract.ast], given, value, undefined);
-    const fields: Record<PropertyKey, unknown> = given as never;
-    const taken = Object.fromEntries(
-      Reflect.ownKeys(given)
-        .filter(
-          (name) =>
-            !read.has(name) &&
-            Object.prototype.propertyIsEnumerable.call(given, name),
-        )
-        .map((name) => [name, fields[name]]),
-    );
-    return Excess.missing([contract.ast], taken, value, undefined);
-  };
+  /** What a route was given, by the parent's normalised input, and did not keep. */
+  const unkept = (given: unknown, value: unknown) =>
+    Excess.missing([contract.ast], given, value, undefined);
   const byField = Effect.fnUntraced(function* (
     input: object,
+    given: unknown,
     parseOptions?: SchemaAST.ParseOptions,
     onFieldwise?: () => void,
   ) {
     const output: Record<PropertyKey, unknown> = { ...input };
     // A field need not be a key, as an accessor on a class is not, so it comes from `input`.
     const fields: Record<PropertyKey, unknown> = input as never;
-    const parts: Array<readonly [PropertyKey, unknown]> = [];
+    const read: Array<PropertyKey> = [];
     const lost: Array<Excess.Path> = [];
     for (const { name, type } of Excess.fieldsOf(contract.ast)) {
       if (fields[name] === undefined) continue;
-      const read = yield* fromPart(type, fields[name], parseOptions, true);
-      output[name] = read.value;
-      parts.push([name, read.view]);
-      for (const path of read.lost) lost.push([name, ...path]);
+      const field = yield* fromPart(
+        type,
+        fields[name],
+        parseOptions,
+        true,
+        undefined,
+        sliceOf(given, name),
+      );
+      output[name] = field.value;
+      read.push(name);
+      for (const path of field.lost) lost.push([name, ...path]);
     }
     const value = yield* make(output, parseOptions);
     onFieldwise?.();
     // The root's encoded-only names have their own proof; a part's are checked here.
-    if (part)
-      lost.push(...unkept(input, value, new Set(parts.map(([name]) => name))));
-    return { value, view: withParts(value, parts), lost };
+    if (part && given !== undefined)
+      lost.push(...unkept(withoutFields(given, read), value));
+    return { value, lost };
   });
   const byMember = (
     input: object,
     failure: Schema.SchemaError,
+    given: unknown,
     parseOptions?: SchemaAST.ParseOptions,
     onFieldwise?: () => void,
   ) =>
     contract.ast._tag === "Union" && contract.ast.types.length > 0
       ? Effect.firstSuccessOf(
           contract.ast.types.map((member) =>
-            fromPart(member, input, parseOptions, part, onFieldwise),
+            fromPart(member, input, parseOptions, part, onFieldwise, given),
           ),
         )
       : // A copy of a list is an object keyed by its indexes, which a record or struct could take.
         Array.isArray(input)
         ? Effect.fail(failure)
-        : byField(input, parseOptions, onFieldwise);
+        : byField(input, given, parseOptions, onFieldwise);
+  /** The routes after the constructor, as Effect reads a value. */
   const afterConstruction = (
     input: unknown,
+    given: unknown,
     parseOptions?: SchemaAST.ParseOptions,
     onFieldwise?: () => void,
   ): Effect.Effect<Decoded<unknown>, Schema.SchemaError, unknown> =>
@@ -188,35 +225,78 @@ const decodedReading = <S extends Schema.Top>(
       Effect.map(decode(input, parseOptions), whole),
       (encodedFailure) =>
         typeof input === "object" && input !== null
-          ? byMember(input, encodedFailure, parseOptions, onFieldwise)
+          ? byMember(input, encodedFailure, given, parseOptions, onFieldwise)
           : Effect.fail(encodedFailure),
+    );
+  /** The routes after a part's constructor, each accounting for what it was given. */
+  const accounted = (
+    input: unknown,
+    given: unknown,
+    parseOptions?: SchemaAST.ParseOptions,
+    onFieldwise?: () => void,
+  ): Effect.Effect<Decoded<unknown>, Schema.SchemaError, unknown> =>
+    Effect.catch(
+      Effect.map(
+        decode(given, { ...parseOptions, onExcessProperty: "error" }),
+        whole,
+      ),
+      (strictFailure) => {
+        // A strict and a loose read part only on excess keys, so a strict failure that names none
+        // would fail the same way loosely; do not run the decoder again for it. Where it names one,
+        // the loose read strips a field the normalised input states, even if a decoding default
+        // fills that name again, so it always loses something.
+        const excess = excessAt(strictFailure.issue);
+        const loose =
+          excess === undefined
+            ? Effect.fail(strictFailure)
+            : Effect.map(
+                decode(input, parseOptions),
+                (value): Decoded<unknown> => {
+                  const lost = unkept(given, value);
+                  return { value, lost: lost.length > 0 ? lost : [excess] };
+                },
+              );
+        return typeof input === "object" && input !== null
+          ? Effect.catch(
+              byMember(input, strictFailure, given, parseOptions, onFieldwise),
+              () => loose,
+            )
+          : loose;
+      },
     );
   return (
     input: Input<S>,
     onConstructed?: () => void,
     onFieldwise?: () => void,
     parseOptions = options,
+    given?: unknown,
   ): Effect.Effect<
     Decoded<S["Type"]>,
     Schema.SchemaError,
     S["DecodingServices"]
-  > =>
-    Effect.matchEffect(make(input, parseOptions), {
+  > => {
+    const checked = part && given !== undefined;
+    return Effect.matchEffect(make(input, parseOptions), {
       onSuccess: (value) => {
         // Observe only the initial whole constructor, outside its failure handler.
         onConstructed?.();
-        if (!part) return Effect.succeed(whole(value));
-        const lost = unkept(input, value);
-        return lost.length === 0
-          ? Effect.succeed(whole(value))
-          : Effect.catch(
-              afterConstruction(input, parseOptions, onFieldwise),
-              () => Effect.succeed({ value, view: value, lost }),
-            );
+        if (!checked || value === input) return Effect.succeed(whole(value));
+        const lost = unkept(given, value);
+        if (lost.length === 0) return Effect.succeed(whole(value));
+        // Give way only to a route that keeps everything; otherwise keep the constructor's loss.
+        return Effect.catch(
+          Effect.filterOrFail(
+            accounted(input, given, parseOptions, onFieldwise),
+            (read) => read.lost.length === 0,
+          ),
+          () => Effect.succeed({ value, lost }),
+        );
       },
       onFailure: (failure) =>
         Effect.mapError(
-          afterConstruction(input, parseOptions, onFieldwise),
+          checked
+            ? accounted(input, given, parseOptions, onFieldwise)
+            : afterConstruction(input, given, parseOptions, onFieldwise),
           () => failure,
         ),
     }) as Effect.Effect<
@@ -224,6 +304,7 @@ const decodedReading = <S extends Schema.Top>(
       Schema.SchemaError,
       S["DecodingServices"]
     >;
+  };
 };
 
 /**
@@ -239,9 +320,6 @@ const decodedReading = <S extends Schema.Top>(
  * value into a new object, and a record or a struct could take the copy in the list's place. Union
  * members are still tried in turn, each by the same rules, because a member read alone can settle
  * what the whole union refuses, as an any-one union of two list members can.
- *
- * Read field by field, a part whose constructor loses a field it was given takes the next route,
- * and keeps that loss if none fits. {@link decodedReading} keeps the evidence for the caller.
  */
 export const toDecoded = <S extends Schema.Top>(
   contract: S,
@@ -262,7 +340,7 @@ export const toDecoded = <S extends Schema.Top>(
 
 /**
  * Read a field or union member, which may be on either side of its own schema. A member reads its
- * union's input, so it is a part only where its union is.
+ * union's input, so it is a part only where its union is, and shares its normalised input.
  */
 const fromPart = (
   ast: SchemaAST.AST,
@@ -270,11 +348,14 @@ const fromPart = (
   options: SchemaAST.ParseOptions | undefined,
   part: boolean,
   onFieldwise?: () => void,
+  given?: unknown,
 ): Effect.Effect<Decoded<unknown>, Schema.SchemaError, unknown> =>
   decodedReading(Schema.make<Schema.Top>(ast), options, part)(
     value,
     undefined,
     onFieldwise,
+    options,
+    given,
   );
 
 /** What a schema wrote, and the fields of its input it would lose, which may be held elsewhere. */
@@ -296,36 +377,48 @@ const coversPath = (lost: Excess.Path, alias: Excess.Path): boolean =>
   lost.length <= alias.length &&
   lost.every((part, index) => part === alias[index]);
 
-const samePath = (path: Excess.Path, other: Excess.Path): boolean =>
-  path.length === other.length &&
-  path.every((part, index) => part === other[index]);
-
-const distinctPaths = (
-  ...lists: ReadonlyArray<ReadonlyArray<Excess.Path>>
-): ReadonlyArray<Excess.Path> =>
-  lists
-    .flat()
-    .filter(
-      (path, index, all) =>
-        all.findIndex((other) => samePath(other, path)) === index,
-    );
-
-/** Whether a member's failure only names keys it does not state, which a relaxed write strips. */
-const strips = (issue: SchemaIssue.Issue): boolean => {
-  switch (issue._tag) {
-    case "UnexpectedKey":
-      return true;
-    case "Pointer":
-    case "Encoding":
-    case "Filter":
-      return strips(issue.issue);
-    case "Composite":
-      return issue.issues.every(strips);
-    case "AnyOf":
-      return issue.issues.some(strips);
-    default:
-      return false;
+/** Paths held by their parts, so a lookup costs one step per part. */
+const pathSet = (paths: Iterable<Excess.Path> = []) => {
+  interface Node {
+    end: boolean;
+    readonly next: Map<PropertyKey, Node>;
   }
+  const root: Node = { end: false, next: new Map() };
+  const nodeFor = (path: Excess.Path, create: boolean): Node | undefined => {
+    let node: Node | undefined = root;
+    for (const part of path) {
+      let next: Node | undefined = node.next.get(part);
+      if (next === undefined) {
+        if (!create) return undefined;
+        next = { end: false, next: new Map() };
+        node.next.set(part, next);
+      }
+      node = next;
+    }
+    return node;
+  };
+  const set = {
+    has: (path: Excess.Path) => nodeFor(path, false)?.end === true,
+    /** Add a path, and say whether it was new. */
+    add: (path: Excess.Path) => {
+      const node = nodeFor(path, true)!;
+      if (node.end) return false;
+      node.end = true;
+      return true;
+    },
+  };
+  for (const path of paths) set.add(path);
+  return set;
+};
+
+/** Losses from separate checks, each listing a path once. A single list is returned as it is. */
+const mergePaths = (
+  ...lists: ReadonlyArray<ReadonlyArray<Excess.Path>>
+): ReadonlyArray<Excess.Path> => {
+  const filled = lists.filter((list) => list.length > 0);
+  if (filled.length <= 1) return filled[0] ?? [];
+  const seen = pathSet();
+  return filled.flat().filter((path) => seen.add(path));
 };
 
 /** A guarded Void declines an object or list. That says nothing about the value it was given. */
@@ -334,8 +427,9 @@ const declinedByVoid = (issue: SchemaIssue.Issue): boolean =>
 
 /**
  * A strict write's failure as the first member that could not write the value reports it, at each
- * union, without the members a relaxed write could take by stripping keys. Undefined if every
- * member only strips or declines.
+ * union, in member order and through nested unions. A member that only names keys it does not
+ * state could write the value by stripping them, and a guarded Void declines it, so neither is
+ * that member. Undefined if every member only strips or declines.
  */
 const unwritable = (
   issue: SchemaIssue.Issue,
@@ -362,10 +456,12 @@ const unwritable = (
       return first && new SchemaIssue.Composite(issue.ast, [first, ...others]);
     }
     case "AnyOf": {
-      const member = issue.issues.find(
-        (inner) => !strips(inner) && !declinedByVoid(inner),
-      );
-      return member && unwritable(member);
+      for (const member of issue.issues) {
+        if (declinedByVoid(member)) continue;
+        const inner = unwritable(member);
+        if (inner !== undefined) return inner;
+      }
+      return undefined;
     }
     default:
       return issue;
@@ -403,6 +499,8 @@ const stripping = <S extends Schema.Top, A, R>(
  * A value that cannot be read that way is read as Effect reads it, and the result is compared with
  * what went in, so what is lost is what actually went, not what a failure suggests would. The write
  * is strict first, because a loose write can choose another member and lose what the read kept.
+ * The loose write notes which member wrote each value, and a field that member does not state is
+ * lost, since its struct drops the field before anything else it does runs.
  *
  * The strict pass also gives a visible object or list a chance to win over Void in an any-of union.
  */
@@ -410,8 +508,9 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   contract: S,
   codec: Schema.ConstraintCodec<S["Type"], A, unknown, R>,
   guarded: ReturnType<typeof guardVoidMembers>,
-  write: Write<S, A, R> = Schema.encodeEffect(codec),
+  custom?: Write<S, A, R>,
 ) => {
+  const write = custom ?? Schema.encodeEffect(codec);
   const decoded = toDecoded(contract);
   const written = (
     reading: ReturnType<typeof decoded>,
@@ -460,101 +559,107 @@ const readerForCodec = <S extends Schema.Top, A, R>(
           }),
         ),
     );
-  const readDecoded = decodedReading(contract);
-  // The JSON codec and the contract both decode with the contract's services.
-  const sentBack = Schema.decodeUnknownEffect(
-    Schema.make<Schema.Decoder<S["Type"], S["DecodingServices"]>>(guardWrite),
-  );
-  /**
-   * The fields a relaxed write lost. It can take a later member, which strips a field the decoded
-   * value still holds, so Effect reads back what it sent. A field sent under its own name needs no
-   * reading, and one that cannot be read back cannot show that it went.
-   */
-  const unsent = (
-    given: unknown,
-    output: A,
-    choices: WeakSet<SchemaAST.AST> | undefined,
-  ) => {
-    const absent = Excess.missing([ast], given, undefined, output, [], choices);
-    return absent.length === 0
-      ? Effect.succeed(absent)
-      : Effect.match(sentBack(output), {
-          onFailure: () => absent,
-          onSuccess: (sent) =>
-            Excess.missing([ast], given, sent, output, [], choices),
-        });
+  const withParts = decodedReading(contract);
+  const readDecoded = (
+    input: Input<S>,
+    onConstructed?: () => void,
+    onFieldwise?: () => void,
+    given?: unknown,
+  ) => withParts(input, onConstructed, onFieldwise, undefined, given);
+  // A custom writer is the caller's own. Only the schema's own writer can note its members.
+  const recordingAst =
+    custom === undefined || strictWriter !== write
+      ? recordingWriter(guardWrite)
+      : undefined;
+  const recordingWrite =
+    recordingAst &&
+    Schema.encodeEffect(Schema.make<typeof codec>(recordingAst));
+  /** What a write sent, the strict failure a loose write followed, and who wrote each value. */
+  interface Sent {
+    readonly output: A;
+    readonly strict?: Schema.SchemaError;
+    readonly writers?: Writers | undefined;
+  }
+  /** The loose write, and which member wrote each value where the writer can say. */
+  const looseWrite = (
+    value: S["Type"],
+  ): Effect.Effect<Sent, Schema.SchemaError, R> => {
+    if (recordingWrite === undefined)
+      return Effect.map(strictWriter(value), (output) => ({
+        output,
+        writers: undefined,
+      }));
+    const writers: Writers = [];
+    return Effect.map(
+      recordingWrite(value, recordingInto(writers)),
+      (output) => ({ output, writers }),
+    );
   };
   const compared = (
     input: Input<S>,
     given: unknown,
     read: (
       input: Input<S>,
-      onConstructed?: () => void,
+      onConstructed: () => void,
+      given: unknown,
     ) => Effect.Effect<
       Decoded<S["Type"]>,
       Schema.SchemaError,
       S["DecodingServices"]
-    > = readDecoded,
+    > = (current, onConstructed, normal) =>
+      readDecoded(current, onConstructed, undefined, normal),
     onWriteFailure?: () => void,
     voidDeclined = false,
   ) =>
     Effect.suspend(() => {
       let constructed = false;
       return Effect.flatMap(
-        read(input, () => {
-          constructed = true;
-        }),
-        ({ value, view, lost: lostByParts }) =>
-          Effect.flatMap(
+        read(
+          input,
+          () => {
+            constructed = true;
+          },
+          given,
+        ),
+        ({ value, lost: lostByParts }) =>
+          Effect.map(
             Effect.catch(
               Effect.map(
                 strictWriter(value, Excess.strict),
-                (output): { output: A; strict?: Schema.SchemaError } => ({
-                  output,
-                }),
+                (output): Sent => ({ output }),
               ),
               (strict) => {
                 onWriteFailure?.();
                 // Relax excess-property handling while keeping any Void guard on the writer.
-                return Effect.map(strictWriter(value), (output) => ({
-                  output,
+                return Effect.map(looseWrite(value), (loose): Sent => ({
+                  ...loose,
                   strict,
                 }));
               },
             ),
-            ({ output, strict }) => {
+            ({ output, strict, writers }): Written<A> => {
               const choices =
                 constructed && voidDeclined ? guarded.choices : undefined;
-              const lost = distinctPaths(
+              const lost = mergePaths(
                 Excess.missing([ast], given, value, output, [], choices),
-                // A part's result shows the field a constructor default took the place of.
-                view === value
-                  ? []
-                  : Excess.missing([ast], given, view, output, [], choices),
                 lostByParts,
               );
-              if (strict === undefined)
-                return Effect.succeed<Written<A>>({ output, lost });
-              return Effect.map(
-                unsent(given, output, choices),
-                (dropped): Written<A> => {
-                  const extra = dropped.filter(
-                    (path) => !lost.some((known) => samePath(known, path)),
-                  );
-                  const failure =
-                    extra.length === 0 ? undefined : unwritable(strict.issue);
-                  return {
-                    output,
-                    lost: [...lost, ...extra],
-                    ...(failure !== undefined && {
-                      unwritten: {
-                        lost: extra,
-                        failure: new Schema.SchemaError(failure),
-                      },
-                    }),
-                  };
-                },
-              );
+              const dropped =
+                strict === undefined || writers === undefined
+                  ? []
+                  : droppedBy(recordingAst!, given, value, writers);
+              if (dropped.length === 0) return { output, lost };
+              const failure = unwritable(strict!.issue);
+              return {
+                output,
+                lost: mergePaths(lost, dropped),
+                ...(failure !== undefined && {
+                  unwritten: {
+                    lost: dropped,
+                    failure: new Schema.SchemaError(failure),
+                  },
+                }),
+              };
             },
           ),
       );
@@ -675,21 +780,26 @@ const readerForCodec = <S extends Schema.Top, A, R>(
           decode === undefined ||
           (!encodedEvidence?.matches() && nestedEvidence === undefined)
         )
-          return compared(input, given, readDecoded, undefined, declined);
+          return compared(input, given, undefined, undefined, declined);
         return Effect.suspend(() => {
           let constructed = false;
           let fieldwise = false;
           let strictWrite = true;
-          const read = (current: Input<S>, onConstructed?: () => void) =>
+          const read = (
+            current: Input<S>,
+            onConstructed: () => void,
+            normal: unknown,
+          ) =>
             readDecoded(
               current,
               () => {
                 constructed = true;
-                onConstructed?.();
+                onConstructed();
               },
               () => {
                 fieldwise = true;
               },
+              normal,
             );
           return Effect.flatMap(
             compared(
@@ -853,11 +963,10 @@ export const refuseLost = (
     (path) => path.length > 1 || taken?.has(path[0]!) !== true,
   );
   if (first === undefined) return Effect.void;
+  const onlyWritten = (paths: ReturnType<typeof pathSet>) =>
+    [first, ...others].every((path) => paths.has(path));
   return Effect.fail(
-    unwritten !== undefined &&
-      [first, ...others].every((path) =>
-        unwritten.lost.some((other) => samePath(other, path)),
-      )
+    unwritten !== undefined && onlyWritten(pathSet(unwritten.lost))
       ? unwritten.failure
       : Excess.refusal(contract.ast, [first, ...others]),
   );

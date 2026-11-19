@@ -27,27 +27,32 @@
   computed value that returns a list fails with `InvalidRequest` during preparation.
 - **Breaking:** write `Date`s using their native timestamp. Dates from another realm now use ISO
   text. Own formatting methods have no effect, and invalid dates write the literal `Invalid Date`.
-- **Breaking:** keep each field's loss evidence when preparation reads a value field by field
-  ([#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241)). Under
+- **Breaking:** make each field account for what it was given when preparation reads a value field
+  by field ([#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241)). Under
   `Schema.Struct({ n: Schema.FiniteFromString, items: Schema.Array(Filter) })`, where `Filter` maps
   `limit` with a constructor default of 25 to `page_size`, `{ n: 1, items: [{ limit: "x" }] }` sent
   `{"n":"1","items":[{"page_size":"25"}]}`. The parent's constructor filled the default for the
   field the list's reading dropped. Such a field now refuses with `SchemaError`, naming it as the
   same value at the root does, in bodies and paths and at any depth: struct, list, tuple, record and
-  union fields. The all-encoded `{ n: "1", items: [{ page_size: "many" }] }` refuses too. A field
-  whose own constructor would drop a valid encoded name is read by its decoder instead, so
-  `{ page_size: "05" }` beside a value that the strict pass refuses now writes `5`, where 0.18.0
-  wrote `25`.
+  union fields. The all-encoded `{ n: "1", items: [{ page_size: "many" }] }` refuses too, and so
+  does `{ page_size: "many" }` in a field `Union([Filter, Cursor])` whose `Cursor` would read it as
+  an empty object. A field whose own constructor would drop a supplied name is read by its decoder
+  strictly, then field by field, so `{ page_size: "05" }` beside a value that the strict pass
+  refuses now writes `5`, where 0.18.0 wrote `25`. A decoding default no longer stands in for a
+  field that a field's loose decoder stripped, and a field given under both its names, such as
+  `{ page_size: "3", limit: 5 }`, now refuses there; 0.18.0 sent `5`.
 - **Breaking:** stop the write fallback from taking a later union member that drops a supplied field
   ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)). With
   `Note = Schema.Struct({ title: Schema.String, meta: Schema.Unknown })` and
   `Title = Schema.Struct({ title: Schema.String })`, `Union([Note, Title])` sent
   `{ title: "a", meta: new Date(0) }` as `{"title":"a"}` in a JSON body. It now fails with `Note`'s
   own `Expected JSON value at ["meta"]`, as `Note` alone does. The same holds with Void before or
-  after `Title`, inside a field or list, and for a member whose encoded check fails in query,
-  header, form and path bindings. A field another stacked schema takes is still not lost. A relaxed
-  write that sends a supplied field under another name is read back to confirm it. That can run
-  decoding steps again, and output that cannot be read back refuses the field.
+  after `Title`, inside a field or list, through grouped and suspended unions, with a decoding
+  default on `meta`, beside a member that writes another field under the name `meta`, and for a
+  member whose encoded check fails in query, header, form and path bindings. The fallback write
+  notes which member wrote each value and never decodes what it sends. A field another stacked
+  schema takes is still not lost. A choice Effect makes after middleware or a transformation on the
+  union itself is still the schema's own.
 
 ## 0.18.0 — 2026-11-18
 
