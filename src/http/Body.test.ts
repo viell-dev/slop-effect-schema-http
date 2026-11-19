@@ -384,15 +384,8 @@ const deepObject = (count: number) => {
   return root;
 };
 
-/** Native JSON's text for a value, or `undefined` where the engine runs out of stack. */
-const nativeJson = (value: unknown): string | undefined => {
-  try {
-    return JSON.stringify(value);
-  } catch (error) {
-    if (error instanceof RangeError) return undefined;
-    throw error;
-  }
-};
+const jsonText = (value: unknown) =>
+  textOf(Effect.runSync(Body.json.encode(value)));
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/256
 describe("writers keep or refuse what they cannot write", () => {
@@ -508,6 +501,39 @@ describe("writers keep or refuse what they cannot write", () => {
     }
   });
 
+  it("copies fields that an assignment would not create", () => {
+    const parsed: unknown = JSON.parse('{"__proto__":1,"toString":2,"a":[3]}');
+    expect(jsonText(parsed)).toBe('{"__proto__":1,"toString":2,"a":[3]}');
+    let sets = 0;
+    const setter = {
+      set() {
+        sets++;
+      },
+      configurable: true,
+    };
+    // oxlint-disable-next-line no-extend-native -- Exercise inherited setters, then remove them below.
+    Object.defineProperty(Object.prototype, "polluted", setter);
+    try {
+      expect(jsonText({ polluted: 1 })).toBe('{"polluted":1}');
+      expect(sets).toBe(0);
+    } finally {
+      delete (Object.prototype as { polluted?: unknown }).polluted;
+    }
+    const hole: unknown[] = [];
+    hole[1] = "b";
+    // oxlint-disable-next-line no-extend-native -- Exercise an inherited position, then remove it below.
+    Object.defineProperty(Array.prototype, "0", {
+      value: "inherited",
+      writable: true,
+      configurable: true,
+    });
+    try {
+      expect(jsonText({ hole })).toBe(JSON.stringify({ hole }));
+    } finally {
+      delete (Array.prototype as { 0?: unknown })[0];
+    }
+  });
+
   it.effect("refuses extra fields on arrays and boxes", () =>
     Effect.gen(function* () {
       const converted = Object.assign(Object(1), {
@@ -577,18 +603,23 @@ describe("writers keep or refuse what they cannot write", () => {
 
   it.effect("adds no depth limit of its own and types the engine's", () =>
     Effect.gen(function* () {
-      // The engine's limit depends on its version and stack; some engines have none at this depth.
-      // Native JSON scans its open containers at each level, so its time grows with the square of
-      // the depth. This depth keeps an engine without a limit here well under a second.
-      const depth = 2 ** 14;
+      // Engines differ: recent ones write plain data at any depth, older ones run out of stack.
+      // Effect's HttpBody.json, 0.18.0's writer, is the reference, in this same pipeline.
+      const depth = 2 ** 16;
       for (const nest of [deepArray, deepObject]) {
-        const native = nativeJson(nest(depth));
-        if (native !== undefined) {
-          expect(textOf(yield* Body.json.encode(nest(depth)))).toBe(native);
+        const reference = yield* Effect.exit(HttpBody.json(nest(depth)));
+        const exit = yield* Effect.exit(Body.json.encode(nest(depth)));
+        if (Exit.isSuccess(reference)) {
+          expect(Exit.isSuccess(exit) && textOf(exit.value)).toBe(
+            textOf(reference.value),
+          );
           continue;
         }
-        // Where native JSON runs out of stack, the writer fails with a typed error, not a defect.
-        const exit = yield* Effect.exit(Body.json.encode(nest(depth)));
+        expect(reference.cause.reasons[0]).toHaveProperty(
+          "error.cause",
+          expect.any(RangeError),
+        );
+        // Where the reference runs out of stack, the writer fails with a typed error, not a defect.
         const reason = Exit.isFailure(exit) ? exit.cause.reasons[0] : undefined;
         expect(reason?._tag).toBe("Fail");
         const failure = reason?._tag === "Fail" ? reason.error : undefined;
@@ -598,19 +629,6 @@ describe("writers keep or refuse what they cannot write", () => {
         expect(failure).toHaveProperty(
           "message",
           expect.stringContaining("JSON body could not be written"),
-        );
-        // Find where native JSON starts failing, within the fixed depth.
-        let fits = 0;
-        let fails = depth;
-        while (fails - fits > 1) {
-          const middle = Math.floor((fits + fails) / 2);
-          if (nativeJson(nest(middle)) === undefined) fails = middle;
-          else fits = middle;
-        }
-        // The writer's native call runs beneath Effect's frames, which share that stack.
-        const below = Math.max(0, fits - 128);
-        expect(textOf(yield* Body.json.encode(nest(below)))).toBe(
-          JSON.stringify(nest(below)),
         );
       }
       for (const box of [

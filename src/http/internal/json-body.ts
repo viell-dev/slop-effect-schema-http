@@ -14,12 +14,42 @@ const { isRawJSON } = JSON as JSON & {
 
 type Container = Record<string, unknown>;
 
+/** A prototype with nothing on its chain, for copies when the standard prototypes offer `toJSON`. */
+const bare = Object.create(null) as object;
+
+const isIndex = (name: string) => String(Number(name) >>> 0) === name;
+
 /**
- * The prototype of a copied object. Its own prototype is `null`, so the final write finds no
- * `toJSON` even if `Object.prototype` gains one, and a `__proto__` field stays a field. Objects
- * made from it keep the engine's fast property layout, which `Object.create(null)` gives up.
+ * How to make copies the final write treats as it treats the caller's own plain values.
+ *
+ * @remarks
+ * Copies are ordinary objects and arrays where possible. Recent engines write those with an
+ * iterative fast path that has no depth limit, and give it up for objects without the standard
+ * prototype, so a prototype-free copy would fail at a depth the caller's own objects reach. A
+ * standard prototype that offers `toJSON` would run it again on a copy, so copies then lose their
+ * prototype. A field an assignment would not create, such as `__proto__`, or `toString` under a
+ * frozen `Object.prototype`, is defined instead.
  */
-const copied = Object.create(null) as object;
+function copies() {
+  const defined = new Set<string>();
+  let indexed = false;
+  for (const prototype of [Object.prototype, Array.prototype])
+    for (const name of Object.getOwnPropertyNames(prototype)) {
+      indexed ||= isIndex(name);
+      if (prototype !== Object.prototype) continue;
+      const field = Object.getOwnPropertyDescriptor(prototype, name);
+      if (
+        field !== undefined &&
+        (!("value" in field) || field.writable !== true)
+      )
+        defined.add(name);
+    }
+  return {
+    bareObjects: "toJSON" in Object.prototype,
+    bareArrays: "toJSON" in Array.prototype || indexed,
+    defined,
+  };
+}
 
 const isObject = (value: unknown): value is object =>
   (typeof value === "object" && value !== null) || typeof value === "function";
@@ -84,16 +114,16 @@ class Frame {
  *
  * @remarks
  * Every getter, proxy trap and `toJSON` runs here, in the native order: a field's value is read
- * and written before the next field is read. The copy holds only primitives, prototype-free
- * objects and arrays, so the native writer that serializes it runs no caller code and keeps its
- * own depth limit. The traversal keeps its own stack, so an exception thrown while it runs came
- * from caller code, and an exception from the native writer is the engine's.
+ * and written before the next field is read. The copy holds only primitives and plain data
+ * objects and arrays, as {@link copies} makes them, so the native writer that serializes it runs
+ * no caller code and reaches the depth it reaches for the caller's own plain values. The traversal
+ * keeps its own stack, so it adds no depth limit, an exception thrown while it runs came from
+ * caller code, and an exception from the native writer is the engine's.
  */
 function snapshot(input: unknown): unknown {
   let top: Frame | undefined;
   let active: Set<object> | undefined;
-  // A polluted array prototype would offer the final write a `toJSON` for each copied array.
-  const shieldArrays = "toJSON" in Array.prototype;
+  const { bareObjects, bareArrays, defined } = copies();
 
   const refuse = (
     key: string | number,
@@ -143,7 +173,7 @@ function snapshot(input: unknown): unknown {
       if (extra !== undefined)
         return refuse(key, "cannot encode an extra array field", extra);
       const target: unknown[] = [];
-      if (shieldArrays) Object.setPrototypeOf(target, null);
+      if (bareArrays) Object.setPrototypeOf(target, null);
       return open(source, target, undefined, length, key);
     }
     const fields = Object.keys(source);
@@ -159,13 +189,8 @@ function snapshot(input: unknown): unknown {
     const symbol = symbols.find((field) => supplies(source, field));
     if (symbol !== undefined)
       return refuse(key, "cannot encode a symbol field name", symbol);
-    return open(
-      source,
-      Object.create(copied) as Container,
-      fields,
-      fields.length,
-      key,
-    );
+    const target = (bareObjects ? Object.create(bare) : {}) as Container;
+    return open(source, target, fields, fields.length, key);
   };
 
   const unbox = (
@@ -253,7 +278,16 @@ function snapshot(input: unknown): unknown {
     } else {
       const field = fields[index]!;
       const value = read(source[field], field, false);
-      if (value !== undefined) (frame.target as Container)[field] = value;
+      if (value === undefined) continue;
+      if (bareObjects || !defined.has(field))
+        (frame.target as Container)[field] = value;
+      else
+        Object.defineProperty(frame.target, field, {
+          value,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
     }
   }
   return output;
