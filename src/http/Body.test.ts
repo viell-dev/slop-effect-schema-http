@@ -373,6 +373,17 @@ const deepArray = (count: number) => {
   return root;
 };
 
+/** Whether native `JSON.stringify` runs out of stack on this many nested arrays. */
+const nativeOverflows = (depth: number) => {
+  try {
+    JSON.stringify(deepArray(depth));
+    return false;
+  } catch (error) {
+    if (error instanceof RangeError) return true;
+    throw error;
+  }
+};
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/256
 describe("writers keep or refuse what they cannot write", () => {
   const symbol = Symbol("extra");
@@ -466,6 +477,7 @@ describe("writers keep or refuse what they cannot write", () => {
 
   it("calls an inherited toJSON once per value, as native JSON does", () => {
     let calls = 0;
+    // oxlint-disable-next-line no-extend-native -- Exercise an inherited toJSON, then remove it below.
     Object.defineProperty(Object.prototype, "toJSON", {
       value(this: unknown) {
         calls++;
@@ -555,13 +567,44 @@ describe("writers keep or refuse what they cannot write", () => {
 
   it.effect("keeps the native depth limit and types engine failures", () =>
     Effect.gen(function* () {
-      expect(textOf(yield* Body.json.encode(deepArray(4_000)))).toBe(
-        "[".repeat(4_001) + "]".repeat(4_001),
+      // The limit depends on the stack size, so measure native JSON in this process.
+      const limit = yield* Effect.sync(() => {
+        let fits = 1;
+        let fails = 1_000;
+        while (!nativeOverflows(fails)) {
+          if (fails >= 2 ** 20)
+            throw new Error(
+              "Native JSON accepted 2 ** 20 nested arrays; revisit this test",
+            );
+          [fits, fails] = [fails, fails * 2];
+        }
+        while (fails - fits > 1) {
+          const middle = Math.floor((fits + fails) / 2);
+          if (nativeOverflows(middle)) fails = middle;
+          else fits = middle;
+        }
+        return fits;
+      });
+      // The writer's own call sits beneath Effect's frames, which share that stack.
+      const kept = limit - 128;
+      expect(kept).toBeGreaterThan(1_000);
+      expect(textOf(yield* Body.json.encode(deepArray(kept)))).toBe(
+        "[".repeat(kept + 1) + "]".repeat(kept + 1),
       );
-      const failure = yield* Effect.flip(Body.json.encode(deepArray(20_000)));
-      expect(failure.reason._tag).toBe("JsonError");
-      expect(failure.cause).toBeInstanceOf(RangeError);
-      expect(failure.message).toContain("JSON body could not be written");
+      const beyond = limit * 2;
+      expect(nativeOverflows(beyond)).toBe(true);
+      // A typed failure, not a defect.
+      const exit = yield* Effect.exit(Body.json.encode(deepArray(beyond)));
+      const reason = Exit.isFailure(exit) ? exit.cause.reasons[0] : undefined;
+      expect(reason?._tag).toBe("Fail");
+      const failure = reason?._tag === "Fail" ? reason.error : undefined;
+      expect(failure).toBeInstanceOf(HttpBody.HttpBodyError);
+      expect(failure).toHaveProperty("reason._tag", "JsonError");
+      expect(failure).toHaveProperty("cause", expect.any(RangeError));
+      expect(failure).toHaveProperty(
+        "message",
+        expect.stringContaining("JSON body could not be written"),
+      );
       for (const box of [
         Object.setPrototypeOf(Object(5), null),
         Object.setPrototypeOf(Object("s"), null),
