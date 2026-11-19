@@ -333,10 +333,9 @@ export const jsonSchema = <S extends Schema.Top>(
 > => {
   const codec = Schema.toCodecJson(contract);
   const encode = Inputs.encoder(contract, codec);
-  const carried = Excess.mixes(contract.ast)
-    ? (output: unknown) =>
-        Excess.uncarried([contract.ast], output, Excess.carriesJson)
-    : () => [];
+  const mixes = Excess.lazily(() => Excess.mixes(contract.ast));
+  const carried = (output: unknown) =>
+    mixes() ? Excess.uncarried([contract.ast], output, Excess.carriesJson) : [];
   return make({
     encode: (value: Inputs.Input<S>) =>
       encode(value).pipe(

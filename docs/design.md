@@ -139,13 +139,19 @@ class has no list reading either. Its struct refuses a list once it states a fie
 class's struct lets Effect copy the cells into an instance keyed by their indexes, the copy
 preparation never makes itself. So a class states nothing for a list's cells; ruling out its struct
 leaves a codec's later steps, such as a tuple the class is decoded from. This does not change member
-choice. An empty class before every other member that reads lists takes any list by first fit, so it
-reads the cells as given, as an empty struct does; elsewhere the list member reads the list.
+choice. An empty class that takes a list by first fit reads the cells as given, as an empty struct
+does. Normalization follows Effect's member order through grouped any-of unions and suspended
+members; when an earlier reader refuses the list at run time and a later empty class takes it, the
+reading shows that, and the cells are read again as given for the class. Elsewhere the list member
+reads the list, with its unstated cell keys left out.
 
-A member Effect reads through a step this library cannot see into, such as an opaque declaration, an
-encoded side that is `Schema.Unknown`, or middleware that turns a refusal into a value, gets the
-caller's value whole before a value with unstated keys left out is read. Its reading is accepted
-when it loses none of the caller's fields, so the field-loss check still sees through it.
+A codec Effect reads through an encoded side this library cannot see into, an opaque declaration or
+an open schema, holds what it reads as given, as an empty struct does, so a key it holds is not
+unstated; if it cannot take the value, the key is refused rather than left out. Middleware that
+turns a refusal into a value is held to the field-loss check for a caller's list, so a recovery that
+keeps none of its cells is refused. A schema question that needs a suspended schema waits until a
+value is read, so a binding can be made before the suspension's target is defined. A rebuilt list
+keeps every cell the caller supplied, hidden or inherited, beside any member.
 
 An empty struct, alone or as an empty class's fields, keeps every key of the value it reads, at
 every depth. Beside a member that states fields, it is the member that keeps them all, so a key only

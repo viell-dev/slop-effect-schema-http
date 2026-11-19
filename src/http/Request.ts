@@ -923,9 +923,9 @@ const prepareGroup = <
   const label = group === "headers" ? "header" : "query";
   const carries =
     group === "headers" ? Excess.carriesHeader : Excess.carriesQuery;
-  const carried = Excess.mixes(contract.ast)
-    ? (output: unknown) => Excess.uncarried([contract.ast], output, carries)
-    : () => [];
+  const mixes = Excess.lazily(() => Excess.mixes(contract.ast));
+  const carried = (output: unknown) =>
+    mixes() ? Excess.uncarried([contract.ast], output, carries) : [];
   const invalidOutput = (cause?: TypeError) =>
     new InvalidRequest({
       message: `The ${label} schema must encode a field record or field pairs`,

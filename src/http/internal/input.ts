@@ -236,13 +236,11 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       : write;
   const preserving =
     guarded.ast === ast ? contract : Schema.make<S>(guarded.ast);
-  const takesWhole = Excess.takesWhole(ast);
+  // A suspended schema may name one defined after this binding, so resolve these on first use.
+  const recovers = Excess.lazily(() => Excess.recovers(ast));
+  const holdsEmptyClass = Excess.lazily(() => Excess.holdsEmptyClass(ast));
   const exact = toDecoded(preserving, Excess.strict);
-  const kept = (
-    input: Input<S>,
-    options: SchemaAST.ParseOptions,
-    whole?: unknown,
-  ) =>
+  const kept = (input: Input<S>, options: SchemaAST.ParseOptions) =>
     Effect.flatMap(
       Effect.mapError(
         exact(input, undefined, undefined, options),
@@ -254,11 +252,11 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             strictWriter(value, Excess.strict),
             (output): Written<A> => ({
               output,
-              // A strict read strips nothing it can see, but a step it cannot see into can.
-              lost:
-                whole === undefined
-                  ? []
-                  : Excess.missing([ast], whole, value, output),
+              // A strict read strips nothing it can see, but middleware can recover a value that
+              // holds none of the cells of the caller's list.
+              lost: recovers()
+                ? Excess.lostCells([ast], input, value, output)
+                : [],
             }),
           ),
           (failure) => ({
@@ -383,34 +381,31 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     const seen = (
       given === input ? input : Excess.exposed([ast], input)
     ) as Input<S>;
-    const whole =
-      takesWhole && given !== input ? Excess.defined([ast], input) : input;
+    // An empty class after a list member takes a list only when that member refuses it. It then
+    // reads the caller's cells as given, so they are read again with no cell key left out for it.
+    const forClasses = (read: Written<A>, options: SchemaAST.ParseOptions) =>
+      holdsEmptyClass() && Excess.passedClassTook([ast], given, read.output)
+        ? Effect.orElseSucceed(
+            kept(
+              Excess.normalisedForClasses([ast], input) as Input<S>,
+              options,
+            ),
+            () => read,
+          )
+        : Effect.succeed(read);
     const attempt = (options: SchemaAST.ParseOptions) =>
       given === input
         ? kept(input, options)
-        : !takesWhole
-          ? Effect.catch(kept(given as Input<S>, options), (first) =>
+        : Effect.catch(
+            Effect.flatMap(kept(given as Input<S>, options), (read) =>
+              forClasses(read, options),
+            ),
+            (first) =>
               Effect.mapError(kept(seen, options), (last) => ({
                 ...last,
                 reading: first.reading && last.reading,
               })),
-            )
-          : // A member read through an opaque step or middleware may keep the caller's value
-            // whole. It gets that value first, unless it loses some of it.
-            Effect.matchEffect(kept(whole as Input<S>, options, whole), {
-              onFailure: (last) =>
-                Effect.mapError(kept(given as Input<S>, options), (first) => ({
-                  ...last,
-                  reading: first.reading && last.reading,
-                })),
-              onSuccess: (read) =>
-                read.lost.length === 0
-                  ? Effect.succeed(read)
-                  : Effect.orElseSucceed(
-                      kept(given as Input<S>, options),
-                      () => read,
-                    ),
-            });
+          );
     const strictRead =
       guarded.ast === ast
         ? Effect.mapError(attempt(Excess.strict), (result) => ({

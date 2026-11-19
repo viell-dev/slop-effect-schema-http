@@ -63,8 +63,11 @@ or looked up as an element type. Symbols stay symbols in lookup and loss diagnos
 index-looking strings stay metadata. Keep an unchanged value's identity and do not invoke its
 iterator to rebuild it. Ordinary processing can still read getters and inspect prototypes. Discover
 hidden/inherited positions only in structural array views without an open or opaque alternative; a
-union's Array alternative alone does not justify inspecting another alternative's value. Existing
-enumerable-child normalization still applies across views and does not select or execute an
+union's Array alternative alone does not justify inspecting another alternative's value. An empty
+struct member is no such alternative, so beside one a structural view still discovers them. A
+rebuilt view that does not discover them keeps them where the caller put them: an own cell it does
+not rewrite keeps its descriptor, and an inherited one stays inherited from the same prototype.
+Existing enumerable-child normalization still applies across views and does not select or execute an
 alternative. The [0.15 migration](./release-notes/0.15.md) states the normalization changes and
 exposed default substitutions. The [0.16 batch](./release-notes/0.16.md),
 [0.17](./release-notes/0.17.md) and [0.18](./release-notes/0.18.md) extend the separate
@@ -384,15 +387,20 @@ The rule covers only the copy this route would make. Effect's own readings still
 list's indexes. A class has no list reading, so it states nothing for a list's cells, and beside a
 list member placed before it a list keeps the list member's reading. An empty class before every
 other member that reads lists takes the list, as Effect's first fit does, and reads every cell as
-given. Put the list member first to keep a list a list. Ruling out a class's own struct for a list
-leaves the codec's other steps, so a class decoded from `Schema.Tuple([Schema.Unknown])` still reads
-a list through the tuple.
+given. Members of a grouped any-of union and a suspended member keep their place in that order. An
+empty class placed later takes the list only when every earlier reader refuses it, as
+`Schema.Tuple([Schema.Number, Schema.Number])` refuses a one-item list; it then reads every cell as
+given too. Put the list member first to keep a list a list. Ruling out a class's own struct for a
+list leaves the codec's other steps, so a class decoded from `Schema.Tuple([Schema.Unknown])` still
+reads a list through the tuple.
 
-A member Effect reads through a step this library cannot see into, such as a codec whose encoded
-side is `Schema.declare` or `Schema.Unknown`, or one with `Schema.catchDecoding` middleware, gets
-the caller's value whole first. Its reading wins when it loses none of the caller's fields, so
-beside a list member it can keep a cell key that member does not state. A recovery that loses them,
-such as one returning a fixed value, does not take the list. These limits remain:
+A codec Effect reads through an encoded side this library cannot see into, such as `Schema.declare`
+or `Schema.Unknown`, holds what it reads as given, as an empty struct does. So beside a list member
+it keeps a cell key that member does not state, and when it cannot take the value, such as when its
+own JSON reading refuses an `undefined` inside the cell, that key is refused rather than left out.
+`Schema.catchDecoding` middleware that takes a caller's list must keep its cells: a recovery that
+returns a value of its own instead is refused. For any other value, middleware gives its own
+reading, as Effect's does. These limits remain:
 
 - When another field makes a parent read field by field, a constructor default can still replace an
   invalid decoded item value, with or without the record: `{ n: 1, items: [{ limit: "x" }] }` under
@@ -510,12 +518,13 @@ remaining list limit under #241.
 - Beside `Schema.Unknown`, `Schema.Any` or `Schema.Object`, a stated member's nested value can still
   lose a key only the open member would hold. With
   `Union([Schema.Struct({ b: A }), Schema.Unknown])`, `{ b: { a: "x", z: 1 } }` sends
-  `{"b":{"a":"x"}}`. A key at the open member's own value is kept, and an empty struct keeps such
-  keys at every depth.
+  `{"b":{"a":"x"}}` ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)). A key
+  at the open member's own value is kept, and an empty struct keeps such keys at every depth.
 - `Schema.Struct({})` alone, or beside members that state no fields, hands what it keeps to the
-  writer as given, and the writer's own reading applies there: JSON writes `NaN` as `null` and
-  leaves out symbol keys and symbol values, and a query writes an object as `[object Object]`.
-  Beside a stated member the same fields are refused, as above.
+  writer as given, and the JSON writer's own reading applies there: it writes `NaN` as `null` and
+  leaves out symbol keys and symbol values
+  ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). Beside a stated member
+  the same fields are refused, as above.
 - Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
   name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that
   choice for the whole value. The [0.14 migration](./release-notes/0.14.md#account-for-both-names)

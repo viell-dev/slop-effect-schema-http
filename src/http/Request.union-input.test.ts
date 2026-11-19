@@ -182,11 +182,11 @@ describe("signature-less object candidates under unions", () => {
       );
       // JSON would write `null` for a number it has no text for, leave out a symbol, and write
       // the bytes as an object keyed by index.
-      for (const [field, value] of [
-        [Schema.NumberFromString, Number.NaN],
-        [Schema.NumberFromString, Number.POSITIVE_INFINITY],
-        [SymbolText, Symbol.for("west")],
-        [Schema.Uint8ArrayFromHex, new Uint8Array([7, 8])],
+      for (const [field, value, written] of [
+        [Schema.NumberFromString, Number.NaN, '{"v":"NaN"}'],
+        [Schema.NumberFromString, Number.POSITIVE_INFINITY, '{"v":"Infinity"}'],
+        [SymbolText, Symbol.for("west"), '{"v":"west"}'],
+        [Schema.Uint8ArrayFromHex, new Uint8Array([7, 8]), '{"v":"0708"}'],
       ] as const) {
         const Stated = Schema.Struct({ v: field });
         const input = { v: value, extra: "keep" };
@@ -200,7 +200,7 @@ describe("signature-less object candidates under unions", () => {
         // The stated member alone writes the value through its codec.
         expect(
           yield* bodyOf(post(Stated), { body: { v: value } as never }),
-        ).not.toContain("null");
+        ).toBe(written);
       }
       // A query writes no object; text it can write from a number goes out.
       const nested = { a: "x", z: { deep: 1 } };
@@ -261,6 +261,126 @@ describe("signature-less object candidates under unions", () => {
           { path: { limit: undefined } },
         );
         expect(Reflect.ownKeys(rendered as object)).toEqual([]);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect(
+    "currently loses a key below a stated member beside an open member",
+    () =>
+      Effect.gen(function* () {
+        const nested = { b: { a: "x", z: 1 } };
+        for (const open of [Schema.Unknown, Schema.Any, Schema.ObjectKeyword])
+          expect(
+            yield* bodyOf(post(Schema.Union([Schema.Struct({ b: A }), open])), {
+              body: nested,
+            }),
+          ).toBe('{"b":{"a":"x"}}');
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect.fails(
+    "keeps a key below a stated member beside an open member",
+    () =>
+      Effect.gen(function* () {
+        const nested = { b: { a: "x", z: 1 } };
+        expect(
+          yield* bodyOf(
+            post(Schema.Union([Schema.Struct({ b: A }), Schema.Unknown])),
+            { body: nested },
+          ),
+        ).toBe('{"b":{"a":"x","z":1}}');
+      }),
+  );
+
+  // A suspended member can name a schema defined after the binding, so it is read once a value is.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/249
+  it.effect("makes a binding before a suspended member is defined", () =>
+    Effect.gen(function* () {
+      const later: { schema?: typeof A } = {};
+      let resolved = 0;
+      const schema = Schema.Union([
+        Empty,
+        Schema.suspend((): typeof A => {
+          resolved++;
+          return later.schema!;
+        }),
+      ]);
+      const search = queried(schema);
+      const send = post(schema);
+      const render = Request.get("/x").pipe(Request.path(schema, () => "/ok"));
+      expect(resolved).toBe(0);
+      later.schema = A;
+      const value = { a: "ok" };
+      expect(yield* urlOf(search, { query: value })).toBe("/x?a=ok");
+      expect(yield* bodyOf(send, { body: value })).toBe('{"a":"ok"}');
+      expect(yield* urlOf(render, { path: value })).toBe("/x/ok");
+    }),
+  );
+
+  // An ordinary union runs each step it reads through once, as before #249.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/249
+  it.effect(
+    "runs an ordinary union's decoder, middleware and getters once",
+    () =>
+      Effect.gen(function* () {
+        const counts = { decode: 0, recover: 0, reads: 0 };
+        const Counted = Schema.String.pipe(
+          Schema.decodeTo(
+            Schema.Number,
+            SchemaTransformation.transform({
+              decode: (text) => {
+                counts.decode++;
+                return Number(text);
+              },
+              encode: String,
+            }),
+          ),
+        );
+        const Other = Schema.Struct({ b: Schema.String });
+        const Stamped = Schema.Struct({
+          a: Counted,
+          stamp: Schema.optionalKey(Schema.Date),
+        });
+        const runs: Array<typeof counts> = [];
+        for (const schema of [
+          Schema.Union([Schema.Struct({ a: Counted }), Other]),
+          Schema.Union([Stamped, Other]),
+          Schema.Union([
+            Schema.Struct({
+              a: Counted,
+              stamp: Schema.optionalKey(
+                Schema.declare((input): input is Date => input instanceof Date),
+              ),
+            }),
+            Other,
+          ]),
+          Schema.Union([
+            Stamped,
+            Other.pipe(
+              Schema.catchDecoding((issue) => {
+                counts.recover++;
+                return Effect.fail(issue);
+              }),
+            ),
+          ]),
+        ]) {
+          counts.decode = counts.recover = counts.reads = 0;
+          const input = Object.defineProperty({ extra: 1 }, "a", {
+            get: () => {
+              counts.reads++;
+              return "5";
+            },
+            enumerable: true,
+          });
+          expect(yield* bodyOf(post(schema), { body: input as never })).toBe(
+            '{"a":"5"}',
+          );
+          runs.push({ ...counts });
+        }
+        expect(runs[0]).toMatchObject({ decode: 1, recover: 0 });
+        for (const run of runs) expect(run).toEqual(runs[0]);
       }),
   );
 

@@ -53,12 +53,20 @@
   it, so beside an empty struct as well, `{ "0": { limit: "x", extra: 1 } }` keeps `extra`, which
   0.18.0 left out. A class has no list reading: it states nothing for a list's cells, though a
   codec's later steps, such as a tuple the class is decoded from, still read the list. An empty
-  class before every other member that reads lists takes the list and reads every cell as given, so
+  class that takes a list by first fit, including through a grouped union, a suspension or after an
+  earlier reader that refuses the list, reads every cell as given, so
   `Union([EmptyClass, Schema.Array(Plain)])` keeps `extra` in `{"0":{...}}`, which 0.18.0 left out.
-  A member read through an opaque declaration, an `Unknown` encoded side or `catchDecoding`
-  middleware gets the caller's value whole first and keeps it when it loses none of its fields. A
-  query or header schema that only a cast admits, with a list member that writes objects, can now
-  reach the documented writer failure for malformed pairs instead of refusing earlier.
+  A codec whose encoded side is an opaque declaration or `Schema.Unknown` keeps the cell keys it
+  reads, or refuses them when it cannot take the list. `catchDecoding` middleware that takes a
+  caller's list with a value of its own, keeping none of its cells, now refuses where 0.18.0 sent
+  that value. A query or header schema that only a cast admits, with a list member that writes
+  objects, now refuses with `InvalidRequest` from the field-pair check instead of a `SchemaError`.
+- Keep a hidden or inherited list cell when normalization rebuilds the list beside `Schema.Unknown`,
+  `Schema.Any` or `Schema.Object`
+  ([#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257)). With a non-enumerable
+  first cell and a later cell holding a key set to `undefined`,
+  `Union([Schema.Array(A), Schema.Unknown])` passed `[null, …]` to a path renderer; the rebuilt list
+  now keeps the cell where the caller put it.
 
 ## 0.18.0 — 2026-11-18
 
