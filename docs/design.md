@@ -133,13 +133,17 @@ reading. Known violations, conflicting aliases and unsupported recovery remain e
 Two rules decide how normalization and field-loss accounting read a value, and they apply only where
 what each alternative reads from an object or a list is known from the schema alone. That holds when
 every alternative at the value is a struct, a record, a list or a tuple, including an empty struct
-and a struct renamed with `Schema.encodeKeys`. An alternative that takes no object, such as text, a
-number or `null`, and built-in `Schema.Void`, which the Void rule below decides, leave that set
-known. Field types can be anything: each child value is judged again at its own level. Anywhere else
-the value keeps 0.18.0's reading. That covers any alternative that is a class, a declaration, an
-open schema, middleware or a codec with any other transformation, and every value inside one that
-middleware reads, because a recovery can turn a failure anywhere inside into a value of its own.
-Suspended schemas are read as what they stand for once a value is read, as Effect reads them.
+and a struct whose keys `Schema.encodeKeys` renames, and no other change. An alternative that takes
+no object, such as text, a number or `null`, leaves that set known, and so does built-in
+`Schema.Void` where the Void rule below guards it: in an any-of union beside an object or list
+member, on a path that rule reaches, which passes through no suspension and no declaration. Field
+types can be anything: each child value is judged again at its own level. Every member counts,
+including one a tag rules out: it states no key, but its middleware still runs. Anywhere else the
+value keeps 0.18.0's reading. That covers any alternative that is a class, a declaration, an open
+schema, middleware, an unguarded Void or a codec with any other transformation, a struct decoded
+from another struct included, and every value inside one that middleware reads, because a recovery
+can turn a failure anywhere inside into a value of its own. Suspended schemas are read as what they
+stand for once a value is read, as Effect reads them.
 
 The first rule counts only members that can read the caller's container, as Effect's own parsers
 tell them apart with `Array.isArray`. A record or a struct that states a field holds none of a
@@ -153,12 +157,14 @@ made before the suspension's target is defined. A rebuilt list keeps every cell 
 hidden or inherited, beside any member, and reads the list's prototype only when its own positions
 do not cover its length.
 
-The second rule: an empty struct keeps every key of the value it reads, at every depth. Beside a
-member that states fields, it is the member that keeps them all, so a key only it holds is kept
-rather than stripped as unstated. The kept-or-refused rule prefers it for that reason. Effect's own
-first-fit reading keeps the key when the empty struct comes first, and an open record,
-`Schema.Unknown` or `Schema.Object` already won over a stated member this way at the value it reads.
-An empty class is a class, so it keeps 0.18.0's reading, as the [active
+The second rule: an empty struct that is an alternative of its own, not one end of a codec, keeps
+every key of the value it reads, at every depth where the alternatives stay known. Beside a member
+that states fields, it is the member that keeps them all, so a key only it holds is kept rather than
+stripped as unstated. The kept-or-refused rule prefers it for that reason. Effect's own first-fit
+reading keeps the key when the empty struct comes first, and an open record, `Schema.Unknown` or
+`Schema.Object` already won over a stated member this way at the value it reads. An empty class is a
+class, so it keeps 0.18.0's reading, and so does a child value with an alternative outside the known
+set, even below an empty struct that holds its parent, as the [active
 limits](./schema-input.md#active-limits-and-recovery) give. When both members keep the whole value,
 first fit decides. A kept value the request cannot carry is refused before dispatch. That includes a
 field its writer would leave out or replace, such as a symbol key, or `NaN`, which JSON writes as

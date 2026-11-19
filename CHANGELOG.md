@@ -34,17 +34,18 @@
   `{ tag: "a" }` instead of the stated member's default `?page_size=25`. When both members keep the
   value, member order still decides: `Union([Schema.Struct({}), Filter])` sends `{ limit: 5 }` as
   `?limit=5`. This applies where every alternative at the value is a struct, a record, a list or a
-  tuple; beside a class, including an empty `Schema.Class`, a declaration, an open schema,
-  middleware or any other codec, a value keeps 0.18.0's reading. A class instance the empty struct
-  keeps reaches a path renderer as the same instance, except that an inherited accessor a stated
-  member names makes it a plain copy. A kept field the request cannot carry now refuses before
-  dispatch: a header value that is not a string is `InvalidRequest`, and a field the writer would
-  leave out or replace is a `SchemaError` that names it, such as a symbol key in JSON, a query or
-  headers, `NaN` or a BigInt in a JSON body, or an object in a query. In a stacked query or header
-  group, such a union bound after a schema that states the field writes the caller's value in its
-  place: `Count = Schema.Struct({ z: Schema.FiniteFromString })` stacked before
-  `Union([A, Struct({})])` sends `{ a: "x", z: "05" }` as `?a=x&z=05`, where 0.18.0 sent `?z=5&a=x`.
-  Bind the stated member directly, or bind the union first, to keep its reading. See the [migration
+  tuple, guarded Void beside them included; beside a class, including an empty `Schema.Class`, a
+  declaration, an open schema, middleware or any other codec, a value keeps 0.18.0's reading. A
+  class instance the empty struct keeps reaches a path renderer as the same instance, except that an
+  inherited accessor a stated member names makes it a plain copy. A kept field the request cannot
+  carry now refuses before dispatch: a header value that is not a string is `InvalidRequest`, and a
+  field the writer would leave out or replace is a `SchemaError` that names it, such as a symbol key
+  in JSON, a query or headers, `NaN` or a BigInt in a JSON body, or an object in a query. In a
+  stacked query or header group, such a union bound after a schema that states the field writes the
+  caller's value in its place: `Count = Schema.Struct({ z: Schema.FiniteFromString })` stacked
+  before `Union([A, Struct({})])` sends `{ a: "x", z: "05" }` as `?a=x&z=05`, where 0.18.0 sent
+  `?z=5&a=x`. Bind the stated member directly, or bind the union first, to keep its reading. See the
+  [migration
   note](https://viell-dev.github.io/slop-effect-schema-http/schema-input#a-union-keeps-what-the-caller-gave).
 - **Breaking:** count only members that can read the caller's container during normalization and
   field-loss accounting (#243). A record or a struct that states a field holds none of a list's
@@ -54,11 +55,11 @@
   A numeric-keyed object beside an array or tuple member is read as its object member alone reads
   it, so beside an empty struct as well, `{ "0": { limit: "x", extra: 1 } }` keeps `extra`, which
   0.18.0 left out. Like the empty-struct rule, this applies only where every alternative at the
-  value is a struct, a record, a list or a tuple, `encodeKeys` included; a value beside a class, a
-  declaration, an open schema, middleware or any other codec, or inside a value middleware reads,
-  keeps 0.18.0's reading. A query or header schema that only a cast admits, with a list member that
-  writes objects, now refuses with `InvalidRequest` from the field-pair check instead of a
-  `SchemaError`.
+  value is a struct, a record, a list or a tuple, `encodeKeys` renames included; a value beside a
+  class, a declaration, an open schema, middleware or any other codec, or inside a value middleware
+  reads, keeps 0.18.0's reading. A query or header schema that only a cast admits, with a list
+  member that writes objects, now refuses with `InvalidRequest` from the field-pair check instead of
+  a `SchemaError`.
 - Keep a hidden or inherited list cell when normalization rebuilds the list beside `Schema.Unknown`,
   `Schema.Any` or `Schema.Object`
   ([#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257)). With a non-enumerable

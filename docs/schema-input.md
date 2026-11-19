@@ -387,17 +387,21 @@ tuple member is read as its object member alone reads it.
 
 This reading, and the empty-struct rule above, apply only where what each alternative reads from an
 object or a list is known from the schema alone: every alternative at the value is a struct, a
-record, a list or a tuple, an empty struct and a struct renamed with `Schema.encodeKeys` included.
-An alternative that takes no object, such as text, a number or `null`, and built-in `Schema.Void` do
-not change that. Field types can be anything; each child value is judged again at its own level.
-`Schema.Struct({})` keeps a list as it is there.
+record, a list or a tuple, an empty struct and a struct whose keys `Schema.encodeKeys` renames
+included. An alternative that takes no object, such as text, a number or `null`, does not change
+that, nor does built-in `Schema.Void` where the Void rule below guards it, in an any-of union beside
+an object or list member and not inside a suspension or a class. Field types can be anything; each
+child value is judged again at its own level. Every member counts, one a tag rules out included.
+`Schema.Struct({})` keeps a list as it is there, and only as an alternative of its own does an empty
+struct keep the keys it reads.
 
 Anywhere else a value keeps 0.18.0's reading. That covers any alternative that is a class, a
 declaration such as `Schema.Date`, an open schema such as `Schema.Unknown`, `Schema.catchDecoding`
-middleware or a codec with any other transformation, and every value inside one that middleware
-reads, since a recovery can turn a failure anywhere inside into a value of its own. So beside an
-empty `Schema.Class`, a class decoded from a tuple, a codec decoded from `Schema.declare` or
-`Schema.Unknown`, or a record with a recovery, a list and its cells read as they did on 0.18.0.
+or `Schema.catchEncoding` middleware, a Void the Void rule does not guard, or a codec with any other
+transformation, such as a struct decoded from another struct, and every value inside one that
+middleware reads, since a recovery can turn a failure anywhere inside into a value of its own. So
+beside an empty `Schema.Class`, a class decoded from a tuple, a codec decoded from `Schema.declare`
+or `Schema.Unknown`, or a record with a recovery, a list and its cells read as they did on 0.18.0.
 These limits remain:
 
 - When another field makes a parent read field by field, a constructor default can still replace an
@@ -518,7 +522,8 @@ remaining list limit under #241.
   lose a key only the open member would hold. With
   `Union([Schema.Struct({ b: A }), Schema.Unknown])`, `{ b: { a: "x", z: 1 } }` sends
   `{"b":{"a":"x"}}` ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)). A key
-  at the open member's own value is kept, and an empty struct keeps such keys at every depth.
+  at the open member's own value is kept, and an empty struct keeps such keys at every depth where
+  the alternatives stay known, as [A list stays a list](#a-list-stays-a-list) describes.
 - `Schema.Struct({})` alone, or beside members that state no fields, hands what it keeps to the
   writer as given, and the JSON writer's own reading applies there: it writes `NaN` as `null` and
   leaves out symbol keys and symbol values
@@ -541,6 +546,12 @@ remaining list limit under #241.
   `Union([Bare, A])` send `{"a":"x"}` for `{ a: "x", z: 1 }`
   ([#249](https://github.com/viell-dev/slop-effect-schema-http/issues/249)). `Schema.Struct({})` in
   the class's place keeps the cells and the key.
+- Below an empty struct that holds a parent value, a child value with an alternative outside the
+  known set keeps 0.18.0's reading and can lose a key there. Under
+  `Union([Schema.Struct({ b: Limited }), Schema.Struct({})])`, where `Limited` is a class stating
+  `a`, `{ b: { a: "x", z: 1 }, top: 1 }` sends `{"b":{"a":"x"},"top":1}`: `top` is kept and `z` is
+  not ([#249](https://github.com/viell-dev/slop-effect-schema-http/issues/249)). A struct in the
+  class's place keeps `z`.
 - Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
   name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that
   choice for the whole value. The [0.14 migration](./release-notes/0.14.md#account-for-both-names)

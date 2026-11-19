@@ -1248,6 +1248,7 @@ describe("members that cannot read the caller's container", () => {
   );
 
   // A recovery's value is not checked against the cells it was given.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
   const Substituted = Open.pipe(
     Schema.catchDecoding(() =>
       Effect.succeedSome({ 0: { limit: "altered", extra: 99 } }),
@@ -1489,6 +1490,38 @@ describe("a list beside an open member", () => {
                   ),
                 ).toBe('[{"limit":"first"},{"limit":"last"}]');
       }),
+  );
+
+  it.effect("asks a list for its own keys no more often than 0.18.0", () =>
+    Effect.gen(function* () {
+      // Copying hidden cells reuses the own keys and descriptors already read for the list's keys.
+      for (const hidden of [false, true]) {
+        const counts = { ownKeys: 0, getOwnPropertyDescriptor: 0 };
+        const cells: Array<object> = [
+          { limit: "first" },
+          { limit: "last", absent: undefined },
+        ];
+        if (hidden) Object.defineProperty(cells, "0", { enumerable: false });
+        const input = new Proxy(cells, {
+          ownKeys(target) {
+            counts.ownKeys++;
+            return Reflect.ownKeys(target);
+          },
+          getOwnPropertyDescriptor(target, key) {
+            counts.getOwnPropertyDescriptor++;
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        });
+        expect(
+          JSON.stringify(
+            yield* prepare(Schema.Union([Rows, Schema.Unknown]), input, "path"),
+          ),
+        ).toBe('[{"limit":"first"},{"limit":"last"}]');
+        // 0.18.0 asked for the own keys twice and for seven descriptors.
+        expect(counts.ownKeys).toBe(2);
+        expect(counts.getOwnPropertyDescriptor).toBeLessThanOrEqual(7);
+      }
+    }),
   );
 
   it.effect("reads no prototype of a dense list it rebuilds", () =>
