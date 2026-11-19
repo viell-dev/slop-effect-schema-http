@@ -142,8 +142,10 @@ supply a form entry, it refuses with `HttpBodyError` naming the field. For examp
 schema that encodes it to text, and a `Redacted` value one that reveals its text. A prepared
 `FormData` can go directly to `Body.formData`, including one from another realm or implementation,
 such as the `undici` package used with its own `fetch`. Anything that is not a form fails with
-`HttpBodyError`. `Body.urlEncoded` writes Effect `UrlParams` text pairs, including redacted text
-values, and refuses malformed pairs or non-text values with `HttpBodyError`.
+`HttpBodyError`. `Body.urlEncoded` writes Effect `UrlParams`, whose values are text, numbers,
+bigints, booleans or redacted ones. From JavaScript it also takes what `UrlParams.fromInput` reads,
+such as a plain record or `URLSearchParams`. A value that reading would drop or write as something
+else, such as `null` or a `Date`, and a malformed pair fail with `HttpBodyError` naming the field.
 
 `Body.text`, `Body.bytes` and `Body.empty` also fail with `HttpBodyError` when JavaScript or a
 schema such as `Schema.Any` passes them a value that is not a string, not a `Uint8Array`, or any

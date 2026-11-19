@@ -240,10 +240,12 @@ export const formData: Codec<
  *
  * @remarks
  * Construct values with `UrlParams.fromInput` from `effect/http`. The media type is
- * `application/x-www-form-urlencoded`. Each pair writes its text, or a redacted text's value.
- * Encoding a value that is not `UrlParams`, such as a plain record from JavaScript, or a pair that
- * is malformed, has a value other than text, or has an own field beside its positions, fails with
- * `HttpBodyError` naming the position.
+ * `application/x-www-form-urlencoded`. Each pair writes its text: a string, a number, a bigint or
+ * a boolean, or a redacted one. JavaScript can also pass what `UrlParams.fromInput` reads, such as
+ * a plain record, field pairs or `URLSearchParams`, which is read the same way. A value that
+ * reading would drop or write as something else, such as `null`, a `Date`, a list inside a list,
+ * a symbol field or a list's own field beside its positions, fails with `HttpBodyError` naming its
+ * field, and so does a malformed pair.
  */
 export const urlEncoded: Codec<
   UrlParams.UrlParams,

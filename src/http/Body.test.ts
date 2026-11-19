@@ -727,6 +727,17 @@ describe("writers keep or refuse what they cannot write", () => {
           [{ v: Object("s") as object }, '$["v"] cannot encode a boxed string'],
           [
             { v: Redacted.make("secret") },
+            '$["v"] must be text, a Blob or File, or a form container',
+          ],
+          [
+            {
+              v: new (class Sealed {
+                readonly #secret = "kept";
+                reveal() {
+                  return this.#secret;
+                }
+              })(),
+            },
             '$["v"] has no own fields a form can write',
           ],
         ] as const)
@@ -752,16 +763,22 @@ describe("writers keep or refuse what they cannot write", () => {
   it.effect("reports URL-encoded pair refusals with their path", () =>
     Effect.gen(function* () {
       for (const [params, message] of [
-        [UrlParams.make([["k", 1 as never]]), '$["k"] must be a string'],
         [
-          { params: Object.assign([["k", "v"]], { extra: "keep" }) },
+          UrlParams.make([["k", { x: 1 } as never]]),
+          '$["k"] must be text, a number, a bigint or a boolean',
+        ],
+        [
+          UrlParams.make(
+            Object.assign([["k", "v"]], { extra: "keep" }) as never,
+          ),
           '$["extra"] cannot encode an extra array field',
         ],
         [
-          { params: [Object.assign(["k", "v"], { extra: "keep" })] },
+          UrlParams.make([
+            Object.assign(["k", "v"], { extra: "keep" }),
+          ] as never),
           '$[0]["extra"] cannot encode an extra array field',
         ],
-        [{ k: "v" }, "$ must contain an array of pairs"],
       ] as const)
         yield* bodyError(
           Body.urlEncoded.encode(params as never),
@@ -1066,61 +1083,83 @@ const urlEncodedRefusal = (value: unknown) =>
   );
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/256
-// 0.18.0 read these through Effect's `UrlParams.fromInput`. Each pin records the current outcome.
 describe("Body.urlEncoded from untyped callers", () => {
-  it.effect("currently refuses a plain record and URLSearchParams", () =>
+  it.effect("writes what UrlParams.fromInput reads, as 0.18.0 did", () =>
     Effect.gen(function* () {
-      for (const value of [{ k: "v", n: 1 }, new URLSearchParams("k=v&k=w")])
-        expect(yield* urlEncodedRefusal(value)).toBe(
-          "URL-encoded body at $ must contain an array of pairs",
+      for (const [value, text] of [
+        [{ k: "v" }, "k=v"],
+        [
+          {
+            k: "a b",
+            n: 1,
+            on: true,
+            big: 10n,
+            list: ["x", "y"],
+            absent: undefined,
+          },
+          "k=a+b&n=1&on=true&big=10&list=x&list=y",
+        ],
+        [{ a: { b: "1", c: { d: "2" } } }, "a%5Bb%5D=1&a%5Bc%5D%5Bd%5D=2"],
+        [
+          { token: Redacted.make("secret"), none: [], nothing: {} },
+          "token=secret",
+        ],
+        [new URLSearchParams("k=v&k=w&e=a+b"), "k=v&k=w&e=a+b"],
+        [
+          [
+            ["k", "v"],
+            ["k", "w"],
+          ],
+          "k=v&k=w",
+        ],
+        [{ m: new Map([["k", "v"]]) }, "m%5Bk%5D=v"],
+        [UrlParams.make([["n", 1 as never]]), "n=1"],
+      ] as const)
+        expect(textOf(yield* Body.urlEncoded.encode(value as never))).toBe(
+          text,
         );
     }),
   );
 
-  it.effect.fails(
-    "writes a plain record and URLSearchParams as 0.18.0 did",
+  it.effect(
+    "refuses what that reading would drop or write as something else",
     () =>
       Effect.gen(function* () {
-        expect(textOf(yield* Body.urlEncoded.encode({ k: "v" } as never))).toBe(
-          "k=v",
-        );
+        const scalar =
+          "must be text, a number, a bigint, a boolean, or a record of them";
+        for (const [value, message] of [
+          [{ k: "v", d: new Date(0) }, '$["d"] cannot encode Date'],
+          [{ k: null }, `$["k"] ${scalar}`],
+          [{ k: Symbol("s") }, `$["k"] ${scalar}`],
+          [{ k: Redacted.make({ a: 1 }) }, `$["k"] ${scalar}`],
+          [
+            { k: [["a"]] },
+            '$["k"][0] cannot encode a list or an object inside a list',
+          ],
+          [
+            { k: ["a", undefined] },
+            '$["k"][1] cannot encode undefined in a list',
+          ],
+          [
+            { k: Object.assign(["a"], { extra: "keep" }) },
+            '$["k"]["extra"] cannot encode an extra array field',
+          ],
+          [
+            { k: "v", [Symbol("s")]: "x" },
+            "$[Symbol(s)] must have a string field name",
+          ],
+          [[["k", "v", "x"]], "$[0] must be a pair"],
+          [[[1, "v"]], "$[0][0] must have a string name"],
+          [
+            UrlParams.make([["k", { a: 1 } as never]]),
+            '$["k"] must be text, a number, a bigint or a boolean',
+          ],
+          ["k=v", "$ must be UrlParams, a record or field pairs"],
+        ] as const)
+          expect(yield* urlEncodedRefusal(value)).toBe(
+            `URL-encoded body at ${message}`,
+          );
       }),
-  );
-
-  it.effect("currently refuses a record field without naming it", () =>
-    Effect.gen(function* () {
-      expect(yield* urlEncodedRefusal({ k: "v", d: new Date(0) })).toBe(
-        "URL-encoded body at $ must contain an array of pairs",
-      );
-    }),
-  );
-
-  it.effect.fails(
-    "refuses a record field that would be dropped, naming it",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* urlEncodedRefusal({ k: "v", d: new Date(0) })).toBe(
-          'URL-encoded body at $["d"] cannot encode Date',
-        );
-      }),
-  );
-
-  it.effect("currently refuses a number in UrlParams pairs", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* urlEncodedRefusal(UrlParams.make([["n", 1 as never]])),
-      ).toBe('URL-encoded body at $["n"] must be a string');
-    }),
-  );
-
-  it.effect.fails("writes a number in UrlParams pairs as its text", () =>
-    Effect.gen(function* () {
-      expect(
-        textOf(
-          yield* Body.urlEncoded.encode(UrlParams.make([["n", 1 as never]])),
-        ),
-      ).toBe("n=1");
-    }),
   );
 });
 
