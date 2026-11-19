@@ -1684,4 +1684,59 @@ describe("a field a part lost under a parent read field by field", () => {
       expect(reads).toBe(0);
     }),
   );
+
+  it.effect("adds no reads of an opaque field on the fieldwise fallback", () =>
+    Effect.gen(function* () {
+      class Counted extends Schema.Class<Counted>("Counted")({
+        a: Schema.String,
+      }) {
+        readonly reads = 1;
+      }
+      const opaque = Schema.declare(
+        (input): input is object => typeof input === "object" && input !== null,
+      );
+      // The instance's own property fails the strict write, so the value is read again by field.
+      for (const [schema, place] of [
+        [
+          Schema.Struct({ n, m: n, f: Filter, o: opaque, c: Counted }),
+          (o: object) => ({ o }),
+        ],
+        [
+          Schema.Struct({
+            n,
+            m: n,
+            f: Filter,
+            inner: Schema.Struct({ o: opaque }),
+            c: Counted,
+          }),
+          (o: object) => ({ inner: { o } }),
+        ],
+      ] as const) {
+        let reads = 0;
+        const o = Object.defineProperty({}, "annotation", {
+          enumerable: true,
+          get: () => {
+            reads++;
+            return "v";
+          },
+        });
+        const path = Request.get("").pipe(
+          Request.path(schema, (value) => `/${JSON.stringify(value.f)}`),
+        );
+        expect(
+          yield* urlOf(path, {
+            path: {
+              n: "1",
+              m: 1,
+              f: { page_size: "05" },
+              ...place(o),
+              c: new Counted({ a: "x" }),
+            },
+          } as never),
+        ).toBe('/{"page_size":"5"}');
+        // The root's own normalisation reads it; the fallback reads nothing it keeps unchanged.
+        expect(reads).toBeLessThanOrEqual(2);
+      }
+    }),
+  );
 });
