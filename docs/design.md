@@ -475,9 +475,10 @@ the `URL` it gives its runner, which percent-encodes some characters. A provider
 
 ### A query value can be a `Date`
 
-A query value is text, and a `Date` has an obvious text, so `UrlEncoding.QueryValue` includes it and
-a query schema can encode to it. It is written with `toISOString()`. A request carries a schema's
-encoded side, and the caller gives its decoded side:
+Query fields can encode to text, numbers, booleans, bigints, `Date`s, `null`, or flat lists of those
+values. `undefined` omits an entry. An unsupported value fails with `InvalidRequest` naming the
+field. A `Date` is written with `toISOString()`. A request carries a schema's encoded side, and the
+caller gives its decoded side:
 
 | Schema                                                                             | Caller gives          | Request carries |
 | ---------------------------------------------------------------------------------- | --------------------- | --------------- |

@@ -16,6 +16,13 @@
   and `["ab"]`. The query helper also refuses `[["k"]]` and `[[1, "v"]]`. When a query binding
   cannot convert a value to text, its `InvalidRequest` names the value conversion and keeps the
   original cause.
+- **Breaking:** refuse unsupported encoded query values before dispatch
+  ([#255](https://github.com/viell-dev/slop-effect-schema-http/issues/255)). For example,
+  `{ b: { x: 1 } }` used to send `[object Object]`. Query fields accept scalars and flat lists of
+  scalars. A binding reports `InvalidRequest` naming the field for an unsupported value, including
+  an object other than a `Date`, a function, a symbol, or a nested list. The direct
+  `UrlEncoding.queryEntries` helper throws `TypeError`, including when called by the object form of
+  `Request.setQuery`.
 
 ## 0.18.0 — 2026-11-18
 

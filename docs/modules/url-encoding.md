@@ -26,13 +26,15 @@ entries, `null` means a bare key, and `undefined` omits an entry:
 
 Pair arrays and arrays of repeated values are read by position, including arrays with a `null`
 prototype or a custom iterator. A pair must be an array of length two with a string name.
-`queryEntries` throws `TypeError` for malformed pairs.
+`queryEntries` throws `TypeError` for malformed pairs and unsupported values.
 
 Numbers, bigints and booleans become strings, and a `Date` becomes its ISO text. An invalid `Date`
 has no ISO text, so it goes out as `Invalid Date`, and a schema such as `Schema.Date` refuses it
 before that. An empty string remains an empty value. Use an iterable of pairs when you need explicit
-ordering across repeated names. The exported `QueryInput` type is also the encoded shape accepted by
-a request query schema, so [a query schema can encode to a `Date`](./request.md#dates-in-a-query).
+ordering across repeated names. A repeated value is a flat list of scalars. Functions, symbols,
+nested lists, and objects other than `Date` are invalid. The exported `QueryInput` type is the
+encoded shape accepted by a request query schema, so [a query schema can encode to a
+`Date`](./request.md#dates-in-a-query).
 
 ## Replace one encoding rule
 
