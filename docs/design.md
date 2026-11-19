@@ -190,9 +190,14 @@ representation it actually writes, in the same pass, so the check cannot disagre
 This applies to open schemas, the output of any selected union member, and encoders composed with
 `Body.encodeSchema`. Where Effect's schema reading itself drops a supplied value before any writer
 sees it, the schema read refuses instead. For example, a string-indexed record loses a supplied
-symbol field whether it constructs or decodes the value, and `Schema.toCodecJson` of
-`Schema.ObjectKeyword` copies only string fields. Those fail with `SchemaError`. An empty struct
-passes the symbol through, and the writer refuses it with `HttpBodyError`. Both name the symbol.
+symbol field whether it constructs or decodes the value. So do a class, which keeps only its fields,
+and a link whose encoded end is such a record, as when a record decodes to a struct.
+`Schema.toCodecJson` of `Schema.ObjectKeyword` copies only the string fields of an object and the
+positions of an array. Those fail with `SchemaError`. An empty struct passes the symbol through, and
+the writer refuses it with `HttpBodyError`. Both name the symbol. Not covered:
+[#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261), a built-in that an open
+schema rebuilds before any writer sees it, such as a `Date` that `Schema.ObjectKeyword` turns into
+`{}`.
 
 `Body.jsonSchema` first encodes through the schema's canonical JSON codec (`Schema.toCodecJson`). It
 then shares the JSON writer with raw and composed `Body.json`. That writer reads each value once, in

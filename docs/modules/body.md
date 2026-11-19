@@ -129,11 +129,14 @@ Plain objects, class instances and `Schema.Class` values write their fields, and
 `Option`, `Chunk` and `DateTime` write what their `toJSON` returns. An invalid `Date` writes `null`,
 which is its own `toJSON` result. The writer omits undefined object fields and encodes top-level
 `undefined` as an empty outgoing body. Exceptions thrown by getters, proxies and `toJSON` are
-defects. The checks add no nesting limit of their own. Nesting deeper than the engine's own
-`JSON.stringify` allows fails with `HttpBodyError` too. That limit depends on the engine and its
-stack: Node 24 on Windows stops at about 4,700 levels, while Node 26 on Linux writes over a million.
-An empty incoming body is a decoding error. Choose `Body.jsonSchema` to validate the application
-shape, or `Body.empty` for a response with no useful body.
+defects. A value an open schema rebuilds before the writer, such as a `Date` read by
+`Schema.ObjectKeyword`, is not covered
+([#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261)). The checks add no nesting
+limit of their own. Nesting deeper than the engine's own `JSON.stringify` allows fails with
+`HttpBodyError` too. That limit depends on the engine and its stack: Node 24 on Windows stops at
+about 4,700 levels, while Node 26 on Linux writes over a million. An empty incoming body is a
+decoding error. Choose `Body.jsonSchema` to validate the application shape, or `Body.empty` for a
+response with no useful body.
 
 Use `Body.formData.pipe(Body.encodeSchema(Schema.fromFormData(fields)))` when a schema supplies the
 form entries. The form writer accepts text, files and blobs, including repeated values and nested
@@ -142,10 +145,11 @@ supply a form entry, it refuses with `HttpBodyError` naming the field. For examp
 schema that encodes it to text, and a `Redacted` value one that reveals its text. A prepared
 `FormData` can go directly to `Body.formData`, including one from another realm or implementation,
 such as the `undici` package used with its own `fetch`. Anything that is not a form fails with
-`HttpBodyError`. `Body.urlEncoded` writes Effect `UrlParams`, whose values are text, numbers,
-bigints, booleans or redacted ones. From JavaScript it also takes what `UrlParams.fromInput` reads,
-such as a plain record or `URLSearchParams`. A value that reading would drop or write as something
-else, such as `null` or a `Date`, and a malformed pair fail with `HttpBodyError` naming the field.
+`HttpBodyError`. `Body.urlEncoded` writes Effect `UrlParams`, whose values are text or redacted
+text. From JavaScript it also writes numbers, bigints and booleans in those pairs as their text, and
+takes what `UrlParams.fromInput` reads, such as a plain record or `URLSearchParams`. A value that
+reading would drop or write as something else, such as `null` or a `Date`, and a malformed pair fail
+with `HttpBodyError` naming the field.
 
 `Body.text`, `Body.bytes` and `Body.empty` also fail with `HttpBodyError` when JavaScript or a
 schema such as `Schema.Any` passes them a value that is not a string, not a `Uint8Array`, or any

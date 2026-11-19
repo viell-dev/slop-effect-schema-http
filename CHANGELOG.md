@@ -34,15 +34,17 @@
   schema. The writer also refuses functions, symbols, defined enumerable symbol fields, an array's
   own fields beside its positions, and objects whose content is not in their own fields: built-in
   collections, binary data, `RegExp`, `Error`, `URLSearchParams`, `FormData`, `Headers`, `Blob`,
-  `File` and boxed symbols. Plain objects, class instances and values with `toJSON`, such as
-  `Option` and `DateTime`, write as before, and an invalid `Date` still writes `null`. The checks
-  use the result of `toJSON` and report `HttpBodyError`, as nesting beyond the engine's own
-  `JSON.stringify` limit still does; they add no nesting limit of their own. A schema can still
-  refuse first with `SchemaError`. Exceptions from caller getters, proxies and `toJSON` now
-  propagate as defects. The writer now reads enumerable symbol-keyed fields, including getters, to
-  see whether they supply a value. It does more work than `HttpBody.json`: on Node 24, a large body
-  takes about two to three times as long to encode as on 0.18.0, and the same without Node's brand
-  helpers, as in a browser.
+  `File` and boxed symbols, and a box's own fields, so
+  `Object.assign(new Number(5), { unit: "kg" })` no longer writes `5`. Plain objects, class
+  instances and values with `toJSON`, such as `Option` and `DateTime`, write as before, and an
+  invalid `Date` still writes `null`. The checks use the result of `toJSON` and report
+  `HttpBodyError`, as nesting beyond the engine's own `JSON.stringify` limit still does; they add no
+  nesting limit of their own. A schema can still refuse first with `SchemaError`. Exceptions from
+  caller getters, proxies and `toJSON` now propagate as defects. The writer now reads enumerable
+  symbol-keyed fields, including getters, to see whether they supply a value. It does more work than
+  `HttpBody.json`: up to about four times 0.18.0's encoding time for a large body, and more for many
+  empty objects or arrays, as the cost table in
+  [#260](https://github.com/viell-dev/slop-effect-schema-http/pull/260) records.
 - **Breaking:** form writers refuse values they would silently skip, with `HttpBodyError` naming the
   field ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). For example,
   multipart no longer sends only `extra=keep` for `{ v: 1, extra: "keep" }` through an open
@@ -55,10 +57,11 @@
   implementation is sent as it is. `Body.urlEncoded` still reads a plain record, field pairs or
   `URLSearchParams` passed from JavaScript as Effect's `UrlParams.fromInput` does. It refuses a
   value that reading would drop or write as something else, such as `{ k: null }`, which wrote
-  `k=null`, a `Date`, which wrote nothing, or an object in a list, which wrote `[object Object]`,
-  and malformed pairs. A number, bigint or boolean in `UrlParams` pairs, which used to fail as a
-  defect, writes its text. `Body.formData`, `Body.urlEncoded` and every `Body.encodeSchema` encoder
-  now have `HttpBodyError` in their error type.
+  `k=null`, a `Date`, which wrote nothing, an object in a list, which wrote `[object Object]`, or
+  `undefined` in a list, which was skipped while the rest was written, and malformed pairs. A
+  number, bigint or boolean in `UrlParams` pairs, which used to fail as a defect, writes its text.
+  `Body.formData`, `Body.urlEncoded` and every `Body.encodeSchema` encoder now have `HttpBodyError`
+  in their error type.
 - **Breaking:** `Body.text`, `Body.bytes` and `Body.empty` refuse what they cannot write, with
   `HttpBodyError` ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). A value
   that is not a string, such as an object passed through `Body.encodeSchema(Schema.Any)`, used to
@@ -77,9 +80,10 @@
 - **Breaking:** a supplied symbol field that Effect's own schema reading drops from a body is
   refused with `SchemaError`
   ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). A string-indexed record
-  drops one whether it constructs or decodes the value, and `Body.jsonSchema` of
-  `Schema.ObjectKeyword` drops one from the top-level object, whose canonical JSON codec copies only
-  string fields.
+  drops one whether it constructs or decodes the value, and so do a class, which keeps only its
+  fields, and a link whose encoded end is such a record. `Body.jsonSchema` of `Schema.ObjectKeyword`
+  drops symbol fields from the top-level object and an array's own fields beside its positions,
+  because its canonical JSON codec copies only string fields and positions.
 
 ## 0.18.0 — 2026-11-18
 
