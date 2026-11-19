@@ -1,8 +1,12 @@
 import { Effect, Schema, SchemaAST, SchemaIssue } from "effect";
-import { readsField } from "./candidates.js";
 import { encodedInput } from "./encoded-input.js";
 import * as Excess from "./excess.js";
 import { nestedEncodedInput } from "./nested-input.js";
+import {
+  isPlainData,
+  isPlainDataThroughout,
+  statesPrototypeName,
+} from "./plain.js";
 import { snapshotter } from "./snapshot.js";
 import { guardVoidMembers, observeVoid } from "./void-member.js";
 import {
@@ -96,7 +100,7 @@ const reporting: SchemaAST.ParseOptions = {
  * @remarks
  * A strict and a loose read part only on excess keys. A key counts as the caller's when the object
  * it was found in is the caller's own object at that place, as a part's normalised input holds it.
- * That input holds only names the caller's value holds, as {@link ownFields} says. A decoder or
+ * A checked part is plain data, so that input holds only the caller's own fields. A decoder or
  * transformation makes a new object, so a key it adds is not the caller's. A union takes its first
  * member that only strips, as a loose read would.
  */
@@ -169,55 +173,12 @@ const sliceOf = (given: unknown, name: PropertyKey): unknown =>
     : undefined;
 
 /**
- * The normalised input without the names it brought out that are no fields the caller gave.
- *
- * @remarks
- * Normalising brings a field the value inherits out as a key under a name the schema states, as an
- * accessor on a class is. A key stays where the installed Effect's struct reads it from the caller's
- * value, as {@link readsField} says. What the language gives every value under such a name, from
- * `Object.prototype` or as a class's `constructor`, is not one the caller gave. Parts read this
- * view, and the root's comparison does too, so a strict read does not refuse such a name as a
- * wrong value and a comparison does not count it as lost. Whatever is unchanged is returned as it
- * was; a field read through an accessor is not walked, so its accessor does not run again.
+ * Whether a field read on its own is checked: it is plain data throughout, and its schema states no
+ * name every object has, at any depth. Each check of a part reads all of it, so the whole of it has
+ * to be what the caller gave.
  */
-const ownFields = (given: unknown, caller: unknown): unknown => {
-  if (!isKeyed(given) || !isKeyed(caller) || given === caller) return given;
-  let changed = false;
-  /** One field of the view, kept and walked into where it is an object of the caller's. */
-  const inner = (item: unknown, key: PropertyKey): unknown => {
-    // Only an object can hold names to take out; reading it through an accessor would run it again.
-    const kept = isKeyed(item) ? ownFields(item, dataAt(caller, key)) : item;
-    if (kept !== item) changed = true;
-    return kept;
-  };
-  if (Array.isArray(given)) {
-    const items = given.map((item: unknown, index) => inner(item, index));
-    return changed ? items : given;
-  }
-  const entries: Array<readonly [PropertyKey, unknown]> = [];
-  for (const key of Reflect.ownKeys(given)) {
-    if (!readsField(caller, key)) {
-      changed = true;
-      continue;
-    }
-    entries.push([key, inner(given[key], key)]);
-  }
-  return changed ? Object.fromEntries(entries) : given;
-};
-
-/** A field's value where the caller's value holds it as data, without running an accessor. */
-const dataAt = (value: object, key: PropertyKey): unknown => {
-  for (
-    let holder: object | null = value;
-    holder !== null;
-    holder = Object.getPrototypeOf(holder) as object | null
-  ) {
-    const property = Object.getOwnPropertyDescriptor(holder, key);
-    if (property !== undefined)
-      return "value" in property ? property.value : undefined;
-  }
-  return undefined;
-};
+const plainPart = (value: unknown, type: SchemaAST.AST): boolean =>
+  isPlainDataThroughout(value) && !statesPrototypeName(type, true);
 
 /** The normalised input without the fields a parent already read as parts. */
 const withoutFields = (
@@ -256,7 +217,8 @@ const withoutFields = (
  * - A decoder that has to strip is the last route, and what it lost is kept.
  *
  * A route that keeps everything wins. Otherwise the constructor's loss, or the first later route's,
- * is kept, so the request is refused. Without that input, a part reads as Effect reads it.
+ * is kept, so the request is refused. Without that input, a part reads as Effect reads it, and so
+ * does one that is not plain data throughout, as {@link plainPart} says.
  */
 const decodedReading = <S extends Schema.Top>(
   contract: S,
@@ -282,19 +244,22 @@ const decodedReading = <S extends Schema.Top>(
     onFieldwise?: () => void,
   ) {
     const output: Record<PropertyKey, unknown> = { ...input };
-    // Parts read the caller's own fields. A part's slice already comes from such a view.
-    const view = part ? given : ownFields(given, input);
     // A field need not be a key, as an accessor on a class is not, so it comes from `input`.
     const fields: Record<PropertyKey, unknown> = input as never;
     const read: Array<PropertyKey> = [];
-    const parts: Record<PropertyKey, unknown> = {};
+    // An own `__proto__` field is a key here, as it is in the spread copy above.
+    const parts: Record<PropertyKey, unknown> = Object.create(null) as never;
     const lost: Array<Excess.Path> = [];
     for (const { name, type } of Excess.fieldsOf(contract.ast)) {
       if (fields[name] === undefined) continue;
+      // A checked value is plain data, so its fields are its own data. A part of a part is checked
+      // where the part is; another is checked where it is plain data throughout.
+      const checked =
+        given !== undefined && (part || plainPart(fields[name], type));
       const field = yield* fromPart(type, fields[name], {
         options: parseOptions,
         part: true,
-        given: sliceOf(view, name),
+        given: checked ? sliceOf(given, name) : undefined,
       });
       output[name] = field.value;
       parts[name] = field.value;
@@ -303,10 +268,10 @@ const decodedReading = <S extends Schema.Top>(
     }
     // The constructor runs again over each part's result. Strictly, a union there keeps the member
     // the part was read by instead of taking an earlier one that strips it; loosely, as Effect would.
-    const value = yield* isKeyed(view)
+    const value = yield* isKeyed(given)
       ? Effect.catch(
           make(
-            { ...(withoutFields(view, read) as object), ...parts },
+            { ...(withoutFields(given, read) as object), ...parts },
             { ...parseOptions, onExcessProperty: "error" },
           ),
           () => make(output, parseOptions),
@@ -314,8 +279,8 @@ const decodedReading = <S extends Schema.Top>(
       : make(output, parseOptions);
     onFieldwise?.();
     // The root's encoded-only names have their own proof; a part's are checked here.
-    if (part && view !== undefined)
-      lost.push(...unkept(withoutFields(view, read), value));
+    if (part && given !== undefined)
+      lost.push(...unkept(withoutFields(given, read), value));
     return { value, lost };
   });
   const byMember = (
@@ -735,12 +700,22 @@ const readerForCodec = <S extends Schema.Top, A, R>(
         ),
     );
   const withParts = decodedReading(contract);
+  // The root's own checks run where its value is plain data and its schema names nothing every
+  // object has; its parts are then each checked as they are.
+  const plainRoot = !statesPrototypeName(ast, false);
   const readDecoded = (
     input: Input<S>,
     onConstructed?: () => void,
     onFieldwise?: () => void,
     given?: unknown,
-  ) => withParts(input, onConstructed, onFieldwise, undefined, given);
+  ) =>
+    withParts(
+      input,
+      onConstructed,
+      onFieldwise,
+      undefined,
+      plainRoot && isPlainData(input) ? given : undefined,
+    );
   // A custom writer is the caller's own. Only the schema's own writer can note its members.
   const recordingAst =
     custom === undefined || strictWriter !== write
@@ -815,22 +790,18 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             ({ output, strict, writers }): Written<A> => {
               const choices =
                 constructed && voidDeclined ? guarded.choices : undefined;
-              // Only a field the caller gave can be lost, as for each part.
               const lost = mergePaths(
-                Excess.missing(
-                  [ast],
-                  ownFields(given, input),
-                  value,
-                  output,
-                  [],
-                  choices,
-                ),
+                Excess.missing([ast], given, value, output, [], choices),
                 lostByParts,
               );
               const dropped =
                 strict === undefined || writers === undefined
                   ? []
-                  : droppedBy(guardWrite, given, value, writers);
+                  : droppedBy(
+                      guardWrite,
+                      { given, value, caller: input },
+                      writers,
+                    );
               if (dropped.length === 0) return { output, lost };
               const paths = dropped.map(({ path }) => path);
               const failure = writeFailure(ast, dropped);

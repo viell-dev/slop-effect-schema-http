@@ -273,12 +273,16 @@ object. A decoder that can read the field only by stripping a supplied key is th
 that key is refused even where a decoding default fills its name again. A field given under both its
 names cannot keep both, so it is refused too. A value the constructor returns unchanged, as an
 opaque declaration's is, lost nothing, and nothing inside it is read again. A key that a decoder or
-transformation adds to the value it makes is not the caller's, so it is never counted as lost. A
-field the caller's value inherits counts where the installed Effect reads it. Effect 4.1.4 reads a
-field named after an `Object.prototype` member, such as `toString`, only as the value's own
-property, and Effect 4.0.7 also reads one the value inherits from its own prototype. What the
-language gives every value under such a name, `Object.prototype`'s members and a class's
-`constructor`, is never the caller's.
+transformation adds to the value it makes is not the caller's, so it is never counted as lost.
+
+These checks run where a field's value is plain data throughout: lists and objects whose prototype
+is `Object.prototype` or `null`, holding only own data properties, none named after an
+`Object.prototype` member such as `toString` or `__proto__`, under a schema that states no field and
+no wire name named after one at any depth. The root's own checks need the same of its value and of
+the names its schema states. A value held behind an accessor, a class instance, including a
+`Schema.Class` instance, and a schema that uses such a name read as Effect reads them. Effect 4.0.7
+and 4.1.4 read those names differently, so preparation does not guess what the caller gave there.
+[Active limits](#active-limits-and-recovery) lists what that leaves.
 
 A union field read field by field takes its first member reading that keeps everything, ahead of an
 earlier one that loses a field. The object's constructor then runs again over the fields' results,
@@ -360,13 +364,14 @@ every key, and a record keeps the keys its key schema takes. Nothing is decoded 
 The relaxed write selects the members to try by kind of value and literal tags, as the installed
 Effect does, before it runs any of them, so a member Effect rules out runs none of its encoders,
 middleware or checks. Like Effect, it follows each tag field through its encoding before it asks
-whether the tag is required. A name `Object.prototype` has, such as `toString`, is a field of a
-written value only as its own property, so a member that does not state it loses nothing where the
-value only inherits it. A nested union that fails its own check or one-of rule credits none of its
-members, and each place a value is written from is checked on its own, so one object given to two
-fields is checked against each field's member. When no member can both keep and write the value, the
-refusal is the error of the first member that could not write it, the error that member alone gives.
-That holds through grouped and suspended unions:
+whether the tag is required. The check runs where the caller's value is plain data, as the section
+above defines it, and the schema there, a union's members and tags among it, names no field after an
+`Object.prototype` member; elsewhere the value is written as Effect writes it. A nested union that
+fails its own check or one-of rule credits none of its members, and each place a value is written
+from is checked on its own, so one object given to two fields is checked against each field's
+member. When no member can both keep and write the value, the refusal is the error of the first
+member that could not write it, the error that member alone gives. That holds through grouped and
+suspended unions:
 
 ```ts
 import { Schema } from "effect";
@@ -548,6 +553,15 @@ remaining list limit under #243.
   field the request is refused. Under `Union([Filter, Word])`, where `Word` reads `page_size` as
   text, `{ page_size: "many" }` is sent as text where nothing else relaxes the write, and refused
   beside such a field ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)).
+- Outside plain data, as [a field keeps what its own reading
+  lost](#a-field-keeps-what-its-own-reading-lost) defines it, a value reads and writes as Effect
+  reads and writes it, so both checks above are off there
+  ([#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241),
+  [#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)). Under the `Page`
+  example, `{ n: 1, items: [{ limit: "x" }] }` held behind a getter, or given as a class instance,
+  still sends `"page_size":"25"`; `Union([Note, Title])` still drops `meta` from a class instance. A
+  field given under both names, where the wire name is one every object has such as `toString`,
+  sends one of them, and a field given under the wire name `__proto__` is dropped.
 - The relaxed write's check follows a struct's decoded fields. A struct renamed with
   `Schema.encodeKeys` writes each field again on its encoded side, so a union there can take another
   member, and a field that member drops is not seen. Where `Dropping` is

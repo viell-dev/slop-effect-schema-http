@@ -1,5 +1,6 @@
 import { Effect, Schema, SchemaAST, SchemaIssue, SchemaParser } from "effect";
-import { candidates, hasField } from "./candidates.js";
+import { candidates } from "./candidates.js";
+import { isPlainData, statesPrototypeName } from "./plain.js";
 
 /** A union a write went through, the member that wrote the value, and the first that could not. */
 export interface WriterNote {
@@ -352,23 +353,34 @@ export interface Dropped {
   readonly before: SchemaIssue.Issue | undefined;
 }
 
+/** What a write was given, as the caller gave it and normalised, and the value it wrote. */
+export interface WriteInput {
+  /** The caller's value, which says where it is plain data. */
+  readonly caller: unknown;
+  /** The caller's value as the schema normalised it. */
+  readonly given: unknown;
+  /** The decoded value the write took. */
+  readonly value: unknown;
+}
+
 /**
  * The supplied fields a relaxed write dropped.
  *
  * @remarks
  * A struct's type side reads only the names it states, so every struct the write goes through drops
  * the other keys of the value before any of its own steps run. A struct that states no key keeps
- * them all. A key counts when the caller supplied it and the decoded value holds it as a field under
- * the same name; one a decoder made is in neither, and a name `Object.prototype` has, such as
- * `toString`, is a field of the value only as its own property. Each union is followed into the
- * member that wrote the value at that place, as the write noted it. A class or other declaration, and a union no member
- * of which wrote there, is the schema's own reading. Only the structure the writer states is
- * followed, so nothing inside an opaque value is read.
+ * them all. A key counts when the caller supplied it and the decoded value holds it under the same
+ * name; one a decoder made is in neither. Each union is followed into the member that wrote the
+ * value at that place, as the write noted it. A class or other declaration, and a union no member of
+ * which wrote there, is the schema's own reading.
+ *
+ * The walk goes only where the caller's value is plain data, held as own data properties, and the
+ * schema there names nothing every object has. Elsewhere the write is Effect's own. Only the
+ * structure the writer states is followed, so nothing inside an opaque value is read.
  */
 export const dropped = (
   writer: SchemaAST.AST,
-  given: unknown,
-  value: unknown,
+  { caller: root, given, value }: WriteInput,
   written: WriterNotes,
 ): ReadonlyArray<Dropped> => {
   if (written.length === 0) return [];
@@ -387,10 +399,18 @@ export const dropped = (
     ast: SchemaAST.AST,
     supplied: unknown,
     held: unknown,
+    caller: unknown,
     path: ReadonlyArray<PropertyKey>,
     choice: Choice | undefined,
   ): void => {
-    if (!isKeyed(supplied) || !isKeyed(held)) return;
+    if (
+      !isKeyed(supplied) ||
+      !isKeyed(held) ||
+      !isKeyed(caller) ||
+      !isPlainData(caller) ||
+      statesPrototypeName(ast, false)
+    )
+      return;
     let node: SchemaAST.AST | undefined = ast;
     let chosen = choice;
     while (node?._tag === "Suspend" || node?._tag === "Union") {
@@ -408,7 +428,7 @@ export const dropped = (
         if (
           !Object.prototype.propertyIsEnumerable.call(supplied, key) ||
           supplied[key] === undefined ||
-          !hasField(held, key) ||
+          !(key in held) ||
           held[key] === undefined
         )
           continue;
@@ -420,9 +440,10 @@ export const dropped = (
             before: chosen?.before,
           });
         else if (isKeyed(supplied[key]) && isKeyed(held[key])) {
+          // Plain data holds every field as its own data, so reading it runs nothing.
           const at = [...path, key];
           for (const type of types)
-            visit(type, supplied[key], held[key], at, chosen);
+            visit(type, supplied[key], held[key], caller[key], at, chosen);
         }
       }
       return;
@@ -445,10 +466,17 @@ export const dropped = (
               ? node.rest[index - tail + 1]
               : node.rest[0];
         if (type !== undefined && Object.hasOwn(supplied, index))
-          visit(type, supplied[index], held[index], [...path, index], chosen);
+          visit(
+            type,
+            supplied[index],
+            held[index],
+            caller[index],
+            [...path, index],
+            chosen,
+          );
       }
     }
   };
-  visit(writer, given, value, [], undefined);
+  visit(writer, given, value, root, [], undefined);
   return lost;
 };

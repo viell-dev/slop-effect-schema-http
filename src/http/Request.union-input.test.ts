@@ -2144,47 +2144,151 @@ describe("a caller's field under a union", () => {
         }),
     );
 
-    it.effect("does not count a name every object inherits as written", () =>
+    // The write's check runs only where the caller's value is plain data and the schema there names
+    // no field every object has. Elsewhere the value is written as Effect writes it.
+    it.effect(
+      "writes a union that names a field every object has as Effect writes it",
+      () =>
+        Effect.gen(function* () {
+          // The value `{ c: false }` inherits `toString` and `constructor`, which it was not given.
+          for (const Named of [
+            Schema.Struct({ toString: text }),
+            Schema.Struct({ constructor: text }),
+          ])
+            expect(
+              yield* bodyOf(
+                post(
+                  Schema.Struct({
+                    choice: Schema.Union([
+                      Schema.Struct({ c: Schema.Boolean }),
+                      Named,
+                    ]),
+                    rename: Relaxing,
+                  }),
+                ),
+                { body: { choice: { c: false }, rename: relaxed } },
+              ),
+            ).toBe('{"choice":{"c":false},"rename":{"a":"ok"}}');
+          const Wire = Schema.Struct({ text }).pipe(
+            Schema.encodeKeys({ text: "constructor" }),
+          );
+          const schema = Schema.Struct({
+            any: Schema.Union([
+              Schema.Struct({ a: text }),
+              Schema.Struct({ b: text }),
+            ]),
+            rename: Relaxing,
+            f: Wire,
+          });
+          for (const f of [{ constructor: "x" }, { text: "x" }])
+            expect(
+              yield* bodyOf(post(schema), {
+                body: { any: { a: "x" }, rename: relaxed, f } as never,
+              }),
+            ).toBe(
+              '{"any":{"a":"x"},"rename":{"a":"ok"},"f":{"constructor":"x"}}',
+            );
+        }),
+    );
+
+    it.effect(
+      "writes a union whose first member takes anything under such a name as Effect writes it",
+      () =>
+        Effect.gen(function* () {
+          for (const name of ["toString", "constructor", "valueOf"]) {
+            const Open = Schema.Union([
+              Schema.Struct({ [name]: Schema.Unknown }),
+              Schema.Struct({ a: Schema.optionalKey(Schema.Number) }),
+            ]);
+            expect(
+              yield* bodyOf(
+                post(Schema.Struct({ f: Open, rename: Relaxing })),
+                { body: { f: {}, rename: relaxed } } as never,
+              ),
+            ).toBe('{"f":{},"rename":{"a":"ok"}}');
+          }
+        }),
+    );
+
+    it.effect("writes a class instance as Effect writes it", () =>
       Effect.gen(function* () {
-        // The value `{ c: false }` inherits `toString` and `constructor`, which it was not given.
-        for (const Named of [
-          Schema.Struct({ toString: text }),
-          Schema.Struct({ constructor: text }),
-        ])
+        for (const name of ["toString", "valueOf"]) {
+          // The class has a method under a name another member states as a field.
+          class Methods {
+            readonly a = "";
+            readonly b = true;
+          }
+          Object.defineProperty(Methods.prototype, name, {
+            value: () => "v",
+            configurable: true,
+          });
+          const members = Schema.Union([
+            Schema.Struct({
+              b: Schema.FiniteFromString,
+              [name]: Schema.Boolean,
+            }),
+            Schema.Struct({ a: text, b: Schema.Boolean }),
+          ]);
           expect(
             yield* bodyOf(
-              post(
-                Schema.Struct({
-                  choice: Schema.Union([
-                    Schema.Struct({ c: Schema.Boolean }),
-                    Named,
-                  ]),
-                  rename: Relaxing,
-                }),
-              ),
-              { body: { choice: { c: false }, rename: relaxed } },
+              post(Schema.Struct({ f: members, rename: Relaxing })),
+              { body: { f: new Methods(), rename: relaxed } } as never,
             ),
-          ).toBe('{"choice":{"c":false},"rename":{"a":"ok"}}');
-        const Wire = Schema.Struct({ text }).pipe(
-          Schema.encodeKeys({ text: "constructor" }),
-        );
-        const schema = Schema.Struct({
-          any: Schema.Union([
-            Schema.Struct({ a: text }),
-            Schema.Struct({ b: text }),
-          ]),
-          rename: Relaxing,
-          f: Wire,
-        });
-        for (const f of [{ constructor: "x" }, { text: "x" }])
-          expect(
-            yield* bodyOf(post(schema), {
-              body: { any: { a: "x" }, rename: relaxed, f } as never,
+          ).toBe('{"f":{"a":"","b":true},"rename":{"a":"ok"}}');
+          class Kept extends Schema.Class<Kept>(`Kept-${name}`)({
+            a: text,
+            b: Schema.Boolean,
+          }) {}
+          const withClass = Schema.Union([
+            text,
+            Schema.Struct({
+              b: Schema.FiniteFromString,
+              [name]: Schema.Boolean,
             }),
-          ).toBe(
-            '{"any":{"a":"x"},"rename":{"a":"ok"},"f":{"constructor":"x"}}',
-          );
+            Kept,
+          ]);
+          expect(
+            yield* bodyOf(
+              post(Schema.Struct({ f: withClass, rename: Relaxing })),
+              {
+                body: { f: new Kept({ a: "", b: true }), rename: relaxed },
+              } as never,
+            ),
+          ).toBe('{"f":{"a":"","b":true},"rename":{"a":"ok"}}');
+        }
       }),
+    );
+
+    /** The #250 value, in a class instance, which is not plain data. */
+    class Dated {
+      readonly title = "a";
+      readonly meta = new Date(0);
+    }
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+    it.effect(
+      "currently lets a member drop a field of a value that is not plain data",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* bodyOf(post(Schema.Union([Note, Title])), {
+              body: new Dated(),
+            } as never),
+          ).toBe('{"title":"a"}');
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+    it.effect.fails(
+      "refuses a field a member drops of a value that is not plain data",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* schemaFailure(post(Schema.Union([Note, Title])), {
+              body: new Dated(),
+            } as never),
+          ).toBe('Expected JSON value\n  at ["meta"]');
+        }),
     );
 
     it.effect("offers no struct for null, as Effect does not", () =>

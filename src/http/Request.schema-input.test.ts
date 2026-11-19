@@ -41,6 +41,17 @@ const posted = <
 const inheriting = (name: string, fields: object): object =>
   Object.assign(Object.create({ [name]: "x" }) as object, fields);
 
+/** A value that holds the list `[{ limit: "x" }]` behind an accessor named `items`. */
+const gettingItems = (fields: object): object =>
+  Object.defineProperty(fields, "items", {
+    enumerable: true,
+    get: () => [{ limit: "x" }],
+  });
+
+/** A field written under the wire name `__proto__`, given as `JSON.parse` makes it. */
+const protoWire = (): never =>
+  JSON.parse('{"n":1,"m":"2","__proto__":"x"}') as never;
+
 /** The body a JSON schema sends for a value. */
 const sentBy = <
   S extends Schema.Top & {
@@ -1973,12 +1984,14 @@ describe("a field a part lost under a parent read field by field", () => {
       }),
   );
 
+  // A part is checked only where it is plain data throughout: own data properties of plain objects
+  // and lists, and a schema that names no field every object has. Elsewhere it reads as Effect
+  // reads it, as the root does where its own value is not plain data.
+
   it.effect(
-    "does not count a name every object inherits as the caller's field",
+    "reads a part whose schema names a field every object has as Effect reads it",
     () =>
       Effect.gen(function* () {
-        // Each part's value inherits the name the schema renames on the wire, as every object
-        // inherits `toString` and `constructor`, but the caller gave only `w` and `a`.
         for (const name of [
           "label",
           "toString",
@@ -1995,9 +2008,8 @@ describe("a field a part lost under a parent read field by field", () => {
             yield* sentBy(parent.schema, parent.body({ w: "x", a: "y" })),
           ).toBe(parent.sent({ w: "x", a: "y" }));
         }
-        // An optional field named after one is left out of a part read beside a sibling that relaxes
-        // the write. The part reads as Effect reads the caller's value: Effect 4.1.4 reads only a
-        // field the value holds, and Effect 4.0.7 reads the inherited `constructor` and refuses it.
+        // Effect 4.1.4 reads only a `constructor` the value holds, and Effect 4.0.7 reads the
+        // inherited one and refuses it.
         const Optional = Schema.Struct({
           a: Schema.Number,
           b: n,
@@ -2022,9 +2034,9 @@ describe("a field a part lost under a parent read field by field", () => {
     "reads a field a part's value inherits from its own prototype as Effect reads it",
     () =>
       Effect.gen(function* () {
-        // Effect 4.1.4 reads a field named after an `Object.prototype` member only as the value's
-        // own; Effect 4.0.7 also reads one the value inherits from its own prototype. Each part
-        // reads the field as the installed Effect does, wherever the part is.
+        // Such a value is not plain data. Effect 4.1.4 reads a field named after an
+        // `Object.prototype` member only as the value's own; Effect 4.0.7 also reads one the value
+        // inherits from its own prototype. The part reads as the installed Effect does.
         for (const name of [
           "toString",
           "constructor",
@@ -2094,12 +2106,11 @@ describe("a field a part lost under a parent read field by field", () => {
   );
 
   it.effect(
-    "reads a class value's getter field without its class's constructor or another read",
+    "reads a class instance as Effect reads it, running its getter no more often",
     () =>
       Effect.gen(function* () {
         for (const name of ["label", "constructor", "toString"]) {
           let reads = 0;
-          // Every class's prototype links back to its class as `constructor`, which is no field.
           class Holder {
             readonly a = "5";
             get text() {
@@ -2116,31 +2127,231 @@ describe("a field a part lost under a parent read field by field", () => {
             expect(
               yield* sentBy(parent.schema, parent.body(new Holder())),
             ).toBe(parent.sent({ [name]: "x", a: "5" }));
-            // Effect's own reads run the getter. The view each part reads runs it no more.
+            // Effect's own reads run the getter, and preparation runs it no more.
             expect(reads).toBeLessThanOrEqual(7);
           }
+        }
+        // A class whose method another union member states as a field.
+        for (const name of ["toString", "valueOf"]) {
+          class Methods {
+            readonly a = "";
+            readonly b = true;
+          }
+          Object.defineProperty(Methods.prototype, name, {
+            value: () => "v",
+            configurable: true,
+          });
+          const parent = parentOf(
+            Schema.Union([
+              Schema.Struct({ b: n, [name]: Schema.Boolean }),
+              Schema.Struct({ a: Schema.String, b: Schema.Boolean }),
+            ]) as unknown as Field,
+            false,
+          );
+          expect(yield* sentBy(parent.schema, parent.body(new Methods()))).toBe(
+            parent.sent({ a: "", b: true }),
+          );
         }
       }),
   );
 
+  it.effect("reads a part held behind a getter as Effect reads it", () =>
+    Effect.gen(function* () {
+      for (const name of ["label", "toString", "constructor", "valueOf"]) {
+        const Wire = Schema.Struct({ text: Schema.String, a: n }).pipe(
+          Schema.encodeKeys({ text: name } as never),
+        ) as unknown as Field;
+        const parent = parentOf(Wire, false);
+        const sent = parent.sent({ [name]: "x", a: "5" });
+        const held = Object.defineProperty({ n: 1, m: "2" }, "f", {
+          enumerable: true,
+          get: () => ({ text: "x", a: "5" }),
+        });
+        expect(yield* sentBy(parent.schema, held as never)).toBe(sent);
+        class Getting {
+          readonly n = 1;
+          readonly m = "2";
+          get f() {
+            return { text: "x", a: "5" };
+          }
+        }
+        expect(yield* sentBy(parent.schema, new Getting() as never)).toBe(sent);
+      }
+    }),
+  );
+
+  it.effect("keeps an own __proto__ field as Effect does", () =>
+    Effect.gen(function* () {
+      // `JSON.parse` makes `__proto__` an own field. Effect keeps it, and so does each part.
+      const optional = Schema.optionalKey(Schema.String);
+      expect(
+        yield* sentBy(
+          Schema.Struct({ n, m: n, ["__proto__"]: optional, rename: Relaxing }),
+          JSON.parse(
+            '{"n":1,"m":"2","__proto__":"x","rename":{"b":"ok"}}',
+          ) as never,
+        ),
+      ).toBe('{"n":"1","m":"2","__proto__":"x","rename":{"a":"ok"}}');
+      expect(
+        yield* sentBy(
+          Schema.Struct({
+            n,
+            m: n,
+            f: Schema.Struct({ a: n, b: n, ["__proto__"]: optional }),
+            rename: Relaxing,
+          }),
+          JSON.parse(
+            '{"n":1,"m":"2","f":{"a":1,"b":"2","__proto__":"x"},"rename":{"b":"ok"}}',
+          ) as never,
+        ),
+      ).toBe(
+        '{"n":"1","m":"2","f":{"a":"1","b":"2","__proto__":"x"},"rename":{"a":"ok"}}',
+      );
+    }),
+  );
+
+  it.effect("refuses a field given under both names", () =>
+    Effect.gen(function* () {
+      const Wire = Schema.Struct({ text: Schema.String, a: n }).pipe(
+        Schema.encodeKeys({ text: "label" }),
+      ) as unknown as Field;
+      const parent = parentOf(Wire, false);
+      expect(
+        yield* schemaFailure(posted(parent.schema), {
+          body: parent.body({ text: "x", label: "y", a: "5" }),
+        }),
+      ).toBe(
+        'The schema cannot keep this field with the rest of the value\n  at ["f"]["label"]',
+      );
+    }),
+  );
+
+  /** `text` written as a name every object has, and the body that gives both of its names. */
+  const bothNames = (name: string) => {
+    const parent = parentOf(
+      Schema.Struct({ text: Schema.String, a: n }).pipe(
+        Schema.encodeKeys({ text: name } as never),
+      ) as unknown as Field,
+      false,
+    );
+    return {
+      schema: parent.schema,
+      body: parent.body({ text: "x", [name]: "y", a: "5" }),
+      sent: parent.sent({ [name]: "y", a: "5" }),
+    };
+  };
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
   it.effect(
-    "refuses a field given under both names, an inherited one too",
+    "currently sends one of a field's two names where the wire name is one every object has",
     () =>
       Effect.gen(function* () {
-        // Both of a field's names cannot be kept, whether or not every object inherits the wire name.
-        for (const name of ["label", "toString", "constructor"]) {
-          const Wire = Schema.Struct({ text: Schema.String, a: n }).pipe(
-            Schema.encodeKeys({ text: name } as never),
-          ) as unknown as Field;
-          const parent = parentOf(Wire, false);
-          expect(
-            yield* schemaFailure(posted(parent.schema), {
-              body: parent.body({ text: "x", [name]: "y", a: "5" }),
-            }),
-          ).toBe(
+        for (const name of ["toString", "constructor"]) {
+          const { schema, body, sent } = bothNames(name);
+          expect(yield* sentBy(schema, body)).toBe(sent);
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect.fails(
+    "refuses a field given under both names where the wire name is one every object has",
+    () =>
+      Effect.gen(function* () {
+        for (const name of ["toString", "constructor"]) {
+          const { schema, body } = bothNames(name);
+          expect(yield* schemaFailure(posted(schema), { body })).toBe(
             `The schema cannot keep this field with the rest of the value\n  at ["f"]["${name}"]`,
           );
         }
+      }),
+  );
+
+  const Page = Schema.Struct({ n, items: Schema.Array(Filter) });
+  const Wrapped = Schema.Struct({
+    n,
+    page: Schema.Struct({ items: Schema.Array(Filter) }),
+  });
+
+  /**
+   * The list `Filter` loses a field of, behind a getter or in a class instance, at the root and
+   * in a field of a plain root: each schema, the caller's value, what is sent, and where it fails.
+   */
+  const notPlain = () => {
+    class Root {
+      readonly n = 1;
+      readonly items = [{ limit: "x" }];
+    }
+    class List {
+      readonly items = [{ limit: "x" }];
+    }
+    const root = '{"n":"1","items":[{"page_size":"25"}]}';
+    const inField = '{"n":"1","page":{"items":[{"page_size":"25"}]}}';
+    return [
+      [Page, gettingItems({ n: 1 }), root, '["items"][0]["limit"]'],
+      [Page, new Root(), root, '["items"][0]["limit"]'],
+      [
+        Wrapped,
+        { n: 1, page: gettingItems({}) },
+        inField,
+        '["page"]["items"][0]["limit"]',
+      ],
+      [
+        Wrapped,
+        { n: 1, page: new List() },
+        inField,
+        '["page"]["items"][0]["limit"]',
+      ],
+    ] as const;
+  };
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect(
+    "currently fills a default for a field a part lost where the value is not plain data",
+    () =>
+      Effect.gen(function* () {
+        for (const [schema, body, sent] of notPlain())
+          expect(yield* sentBy(schema as Field, body as never)).toBe(sent);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect.fails(
+    "refuses a field a part lost where the value is not plain data",
+    () =>
+      Effect.gen(function* () {
+        for (const [schema, body, , at] of notPlain())
+          expect(
+            yield* schemaFailure(posted(schema as Field), { body } as never),
+          ).toContain(at);
+      }),
+  );
+
+  /** A field written under the wire name `__proto__`. */
+  const ProtoWire = Schema.Struct({
+    n,
+    m: n,
+    text: Schema.optionalKey(Schema.String),
+  }).pipe(Schema.encodeKeys({ text: "__proto__" }));
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect("currently drops a field given under the wire name __proto__", () =>
+    Effect.gen(function* () {
+      expect(yield* sentBy(ProtoWire, protoWire())).toBe('{"n":"1","m":"2"}');
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect.fails(
+    "keeps or refuses a field given under the wire name __proto__",
+    () =>
+      Effect.gen(function* () {
+        const outcome = yield* Effect.exit(sentBy(ProtoWire, protoWire()));
+        expect(
+          Exit.isFailure(outcome) ||
+            (Exit.isSuccess(outcome) &&
+              (outcome.value ?? "").includes('"__proto__"')),
+        ).toBe(true);
       }),
   );
 });

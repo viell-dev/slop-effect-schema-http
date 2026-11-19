@@ -41,13 +41,14 @@
   refuses now writes `5`, where 0.18.0 wrote `25`. A decoding default no longer stands in for a
   field that a field's loose decoder stripped, and a field given under both its names, such as
   `{ page_size: "3", limit: 5 }`, now refuses there; 0.18.0 sent `5`. A key a field's decoder adds
-  is not counted as the caller's, and an inherited field counts where the installed Effect reads it,
-  never what the language gives every value, such as `Object.prototype`'s `constructor`. Both names
-  of a field refuse even where the wire name is one every object has, such as `toString`. A union
-  field takes its first member reading that keeps everything, and the parent is built strictly
-  first, so it keeps that member. Under `Union([Filter, Word])`, where `Word` reads `page_size` as
-  text, `{ page_size: "05" }` beside a sibling that only the relaxed write can send now writes `5`,
-  and `"many"` refuses there; 0.18.0 wrote `25` for both.
+  is not counted as the caller's. A union field takes its first member reading that keeps
+  everything, and the parent is built strictly first, so it keeps that member. Under
+  `Union([Filter, Word])`, where `Word` reads `page_size` as text, `{ page_size: "05" }` beside a
+  sibling that only the relaxed write can send now writes `5`, and `"many"` refuses there; 0.18.0
+  wrote `25` for both. These checks apply where a field's value is plain data: a list, or an object
+  of no class, holding only own data properties, none named after an `Object.prototype` member,
+  under a schema that names no such field or wire name. A value held behind an accessor, a class
+  instance, and a schema that uses such a name read as before.
 - **Breaking:** stop the write fallback from taking a later union member that drops a supplied field
   ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)). With
   `Note = Schema.Struct({ title: Schema.String, meta: Schema.Unknown })` and
@@ -60,12 +61,11 @@
   enclosing structs, lists and records, elements after a rest, suspended members, a nested union
   that fails its own check or one-of rule, and one object given to two fields. The fallback write
   selects members by kind and literal tags as the installed Effect does, so a member Effect rules
-  out never runs. A name `Object.prototype` has, such as `toString`, is a field of a written value
-  only as its own property. It notes which member wrote each value and never decodes what it sends.
-  A struct that states no field keeps every key. A field another stacked schema takes is still not
-  lost, and a refusal names the field none took. A choice Effect makes after middleware or a
-  transformation on the union itself is still the schema's own, as is a union whose only other
-  member is an opaque declaration.
+  out never runs. It notes which member wrote each value and never decodes what it sends, and checks
+  only plain data, as for #241; elsewhere a value is written as before. A struct that states no
+  field keeps every key. A field another stacked schema takes is still not lost, and a refusal names
+  the field none took. A choice Effect makes after middleware or a transformation on the union
+  itself is still the schema's own, as is a union whose only other member is an opaque declaration.
 
 ## 0.18.0 — 2026-11-18
 
