@@ -6,11 +6,16 @@
   defaults and serialization
   ([#242](https://github.com/viell-dev/slop-effect-schema-http/issues/242)). For example, a
   null-prototype `[["k", "v"]]` kept by `Schema.Struct({})` now writes `?k=v` instead of `?0=k&0=v`.
-  An array's custom iterator can no longer substitute different fields.
+  Repeated value arrays also use their positions. An array with a custom iterator or mapping method
+  now writes its positional values. One-shot iterators such as `new Map([["k", "v"]]).entries()` are
+  read once and now write their fields. A non-callable iterator property leaves a record readable.
 - **Breaking:** refuse malformed field pairs with a typed `InvalidRequest` before dispatch
   ([#236](https://github.com/viell-dev/slop-effect-schema-http/issues/236)). A cast-only pair array
-  must have exactly two positions, including a string name. Malformed output could previously die
-  with a `TypeError` or be written after silently dropping part of a pair.
+  must have length two and a string name. Iterable groups must also yield arrays of that form.
+  `UrlEncoding.queryEntries` and `Transport.entries` now throw `TypeError` on `[["k", "v", "x"]]`
+  and `["ab"]`. The query helper also refuses `[["k"]]` and `[[1, "v"]]`. When a query binding
+  cannot convert a value to text, its `InvalidRequest` names the value conversion and keeps the
+  original cause.
 
 ## 0.18.0 — 2026-11-18
 

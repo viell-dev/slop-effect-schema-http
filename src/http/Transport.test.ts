@@ -57,6 +57,30 @@ describe("Transport.entries", () => {
     ]);
   });
 
+  it("reads repeated record values by position", () => {
+    const values = ["one", "two"];
+    Object.setPrototypeOf(values, null);
+    Object.defineProperties(values, {
+      map: { value: () => [["X-Scope", "substitute"]] },
+      [Symbol.iterator]: { value: () => ["substitute"][Symbol.iterator]() },
+    });
+    expect(
+      Transport.entries({ "X-Scope": values, [Symbol.iterator]: undefined }),
+    ).toEqual([
+      ["X-Scope", "one"],
+      ["X-Scope", "two"],
+    ]);
+  });
+
+  it.each([
+    { input: [["k", "v", "extra"]] },
+    { input: ["ab"] },
+    { input: [["k"]] },
+    { input: [[1, "v"]] },
+  ])("throws TypeError for a malformed array entry", ({ input }) => {
+    expect(() => Transport.entries(input as never)).toThrow(TypeError);
+  });
+
   it("keeps a value that contains a comma as one line", () => {
     expect(Transport.entries({ "X-List": "a, b" })).toEqual([
       ["X-List", "a, b"],

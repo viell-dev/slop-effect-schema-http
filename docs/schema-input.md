@@ -345,10 +345,11 @@ list's indexes. These limits remain:
 
 A query or header group that encodes to an array of field pairs is read by position, including when
 `Schema.Struct({})` keeps the original array. Both the list and its pairs can have a `null`
-prototype or an own iterator. A pair must be a two-position array with a string name and a value at
-the second position. An explicit `undefined` value in a query pair omits that entry. A malformed
-entry, including a hole in the list, fails with `InvalidRequest`. Declared defaults are added as
-pairs before the schema reads the group again.
+prototype or an own iterator. A callable iterator on another object supplies its pairs once. A pair
+must be an array of length two with a string name. A hole at the value position reads as
+`undefined`, which omits a query entry and is invalid for a header pair. A malformed entry,
+including a hole in the outer list, fails with `InvalidRequest`. Declared defaults are added as
+pairs before the schema reads the group again. Arrays of repeated values are also read by position.
 
 ### An opaque value is the schema's own reading
 

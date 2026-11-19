@@ -1,5 +1,6 @@
 import { Context, Layer } from "effect";
 import * as FieldPairs from "./internal/field-pairs.js";
+import * as GroupEncoding from "./internal/group-encoding.js";
 
 /**
  * Ordered decoded query entries, including repeated names.
@@ -19,12 +20,6 @@ export type Query = ReadonlyArray<readonly [string, string | null]>;
  */
 export type QueryValue =
   string | number | bigint | boolean | Date | null | undefined;
-
-/** The URL text of a value that has one. */
-const queryText = (value: Exclude<QueryValue, null | undefined>): string =>
-  value instanceof Date && !Number.isNaN(value.getTime())
-    ? value.toISOString()
-    : String(value);
 
 /**
  * A record or iterable of query pairs accepted as a schema's encoded output.
@@ -48,24 +43,12 @@ export type QueryInput =
  *
  * @remarks
  * Omits `undefined`, keeps `null`, writes a `Date` as ISO text, and converts other scalar values to
- * strings. Arrays of pairs are read by position. Malformed field pairs throw `TypeError`.
- * URL escaping happens later through the query renderer.
+ * strings. Pair arrays and repeated values are read by position. Each pair must be an array of
+ * length two with a string name. Malformed field pairs throw `TypeError`. URL escaping happens
+ * later through the query renderer.
  */
-export const queryEntries = (input: QueryInput): Query => {
-  const entries = Array.isArray(input)
-    ? FieldPairs.fromArray(input)
-    : Symbol.iterator in input
-      ? FieldPairs.fromIterable(input)
-      : Object.entries(input);
-  return entries.flatMap(
-    ([key, value]): Array<readonly [string, string | null]> =>
-      (Array.isArray(value) ? value : [value]).flatMap((entry: QueryValue) =>
-        entry === undefined
-          ? []
-          : [[key, entry === null ? null : queryText(entry)] as const],
-      ),
-  );
-};
+export const queryEntries = (input: QueryInput): Query =>
+  GroupEncoding.queryEntries(FieldPairs.read(input));
 
 /**
  * Functions that render path values, query entries and the final request URL.

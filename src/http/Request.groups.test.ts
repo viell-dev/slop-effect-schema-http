@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from "@effect/vitest";
+import { describe, expect, expectTypeOf, it, vi } from "@effect/vitest";
 import {
   Cause,
   Effect,
@@ -24,6 +24,7 @@ import {
 } from "../../test/request.js";
 import { bodyText, empty, synthetic } from "../../test/support.js";
 import * as Body from "./Body.js";
+import * as Shapes from "./internal/shape.js";
 import * as Operation from "./Operation.js";
 import * as Request from "./Request.js";
 import * as Response from "./Response.js";
@@ -2303,8 +2304,6 @@ describe("pairs group output", () => {
           ),
         ],
       ];
-      const sparsePair = ["k", "v"];
-      delete sparsePair[1];
       const sparseGroup: unknown[] = [];
       sparseGroup.length = 1;
       const inputs = [
@@ -2314,7 +2313,10 @@ describe("pairs group output", () => {
         [[1, "v"]],
         new Map([[1, "v"]]),
         [["k"]],
-        [sparsePair],
+        [{ 0: "k", 1: "v", length: 2 }],
+        ["ab"],
+        new Set(["kvX"]),
+        new Set([{ 0: "k", 1: "v", length: 2 }]),
         [["k", "v", "extra"]],
         sparseGroup,
       ];
@@ -2336,6 +2338,7 @@ describe("pairs group output", () => {
             expect(error.message).toBe(
               `The ${label} schema must encode a field record or field pairs`,
             );
+            expect(error).toHaveProperty("cause", expect.any(TypeError));
           }
         }
         expect(server.exchanges).toEqual([]);
@@ -2356,5 +2359,316 @@ describe("pairs group output", () => {
         yield* linesOf(headers, { headers: new Map([["k", "v"]]) }),
       ).toEqual([["k", "v"]]);
     }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/242
+  it.effect("uses one-shot pairs even when checking declared defaults", () =>
+    Effect.gen(function* () {
+      const base = Request.get("/x");
+      for (const declaration of [
+        base,
+        base.pipe(
+          Request.setQuery("fallback", "d"),
+          Request.setHeader("fallback", "d"),
+        ),
+      ]) {
+        const request = declaration.pipe(
+          Request.query(Schema.Any),
+          Request.headers(Schema.Any),
+        );
+        const pairs = new Map([["k", "v"]]);
+        const queryEntries = pairs.entries();
+        let iteratorReads = 0;
+        const query = {
+          get [Symbol.iterator]() {
+            iteratorReads++;
+            return () => queryEntries;
+          },
+        };
+        const compiled = yield* Request.compile(request, {
+          query,
+          headers: pairs.entries(),
+        });
+        expect(iteratorReads).toBe(1);
+        expect(compiled.request.url).toBe(
+          declaration === base ? "/x?k=v" : "/x?k=v&fallback=d",
+        );
+        expect(compiled.headerLines).toEqual(
+          declaration === base
+            ? [["k", "v"]]
+            : [
+                ["k", "v"],
+                ["fallback", "d"],
+              ],
+        );
+      }
+    }),
+  );
+
+  it.effect("reads a reused encoder array again after settlement", () =>
+    Effect.gen(function* () {
+      const reused: Array<readonly [string, string]> = [];
+      const Group = Schema.Any.pipe(
+        Schema.decodeTo(Schema.String, {
+          decode: SchemaGetter.transform((value: unknown) =>
+            Array.isArray(value) ? "settled" : "initial",
+          ),
+          encode: SchemaGetter.transform((phase) => {
+            reused.length = 0;
+            reused.push(["k", "v"]);
+            if (phase === "settled") reused.push(["fallback", "d"]);
+            return reused;
+          }),
+        }),
+      );
+      const base = Request.get("/x");
+      expect(
+        yield* urlOf(
+          base.pipe(Request.setQuery("fallback", "d"), Request.query(Group)),
+          { query: "initial" },
+        ),
+      ).toBe("/x?k=v&fallback=d");
+      expect(
+        yield* linesOf(
+          base.pipe(Request.setHeader("fallback", "d"), Request.headers(Group)),
+          { headers: "initial" },
+        ),
+      ).toEqual([
+        ["k", "v"],
+        ["fallback", "d"],
+      ]);
+    }),
+  );
+
+  it.effect("reports a throwing query value with its original cause", () =>
+    Effect.gen(function* () {
+      const error = yield* refusal(
+        Request.get("/x").pipe(Request.query(Schema.Any)),
+        { query: { k: Object.create(null) } },
+      );
+      expect(error).toBeInstanceOf(Request.InvalidRequest);
+      expect(error.message).toBe(
+        "The query schema must encode values that can be written as query text",
+      );
+      expect(error).toHaveProperty("cause", expect.any(TypeError));
+    }),
+  );
+
+  it.effect("keeps snapshot getter exceptions as defects", () =>
+    Effect.gen(function* () {
+      const boom = new TypeError("getter");
+      const output = {
+        get k() {
+          throw boom;
+        },
+      };
+      const Group = Schema.Any.pipe(
+        Schema.decodeTo(Schema.String, {
+          decode: SchemaGetter.transform(() => "decoded"),
+          encode: SchemaGetter.transform(() => output),
+        }),
+      );
+      const request = Request.get("/x").pipe(Request.query(Group));
+      const result = yield* Effect.exit(
+        Request.compile(request, { query: "decoded" }),
+      );
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) expect(Cause.squash(result.cause)).toBe(boom);
+    }),
+  );
+
+  it.effect(
+    "keeps a throwing caller getter during group claims as a defect",
+    () =>
+      Effect.gen(function* () {
+        const boom = new Error("caller getter");
+        class Caller {
+          readonly a = "caller";
+        }
+        const caller = Object.defineProperty(new Caller(), "k", {
+          enumerable: true,
+          get: () => {
+            throw boom;
+          },
+        });
+        const Declared = Schema.declare(
+          (value: unknown): value is Caller => value instanceof Caller,
+        );
+        const Group = Schema.Any.pipe(
+          Schema.decodeTo(Declared, {
+            decode: SchemaGetter.transform(() => caller),
+            encode: SchemaGetter.transform(() => ({ k: "v" })),
+          }),
+        );
+        const Alternatives = Schema.Union([
+          Schema.Struct({ a: Schema.String }),
+          Schema.Struct({ b: Schema.String }),
+        ]);
+        const request = Request.get("/x").pipe(
+          Request.query(Alternatives),
+          Request.query(Group),
+        );
+        const result = yield* Effect.exit(
+          Request.compile(request, { query: caller }),
+        );
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result))
+          expect(Cause.squash(result.cause)).toBe(boom);
+      }),
+  );
+
+  it.effect("keeps name accounting outside the output failure boundary", () =>
+    Effect.gen(function* () {
+      const request = Request.get("/x").pipe(Request.query(Schema.Any));
+      const boom = new Error("name accounting");
+      // These steps consume only the snapshot, so they have no caller getter to make them throw.
+      for (const step of ["written", "lost"] as const) {
+        const accounting = vi.spyOn(Shapes, step).mockImplementation(() => {
+          throw boom;
+        });
+        try {
+          const result = yield* Effect.exit(
+            Request.compile(request, { query: [["k", "v"]] }),
+          );
+          expect(accounting).toHaveBeenCalledOnce();
+          expect(Exit.isFailure(result)).toBe(true);
+          if (Exit.isFailure(result))
+            expect(Cause.squash(result.cause)).toBe(boom);
+        } finally {
+          accounting.mockRestore();
+        }
+      }
+    }),
+  );
+
+  it.effect("reports an uncovered caller field before a malformed pair", () =>
+    Effect.gen(function* () {
+      const Chosen = Schema.Union([
+        Schema.Struct({ k: Schema.String }),
+        Schema.Struct({ lost: Schema.Literal("allowed") }),
+      ]);
+      const Group = Schema.Any.pipe(
+        Schema.decodeTo(Chosen, {
+          decode: SchemaGetter.passthrough(),
+          encode: SchemaGetter.transform(() => [1]),
+        }),
+      );
+      const base = Request.get("/x");
+      const query = { k: "kept", lost: "other" };
+      expect(
+        yield* schemaFailure(base.pipe(Request.query(Group)), { query }),
+      ).toContain('["lost"]');
+      const Sibling = Schema.Struct({ lost: Schema.String });
+      expect(
+        yield* refusal(
+          base.pipe(Request.query(Sibling), Request.query(Group)),
+          { query },
+        ),
+      ).toBeInstanceOf(Request.InvalidRequest);
+    }),
+  );
+
+  it("excludes named properties on prototype-free pair arrays from generated fields", () => {
+    const contract = Schema.Struct({
+      generated: Schema.optionalKey(Schema.String),
+    });
+    const { filled } = Shapes.bind(contract, (name) => name);
+    const record = { generated: "data property" };
+    const array = Object.assign([["k", "v"]], record);
+    Object.setPrototypeOf(array, null);
+    expect(filled(["generated"], Shapes.snapshot(record))).toEqual([
+      "generated",
+    ]);
+    expect(filled(["generated"], Shapes.snapshot(array))).toEqual([]);
+  });
+
+  it.effect(
+    "keeps a declaration guard exception during default settlement as a defect",
+    () =>
+      Effect.gen(function* () {
+        const boom = new TypeError("declaration guard");
+        const DateValue = Schema.declare((value: unknown): value is Date => {
+          if (value instanceof Date) throw boom;
+          return false;
+        });
+        const Group = Schema.Struct({ k: Schema.optionalKey(DateValue) });
+        const request = Request.get("/x").pipe(
+          Request.setQuery("k", "2000-01-01"),
+          Request.query(Group),
+        );
+        const result = yield* Effect.exit(
+          Request.compile(request, { query: {} }),
+        );
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          expect(Cause.hasDies(result.cause)).toBe(true);
+          const defect = Cause.squash(result.cause);
+          const cause = defect instanceof Error ? defect.cause : undefined;
+          // Effect's synchronous type guard can wrap the exception in another defect.
+          expect(Cause.isCause(cause) ? Cause.squash(cause) : defect).toBe(
+            boom,
+          );
+        }
+      }),
+  );
+
+  it.effect("reads a value hole like the schema tuple reader", () =>
+    Effect.gen(function* () {
+      const pair = ["k", "v"];
+      delete pair[1];
+      const queryPair = Schema.Tuple([
+        Schema.String,
+        Schema.UndefinedOr(Schema.String),
+      ]);
+      const pairs = Schema.Array(queryPair);
+      const base = Request.get("/x");
+      for (const Group of [pairs, Schema.Union([Schema.Struct({}), pairs])]) {
+        expect(
+          yield* urlOf(base.pipe(Request.query(Group)), {
+            query: [pair],
+          } as never),
+        ).toBe("/x");
+      }
+      const error = yield* refusal(base.pipe(Request.headers(Schema.Any)), {
+        headers: [pair],
+      });
+      expect(error.message).toBe(
+        "The header schema must encode string field names and values",
+      );
+      expect(error).toHaveProperty("cause", expect.any(TypeError));
+    }),
+  );
+
+  it.effect(
+    "reads repeated values and treats a non-callable iterator as a record",
+    () =>
+      Effect.gen(function* () {
+        const request = Request.get("/x").pipe(
+          Request.query(Schema.Any),
+          Request.headers(Schema.Any),
+        );
+        const values = ["a", "b"];
+        Object.setPrototypeOf(values, null);
+        const blocked = {
+          get: () => {
+            throw new Error("must not read a caller method");
+          },
+        };
+        Object.defineProperties(values, {
+          flatMap: blocked,
+          map: blocked,
+          [Symbol.iterator]: blocked,
+        });
+        const output = { k: values, [Symbol.iterator]: undefined };
+        const compiled = yield* Request.compile(request, {
+          query: output,
+          headers: output,
+        });
+        expect(compiled.request.url).toBe("/x?k=a&k=b");
+        expect(compiled.headerLines).toEqual([
+          ["k", "a"],
+          ["k", "b"],
+        ]);
+      }),
   );
 });

@@ -134,6 +134,32 @@ describe("UrlEncoding.queryEntries", () => {
       TypeError,
     );
   });
+
+  it("reads repeated values without array methods", () => {
+    const values = ["one", "two"];
+    Object.setPrototypeOf(values, null);
+    Object.defineProperties(values, {
+      flatMap: { value: () => [["k", "substitute"]] },
+      [Symbol.iterator]: { value: () => ["substitute"][Symbol.iterator]() },
+    });
+    const expected = [
+      ["k", "one"],
+      ["k", "two"],
+    ];
+    expect(
+      UrlEncoding.queryEntries({ k: values, [Symbol.iterator]: undefined }),
+    ).toEqual(expected);
+    expect(UrlEncoding.queryEntries([["k", values]])).toEqual(expected);
+  });
+
+  it.each([
+    { input: [["k", "v", "extra"]] },
+    { input: ["ab"] },
+    { input: [["k"]] },
+    { input: [[1, "v"]] },
+  ])("throws TypeError for a malformed array entry", ({ input }) => {
+    expect(() => UrlEncoding.queryEntries(input as never)).toThrow(TypeError);
+  });
 });
 
 describe("UrlEncoding.defaults", () => {

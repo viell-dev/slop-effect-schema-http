@@ -5,6 +5,7 @@ import {
   type HttpClientResponse,
 } from "effect/http";
 import * as FieldPairs from "./internal/field-pairs.js";
+import * as GroupEncoding from "./internal/group-encoding.js";
 
 /**
  * Ordered header name/value pairs, preserving supplied spelling and repeated lines.
@@ -23,45 +24,17 @@ export type Lines = ReadonlyArray<readonly [string, string]>;
  */
 export type HeaderInput = Headers.Input;
 
-const headerLine = (
-  name: string,
-  value: unknown,
-): readonly [string, string] => {
-  if (typeof name !== "string" || typeof value !== "string")
-    throw new TypeError("A header line must have a string name and value");
-  return [name, value];
-};
-
 /**
  * Expand a supported header collection into ordered name/value lines.
  *
  * @remarks
  * Record arrays of strings become repeated lines, and `undefined` record fields are omitted.
- * Arrays of pairs are read by position. Pair names and values must be strings. Malformed pairs
- * and invalid names or values throw `TypeError`. A schema-backed `Request.headers` binding reports
- * this failure as `InvalidRequest`.
+ * Pair arrays and repeated values are read by position. Each pair must be an array of length two
+ * with a string name and value. Malformed pairs and invalid values throw `TypeError`. A
+ * schema-backed `Request.headers` binding reports this failure as `InvalidRequest`.
  */
 export const entries = (input: HeaderInput): Lines =>
-  Array.isArray(input)
-    ? FieldPairs.fromArray(input).map(([name, value]) =>
-        headerLine(name, value),
-      )
-    : Symbol.iterator in input
-      ? Array.from(input, (pair) => {
-          const [name, value] = FieldPairs.iterableEntry(pair);
-          return headerLine(name, value);
-        })
-      : Object.entries(input).flatMap(
-          ([name, value]): Array<readonly [string, string]> => {
-            if (value === undefined) return [];
-            if (typeof value === "string") return [[name, value]];
-            if (!Array.isArray(value))
-              throw new TypeError(
-                "A header record field must be text or an array of text",
-              );
-            return value.map((line) => headerLine(name, line));
-          },
-        );
+  GroupEncoding.headerEntries(FieldPairs.read(input));
 
 /**
  * Produce Effect's normalized header view from ordered lines.

@@ -215,27 +215,14 @@ export const required = (
     shapes.some((shape) => shape.required.has(fold(name))),
   );
 
-export interface Output<W extends object = object> {
-  readonly source: W;
-  readonly pairs: ReadonlyArray<FieldPairs.Pair> | undefined;
-}
+/** One reading of an encoded group, shared by claims, default settlement and writing. */
+export type Output = FieldPairs.Reading;
 
-/** Keep one positional read for claims, defaults and writing. Non-array outputs keep their reader. */
-export const snapshot = <W extends object>(source: W): Output<W> => ({
-  source,
-  pairs: Array.isArray(source) ? FieldPairs.fromArray(source) : undefined,
-});
+export const snapshot = FieldPairs.read;
 
 /** The names a schema's output holds a value under, as the schema spells them. */
-const writtenNames = ({ source, pairs }: Output): ReadonlyArray<string> =>
-  (
-    pairs ??
-    (Symbol.iterator in source
-      ? FieldPairs.fromIterable(source)
-      : Object.entries(source))
-  )
-    .filter(([, value]) => value !== undefined)
-    .map(([name]) => name);
+const writtenNames = ({ entries }: Output): ReadonlyArray<string> =>
+  entries.filter(([, value]) => value !== undefined).map(([name]) => name);
 
 /**
  * The names a schema's output writes, in their compared form. A name with no value writes nothing,
@@ -462,26 +449,11 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
   /** Preparation supplied these omitted, edited fields in the record it actually writes. */
   const filled = (
     names: ReadonlyArray<string>,
-    output: unknown,
-  ): ReadonlyArray<string> => {
-    if (
-      typeof output !== "object" ||
-      output === null ||
-      Array.isArray(output) ||
-      Symbol.iterator in output
-    )
-      return [];
-    return names
-      .filter((name) => {
-        const encoded = Object.getOwnPropertyDescriptor(output, name);
-        return (
-          encoded?.enumerable === true &&
-          "value" in encoded &&
-          encoded.value !== undefined
-        );
-      })
-      .map(fold);
-  };
+    output: Output,
+  ): ReadonlyArray<string> =>
+    output.kind === "record"
+      ? names.filter((name) => output.definedDataFields.has(name)).map(fold)
+      : [];
   /**
    * The caller's fields this schema took: what it wrote, and any it states and the caller gave,
    * which may be written under another name or not at all. What it would lose is not among them.
@@ -497,11 +469,11 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
         ...Excess.statedFields(contract.ast, input),
       ].filter((name) => !losing.some(([key]) => key === name)),
     );
-  const settle = <W extends object, A>(
-    output: Output<W>,
+  const settle = <A>(
+    output: Output,
     defaults: ReadonlyArray<readonly [string, A]>,
   ): Effect.Effect<
-    W,
+    S["Encoded"],
     Schema.SchemaError,
     S["DecodingServices"] | S["EncodingServices"]
   > => {
@@ -522,18 +494,13 @@ export const bind = <S extends Schema.Constraint>(contract: S, fold: Fold) => {
           : entries[0],
       ]),
     );
-    const { source, pairs: positions } = output;
     const group =
-      positions !== undefined
-        ? [...positions, ...pairs]
-        : Symbol.iterator in source
-          ? [...(source as unknown as Iterable<unknown>), ...pairs]
-          : { ...source, ...record };
+      output.kind === "pairs"
+        ? [...output.entries, ...pairs]
+        : { ...output.record, ...record };
     const through = (options?: SchemaAST.ParseOptions) =>
-      Effect.flatMap(
-        decode(group, options),
-        (decoded) =>
-          encode(decoded, options) as Effect.Effect<W, Schema.SchemaError>,
+      Effect.flatMap(decode(group, options), (decoded) =>
+        encode(decoded, options),
       );
     return Effect.catch(through({ onExcessProperty: "error" }), () =>
       through(),

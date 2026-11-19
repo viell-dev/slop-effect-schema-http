@@ -774,7 +774,6 @@ describe("positional query and header groups", () => {
           ["tag", "one"],
           ["k", "again"],
         ] as const;
-        let iterations = 0;
         for (const schema of [Pairs, Kept]) {
           for (const declaration of [base, fallback]) {
             const request = declaration.pipe(
@@ -793,6 +792,7 @@ describe("positional query and header groups", () => {
               "null prototype",
               "own iterator",
             ] as const) {
+              let iterations = 0;
               const pairs = original.map(
                 ([name, value]) => [name, value] as const,
               );
@@ -816,20 +816,21 @@ describe("positional query and header groups", () => {
                 });
               }
               const input = { query: pairs, headers: pairs };
+              const scenario = `${schema === Pairs ? "pairs" : "union"}, ${declaration === fallback ? "with defaults" : "without defaults"}, ${layout}`;
               const compiled = yield* Request.compile(request, input);
-              expect(compiled.request.url, layout).toBe(url);
-              expect(compiled.headerLines, layout).toEqual(lines);
+              expect(compiled.request.url, scenario).toBe(url);
+              expect(compiled.headerLines, scenario).toEqual(lines);
               const server = synthetic(() => empty(204));
               yield* Operation.make(request, Response.status(204, Body.empty))
                 .execute(input)
                 .pipe(Effect.provide(server.layer));
-              expect(server.exchanges, layout).toHaveLength(1);
-              expect(server.exchanges[0]?.url, layout).toBe(url);
-              expect(server.exchanges[0]?.headerLines, layout).toEqual(lines);
+              expect(server.exchanges, scenario).toHaveLength(1);
+              expect(server.exchanges[0]?.url, scenario).toBe(url);
+              expect(server.exchanges[0]?.headerLines, scenario).toEqual(lines);
+              expect(iterations, scenario).toBe(0);
             }
           }
         }
-        expect(iterations).toBe(0);
       }),
   );
 

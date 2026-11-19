@@ -9,7 +9,9 @@ export const recovery = <S extends Schema.Top>(contract: S) => {
   let readers: ReturnType<typeof Inputs.reorderedReaders<S>> | undefined;
   return Effect.fnUntraced(function* (
     input: Inputs.Input<S>,
-    original: Inputs.Written<S["Encoded"]>,
+    original: Inputs.Written<S["Encoded"]> & {
+      readonly snapshot: Shapes.Output;
+    },
     taken: Shapes.Taken | undefined,
     token: object,
     claim: (
@@ -23,8 +25,7 @@ export const recovery = <S extends Schema.Top>(contract: S) => {
       !taken.certificates.has(token) ||
       typeof original.output !== "object" ||
       original.output === null ||
-      Array.isArray(original.output) ||
-      Symbol.iterator in original.output ||
+      original.snapshot.kind !== "record" ||
       original.lost.some((path) => path.length !== 1) ||
       original.lost.every(([name]) => taken.fields.has(name!))
     )
@@ -39,23 +40,23 @@ export const recovery = <S extends Schema.Top>(contract: S) => {
       if (
         typeof candidate.output !== "object" ||
         candidate.output === null ||
-        Array.isArray(candidate.output) ||
-        Symbol.iterator in candidate.output ||
         candidate.lost.some(
           (path) => path.length !== 1 || !elsewhere.has(path[0]!),
         )
       )
         continue;
+      const snapshot = Shapes.snapshot(candidate.output, "record");
+      if (snapshot === undefined) continue;
       const next = Shapes.retaking(
         taken,
-        claim(input, Shapes.snapshot(candidate.output), candidate.lost),
+        claim(input, snapshot, candidate.lost),
         token,
       );
       if (
         next !== undefined &&
         original.lost.every(([name]) => next.fields.has(name!))
       )
-        return { reading: candidate, taken: next };
+        return { reading: candidate, snapshot, taken: next };
     }
     return undefined;
   });
