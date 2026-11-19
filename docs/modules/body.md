@@ -129,11 +129,11 @@ Plain objects, class instances and `Schema.Class` values write their fields, and
 `Option`, `Chunk` and `DateTime` write what their `toJSON` returns. An invalid `Date` writes `null`,
 which is its own `toJSON` result. The writer omits undefined object fields and encodes top-level
 `undefined` as an empty outgoing body. Exceptions thrown by getters, proxies and `toJSON` are
-defects. Nesting deeper than the engine's own `JSON.stringify` allows fails with `HttpBodyError`
-too. That limit depends on the stack size: Node 24's default allows about 4,700 levels on Windows
-and several times more on Linux. An empty incoming body is a decoding error. Choose
-`Body.jsonSchema` to validate the application shape, or `Body.empty` for a response with no useful
-body.
+defects. The checks add no nesting limit of their own. Nesting deeper than the engine's own
+`JSON.stringify` allows fails with `HttpBodyError` too. That limit depends on the engine and its
+stack: Node 24 on Windows stops at about 4,700 levels, while Node 26 on Linux writes over a million.
+An empty incoming body is a decoding error. Choose `Body.jsonSchema` to validate the application
+shape, or `Body.empty` for a response with no useful body.
 
 Use `Body.formData.pipe(Body.encodeSchema(Schema.fromFormData(fields)))` when a schema supplies the
 form entries. The form writer accepts text, files and blobs, including repeated values and nested

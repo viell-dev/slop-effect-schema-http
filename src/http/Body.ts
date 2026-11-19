@@ -138,9 +138,10 @@ const decodeFailure = (
  * fields, such as a `Map`, binary data, a `Blob` or an `Error`. A `toJSON` result is checked the
  * same way; an invalid `Date` writes `null`, as its `toJSON` returns. An `undefined` object field
  * supplies nothing, and top-level `undefined` produces an empty outgoing body. Exceptions thrown
- * by getters, proxies and `toJSON` are defects. Nesting deeper than the engine's own
- * `JSON.stringify` allows also fails with `HttpBodyError`. That limit depends on the stack size:
- * Node 24's default allows about 4,700 levels on Windows and several times more on Linux.
+ * by getters, proxies and `toJSON` are defects. The checks add no nesting limit of their own.
+ * Nesting deeper than the engine's own `JSON.stringify` allows fails with `HttpBodyError`. That
+ * limit depends on the engine and its stack: Node 24 on Windows stops at about 4,700 levels, while
+ * Node 26 on Linux writes over a million.
  *
  * An empty incoming body is a decoding failure. Use {@link jsonSchema} to validate application
  * values.
