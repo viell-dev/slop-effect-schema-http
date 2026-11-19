@@ -42,9 +42,10 @@
   nesting limit of their own. A schema can still refuse first with `SchemaError`. Exceptions from
   caller getters, proxies and `toJSON` now propagate as defects. The writer now reads enumerable
   symbol-keyed fields, including getters, to see whether they supply a value. It does more work than
-  `HttpBody.json`: up to about four times 0.18.0's encoding time for a large body, and more for many
-  empty objects or arrays, as the cost table in
-  [#260](https://github.com/viell-dev/slop-effect-schema-http/pull/260) records.
+  `HttpBody.json`. On Node 24 a large body takes about three to four times 0.18.0's encoding time.
+  On Node 26, whose native JSON is much faster, it takes about six to eight times as long: 10,000
+  rows take 0.9 ms on 0.18.0 and 5.75 ms here. Many empty objects or arrays cost more, as the cost
+  table in [#260](https://github.com/viell-dev/slop-effect-schema-http/pull/260) records.
 - **Breaking:** form writers refuse values they would silently skip, with `HttpBodyError` naming the
   field ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). For example,
   multipart no longer sends only `extra=keep` for `{ v: 1, extra: "keep" }` through an open
@@ -80,10 +81,12 @@
 - **Breaking:** a supplied symbol field that Effect's own schema reading drops from a body is
   refused with `SchemaError`
   ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). A string-indexed record
-  drops one whether it constructs or decodes the value, and so do a class, which keeps only its
-  fields, and a link whose encoded end is such a record. `Body.jsonSchema` of `Schema.ObjectKeyword`
-  drops symbol fields from the top-level object and an array's own fields beside its positions,
-  because its canonical JSON codec copies only string fields and positions.
+  drops one whether it constructs or decodes the value, including such a record inside a class's
+  fields, and so does a link whose encoded end is such a record. A symbol key the schema declares is
+  written as the schema chooses, and one at a class's root is stripped as a struct strips any
+  undeclared key, as before. `Body.jsonSchema` of `Schema.ObjectKeyword` drops symbol fields from
+  the top-level object and an array's own fields beside its positions, because its canonical JSON
+  codec copies only string fields and positions.
 
 ## 0.18.0 — 2026-11-18
 
