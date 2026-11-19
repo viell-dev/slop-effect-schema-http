@@ -1,3 +1,5 @@
+import { Predicate } from "effect";
+
 export type Pair = readonly [string, unknown];
 
 export interface RecordFields {
@@ -12,8 +14,10 @@ export type Reading =
   | { readonly kind: "pairs"; readonly entries: ReadonlyArray<Pair> };
 
 class MalformedPair extends TypeError {
-  constructor() {
-    super("A field pair must be a two-position array with a string name");
+  constructor(
+    message = "A field pair must be a two-position array with a string name",
+  ) {
+    super(message);
   }
 }
 
@@ -31,6 +35,8 @@ const readRecord = (input: object, iterator: unknown): RecordFields => {
   const entries: Pair[] = [];
   const record = {};
   const definedDataFields = new Set<string>();
+  // Function outputs supply wire fields, but no generated-field evidence, as in 0.18.0.
+  const canProveGeneratedFields = typeof input === "object";
   for (const key of Reflect.ownKeys(input)) {
     const descriptor = Object.getOwnPropertyDescriptor(input, key);
     if (descriptor?.enumerable !== true) continue;
@@ -39,7 +45,7 @@ const readRecord = (input: object, iterator: unknown): RecordFields => {
       entries.push([key, value]);
       Object.defineProperty(record, key, { value, enumerable: true });
       if (
-        typeof input === "object" &&
+        canProveGeneratedFields &&
         "value" in descriptor &&
         descriptor.value !== undefined
       )
@@ -56,6 +62,34 @@ const readRecord = (input: object, iterator: unknown): RecordFields => {
     }
   }
   return { kind: "record", entries, record, definedDataFields };
+};
+
+const invalidIterator = () =>
+  new MalformedPair(
+    "A field pairs iterable must return an iterator with a callable next method",
+  );
+
+/** Validate protocol results while preserving the caller's receiver and iterator cleanup. */
+const checkedIterator = (iterator: unknown): Iterator<unknown> => {
+  if (!Predicate.isObjectKeyword(iterator)) throw invalidIterator();
+  const next: unknown = Reflect.get(iterator, "next");
+  if (typeof next !== "function") throw invalidIterator();
+  return {
+    next() {
+      const result: unknown = Reflect.apply(next, iterator, []);
+      if (!Predicate.isObjectKeyword(result))
+        throw new MalformedPair(
+          "A field pairs iterator must return an object from next",
+        );
+      return result as IteratorResult<unknown>;
+    },
+    return() {
+      const close: unknown = Reflect.get(iterator, "return");
+      return typeof close === "function"
+        ? (Reflect.apply(close, iterator, []) as IteratorResult<unknown>)
+        : { done: true, value: undefined };
+    },
+  };
 };
 
 /** Read one output. The record-only route leaves arrays and iterables unread during recovery. */
@@ -75,7 +109,7 @@ export function read(input: object, mode?: "record"): Reading | undefined {
     if (mode === "record") return undefined;
     const iterable = {
       [Symbol.iterator]: () =>
-        Reflect.apply(iterator, input, []) as Iterator<unknown>,
+        checkedIterator(Reflect.apply(iterator, input, [])),
     };
     return { kind: "pairs", entries: Array.from(iterable, readPair) };
   }

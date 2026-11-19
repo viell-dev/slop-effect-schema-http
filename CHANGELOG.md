@@ -13,16 +13,20 @@
   ([#236](https://github.com/viell-dev/slop-effect-schema-http/issues/236)). A cast-only pair array
   must have length two and a string name. Iterable groups must also yield arrays of that form.
   `UrlEncoding.queryEntries` and `Transport.entries` now throw `TypeError` on `[["k", "v", "x"]]`
-  and `["ab"]`. The query helper also refuses `[["k"]]` and `[[1, "v"]]`. When a query binding
-  cannot convert a value to text, its `InvalidRequest` names the value conversion and keeps the
-  original cause.
+  and `["ab"]`. The query helper also refuses `[["k"]]` and `[[1, "v"]]`. Malformed iterator
+  protocol results follow the same error rules. Bindings report invalid field values as
+  `InvalidRequest` with their validation cause. Caller exceptions during schema field writing
+  propagate as defects.
 - **Breaking:** refuse unsupported encoded query values before dispatch
   ([#255](https://github.com/viell-dev/slop-effect-schema-http/issues/255)). For example,
   `{ b: { x: 1 } }` used to send `[object Object]`. Query fields accept scalars and flat lists of
   scalars. A binding reports `InvalidRequest` naming the field for an unsupported value, including
   an object other than a `Date`, a function, a symbol, or a nested list. The direct
-  `UrlEncoding.queryEntries` helper throws `TypeError`, including when called by the object form of
-  `Request.setQuery`.
+  `UrlEncoding.queryEntries` helper throws `TypeError`. Both forms of `Request.setQuery` and
+  `Request.appendQuery` throw `TypeError` when applying an edit with an unsupported fixed value. A
+  computed value that returns a list fails with `InvalidRequest` during preparation.
+- **Breaking:** write `Date`s using their native timestamp. Dates from another realm now use ISO
+  text. Own formatting methods have no effect, and invalid dates write the literal `Invalid Date`.
 
 ## 0.18.0 — 2026-11-18
 

@@ -2440,22 +2440,131 @@ describe("pairs group output", () => {
     }),
   );
 
-  it.effect("reports a throwing query value with its original cause", () =>
+  const writerDefects = [
+    {
+      source: "an element getter",
+      make(error: Error) {
+        return Object.defineProperty(["a", "b"], "1", {
+          get() {
+            throw error;
+          },
+        });
+      },
+    },
+    {
+      source: "a length trap",
+      make(error: Error) {
+        return new Proxy(["a"], {
+          get(target, key, receiver) {
+            if (key === "length") throw error;
+            return Reflect.get(target, key, receiver) as unknown;
+          },
+        });
+      },
+    },
+    {
+      source: "a revoked list",
+      make() {
+        const { proxy, revoke } = Proxy.revocable(["a"], {});
+        revoke();
+        return proxy;
+      },
+    },
+  ];
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
+  it.effect("keeps value writer exceptions as defects", () =>
     Effect.gen(function* () {
-      const cause = new TypeError("date formatting failed");
-      const date = new Date("2026-11-07T12:00:00.000Z");
-      date.toISOString = () => {
-        throw cause;
+      for (const { source, make } of writerDefects) {
+        const cause = new Error(source);
+        const value = make(cause);
+        const Group = Schema.Any.pipe(
+          Schema.decodeTo(Schema.String, {
+            decode: SchemaGetter.transform(() => "decoded"),
+            encode: SchemaGetter.transform(() => ({ k: value })),
+          }),
+        );
+        const base = Request.get("/x");
+        for (const compilation of [
+          Request.compile(base.pipe(Request.query(Group)), {
+            query: "decoded",
+          }),
+          Request.compile(base.pipe(Request.headers(Group)), {
+            headers: "decoded",
+          }),
+        ]) {
+          const result = yield* Effect.exit(compilation);
+          expect(Exit.isFailure(result), source).toBe(true);
+          if (Exit.isFailure(result)) {
+            expect(Cause.hasDies(result.cause), source).toBe(true);
+            const thrown = Cause.squash(result.cause);
+            if (source === "a revoked list")
+              expect(thrown).toBeInstanceOf(TypeError);
+            else expect(thrown).toBe(cause);
+          }
+        }
+      }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
+  it.effect(
+    "refuses invalid iterator protocol shapes as malformed output",
+    () =>
+      Effect.gen(function* () {
+        const base = Request.get("/x");
+        for (const [output, reason] of [
+          [
+            { [Symbol.iterator]: () => 5 },
+            "A field pairs iterable must return an iterator with a callable next method",
+          ],
+          [
+            { [Symbol.iterator]: () => ({}) },
+            "A field pairs iterable must return an iterator with a callable next method",
+          ],
+          [
+            { [Symbol.iterator]: () => ({ next: () => 5 }) },
+            "A field pairs iterator must return an object from next",
+          ],
+        ] as const) {
+          const query = yield* refusal(base.pipe(Request.query(Schema.Any)), {
+            query: output,
+          });
+          const headers = yield* refusal(
+            base.pipe(Request.headers(Schema.Any)),
+            { headers: output },
+          );
+          expect(query.message).toBe(
+            "The query schema must encode a field record or field pairs",
+          );
+          expect(headers.message).toBe(
+            "The header schema must encode a field record or field pairs",
+          );
+          expect(query.cause).toMatchObject({ message: reason });
+          expect(headers.cause).toMatchObject({ message: reason });
+        }
+      }),
+  );
+
+  it.effect("keeps an exception from iterator next as a defect", () =>
+    Effect.gen(function* () {
+      const cause = new TypeError("iterator next");
+      const query = {
+        [Symbol.iterator]() {
+          return {
+            next() {
+              throw cause;
+            },
+          };
+        },
       };
-      const error = yield* refusal(
-        Request.get("/x").pipe(Request.query(Schema.Any)),
-        { query: { k: date } },
-      );
-      expect(error).toBeInstanceOf(Request.InvalidRequest);
-      expect(error.message).toBe(
-        "The query schema must encode values that can be written as query text",
-      );
-      expect(error.cause).toBe(cause);
+      const request = Request.get("/x").pipe(Request.query(Schema.Any));
+      const result = yield* Effect.exit(Request.compile(request, { query }));
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        expect(Cause.hasDies(result.cause)).toBe(true);
+        expect(Cause.squash(result.cause)).toBe(cause);
+      }
     }),
   );
 
@@ -2569,7 +2678,13 @@ describe("pairs group output", () => {
           base.pipe(Request.query(Sibling), Request.query(Group)),
           { query },
         ),
-      ).toBeInstanceOf(Request.InvalidRequest);
+      ).toMatchObject({
+        message: "The query schema must encode a field record or field pairs",
+        cause: {
+          message:
+            "A field pair must be a two-position array with a string name",
+        },
+      });
     }),
   );
 
@@ -2586,6 +2701,59 @@ describe("pairs group output", () => {
     ]);
     expect(filled(["generated"], Shapes.snapshot(array))).toEqual([]);
   });
+
+  it("uses function properties as wire fields without generated-field evidence", () => {
+    const contract = Schema.Struct({
+      generated: Schema.optionalKey(Schema.String),
+    });
+    const { filled } = Shapes.bind(contract, (name) => name);
+    const output = Object.assign(() => undefined, {
+      generated: "data property",
+    });
+    const snapshot = Shapes.snapshot(output);
+    expect(Shapes.written(snapshot, (name) => name)).toEqual(
+      new Set(["generated"]),
+    );
+    expect(filled(["generated"], snapshot)).toEqual([]);
+  });
+
+  it.effect("keeps symbol fields through default settlement", () =>
+    Effect.gen(function* () {
+      const marker = Symbol("marker");
+      const Group = Schema.Struct({
+        [marker]: Schema.Literal("kept"),
+        fallback: Schema.optionalKey(Schema.String),
+      });
+      const request = Request.get("/x").pipe(
+        Request.setQuery("fallback", "d"),
+        Request.query(Group),
+      );
+      expect(yield* urlOf(request, { query: { [marker]: "kept" } })).toBe(
+        "/x?fallback=d",
+      );
+    }),
+  );
+
+  it.effect(
+    "uses the captured iterator property during record settlement",
+    () =>
+      Effect.gen(function* () {
+        let reads = 0;
+        const query = {
+          k: "v",
+          get [Symbol.iterator]() {
+            reads++;
+            return undefined;
+          },
+        };
+        const request = Request.get("/x").pipe(
+          Request.setQuery("fallback", "d"),
+          Request.query(Schema.Any),
+        );
+        expect(yield* urlOf(request, { query })).toBe("/x?k=v&fallback=d");
+        expect(reads).toBe(1);
+      }),
+  );
 
   it.effect(
     "keeps a declaration guard exception during default settlement as a defect",
@@ -2664,16 +2832,18 @@ describe("pairs group output", () => {
           map: blocked,
           [Symbol.iterator]: blocked,
         });
-        const output = { k: values, [Symbol.iterator]: undefined };
-        const compiled = yield* Request.compile(request, {
-          query: output,
-          headers: output,
-        });
-        expect(compiled.request.url).toBe("/x?k=a&k=b");
-        expect(compiled.headerLines).toEqual([
-          ["k", "a"],
-          ["k", "b"],
-        ]);
+        for (const iterator of [undefined, null, 5, {}]) {
+          const output = { k: values, [Symbol.iterator]: iterator };
+          const compiled = yield* Request.compile(request, {
+            query: output,
+            headers: output,
+          });
+          expect(compiled.request.url).toBe("/x?k=a&k=b");
+          expect(compiled.headerLines).toEqual([
+            ["k", "a"],
+            ["k", "b"],
+          ]);
+        }
       }),
   );
 });

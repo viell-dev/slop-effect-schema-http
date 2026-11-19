@@ -15,8 +15,8 @@ export type Query = ReadonlyArray<readonly [string, string | null]>;
  *
  * @remarks
  * `null` keeps a bare key and `undefined` omits an entry. A `Date` becomes its ISO text, and other
- * values are converted to strings. An invalid `Date` has no ISO text, so it goes out as
- * `String(value)`, and a schema such as `Schema.Date` refuses it before that.
+ * values are converted to strings. An invalid `Date` goes out as the literal `Invalid Date`, and
+ * a schema such as `Schema.Date` refuses it before that.
  */
 export type QueryValue =
   string | number | bigint | boolean | Date | null | undefined;

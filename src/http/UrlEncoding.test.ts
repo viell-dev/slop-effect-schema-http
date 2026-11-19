@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
+import { runInNewContext } from "node:vm";
 import * as UrlEncoding from "./UrlEncoding.js";
 
 describe("UrlEncoding.queryEntries", () => {
@@ -15,11 +16,18 @@ describe("UrlEncoding.queryEntries", () => {
       () => 1,
       Symbol("s"),
       [[1, 2]],
+      Object("x") as object,
+      Object(1) as object,
+      Object(true) as object,
+      Object(2n) as object,
       dateLookalike,
     ]) {
-      expect(() => UrlEncoding.queryEntries({ b } as never)).toThrow(TypeError);
+      const expected = new TypeError(
+        'The query field "b" must encode a scalar value or a list of scalar values',
+      );
+      expect(() => UrlEncoding.queryEntries({ b } as never)).toThrow(expected);
       expect(() => UrlEncoding.queryEntries([["b", b]] as never)).toThrow(
-        TypeError,
+        expected,
       );
     }
   });
@@ -32,7 +40,11 @@ describe("UrlEncoding.queryEntries", () => {
         return "text";
       },
     };
-    expect(() => UrlEncoding.queryEntries({ b } as never)).toThrow(TypeError);
+    expect(() => UrlEncoding.queryEntries({ b } as never)).toThrow(
+      new TypeError(
+        'The query field "b" must encode a scalar value or a list of scalar values',
+      ),
+    );
     expect(conversions).toBe(0);
   });
 
@@ -110,10 +122,34 @@ describe("UrlEncoding.queryEntries", () => {
       ).toEqual([["from", "+275760-09-13T00:00:00.000Z"]]);
     });
 
-    it("has no ISO text when invalid, so it goes out as `String(value)`", () => {
-      expect(UrlEncoding.queryEntries({ from: new Date(Number.NaN) })).toEqual([
+    it("uses the literal Invalid Date for an invalid date", () => {
+      const from = Object.assign(new Date(Number.NaN), {
+        toString: () => "substituted",
+      });
+      expect(UrlEncoding.queryEntries({ from })).toEqual([
         ["from", "Invalid Date"],
       ]);
+    });
+
+    it("reads a date from another realm as ISO text", () => {
+      const from = runInNewContext("new Date(0)") as Date;
+      expect(UrlEncoding.queryEntries({ from })).toEqual([
+        ["from", "1970-01-01T00:00:00.000Z"],
+      ]);
+    });
+
+    it("reads the date itself when its own methods or prototype differ", () => {
+      const bare = new Date(0);
+      Object.setPrototypeOf(bare, null);
+      for (const from of [
+        bare,
+        Object.assign(new Date(0), { toISOString: () => "substituted" }),
+        Object.assign(new Date(0), { getTime: () => Number.NaN }),
+      ]) {
+        expect(UrlEncoding.queryEntries({ from })).toEqual([
+          ["from", "1970-01-01T00:00:00.000Z"],
+        ]);
+      }
     });
 
     it("is escaped later, by the query renderer", () => {
@@ -164,7 +200,9 @@ describe("UrlEncoding.queryEntries", () => {
     });
     expect(UrlEncoding.queryEntries(input)).toEqual([["flag", null]]);
     expect(() => UrlEncoding.queryEntries([["missing"]] as never)).toThrow(
-      TypeError,
+      new TypeError(
+        "A field pair must be a two-position array with a string name",
+      ),
     );
   });
 
@@ -191,7 +229,59 @@ describe("UrlEncoding.queryEntries", () => {
     { input: [["k"]] },
     { input: [[1, "v"]] },
   ])("throws TypeError for a malformed array entry", ({ input }) => {
-    expect(() => UrlEncoding.queryEntries(input as never)).toThrow(TypeError);
+    expect(() => UrlEncoding.queryEntries(input as never)).toThrow(
+      new TypeError(
+        "A field pair must be a two-position array with a string name",
+      ),
+    );
+  });
+
+  it("reads the pairs array length once", () => {
+    let reads = 0;
+    const pairs = new Proxy(
+      [
+        ["k", "a"],
+        ["k", "b"],
+      ] as const,
+      {
+        get(target, key, receiver) {
+          if (key === "length") reads++;
+          return Reflect.get(target, key, receiver) as unknown;
+        },
+      },
+    );
+    expect(UrlEncoding.queryEntries(pairs)).toEqual([
+      ["k", "a"],
+      ["k", "b"],
+    ]);
+    expect(reads).toBe(1);
+  });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/236
+  it("reports its own error for an invalid iterator and closes a malformed iterable", () => {
+    const invalid = { [Symbol.iterator]: () => 5 };
+    expect(() => UrlEncoding.queryEntries(invalid as never)).toThrow(
+      new TypeError(
+        "A field pairs iterable must return an iterator with a callable next method",
+      ),
+    );
+    let closed = false;
+    const pairs = {
+      *[Symbol.iterator]() {
+        try {
+          yield ["k", "v"];
+          yield "malformed";
+        } finally {
+          closed = true;
+        }
+      },
+    };
+    expect(() => UrlEncoding.queryEntries(pairs as never)).toThrow(
+      new TypeError(
+        "A field pair must be a two-position array with a string name",
+      ),
+    );
+    expect(closed).toBe(true);
   });
 });
 

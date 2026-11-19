@@ -224,9 +224,10 @@ Each key replaces that name, as the two-argument form does, in key order, and ot
 | A function                  | Its one result, by these rows        | The same                   |
 | `undefined`                 | Removes that name's declarations     | The same                   |
 
-A function runs during request preparation. In the object form it can return any single value in
-this table, so `{ page: () => 2 }` works as `{ page: 2 }` does. In the two-argument form it returns
-text, `null` or `undefined`.
+A function runs during request preparation. In the object form it can return a scalar or
+`undefined`, so `{ page: () => 2 }` works as `{ page: 2 }` does. In the two-argument form it returns
+text, `null` or `undefined`. A computed query value that returns a list fails with `InvalidRequest`.
+An unsupported fixed query value throws `TypeError` when the edit is applied.
 
 Header names compare without case; query names compare with case. Use `appendQuery` for exact order
 across repeated names. `undefined` declares nothing, so it stops no automatic value; that is what
