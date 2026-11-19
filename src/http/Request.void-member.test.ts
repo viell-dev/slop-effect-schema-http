@@ -77,10 +77,23 @@ describe("request preparation beside Void", () => {
           title: Schema.String,
           meta: Schema.Unknown,
         });
+        // A later member that strips `meta` cannot take the value either.
+        // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+        const Title = Schema.Struct({ title: Schema.String });
         for (const [schema, input, field] of [
           [Note, (note: unknown) => note, '["meta"]'],
           [
             Schema.Union([Note, Schema.Void]),
+            (note: unknown) => note,
+            '["meta"]',
+          ],
+          [
+            Schema.Union([Note, Schema.Void, Title]),
+            (note: unknown) => note,
+            '["meta"]',
+          ],
+          [
+            Schema.Union([Note, Title, Schema.Void]),
             (note: unknown) => note,
             '["meta"]',
           ],

@@ -124,8 +124,21 @@ A schema-backed input accepts constructor input, encoded input or a supported mi
 request carries what the schema writes. Preparation prioritizes construction, whole decoding and
 then fieldwise recovery; it must not invent a conversion or replay construction just to classify
 input. Fieldwise recovery reads objects; it never rebuilds a list as an object keyed by its indexes.
-The [input reference](./schema-input.md) owns the detailed rules, type boundaries and
+Each field it reads accounts for what the caller gave it: a constructor has to keep every supplied
+field, a decoder reads strictly first, and a reading that drops a supplied field keeps that loss. A
+key a decoder or transformation adds is not the caller's. The object's constructor then runs again
+over the fields' results, strictly first, so a union field keeps the member it was read by. A
+default that constructor fills therefore cannot hide a field that a field's reading dropped. The
+[input reference](./schema-input.md) owns the detailed rules, type boundaries and
 constructor-default validation.
+
+These checks, and the relaxed write's below, run only where preparation can establish what the
+caller gave: on plain data. Plain data is a list, or an object whose prototype is `Object.prototype`
+or `null`, that holds only own data properties, none of them named after an `Object.prototype`
+member, under a schema that states no field and no wire name named after one. A value held behind an
+accessor, a class instance, `Schema.Class` instances among them, and a schema or union tag that uses
+such a name read as Effect reads them: where the facts cannot be established, the value keeps its
+earlier reading.
 
 For visible fields the intended rule is kept or refused. Strict reads and actual-consumption
 evidence protect that rule across unions and stacked bindings; opaque values retain their schema's
@@ -135,9 +148,13 @@ reading. Known violations, conflicting aliases and unsupported recovery remain e
 Within a visible any-of union beside an object or list candidate, the strict read declines built-in
 `Schema.Void` for an object with a defined enumerable own field or a list with a defined own cell.
 The strict write refuses every object or list at that Void member. Its fallback relaxes excess
-checking and keeps the Void guard. A structural encoding failure remains a `SchemaError` if no other
-member can take the value. Both passes use the value at the union site, including through
-transformations, fieldwise reads and unencoded any-of alternatives. Normalization removes
+checking and keeps the Void guard. That fallback can take a later member, so it notes which member
+wrote each value, and a struct member that does not state a supplied field it was given loses it,
+where the caller's value there is plain data. It selects the members to try by kind and literal tags
+as the installed Effect does, before any member runs. Nothing is decoded from the output. A
+structural encoding failure remains that member's `SchemaError` if no other member can write the
+value without dropping a supplied field. Both passes use the value at the union site, including
+through transformations, fieldwise reads and unencoded any-of alternatives. Normalization removes
 undefined-valued keys and keeps arbitrary keys when every object candidate at a value has no
 property or index signatures. This contributes no names to query or header group shape. The object
 read keeps first-fit order for a union of Void and plain, unchecked empty structs unless grouped

@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import {
   DateTime,
   Effect,
+  Exit,
   Option,
   Schema,
   SchemaGetter,
@@ -35,6 +36,21 @@ const posted = <
 >(
   schema: S,
 ) => Request.post("/x").pipe(Request.body(Body.jsonSchema(schema)));
+
+/** A value that inherits a field from its own prototype, beside its own fields. */
+const inheriting = (name: string, fields: object): object =>
+  Object.assign(Object.create({ [name]: "x" }) as object, fields);
+
+/** A value that holds the list `[{ limit: "x" }]` behind an accessor named `items`. */
+const gettingItems = (fields: object): object =>
+  Object.defineProperty(fields, "items", {
+    enumerable: true,
+    get: () => [{ limit: "x" }],
+  });
+
+/** A field written under the wire name `__proto__`, given as `JSON.parse` makes it. */
+const protoWire = (): never =>
+  JSON.parse('{"n":1,"m":"2","__proto__":"x"}') as never;
 
 /** The body a JSON schema sends for a value. */
 const sentBy = <
@@ -1440,5 +1456,902 @@ describe("a value on the encoded side stays there", () => {
       expect(Excess.choosing(Same.ast)).toBe(false);
       expect(yield* urlOf(queried(Same), { query: { a: "x" } })).toBe("/x?a=x");
     }),
+  );
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/241
+describe("a field a part lost under a parent read field by field", () => {
+  const Filter = Schema.Struct({
+    limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+      Schema.withConstructorDefault(Effect.succeed(25)),
+    ),
+  }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+  const n = Schema.FiniteFromString;
+  const Inner = Schema.Struct({ m: n, f: Filter });
+  const Cursor = Schema.Struct({ cursor: Schema.String });
+  /** A decoded `n: 1` beside the part makes its parent read field by field. */
+  const decodedLost = [
+    [
+      Schema.Struct({ n, f: Filter }),
+      { n: 1, f: { limit: "x" } },
+      '["f"]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, f: Schema.optionalKey(Filter) }),
+      { n: 1, f: { limit: "x" } },
+      '["f"]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, r: Schema.Record(Schema.String, Filter) }),
+      { n: 1, r: { a: { limit: "x" } } },
+      '["r"]["a"]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, t: Schema.Tuple([Filter]) }),
+      { n: 1, t: [{ limit: "x" }] },
+      '["t"][0]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, items: Schema.Array(Inner) }),
+      { n: 1, items: [{ m: "1", f: { limit: "x" } }] },
+      '["items"][0]["f"]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, inner: Inner }),
+      { n: 1, inner: { m: 1, f: { limit: "x" } } },
+      '["inner"]["f"]["limit"]',
+    ],
+    [
+      Schema.Struct({ n, f: Schema.Union([Filter, Cursor]) }),
+      { n: 1, f: { limit: "x" } },
+      '["f"]["limit"]',
+    ],
+    [
+      Schema.Union([Schema.Struct({ n, f: Filter }), Cursor]),
+      { n: 1, f: { limit: "x" } },
+      '["f"]["limit"]',
+    ],
+  ] as const;
+  /** Encoded names throughout, which the part's own constructor reads as excess keys. */
+  const encodedLost = [
+    [
+      Schema.Struct({ n, f: Filter }),
+      { n: "1", f: { page_size: "many" } },
+      '["f"]["page_size"]',
+    ],
+    [
+      Schema.Struct({ n, items: Schema.Array(Filter) }),
+      { n: "1", items: [{ page_size: "many" }] },
+      '["items"][0]["page_size"]',
+    ],
+  ] as const;
+  /** Valid fields on either side, and defaults for fields the caller left out. */
+  const kept = [
+    [
+      Schema.Struct({ n, f: Filter }),
+      { n: 1, f: {} },
+      '{"n":"1","f":{"page_size":"25"}}',
+    ],
+    [
+      Schema.Struct({ n, items: Schema.Array(Filter) }),
+      { n: 1, items: [{ limit: 5 }, {}] },
+      '{"n":"1","items":[{"page_size":"5"},{"page_size":"25"}]}',
+    ],
+    // A second decoded field keeps the whole decode from reading the valid alias.
+    [
+      Schema.Struct({ n, m: n, f: Filter }),
+      { n: "1", m: 1, f: { page_size: "05" } },
+      '{"n":"1","m":"1","f":{"page_size":"5"}}',
+    ],
+    [
+      Schema.Struct({ n, inner: Inner }),
+      { n: 1, inner: { m: 1, f: { page_size: "03" } } },
+      '{"n":"1","inner":{"m":"1","f":{"page_size":"3"}}}',
+    ],
+    [
+      Schema.Struct({ n, m: n, e: Schema.Struct({}) }),
+      { n: "1", m: 1, e: { tag: "a" } },
+      '{"n":"1","m":"1","e":{"tag":"a"}}',
+    ],
+  ] as const;
+
+  it.effect("refuses the field the part lost, as at the root", () =>
+    Effect.gen(function* () {
+      for (const [schema, input, field] of [...decodedLost, ...encodedLost])
+        expect(
+          yield* schemaFailure(posted(schema), { body: input } as never),
+        ).toBe(
+          `The schema cannot keep this field with the rest of the value\n  at ${field}`,
+        );
+      const pathed = Request.get("").pipe(
+        Request.path(decodedLost[0][0], () => "/x"),
+      );
+      expect(
+        yield* schemaFailure(pathed, { path: decodedLost[0][1] } as never),
+      ).toContain('["f"]["limit"]');
+    }),
+  );
+
+  it.effect("keeps valid parts and fills defaults for omitted fields", () =>
+    Effect.gen(function* () {
+      for (const [schema, input, sent] of kept)
+        expect(yield* sentBy(schema, input as never)).toBe(sent);
+    }),
+  );
+
+  it.effect(
+    "reads a part on its encoded side where its constructor would lose a field",
+    () =>
+      Effect.gen(function* () {
+        // The instance's own property fails the strict write, so the whole value is read again
+        // as Effect reads it. The part's constructor then strips `page_size` for a default.
+        class Counted extends Schema.Class<Counted>("Counted")({
+          a: Schema.String,
+        }) {
+          readonly reads = 1;
+        }
+        const schema = Schema.Struct({ n, m: n, f: Filter, c: Counted });
+        const c = new Counted({ a: "x" });
+        expect(
+          yield* sentBy(schema, { n: "1", m: 1, f: { page_size: "05" }, c }),
+        ).toBe('{"n":"1","m":"1","f":{"page_size":"5"},"c":{"a":"x"}}');
+        expect(
+          yield* schemaFailure(posted(schema), {
+            body: { n: "1", m: 1, f: { page_size: "many" }, c },
+          }),
+        ).toContain('["f"]["page_size"]');
+        expect(
+          yield* schemaFailure(posted(schema), {
+            body: { n: 1, m: 1, f: { limit: "x" }, c } as never,
+          }),
+        ).toContain('["f"]["limit"]');
+        // Both names for one field cannot both be kept.
+        expect(
+          yield* schemaFailure(posted(schema), {
+            body: { n: "1", m: 1, f: { page_size: "3", limit: 5 }, c } as never,
+          }),
+        ).toContain('["f"]["page_size"]');
+      }),
+  );
+
+  it.effect(
+    "keeps a member's loss when another member reads the field loosely",
+    () =>
+      Effect.gen(function* () {
+        // A loose read gives `{}` through `MaybeCursor`, and the parent's constructor would then fill
+        // the default through `Filter`.
+        const MaybeCursor = Schema.Struct({
+          cursor: Schema.optionalKey(Schema.String),
+        });
+        const f = Schema.Union([Filter, MaybeCursor]);
+        for (const [schema, wrap, field] of [
+          [Schema.Struct({ n, m: n, f }), (item: object) => item, '["f"]'],
+          [
+            Schema.Struct({ n, m: n, f: Schema.Array(f) }),
+            (item: object) => [item],
+            '["f"][0]',
+          ],
+        ] as const) {
+          expect(
+            yield* schemaFailure(posted(schema), {
+              body: { n: 1, m: "1", f: wrap({ page_size: "many" }) },
+            } as never),
+          ).toBe(
+            `The schema cannot keep this field with the rest of the value\n  at ${field}["page_size"]`,
+          );
+          expect(
+            JSON.parse(
+              (yield* sentBy(schema, {
+                n: 1,
+                m: "1",
+                f: wrap({ page_size: "05" }),
+              } as never))!,
+            ),
+          ).toEqual({ n: "1", m: "1", f: wrap({ page_size: "5" }) });
+        }
+      }),
+  );
+
+  it.effect("does not count a decoding default as the field a part lost", () =>
+    Effect.gen(function* () {
+      const Defaulted = Schema.Struct({
+        limit: n.pipe(
+          Schema.withDecodingDefaultKey(Effect.succeed("25")),
+          Schema.withConstructorDefault(Effect.succeed(25)),
+        ),
+      }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+      expect(
+        yield* schemaFailure(posted(Schema.Struct({ n, m: n, f: Defaulted })), {
+          body: { n: 1, m: "1", f: { limit: "x" } },
+        } as never),
+      ).toContain('["f"]["limit"]');
+    }),
+  );
+
+  it.effect("reads nothing inside an opaque field it does not change", () =>
+    Effect.gen(function* () {
+      const opaque = Schema.declare(
+        (input): input is object => typeof input === "object" && input !== null,
+      );
+      const schema = Schema.Struct({ n, m: n, opaque });
+      const path = Request.get("").pipe(
+        Request.path(schema, ({ n: first, m }) => `/${first}/${m}`),
+      );
+      let reads = 0;
+      for (const get of [
+        () => {
+          reads++;
+          return "v";
+        },
+        () => {
+          throw new Error("read an opaque field");
+        },
+      ]) {
+        const value = Object.defineProperty({}, "annotation", {
+          enumerable: true,
+          get,
+        });
+        expect(
+          yield* urlOf(path, {
+            path: { n: 1, m: "2", opaque: value },
+          } as never),
+        ).toBe("/1/2");
+      }
+      expect(reads).toBe(0);
+    }),
+  );
+
+  it.effect("adds no reads of an opaque field on the fieldwise fallback", () =>
+    Effect.gen(function* () {
+      class Counted extends Schema.Class<Counted>("Counted")({
+        a: Schema.String,
+      }) {
+        readonly reads = 1;
+      }
+      const opaque = Schema.declare(
+        (input): input is object => typeof input === "object" && input !== null,
+      );
+      // The instance's own property fails the strict write, so the value is read again by field.
+      for (const [schema, place] of [
+        [
+          Schema.Struct({ n, m: n, f: Filter, o: opaque, c: Counted }),
+          (o: object) => ({ o }),
+        ],
+        [
+          Schema.Struct({
+            n,
+            m: n,
+            f: Filter,
+            inner: Schema.Struct({ o: opaque }),
+            c: Counted,
+          }),
+          (o: object) => ({ inner: { o } }),
+        ],
+      ] as const) {
+        let reads = 0;
+        const o = Object.defineProperty({}, "annotation", {
+          enumerable: true,
+          get: () => {
+            reads++;
+            return "v";
+          },
+        });
+        const path = Request.get("").pipe(
+          Request.path(schema, (value) => `/${JSON.stringify(value.f)}`),
+        );
+        expect(
+          yield* urlOf(path, {
+            path: {
+              n: "1",
+              m: 1,
+              f: { page_size: "05" },
+              ...place(o),
+              c: new Counted({ a: "x" }),
+            },
+          } as never),
+        ).toBe('/{"page_size":"5"}');
+        // The root's own normalisation reads it; the fallback reads nothing it keeps unchanged.
+        expect(reads).toBeLessThanOrEqual(2);
+      }
+    }),
+  );
+
+  /** A field that only the relaxed write can send: the strict write refuses the `b` it carries. */
+  const Relaxing = Schema.Struct({ a: Schema.String }).pipe(
+    Schema.decodeTo(
+      Schema.Struct({ b: Schema.String }),
+      SchemaTransformation.transform({
+        decode: ({ a }) => ({ b: a }),
+        encode: (value) => ({ ...value, a: value.b }),
+      }),
+    ),
+  );
+  /** A field schema that needs no services. */
+  type Field = Schema.Codec<unknown, unknown>;
+  /** Each place a part can be read in, with and without a sibling that relaxes the write. */
+  const placings = [
+    [(part: Field): Field => part, (value: object) => value, ""],
+    [
+      (part: Field): Field => Schema.Struct({ part }),
+      (value: object) => ({ part: value }),
+      '["part"]',
+    ],
+    [
+      (part: Field): Field => Schema.Array(part),
+      (value: object) => [value],
+      "[0]",
+    ],
+  ] as const;
+  /**
+   * A parent read field by field around a part, as a decoded `n` beside an encoded `m` makes it, and
+   * optionally a sibling that relaxes the write.
+   */
+  const parentOf = (field: Field, relaxing: boolean) => ({
+    schema: relaxing
+      ? Schema.Struct({ n, m: n, f: field, rename: Relaxing })
+      : Schema.Struct({ n, m: n, f: field }),
+    /** The caller's value around the part's input. */
+    body: (f: object) =>
+      ({
+        n: 1,
+        m: "2",
+        f,
+        ...(relaxing && { rename: { b: "ok" } }),
+      }) as never,
+    /** What the parent sends around what the part writes. */
+    sent: (f: object) =>
+      JSON.stringify({
+        n: "1",
+        m: "2",
+        f,
+        ...(relaxing && { rename: { a: "ok" } }),
+      }),
+  });
+
+  it.effect("does not count a key a part's decoder makes as the caller's", () =>
+    Effect.gen(function* () {
+      const Scratch = Schema.Struct({ p: Schema.String }).pipe(
+        Schema.decodeTo(
+          Schema.Struct({ p: Schema.Number }),
+          SchemaTransformation.transform({
+            // The decoder leaves a working key behind on the value it makes.
+            decode: ({ p }): { readonly p: number } =>
+              Object.assign({ p: Number(p) }, { scratch: 99 }),
+            encode: ({ p }) => ({ p: String(p) }),
+          }),
+        ),
+      );
+      const Echo = Schema.Struct({ a: Schema.String }).pipe(
+        Schema.decodeTo(
+          Schema.Struct({ b: Schema.String }),
+          SchemaTransformation.transform({
+            // The decoder keeps its input's `a` beside the `b` it makes.
+            decode: ({ a }): { readonly b: string } =>
+              Object.assign({ b: a }, { a }),
+            encode: ({ b }) => ({ a: b }),
+          }),
+        ),
+      );
+      for (const [field, input] of [
+        [Scratch, { p: "2" }],
+        [Echo, { a: "x" }],
+      ] as const)
+        for (const [place, wrap] of placings)
+          for (const relaxing of [false, true]) {
+            const parent = parentOf(place(field), relaxing);
+            expect(yield* sentBy(parent.schema, parent.body(wrap(input)))).toBe(
+              parent.sent(wrap(input)),
+            );
+          }
+    }),
+  );
+
+  /** A second reading of `page_size`, as a word, which `Filter` would replace with its default. */
+  const Word = Schema.Struct({ word: Schema.String }).pipe(
+    Schema.encodeKeys({ word: "page_size" }),
+  );
+
+  it.effect(
+    "keeps the member a part was read by when its parent is made again",
+    () =>
+      Effect.gen(function* () {
+        const f = Schema.Union([Filter, Word]);
+        for (const [place, wrap] of placings) {
+          for (const relaxing of [false, true]) {
+            const parent = parentOf(place(f), relaxing);
+            expect(
+              yield* sentBy(
+                parent.schema,
+                parent.body(wrap({ page_size: "05" })),
+              ),
+            ).toBe(parent.sent(wrap({ page_size: "5" })));
+          }
+          const alone = parentOf(place(f), false);
+          expect(
+            yield* sentBy(
+              alone.schema,
+              alone.body(wrap({ page_size: "many" })),
+            ),
+          ).toBe(alone.sent(wrap({ page_size: "many" })));
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+  it.effect(
+    "currently refuses a part the relaxed write sends through an earlier member",
+    () =>
+      Effect.gen(function* () {
+        // The part reads `"many"` as a `Word`. The relaxed write takes `Filter` first, as Effect
+        // does, and `Filter` writes the word as nothing.
+        const f = Schema.Union([Filter, Word]);
+        for (const [place, wrap, at] of placings) {
+          const parent = parentOf(place(f), true);
+          expect(
+            yield* schemaFailure(posted(parent.schema), {
+              body: parent.body(wrap({ page_size: "many" })),
+            }),
+          ).toBe(
+            `The schema cannot keep this field with the rest of the value\n  at ["f"]${at}["page_size"]`,
+          );
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+  it.effect.fails(
+    "sends a part through the member it was read by beside a relaxing sibling",
+    () =>
+      Effect.gen(function* () {
+        const f = Schema.Union([Filter, Word]);
+        for (const [place, wrap] of placings) {
+          const parent = parentOf(place(f), true);
+          expect(
+            yield* sentBy(
+              parent.schema,
+              parent.body(wrap({ page_size: "many" })),
+            ),
+          ).toBe(parent.sent(wrap({ page_size: "many" })));
+        }
+      }),
+  );
+
+  /** Two fields, one decoded and one encoded, which no single side reads. */
+  const Pair = Schema.Struct({ p: n, q: n });
+  const pair = { p: 1, q: "2" };
+
+  it.effect(
+    "takes a later member's lossless reading over an earlier lossy one",
+    () =>
+      Effect.gen(function* () {
+        // `Short` reads the pair by dropping `q`, but cannot write `p` as one character.
+        const Short = Schema.Struct({
+          p: n.pipe(
+            Schema.encodeTo(Schema.String.check(Schema.isMinLength(2)), {
+              decode: SchemaGetter.passthrough(),
+              encode: SchemaGetter.passthrough(),
+            }),
+          ),
+        });
+        for (const relaxing of [false, true]) {
+          const parent = parentOf(Schema.Union([Short, Pair]), relaxing);
+          expect(yield* sentBy(parent.schema, parent.body(pair))).toBe(
+            parent.sent({ p: "1", q: "2" }),
+          );
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+  it.effect(
+    "currently refuses a lossless reading the relaxed write sends through a stripping member",
+    () =>
+      Effect.gen(function* () {
+        // The part reads the pair as `Pair`; the relaxed write takes `MaybeCursor` first, as
+        // Effect does, and it states neither field.
+        const MaybeCursor = Schema.Struct({
+          cursor: Schema.optionalKey(Schema.String),
+        });
+        const f = Schema.Union([MaybeCursor, Pair]);
+        const alone = parentOf(f, false);
+        expect(yield* sentBy(alone.schema, alone.body(pair))).toBe(
+          alone.sent({ p: "1", q: "2" }),
+        );
+        const relaxed = parentOf(f, true);
+        expect(
+          yield* schemaFailure(posted(relaxed.schema), {
+            body: relaxed.body(pair),
+          }),
+        ).toBe(
+          'The schema cannot keep this field with the rest of the value\n  at ["f"]["p"]\n' +
+            'The schema cannot keep this field with the rest of the value\n  at ["f"]["q"]',
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
+  it.effect.fails(
+    "sends a lossless reading through its member beside a relaxing sibling",
+    () =>
+      Effect.gen(function* () {
+        const MaybeCursor = Schema.Struct({
+          cursor: Schema.optionalKey(Schema.String),
+        });
+        const parent = parentOf(Schema.Union([MaybeCursor, Pair]), true);
+        expect(yield* sentBy(parent.schema, parent.body(pair))).toBe(
+          parent.sent({ p: "1", q: "2" }),
+        );
+      }),
+  );
+
+  // A part is checked only where it is plain data throughout: own data properties of plain objects
+  // and lists, and a schema that names no field every object has. Elsewhere it reads as Effect
+  // reads it, as the root does where its own value is not plain data.
+
+  it.effect(
+    "reads a part whose schema names a field every object has as Effect reads it",
+    () =>
+      Effect.gen(function* () {
+        for (const name of [
+          "label",
+          "toString",
+          "constructor",
+          "valueOf",
+          "hasOwnProperty",
+        ]) {
+          const Renamed = Schema.Struct({
+            [name]: Schema.String,
+            a: Schema.String,
+          }).pipe(Schema.encodeKeys({ [name]: "w" })) as unknown as Field;
+          const parent = parentOf(Renamed, false);
+          expect(
+            yield* sentBy(parent.schema, parent.body({ w: "x", a: "y" })),
+          ).toBe(parent.sent({ w: "x", a: "y" }));
+        }
+        // Effect 4.1.4 reads only a `constructor` the value holds, and Effect 4.0.7 reads the
+        // inherited one and refuses it.
+        const Optional = Schema.Struct({
+          a: Schema.Number,
+          b: n,
+          constructor: Schema.optionalKey(Schema.String),
+        }).pipe(Schema.encodeKeys({ b: "w_b" } as never));
+        const part = { a: 1, w_b: "1" };
+        const sent = yield* Effect.exit(
+          sentBy(Schema.Struct({ a: Optional, rename: Relaxing }), {
+            a: part,
+            rename: { b: "go" },
+          } as never),
+        );
+        if (Exit.isSuccess(Schema.decodeUnknownExit(Optional)(part)))
+          expect(sent).toEqual(
+            Exit.succeed('{"a":{"a":1,"w_b":"1"},"rename":{"a":"go"}}'),
+          );
+        else expect(Exit.isFailure(sent)).toBe(true);
+      }),
+  );
+
+  it.effect(
+    "reads a field a part's value inherits from its own prototype as Effect reads it",
+    () =>
+      Effect.gen(function* () {
+        // Such a value is not plain data. Effect 4.1.4 reads a field named after an
+        // `Object.prototype` member only as the value's own; Effect 4.0.7 also reads one the value
+        // inherits from its own prototype. The part reads as the installed Effect does.
+        for (const name of [
+          "toString",
+          "constructor",
+          "valueOf",
+          "hasOwnProperty",
+        ]) {
+          const read = Object.hasOwn(
+            Schema.decodeUnknownSync(
+              Schema.Struct({ [name]: Schema.optionalKey(Schema.String) }),
+            )(inheriting(name, {})),
+            name,
+          );
+          const Item = Schema.Struct({
+            a: n,
+            [name]: Schema.optionalKey(Schema.String),
+          }) as unknown as Field;
+          const item = () => inheriting(name, { a: "6" });
+          const written = read ? { a: "6", [name]: "x" } : { a: "6" };
+          for (const [field, value, sent] of [
+            [
+              Schema.Tuple([Item, n]) as unknown as Field,
+              () => [item(), "1"],
+              [written, "1"],
+            ],
+            [Schema.Array(Item) as Field, () => [item()], [written]],
+            [
+              Schema.Record(Schema.String, Item) as Field,
+              () => ({ k: item() }),
+              { k: written },
+            ],
+            [
+              Schema.Union([Schema.Array(Item), Schema.String]) as Field,
+              () => [item()],
+              [written],
+            ],
+          ] as const) {
+            const parent = parentOf(field, true);
+            expect(yield* sentBy(parent.schema, parent.body(value()))).toBe(
+              parent.sent(sent),
+            );
+          }
+          // The same tuple where only the relaxing sibling makes the root read field by field.
+          expect(
+            yield* sentBy(
+              Schema.Struct({
+                f: Schema.Tuple([Item, n]) as unknown as Field,
+                rename: Relaxing,
+              }),
+              { f: [item(), "1"], rename: { b: "ok" } } as never,
+            ),
+          ).toBe(JSON.stringify({ f: [written, "1"], rename: { a: "ok" } }));
+          // A field whose wire name is the inherited one: Effect 4.1.4 sees no `text` there.
+          const Wire = Schema.Struct({ text: Schema.String, a: n }).pipe(
+            Schema.encodeKeys({ text: name } as never),
+          ) as unknown as Field;
+          const parent = parentOf(Wire, true);
+          const outcome = yield* Effect.exit(
+            sentBy(parent.schema, parent.body(inheriting(name, { a: "5" }))),
+          );
+          if (read)
+            expect(outcome).toEqual(
+              Exit.succeed(parent.sent({ [name]: "x", a: "5" })),
+            );
+          else expect(Exit.isFailure(outcome)).toBe(true);
+        }
+      }),
+  );
+
+  it.effect(
+    "reads a class instance as Effect reads it, running its getter no more often",
+    () =>
+      Effect.gen(function* () {
+        for (const name of ["label", "constructor", "toString"]) {
+          let reads = 0;
+          class Holder {
+            readonly a = "5";
+            get text() {
+              reads++;
+              return "x";
+            }
+          }
+          const Wire = Schema.Struct({ text: Schema.String, a: n }).pipe(
+            Schema.encodeKeys({ text: name } as never),
+          ) as unknown as Field;
+          for (const relaxing of [false, true]) {
+            reads = 0;
+            const parent = parentOf(Wire, relaxing);
+            expect(
+              yield* sentBy(parent.schema, parent.body(new Holder())),
+            ).toBe(parent.sent({ [name]: "x", a: "5" }));
+            // Effect's own reads run the getter, and preparation runs it no more.
+            expect(reads).toBeLessThanOrEqual(7);
+          }
+        }
+        // A class whose method another union member states as a field.
+        for (const name of ["toString", "valueOf"]) {
+          class Methods {
+            readonly a = "";
+            readonly b = true;
+          }
+          Object.defineProperty(Methods.prototype, name, {
+            value: () => "v",
+            configurable: true,
+          });
+          const parent = parentOf(
+            Schema.Union([
+              Schema.Struct({ b: n, [name]: Schema.Boolean }),
+              Schema.Struct({ a: Schema.String, b: Schema.Boolean }),
+            ]) as unknown as Field,
+            false,
+          );
+          expect(yield* sentBy(parent.schema, parent.body(new Methods()))).toBe(
+            parent.sent({ a: "", b: true }),
+          );
+        }
+      }),
+  );
+
+  it.effect("reads a part held behind a getter as Effect reads it", () =>
+    Effect.gen(function* () {
+      for (const name of ["label", "toString", "constructor", "valueOf"]) {
+        const Wire = Schema.Struct({ text: Schema.String, a: n }).pipe(
+          Schema.encodeKeys({ text: name } as never),
+        ) as unknown as Field;
+        const parent = parentOf(Wire, false);
+        const sent = parent.sent({ [name]: "x", a: "5" });
+        const held = Object.defineProperty({ n: 1, m: "2" }, "f", {
+          enumerable: true,
+          get: () => ({ text: "x", a: "5" }),
+        });
+        expect(yield* sentBy(parent.schema, held as never)).toBe(sent);
+        class Getting {
+          readonly n = 1;
+          readonly m = "2";
+          get f() {
+            return { text: "x", a: "5" };
+          }
+        }
+        expect(yield* sentBy(parent.schema, new Getting() as never)).toBe(sent);
+      }
+    }),
+  );
+
+  it.effect("keeps an own __proto__ field as Effect does", () =>
+    Effect.gen(function* () {
+      // `JSON.parse` makes `__proto__` an own field. Effect keeps it, and so does each part.
+      const optional = Schema.optionalKey(Schema.String);
+      expect(
+        yield* sentBy(
+          Schema.Struct({ n, m: n, ["__proto__"]: optional, rename: Relaxing }),
+          JSON.parse(
+            '{"n":1,"m":"2","__proto__":"x","rename":{"b":"ok"}}',
+          ) as never,
+        ),
+      ).toBe('{"n":"1","m":"2","__proto__":"x","rename":{"a":"ok"}}');
+      expect(
+        yield* sentBy(
+          Schema.Struct({
+            n,
+            m: n,
+            f: Schema.Struct({ a: n, b: n, ["__proto__"]: optional }),
+            rename: Relaxing,
+          }),
+          JSON.parse(
+            '{"n":1,"m":"2","f":{"a":1,"b":"2","__proto__":"x"},"rename":{"b":"ok"}}',
+          ) as never,
+        ),
+      ).toBe(
+        '{"n":"1","m":"2","f":{"a":"1","b":"2","__proto__":"x"},"rename":{"a":"ok"}}',
+      );
+    }),
+  );
+
+  it.effect("refuses a field given under both names", () =>
+    Effect.gen(function* () {
+      const Wire = Schema.Struct({ text: Schema.String, a: n }).pipe(
+        Schema.encodeKeys({ text: "label" }),
+      ) as unknown as Field;
+      const parent = parentOf(Wire, false);
+      expect(
+        yield* schemaFailure(posted(parent.schema), {
+          body: parent.body({ text: "x", label: "y", a: "5" }),
+        }),
+      ).toBe(
+        'The schema cannot keep this field with the rest of the value\n  at ["f"]["label"]',
+      );
+    }),
+  );
+
+  /** `text` written as a name every object has, and the body that gives both of its names. */
+  const bothNames = (name: string) => {
+    const parent = parentOf(
+      Schema.Struct({ text: Schema.String, a: n }).pipe(
+        Schema.encodeKeys({ text: name } as never),
+      ) as unknown as Field,
+      false,
+    );
+    return {
+      schema: parent.schema,
+      body: parent.body({ text: "x", [name]: "y", a: "5" }),
+      sent: parent.sent({ [name]: "y", a: "5" }),
+    };
+  };
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect(
+    "currently sends one of a field's two names where the wire name is one every object has",
+    () =>
+      Effect.gen(function* () {
+        for (const name of ["toString", "constructor"]) {
+          const { schema, body, sent } = bothNames(name);
+          expect(yield* sentBy(schema, body)).toBe(sent);
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect.fails(
+    "refuses a field given under both names where the wire name is one every object has",
+    () =>
+      Effect.gen(function* () {
+        for (const name of ["toString", "constructor"]) {
+          const { schema, body } = bothNames(name);
+          expect(yield* schemaFailure(posted(schema), { body })).toBe(
+            `The schema cannot keep this field with the rest of the value\n  at ["f"]["${name}"]`,
+          );
+        }
+      }),
+  );
+
+  const Page = Schema.Struct({ n, items: Schema.Array(Filter) });
+  const Wrapped = Schema.Struct({
+    n,
+    page: Schema.Struct({ items: Schema.Array(Filter) }),
+  });
+
+  /**
+   * The list `Filter` loses a field of, behind a getter or in a class instance, at the root and
+   * in a field of a plain root: each schema, the caller's value, what is sent, and where it fails.
+   */
+  const notPlain = () => {
+    class Root {
+      readonly n = 1;
+      readonly items = [{ limit: "x" }];
+    }
+    class List {
+      readonly items = [{ limit: "x" }];
+    }
+    const root = '{"n":"1","items":[{"page_size":"25"}]}';
+    const inField = '{"n":"1","page":{"items":[{"page_size":"25"}]}}';
+    return [
+      [Page, gettingItems({ n: 1 }), root, '["items"][0]["limit"]'],
+      [Page, new Root(), root, '["items"][0]["limit"]'],
+      [
+        Wrapped,
+        { n: 1, page: gettingItems({}) },
+        inField,
+        '["page"]["items"][0]["limit"]',
+      ],
+      [
+        Wrapped,
+        { n: 1, page: new List() },
+        inField,
+        '["page"]["items"][0]["limit"]',
+      ],
+    ] as const;
+  };
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect(
+    "currently fills a default for a field a part lost where the value is not plain data",
+    () =>
+      Effect.gen(function* () {
+        for (const [schema, body, sent] of notPlain())
+          expect(yield* sentBy(schema as Field, body as never)).toBe(sent);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect.fails(
+    "refuses a field a part lost where the value is not plain data",
+    () =>
+      Effect.gen(function* () {
+        for (const [schema, body, , at] of notPlain())
+          expect(
+            yield* schemaFailure(posted(schema as Field), { body } as never),
+          ).toContain(at);
+      }),
+  );
+
+  /** A field written under the wire name `__proto__`. */
+  const ProtoWire = Schema.Struct({
+    n,
+    m: n,
+    text: Schema.optionalKey(Schema.String),
+  }).pipe(Schema.encodeKeys({ text: "__proto__" }));
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect("currently drops a field given under the wire name __proto__", () =>
+    Effect.gen(function* () {
+      expect(yield* sentBy(ProtoWire, protoWire())).toBe('{"n":"1","m":"2"}');
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
+  it.effect.fails(
+    "keeps or refuses a field given under the wire name __proto__",
+    () =>
+      Effect.gen(function* () {
+        const outcome = yield* Effect.exit(sentBy(ProtoWire, protoWire()));
+        expect(
+          Exit.isFailure(outcome) ||
+            (Exit.isSuccess(outcome) &&
+              (outcome.value ?? "").includes('"__proto__"')),
+        ).toBe(true);
+      }),
   );
 });
