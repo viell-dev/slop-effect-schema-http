@@ -2853,6 +2853,57 @@ describe("pairs group output", () => {
   );
 });
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/256
+// Gaps the #260 review found in the group writers. Each pin records the current outcome.
+describe("group writer gaps from the #260 review", () => {
+  const symbol = Symbol("extra");
+  const record = Schema.Record(Schema.String, Schema.FiniteFromString);
+  const decoded = Request.get("/x").pipe(
+    Request.query(record),
+    Request.headers(record),
+  );
+  const open = Request.get("/x").pipe(
+    Request.query(Schema.Any),
+    Request.headers(Schema.Any),
+  );
+  const list = { k: Object.assign(["a"], { extra: "keep" }) };
+
+  it.effect("currently drops a symbol field a record decode loses", () =>
+    Effect.gen(function* () {
+      const fields = { k: "1", [symbol]: "kept" };
+      const result = yield* compile(decoded, {
+        query: fields,
+        headers: fields,
+      });
+      expect(result.request.url).toBe("/x?k=1");
+      expect(result.headerLines).toEqual([["k", "1"]]);
+    }),
+  );
+
+  it.effect.fails("refuses a symbol field a record decode loses", () =>
+    Effect.gen(function* () {
+      const fields = { k: "1", [symbol]: "kept" };
+      yield* Effect.flip(compile(decoded, { query: fields, headers: {} }));
+    }),
+  );
+
+  it.effect(
+    "currently drops extra fields on query and header value lists",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* compile(open, { query: list, headers: list });
+        expect(result.request.url).toBe("/x?k=a");
+        expect(result.headerLines).toEqual([["k", "a"]]);
+      }),
+  );
+
+  it.effect.fails("refuses extra fields on query and header value lists", () =>
+    Effect.gen(function* () {
+      yield* refusal(open, { query: list, headers: {} });
+    }),
+  );
+});
+
 describe("open group writer symbol fields", () => {
   const input = { k: "v", [Symbol("extra")]: "kept" };
   const schemas = [
