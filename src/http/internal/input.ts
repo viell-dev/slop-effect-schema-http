@@ -176,18 +176,6 @@ type Write<S extends Schema.Top, A, R> = (
   options?: SchemaAST.ParseOptions,
 ) => Effect.Effect<A, Schema.SchemaError, R>;
 
-/** Bring a value to the schema's decoded side, then write it, as Effect reads it. */
-const stripping = <S extends Schema.Top, A, R>(
-  contract: S,
-  write: Write<S, A, R>,
-) => {
-  const decoded = toDecoded(contract);
-  return (
-    input: Input<S>,
-  ): Effect.Effect<A, Schema.SchemaError, R | S["DecodingServices"]> =>
-    Effect.flatMap(decoded(input), write);
-};
-
 /**
  * Bring a value to the schema's decoded side, then write it, and say what that would lose.
  *
@@ -222,8 +210,25 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       })),
     );
   const ast = contract.ast;
-  if (guarded.ast === ast && !Excess.choosing(ast))
-    return (input: Input<S>) => written(decoded(input));
+  if (guarded.ast === ast && !Excess.choosing(ast)) {
+    const indexedSymbolLoss = Excess.indexedSymbolLoss(ast);
+    if (indexedSymbolLoss === undefined)
+      return (input: Input<S>) => written(decoded(input));
+    return (input: Input<S>) =>
+      Effect.suspend(() => {
+        let constructed = false;
+        return Effect.flatMap(
+          decoded(input, () => {
+            constructed = true;
+          }),
+          (value) =>
+            Effect.map(write(value), (output): Written<A> => ({
+              output,
+              lost: constructed ? indexedSymbolLoss(input, value) : [],
+            })),
+        );
+      });
+  }
   const guardWrite =
     codec.ast === ast
       ? guarded.ast
@@ -587,8 +592,15 @@ export const encoder = <S extends Schema.Top, A, R>(
   codec: Schema.ConstraintCodec<S["Type"], A, unknown, R>,
 ) => {
   const guarded = guardVoidMembers(contract.ast);
-  if (guarded.ast === contract.ast && !Excess.choosing(contract.ast))
-    return stripping(contract, Schema.encodeEffect(codec));
+  if (
+    guarded.ast === contract.ast &&
+    !Excess.choosing(contract.ast) &&
+    Excess.indexedSymbolLoss(contract.ast) === undefined
+  ) {
+    const decoded = toDecoded(contract);
+    const write = Schema.encodeEffect(codec);
+    return (input: Input<S>) => Effect.flatMap(decoded(input), write);
+  }
   const read = readerForCodec(contract, codec, guarded);
   return (
     input: Input<S>,

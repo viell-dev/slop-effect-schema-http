@@ -4,6 +4,14 @@ import { runInNewContext } from "node:vm";
 import * as UrlEncoding from "./UrlEncoding.js";
 
 describe("UrlEncoding.queryEntries", () => {
+  it("refuses a defined enumerable symbol key in a record", () => {
+    expect(() =>
+      UrlEncoding.queryEntries({ k: "v", [Symbol("extra")]: "keep" }),
+    ).toThrow(
+      new TypeError("The query field [Symbol(extra)] must have a string name"),
+    );
+  });
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/255
   it("refuses unsupported values in records and pair groups", () => {
     const dateLookalike = Object.setPrototypeOf(

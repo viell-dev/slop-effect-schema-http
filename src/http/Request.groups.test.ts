@@ -2717,21 +2717,24 @@ describe("pairs group output", () => {
     expect(filled(["generated"], snapshot)).toEqual([]);
   });
 
-  it.effect("keeps symbol fields through default settlement", () =>
-    Effect.gen(function* () {
-      const marker = Symbol("marker");
-      const Group = Schema.Struct({
-        [marker]: Schema.Literal("kept"),
-        fallback: Schema.optionalKey(Schema.String),
-      });
-      const request = Request.get("/x").pipe(
-        Request.setQuery("fallback", "d"),
-        Request.query(Group),
-      );
-      expect(yield* urlOf(request, { query: { [marker]: "kept" } })).toBe(
-        "/x?fallback=d",
-      );
-    }),
+  it.effect(
+    "keeps symbol fields through default settlement until the writer refuses them",
+    () =>
+      Effect.gen(function* () {
+        const marker = Symbol("marker");
+        const Group = Schema.Struct({
+          [marker]: Schema.Literal("kept"),
+          fallback: Schema.optionalKey(Schema.String),
+        });
+        const request = Request.get("/x").pipe(
+          Request.setQuery("fallback", "d"),
+          Request.query(Group),
+        );
+        const error = yield* refusal(request, { query: { [marker]: "kept" } });
+        expect(error.message).toBe(
+          "The query field [Symbol(marker)] must have a string name",
+        );
+      }),
   );
 
   it.effect(
@@ -2833,7 +2836,9 @@ describe("pairs group output", () => {
           [Symbol.iterator]: blocked,
         });
         for (const iterator of [undefined, null, 5, {}]) {
-          const output = { k: values, [Symbol.iterator]: iterator };
+          const output = Object.defineProperty({ k: values }, Symbol.iterator, {
+            value: iterator,
+          });
           const compiled = yield* Request.compile(request, {
             query: output,
             headers: output,
@@ -2845,6 +2850,156 @@ describe("pairs group output", () => {
           ]);
         }
       }),
+  );
+});
+
+describe("open group writer symbol fields", () => {
+  const input = { k: "v", [Symbol("extra")]: "kept" };
+  const schemas = [
+    [Schema.Struct({}), Request.InvalidRequest],
+    [Schema.Record(Schema.String, Schema.Unknown), Schema.SchemaError],
+    [Schema.Unknown, Request.InvalidRequest],
+  ] as const;
+  it("refuses a symbol-keyed raw record edit", () => {
+    expect(() => Request.setQuery(input)).toThrow(
+      "The query field [Symbol(extra)]",
+    );
+    expect(() => Request.setHeader(input)).toThrow(
+      "The header field [Symbol(extra)]",
+    );
+  });
+
+  it.effect(
+    "refuses a symbol that would be lost while round-tripping declared defaults",
+    () =>
+      Effect.gen(function* () {
+        const key = Symbol("incoming");
+        const group = Schema.Any.pipe(
+          Schema.decodeTo(
+            Schema.Any,
+            SchemaTransformation.transform({
+              decode: (encoded: {
+                [key]?: string;
+                k: string;
+                fallback?: string;
+              }) => {
+                const decoded = { ...encoded };
+                delete decoded[key];
+                return decoded;
+              },
+              encode: (value) => value,
+            }),
+          ),
+        );
+        const request = Request.get("/x").pipe(
+          Request.setQuery({ fallback: "d" }),
+          Request.query(group),
+        );
+        const error = yield* refusal(request, {
+          query: { k: "v", [key]: "kept" },
+        });
+        expect(error.message).toBe(
+          "The query group lost the field [Symbol(incoming)] while applying declared values",
+        );
+      }),
+  );
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/256
+  it.effect("refuses a defined symbol in query and headers", () =>
+    Effect.gen(function* () {
+      for (const [schema, type] of schemas) {
+        const query = Request.get("/x").pipe(Request.query(schema as never));
+        const headers = Request.get("/x").pipe(
+          Request.headers(schema as never),
+        );
+        for (const write of [
+          Request.compile(query, { query: input } as never),
+          Request.compile(headers, { headers: input } as never),
+        ]) {
+          const error = yield* Effect.flip(write);
+          expect(error).toBeInstanceOf(type);
+          expect(error.message).toContain("Symbol(extra)");
+        }
+      }
+    }),
+  );
+  it.effect(
+    "writes a symbol field when the schema encodes it under a string name",
+    () =>
+      Effect.gen(function* () {
+        const key = Symbol("private input name");
+        const group = Schema.Struct({ [key]: Schema.String }).pipe(
+          Schema.encodeKeys({ [key]: "k" }),
+        );
+        const request = Request.get("/x").pipe(
+          Request.query(group),
+          Request.headers(group),
+        );
+        const supplied = { [key]: "v" };
+        const result = yield* Request.compile(request, {
+          query: supplied,
+          headers: supplied,
+        });
+        expect(result.request.url).toBe("/x?k=v");
+        expect(result.headerLines).toEqual([["k", "v"]]);
+      }),
+  );
+  it.effect(
+    "keeps record fields alongside absent or hidden symbols and reads iterable outputs as pairs",
+    () =>
+      Effect.gen(function* () {
+        const request = Request.get("/x").pipe(
+          Request.query(Schema.Any),
+          Request.headers(Schema.Any),
+        );
+        let reads = 0;
+        const record = {
+          k: "v",
+          get [Symbol("absent")]() {
+            reads++;
+            return undefined;
+          },
+        };
+        Object.defineProperty(record, Symbol("hidden"), {
+          get() {
+            throw new Error("must not read a non-enumerable symbol");
+          },
+        });
+        let iterations = 0;
+        const pairs = {
+          *[Symbol.iterator]() {
+            iterations++;
+            yield ["k", "v"];
+          },
+        };
+        for (const output of [record, pairs]) {
+          const compiled = yield* Request.compile(request, {
+            query: output,
+            headers: output,
+          });
+          expect(compiled.request.url).toBe("/x?k=v");
+          expect(compiled.headerLines).toEqual([["k", "v"]]);
+        }
+        expect(reads).toBe(2);
+        expect(iterations).toBe(2);
+      }),
+  );
+  it.effect("leaves an exception from reading a symbol field as a defect", () =>
+    Effect.gen(function* () {
+      const defect = new TypeError("caller getter");
+      const withGetter = {
+        get [Symbol("extra")]() {
+          throw defect;
+        },
+      };
+      const query = Request.get("/x").pipe(Request.query(Schema.Any));
+      const headers = Request.get("/x").pipe(Request.headers(Schema.Any));
+      expect(
+        yield* Effect.exit(Request.compile(query, { query: withGetter })),
+      ).toEqual(Exit.die(defect));
+      expect(
+        yield* Effect.exit(Request.compile(headers, { headers: withGetter })),
+      ).toEqual(Exit.die(defect));
+    }),
   );
 });
 

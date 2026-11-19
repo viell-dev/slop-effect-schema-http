@@ -21,7 +21,7 @@ class InvalidQueryValue extends TypeError {
 }
 
 export const isInvalidQueryValue = (error: unknown): error is TypeError =>
-  error instanceof InvalidQueryValue;
+  error instanceof InvalidQueryValue || error instanceof InvalidFieldName;
 
 /** Read the native Date brand, including dates from another realm. */
 const dateText = (value: object): string | undefined => {
@@ -57,9 +57,49 @@ export const queryScalar = (
   throw new InvalidQueryValue(name);
 };
 
-export const queryEntries = ({ entries }: Reading): Query => {
+class InvalidFieldName extends TypeError {
+  constructor(group: "query" | "header", key: symbol) {
+    super(`The ${group} field [${String(key)}] must have a string name`);
+  }
+}
+
+export function lostSymbol(
+  before: Reading,
+  after: Reading,
+): symbol | undefined {
+  if (before.kind !== "record" || before.symbols === undefined)
+    return undefined;
+  return before.symbols.find(
+    (key) =>
+      Reflect.get(before.record, key) !== undefined &&
+      (after.kind === "pairs" ||
+        !after.symbols?.includes(key) ||
+        Reflect.get(after.record, key) === undefined),
+  );
+}
+
+export function checkRecordNames(
+  group: "query" | "header",
+  input: object,
+  symbols: ReadonlyArray<symbol> = Object.getOwnPropertySymbols(input),
+): void {
+  for (const key of symbols)
+    if (
+      Object.prototype.propertyIsEnumerable.call(input, key) &&
+      Reflect.get(input, key) !== undefined
+    )
+      throw new InvalidFieldName(group, key);
+}
+
+function checkNames(group: "query" | "header", reading: Reading): void {
+  if (reading.kind === "record" && reading.symbols !== undefined)
+    checkRecordNames(group, reading.record, reading.symbols);
+}
+
+export const queryEntries = (reading: Reading): Query => {
+  checkNames("query", reading);
   const query: Array<readonly [string, string | null]> = [];
-  for (const [name, value] of entries) {
+  for (const [name, value] of reading.entries) {
     const write = (entry: unknown) => {
       const text = queryScalar(name, entry);
       if (text !== undefined) query.push([name, text]);
@@ -77,7 +117,12 @@ class InvalidHeaderValue extends TypeError {
 }
 
 export const isInvalidHeaderValue = (error: unknown): error is TypeError =>
-  error instanceof InvalidHeaderValue;
+  error instanceof InvalidHeaderValue || error instanceof InvalidFieldName;
+
+export const headerErrorMessage = (error: TypeError): string =>
+  error instanceof InvalidFieldName
+    ? error.message
+    : "The header schema must encode string field names and values";
 
 const headerLine = (
   name: string,
@@ -87,7 +132,9 @@ const headerLine = (
   return [name, value];
 };
 
-export const headerEntries = ({ kind, entries }: Reading): Lines => {
+export const headerEntries = (reading: Reading): Lines => {
+  checkNames("header", reading);
+  const { kind, entries } = reading;
   if (kind === "pairs")
     return entries.map(([name, value]) => headerLine(name, value));
   const lines: Array<readonly [string, string]> = [];
