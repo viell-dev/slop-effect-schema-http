@@ -493,9 +493,9 @@ remaining list limits under #241 and #243.
   refuses in either order too. Use all-decoded or all-encoded names, one per field, for that input.
 - JavaScript, casts and `Schema.Any` can bypass the TypeScript requirement for a query or header
   schema to encode a group of fields. Preparation reports lost input fields first. A non-object
-  group, a malformed field pair or a header field with an invalid value fails with `InvalidRequest`
-  before dispatch. Direct calls to `Transport.entries` throw `TypeError` for malformed pairs and
-  invalid header values. `UrlEncoding.queryEntries` throws `TypeError` for malformed pairs.
+  group, a malformed field pair or an invalid query or header value fails with `InvalidRequest`
+  before dispatch. An unsupported query value names its field. `Transport.entries` and
+  `UrlEncoding.queryEntries` throw `TypeError` for malformed pairs and invalid values.
 - Once an encoded-only alias enables whole decoding of a list, a decoded-only item beside it can
   lose its decoded name and refuse. This applies to every covered container, array-shaped unions
   included.

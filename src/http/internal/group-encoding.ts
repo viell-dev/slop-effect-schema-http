@@ -12,17 +12,50 @@ const forEachValue = (
     if (index in values) write(values[index]);
 };
 
-const queryText = (value: unknown): string =>
-  value instanceof Date && !Number.isNaN(value.getTime())
-    ? value.toISOString()
-    : String(value);
+class InvalidQueryValue extends TypeError {
+  constructor(name: string) {
+    super(
+      `The query field ${JSON.stringify(name)} must encode a scalar value or a list of scalar values`,
+    );
+  }
+}
+
+export const isInvalidQueryValue = (error: unknown): error is TypeError =>
+  error instanceof InvalidQueryValue;
+
+/** Read the native Date brand, including dates from another realm. */
+const isDate = (value: object): value is Date => {
+  try {
+    Date.prototype.getTime.call(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const queryText = (name: string, value: unknown): string => {
+  switch (typeof value) {
+    case "string":
+      return value;
+    case "number":
+    case "boolean":
+    case "bigint":
+      return String(value);
+    case "object":
+      if (value !== null && isDate(value))
+        return Number.isNaN(value.getTime())
+          ? String(value)
+          : value.toISOString();
+  }
+  throw new InvalidQueryValue(name);
+};
 
 export const queryEntries = ({ entries }: Reading): Query => {
   const query: Array<readonly [string, string | null]> = [];
   for (const [name, value] of entries) {
     const write = (entry: unknown) => {
       if (entry !== undefined)
-        query.push([name, entry === null ? null : queryText(entry)]);
+        query.push([name, entry === null ? null : queryText(name, entry)]);
     };
     if (Array.isArray(value)) forEachValue(value, write);
     else write(value);

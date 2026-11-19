@@ -2442,15 +2442,20 @@ describe("pairs group output", () => {
 
   it.effect("reports a throwing query value with its original cause", () =>
     Effect.gen(function* () {
+      const cause = new TypeError("date formatting failed");
+      const date = new Date("2026-11-07T12:00:00.000Z");
+      date.toISOString = () => {
+        throw cause;
+      };
       const error = yield* refusal(
         Request.get("/x").pipe(Request.query(Schema.Any)),
-        { query: { k: Object.create(null) } },
+        { query: { k: date } },
       );
       expect(error).toBeInstanceOf(Request.InvalidRequest);
       expect(error.message).toBe(
         "The query schema must encode values that can be written as query text",
       );
-      expect(error).toHaveProperty("cause", expect.any(TypeError));
+      expect(error.cause).toBe(cause);
     }),
   );
 
@@ -2670,5 +2675,50 @@ describe("pairs group output", () => {
           ["k", "b"],
         ]);
       }),
+  );
+});
+
+describe("query schema values", () => {
+  const schemas = [
+    ["empty struct", Schema.Struct({})],
+    ["unknown record", Schema.Record(Schema.String, Schema.Unknown)],
+    ["unknown field", Schema.Struct({ b: Schema.Unknown })],
+    ["any field", Schema.Struct({ b: Schema.Any })],
+  ] as const;
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/255
+  it.effect("refuses unsupported query values before dispatch", () =>
+    Effect.gen(function* () {
+      const server = synthetic(() => empty(204));
+      const values = [
+        { x: 1 },
+        ["valid", { x: 1 }],
+        () => 1,
+        Symbol("s"),
+        [[1, 2]],
+      ];
+      const message =
+        'The query field "b" must encode a scalar value or a list of scalar values';
+      for (const [label, schema] of schemas) {
+        const request = Request.get("https://api.test/x").pipe(
+          Request.query(schema as never),
+        );
+        const operation = Operation.make(
+          request,
+          Response.status(204, Body.empty),
+        );
+        for (const b of values) {
+          const input = { query: { b } } as never;
+          const failure = yield* refusal(request, input);
+          expect(failure.message, label).toBe(message);
+          expect(failure.cause, label).toBeInstanceOf(TypeError);
+          const result = yield* Effect.flip(
+            operation.execute(input).pipe(Effect.provide(server.layer)),
+          );
+          expect(result, label).toBeInstanceOf(Request.InvalidRequest);
+          expect(result.message, label).toBe(message);
+        }
+      }
+      expect(server.exchanges).toEqual([]);
+    }),
   );
 });

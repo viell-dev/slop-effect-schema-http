@@ -3,6 +3,39 @@ import { Effect } from "effect";
 import * as UrlEncoding from "./UrlEncoding.js";
 
 describe("UrlEncoding.queryEntries", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/255
+  it("refuses unsupported values in records and pair groups", () => {
+    const dateLookalike = Object.setPrototypeOf(
+      { getTime: () => 0, toISOString: () => "date text" },
+      Date.prototype,
+    ) as object;
+    for (const b of [
+      { x: 1 },
+      [{ x: 1 }],
+      () => 1,
+      Symbol("s"),
+      [[1, 2]],
+      dateLookalike,
+    ]) {
+      expect(() => UrlEncoding.queryEntries({ b } as never)).toThrow(TypeError);
+      expect(() => UrlEncoding.queryEntries([["b", b]] as never)).toThrow(
+        TypeError,
+      );
+    }
+  });
+
+  it("does not call conversion methods on unsupported objects", () => {
+    let conversions = 0;
+    const b = {
+      [Symbol.toPrimitive]() {
+        conversions++;
+        return "text";
+      },
+    };
+    expect(() => UrlEncoding.queryEntries({ b } as never)).toThrow(TypeError);
+    expect(conversions).toBe(0);
+  });
+
   it("expands a record in key order, stringifying scalars", () => {
     expect(
       UrlEncoding.queryEntries({

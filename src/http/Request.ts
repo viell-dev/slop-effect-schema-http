@@ -828,8 +828,9 @@ const invalidHeaderFields = (cause: unknown) =>
 
 const invalidQueryValues = (cause: unknown) =>
   new InvalidRequest({
-    message:
-      "The query schema must encode values that can be written as query text",
+    message: GroupEncoding.isInvalidQueryValue(cause)
+      ? cause.message
+      : "The query schema must encode values that can be written as query text",
     cause,
   });
 
@@ -1179,6 +1180,9 @@ export const headers = <
  * that would be lost otherwise is an {@link InvalidRequest}, which names that field. The caller's
  * own value is read before that, as {@link Input} describes. An encoded array of pairs is read by
  * position. A malformed field pair fails with {@link InvalidRequest} before dispatch.
+ *
+ * An encoded field must be a query scalar or a list of query scalars. Preparation reports an
+ * unsupported value as {@link InvalidRequest} with the field's name.
  *
  * A field can encode to a `Date`, which is written as ISO text. Text under a field that encodes to
  * a number, boolean, bigint or `Date` is read as one first, and a single value under a list field

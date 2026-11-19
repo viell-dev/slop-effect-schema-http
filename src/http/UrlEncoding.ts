@@ -25,7 +25,8 @@ export type QueryValue =
  * A record or iterable of query pairs accepted as a schema's encoded output.
  *
  * @remarks
- * Array values expand to repeated entries. Use ordered pairs to control order across names.
+ * A flat array of scalars expands to repeated entries. Use ordered pairs to control order across
+ * names.
  */
 export type QueryInput =
   | Readonly<Record<string, QueryValue | ReadonlyArray<QueryValue>>>
@@ -44,8 +45,8 @@ export type QueryInput =
  * @remarks
  * Omits `undefined`, keeps `null`, writes a `Date` as ISO text, and converts other scalar values to
  * strings. Pair arrays and repeated values are read by position. Each pair must be an array of
- * length two with a string name. Malformed field pairs throw `TypeError`. URL escaping happens
- * later through the query renderer.
+ * length two with a string name. Malformed pairs and unsupported values throw `TypeError`. URL
+ * escaping happens later through the query renderer.
  */
 export const queryEntries = (input: QueryInput): Query =>
   GroupEncoding.queryEntries(FieldPairs.read(input));
