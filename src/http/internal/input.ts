@@ -236,8 +236,13 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       : write;
   const preserving =
     guarded.ast === ast ? contract : Schema.make<S>(guarded.ast);
+  const takesWhole = Excess.takesWhole(ast);
   const exact = toDecoded(preserving, Excess.strict);
-  const kept = (input: Input<S>, options: SchemaAST.ParseOptions) =>
+  const kept = (
+    input: Input<S>,
+    options: SchemaAST.ParseOptions,
+    whole?: unknown,
+  ) =>
     Effect.flatMap(
       Effect.mapError(
         exact(input, undefined, undefined, options),
@@ -249,7 +254,11 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             strictWriter(value, Excess.strict),
             (output): Written<A> => ({
               output,
-              lost: [],
+              // A strict read strips nothing it can see, but a step it cannot see into can.
+              lost:
+                whole === undefined
+                  ? []
+                  : Excess.missing([ast], whole, value, output),
             }),
           ),
           (failure) => ({
@@ -374,15 +383,34 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     const seen = (
       given === input ? input : Excess.exposed([ast], input)
     ) as Input<S>;
+    const whole =
+      takesWhole && given !== input ? Excess.defined([ast], input) : input;
     const attempt = (options: SchemaAST.ParseOptions) =>
       given === input
         ? kept(input, options)
-        : Effect.catch(kept(given as Input<S>, options), (first) =>
-            Effect.mapError(kept(seen, options), (last) => ({
-              ...last,
-              reading: first.reading && last.reading,
-            })),
-          );
+        : !takesWhole
+          ? Effect.catch(kept(given as Input<S>, options), (first) =>
+              Effect.mapError(kept(seen, options), (last) => ({
+                ...last,
+                reading: first.reading && last.reading,
+              })),
+            )
+          : // A member read through an opaque step or middleware may keep the caller's value
+            // whole. It gets that value first, unless it loses some of it.
+            Effect.matchEffect(kept(whole as Input<S>, options, whole), {
+              onFailure: (last) =>
+                Effect.mapError(kept(given as Input<S>, options), (first) => ({
+                  ...last,
+                  reading: first.reading && last.reading,
+                })),
+              onSuccess: (read) =>
+                read.lost.length === 0
+                  ? Effect.succeed(read)
+                  : Effect.orElseSucceed(
+                      kept(given as Input<S>, options),
+                      () => read,
+                    ),
+            });
     const strictRead =
       guarded.ast === ast
         ? Effect.mapError(attempt(Excess.strict), (result) => ({

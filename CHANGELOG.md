@@ -31,11 +31,18 @@
   either order and at any depth (#249). `Union([A, Schema.Struct({})])` with
   `A = Schema.Struct({ a: Schema.String })` now sends `{ a: "x", z: 1 }` as `{"a":"x","z":1}`, where
   0.18.0 sent `{"a":"x"}`, and `Union([Filter, Schema.Struct({})])` sends `?tag=a` for
-  `{ tag: "a" }` instead of the stated member's default `?page_size=25`. The same holds for an empty
-  `Schema.Class`, and a class instance the empty struct keeps reaches a path renderer as given. Such
-  a kept value the request cannot carry now refuses before dispatch, as under the empty struct
-  alone: a header value that is not a string is `InvalidRequest`, and a BigInt in a JSON body is
-  `HttpBodyError`. Bind the stated member directly to keep its reading. See the [migration
+  `{ tag: "a" }` instead of the stated member's default `?page_size=25`. When both members keep the
+  value, member order still decides: `Union([Schema.Struct({}), Filter])` sends `{ limit: 5 }` as
+  `?limit=5`. The same holds for an empty `Schema.Class`. A class instance the empty struct keeps
+  reaches a path renderer as the same instance, except that an inherited accessor a stated member
+  names makes it a plain copy. A kept field the request cannot carry now refuses before dispatch: a
+  header value that is not a string is `InvalidRequest`, and a field the writer would leave out or
+  replace is a `SchemaError` that names it, such as a symbol key in JSON, a query or headers, `NaN`
+  or a BigInt in a JSON body, or an object in a query. In a stacked query or header group, such a
+  union bound after a schema that states the field writes the caller's value in its place:
+  `Count = Schema.Struct({ z: Schema.FiniteFromString })` stacked before `Union([A, Struct({})])`
+  sends `{ a: "x", z: "05" }` as `?a=x&z=05`, where 0.18.0 sent `?z=5&a=x`. Bind the stated member
+  directly, or bind the union first, to keep its reading. See the [migration
   note](https://viell-dev.github.io/slop-effect-schema-http/schema-input#a-union-keeps-what-the-caller-gave).
 - **Breaking:** count only members that can read the caller's container during normalization and
   field-loss accounting (#243). A record or a struct that states a field holds none of a list's
@@ -44,10 +51,14 @@
   `[{ page_size: "05" }]` now writes `[{}]`, as the list member alone does, where 0.18.0 refused it.
   A numeric-keyed object beside an array or tuple member is read as its object member alone reads
   it, so beside an empty struct as well, `{ "0": { limit: "x", extra: 1 } }` keeps `extra`, which
-  0.18.0 left out. A class has no list reading: it states nothing for a list's cells, and where it
-  takes a list, alone or first in a union, Effect's reading still applies. A query or header schema
-  that only a cast admits, with a list member that writes objects, can now reach the documented
-  writer failure for malformed pairs instead of refusing earlier.
+  0.18.0 left out. A class has no list reading: it states nothing for a list's cells, though a
+  codec's later steps, such as a tuple the class is decoded from, still read the list. An empty
+  class before every other member that reads lists takes the list and reads every cell as given, so
+  `Union([EmptyClass, Schema.Array(Plain)])` keeps `extra` in `{"0":{...}}`, which 0.18.0 left out.
+  A member read through an opaque declaration, an `Unknown` encoded side or `catchDecoding`
+  middleware gets the caller's value whole first and keeps it when it loses none of its fields. A
+  query or header schema that only a cast admits, with a list member that writes objects, can now
+  reach the documented writer failure for malformed pairs instead of refusing earlier.
 
 ## 0.18.0 — 2026-11-18
 

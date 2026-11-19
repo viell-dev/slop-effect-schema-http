@@ -135,12 +135,84 @@ describe("signature-less object candidates under unions", () => {
           "The header schema must encode string field names and values",
         );
       }
-      // JSON has no BigInt, as with the empty struct alone.
+      // JSON has no BigInt. Beside a stated member the field is named, as an open record's is; the
+      // empty struct alone fails at the JSON writer.
       const big = { a: "x", n: 1n };
-      for (const schema of [Empty, Schema.Union([A, Empty])])
+      expect(
+        yield* schemaFailure(post(Schema.Union([A, Empty])), { body: big }),
+      ).toContain('["n"]');
+      expect(
+        yield* Effect.flip(compile(post(Empty), { body: big })),
+      ).toBeInstanceOf(HttpBody.HttpBodyError);
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/249
+  it.effect("refuses a kept field the writer would leave out or replace", () =>
+    Effect.gen(function* () {
+      const key = Symbol("field");
+      const Named = Schema.Struct({ [key]: Schema.String }).pipe(
+        Schema.encodeKeys({ [key]: "x-field" }),
+      );
+      const symbolKeyed = { [key]: "kept", tag: "abc" };
+      for (const schema of [
+        Schema.Union([Named, Empty]),
+        Schema.Union([Empty, Named]),
+      ]) {
+        // No writer has a symbol key; the stated member would have written it as `x-field`.
         expect(
-          yield* Effect.flip(compile(post(schema), { body: big })),
-        ).toBeInstanceOf(HttpBody.HttpBodyError);
+          yield* schemaFailure(post(schema), { body: symbolKeyed }),
+        ).toContain("[Symbol(field)]");
+        expect(
+          yield* schemaFailure(queried(schema), { query: symbolKeyed }),
+        ).toContain("[Symbol(field)]");
+        const headed = Request.get("/x").pipe(Request.headers(schema));
+        expect(
+          yield* schemaFailure(headed, { headers: symbolKeyed }),
+        ).toContain("[Symbol(field)]");
+      }
+      const SymbolText = Schema.String.pipe(
+        Schema.decodeTo(
+          Schema.Symbol,
+          SchemaTransformation.transform({
+            decode: (text) => Symbol.for(text),
+            encode: (symbol) => Symbol.keyFor(symbol) ?? "",
+          }),
+        ),
+      );
+      // JSON would write `null` for a number it has no text for, leave out a symbol, and write
+      // the bytes as an object keyed by index.
+      for (const [field, value] of [
+        [Schema.NumberFromString, Number.NaN],
+        [Schema.NumberFromString, Number.POSITIVE_INFINITY],
+        [SymbolText, Symbol.for("west")],
+        [Schema.Uint8ArrayFromHex, new Uint8Array([7, 8])],
+      ] as const) {
+        const Stated = Schema.Struct({ v: field });
+        const input = { v: value, extra: "keep" };
+        for (const schema of [
+          Schema.Union([Stated, Empty]),
+          Schema.Union([Empty, Stated]),
+        ])
+          expect(yield* schemaFailure(post(schema), { body: input })).toContain(
+            '["v"]',
+          );
+        // The stated member alone writes the value through its codec.
+        expect(
+          yield* bodyOf(post(Stated), { body: { v: value } as never }),
+        ).not.toContain("null");
+      }
+      // A query writes no object; text it can write from a number goes out.
+      const nested = { a: "x", z: { deep: 1 } };
+      expect(
+        yield* schemaFailure(queried(Schema.Union([A, Empty])), {
+          query: nested,
+        }),
+      ).toContain('["z"]');
+      const counted = { a: "x", z: Number.NaN };
+      expect(
+        yield* urlOf(queried(Schema.Union([A, Empty])), { query: counted }),
+      ).toBe("/x?a=x&z=NaN");
     }),
   );
 
@@ -162,6 +234,34 @@ describe("signature-less object candidates under unions", () => {
         "/x?z=05",
       );
     }),
+  );
+
+  // A member read through an opaque step gets the caller's value first, still with no undefined key.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+  it.effect(
+    "reads a key set to undefined as absent beside an opaque field",
+    () =>
+      Effect.gen(function* () {
+        const Page = Schema.Struct({
+          limit: Schema.optional(Schema.Number),
+          at: Schema.optionalKey(Schema.Date),
+        });
+        const schema = Schema.Union([
+          Page,
+          Schema.Struct({ cursor: Schema.String }),
+        ]);
+        let rendered: unknown;
+        yield* compile(
+          Request.get("/x").pipe(
+            Request.path(schema, (value) => {
+              rendered = value;
+              return "/ok";
+            }),
+          ),
+          { path: { limit: undefined } },
+        );
+        expect(Reflect.ownKeys(rendered as object)).toEqual([]);
+      }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/249

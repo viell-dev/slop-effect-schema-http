@@ -255,11 +255,21 @@ reads, as given and at every depth. Beside members that state fields it is the m
 them all, in either order. Under `Union([A, Schema.Struct({})])` with
 `A = Schema.Struct({ a: Schema.String })`, `{ a: "x", z: 1 }` sends `{"a":"x","z":1}`, and under
 `Union([Schema.Struct({ b: A }), Schema.Struct({})])`, `{ b: { a: "x", z: 1 } }` keeps the nested
-`z`. A value the stated member keeps whole, such as `{ a: "x" }`, still goes through that member,
-with its names and constructor defaults. A kept value the request cannot carry is refused before
-dispatch, as under the empty struct alone: a header value that is not a string is `InvalidRequest`,
-and a BigInt in a JSON body is `HttpBodyError`. An empty struct query or header binding still states
-no names.
+`z`. When both members can keep a value, member order decides, as in Effect's first fit: a value the
+stated member keeps whole, such as `{ a: "x" }`, goes through it when it comes first, with its names
+and constructor defaults, and through the empty struct as given when that comes first. A class
+instance the empty struct keeps reaches a path renderer as the same instance, unless a stated member
+names a field the instance holds as an inherited accessor: then it is a plain copy that holds that
+field with the instance's own keys. An empty struct query or header binding still states no names.
+
+What the empty struct keeps goes to the writer as given, so beside a stated member a kept field the
+writer would leave out or replace is a `SchemaError` before dispatch that names it. No writer has a
+symbol key. A JSON body takes what Effect's JSON codec takes for a `Schema.Unknown` value: text,
+finite numbers, booleans, `null` and plain lists and objects of those, so `NaN`, a BigInt, a symbol,
+a `Date` or bytes are refused there, as beside an open record. A query takes
+`UrlEncoding.QueryValue` text, or a list of such values, so an object is refused. A header value
+that is not text is `InvalidRequest`, as for any header schema. The stated member's codec writes
+such values for the wire when it takes the value itself.
 
 0.18.0 kept such keys only where every object candidate was empty, and otherwise left them out,
 sometimes sending the stated member's constructor default in the caller's place. A decoded name
@@ -280,11 +290,12 @@ const search = Request.get("https://api.example.test/things").pipe(
 );
 // Input: { query: { tag: "a" } }; 0.18.0: ?page_size=25; now: ?tag=a
 // Input: { query: { limit: 5, tag: "a" } }; 0.18.0: ?page_size=5; now: ?limit=5&tag=a
-// Input: { query: { limit: 5 } }; both: ?page_size=5
+// Input: { query: { limit: 5 } }; both: ?page_size=5, but ?limit=5 with the empty struct first
 ```
 
-To keep a stated member's reading, bind that member directly, or leave out the keys it does not
-state before preparation.
+To get `Filter`'s encoding, bind `Filter` directly; with the empty struct beside it, the first
+member that keeps the whole value writes it. Leave out the keys `Filter` does not state before
+preparation if they should not be sent.
 
 Built-in `Schema.Void` ordinarily accepts an object and returns `undefined`. Beside an object or
 list candidate in a visible any-of union, the strict read declines Void for an object with a defined
@@ -371,9 +382,17 @@ tuple member is read as its object member alone reads it.
 The rule covers only the copy this route would make. Effect's own readings still apply:
 `Schema.Struct({})` keeps a list as it is, and an empty `Schema.Class` builds an instance keyed by a
 list's indexes. A class has no list reading, so it states nothing for a list's cells, and beside a
-list member placed before it a list keeps the list member's reading. An empty class placed first
-still takes the list, as Effect's first fit does, after the cells' keys the list member does not
-state are left out. Put the list member first to keep a list a list. These limits remain:
+list member placed before it a list keeps the list member's reading. An empty class before every
+other member that reads lists takes the list, as Effect's first fit does, and reads every cell as
+given. Put the list member first to keep a list a list. Ruling out a class's own struct for a list
+leaves the codec's other steps, so a class decoded from `Schema.Tuple([Schema.Unknown])` still reads
+a list through the tuple.
+
+A member Effect reads through a step this library cannot see into, such as a codec whose encoded
+side is `Schema.declare` or `Schema.Unknown`, or one with `Schema.catchDecoding` middleware, gets
+the caller's value whole first. Its reading wins when it loses none of the caller's fields, so
+beside a list member it can keep a cell key that member does not state. A recovery that loses them,
+such as one returning a fixed value, does not take the list. These limits remain:
 
 - When another field makes a parent read field by field, a constructor default can still replace an
   invalid decoded item value, with or without the record: `{ n: 1, items: [{ limit: "x" }] }` under
@@ -493,6 +512,10 @@ remaining list limit under #241.
   `Union([Schema.Struct({ b: A }), Schema.Unknown])`, `{ b: { a: "x", z: 1 } }` sends
   `{"b":{"a":"x"}}`. A key at the open member's own value is kept, and an empty struct keeps such
   keys at every depth.
+- `Schema.Struct({})` alone, or beside members that state no fields, hands what it keeps to the
+  writer as given, and the writer's own reading applies there: JSON writes `NaN` as `null` and
+  leaves out symbol keys and symbol values, and a query writes an object as `[object Object]`.
+  Beside a stated member the same fields are refused, as above.
 - Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
   name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that
   choice for the whole value. The [0.14 migration](./release-notes/0.14.md#account-for-both-names)

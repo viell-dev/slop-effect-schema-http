@@ -5,6 +5,7 @@ import {
   type HttpClientResponse,
   type UrlParams,
 } from "effect/http";
+import * as Excess from "./internal/excess.js";
 import * as Inputs from "./internal/input.js";
 
 /**
@@ -332,9 +333,22 @@ export const jsonSchema = <S extends Schema.Top>(
 > => {
   const codec = Schema.toCodecJson(contract);
   const encode = Inputs.encoder(contract, codec);
+  const carried = Excess.mixes(contract.ast)
+    ? (output: unknown) =>
+        Excess.uncarried([contract.ast], output, Excess.carriesJson)
+    : () => [];
   return make({
     encode: (value: Inputs.Input<S>) =>
-      Effect.flatMap(encode(value), json.encode),
+      encode(value).pipe(
+        Effect.flatMap((output) => {
+          // JSON would leave out or replace what an empty struct kept as given; refuse it instead.
+          const [first, ...others] = carried(output);
+          return first === undefined
+            ? Effect.succeed(output)
+            : Effect.fail(Excess.refusal(contract.ast, [first, ...others]));
+        }),
+        Effect.flatMap(json.encode),
+      ),
     decode: json.pipe(schema(codec)).decode,
     mediaType: json.mediaType,
   });

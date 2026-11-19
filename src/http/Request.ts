@@ -14,6 +14,7 @@ import {
   UrlParams,
 } from "effect/http";
 import type * as Body from "./Body.js";
+import * as Excess from "./internal/excess.js";
 import * as FieldPairs from "./internal/field-pairs.js";
 import * as Fields from "./internal/fields.js";
 import * as GroupEncoding from "./internal/group-encoding.js";
@@ -138,7 +139,8 @@ export type QueryFields = Readonly<
  * Closed structs strip keys no member states and keys a tag rules out. A member that cannot read
  * the caller's container, such as a record beside a list or a list beside an object, states none
  * of its keys. An empty struct keeps every key of what it reads, at any depth, so beside members
- * that state fields it is the member that keeps them all.
+ * that state fields it is the member that keeps them all. There, a kept field its writer would leave
+ * out or replace, such as a symbol key or `NaN` in JSON, is a `SchemaError` before dispatch.
  * A required literal tag can choose by its decoded or encoded name. Both views must rule a member
  * out before its fields go; a constructor default is not guessed to make that choice.
  * A key set to `undefined` is no field, and an accessor on a class is one, as it is to a struct. In a
@@ -919,6 +921,11 @@ const prepareGroup = <
   );
   const takenKey = group === "headers" ? "takenHeaders" : "takenQuery";
   const label = group === "headers" ? "header" : "query";
+  const carries =
+    group === "headers" ? Excess.carriesHeader : Excess.carriesQuery;
+  const carried = Excess.mixes(contract.ast)
+    ? (output: unknown) => Excess.uncarried([contract.ast], output, carries)
+    : () => [];
   const invalidOutput = (cause?: TypeError) =>
     new InvalidRequest({
       message: `The ${label} schema must encode a field record or field pairs`,
@@ -949,6 +956,7 @@ const prepareGroup = <
       const initial = yield* read(value);
       const { output } = initial;
       let lostFromInput = initial.lost;
+      let written: unknown = output;
       // An invalid output claims no fields. Another binding can still claim a root loss.
       const refuseInvalidOutput = (error: InvalidRequest) =>
         lostFromInput.length === 0
@@ -990,6 +998,7 @@ const prepareGroup = <
         );
         if (recovered !== undefined) {
           lostFromInput = recovered.reading.lost;
+          written = recovered.reading.output;
           snapshot = recovered.snapshot;
           conflicts = filled(edited, snapshot);
           prepared = { ...prepared, [takenKey]: recovered.taken };
@@ -1000,6 +1009,12 @@ const prepareGroup = <
           prepared[takenKey]?.fields,
         );
       }
+      // The writer would leave out or replace what an empty struct kept as given; refuse it instead.
+      const [unwritten, ...others] = carried(written);
+      if (unwritten !== undefined)
+        return yield* Effect.fail(
+          Excess.refusal(contract.ast, [unwritten, ...others]),
+        );
       if (conflicts.length > 0)
         return yield* preparationConflict(group, conflicts);
       const names = Shapes.written(snapshot, fold);

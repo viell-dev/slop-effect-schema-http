@@ -9,6 +9,7 @@ import {
   Option,
   Ref,
   Schedule,
+  Schema,
   Stream,
 } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
@@ -553,6 +554,55 @@ describe("Operation over real loopback sockets", () => {
           );
           expect(requests).toBe(1);
         }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/249
+  it.live(
+    "sends a field only an empty member keeps, and refuses one JSON would replace",
+    () =>
+      Effect.gen(function* () {
+        const received: Array<string> = [];
+        const { origin } = yield* listen((request, response) => {
+          const chunks: Array<Buffer> = [];
+          request.on("data", (chunk: Buffer) => chunks.push(chunk));
+          request.on("end", () => {
+            received.push(`${request.url} ${Buffer.concat(chunks)}`);
+            response.writeHead(204);
+            response.end();
+          });
+        });
+        const Either = Schema.Union([
+          Schema.Struct({ a: Schema.String }),
+          Schema.Struct({}),
+        ]);
+        const kept = { a: "x", z: "1" };
+        yield* Operation.make(
+          Request.post(`${origin}/kept`).pipe(
+            Request.query(Either),
+            Request.body(Body.jsonSchema(Either)),
+          ),
+          Response.status(204, Body.empty),
+        )
+          .execute({ query: kept, body: kept })
+          .pipe(Effect.provide(FetchHttpClient.layer));
+        expect(received).toEqual(['/kept?a=x&z=1 {"a":"x","z":"1"}']);
+        // JSON writes NaN as null; the stated member would have written "NaN".
+        const Counted = Schema.Union([
+          Schema.Struct({ v: Schema.NumberFromString }),
+          Schema.Struct({}),
+        ]);
+        const failure = yield* Operation.make(
+          Request.post(`${origin}/refused`).pipe(
+            Request.body(Body.jsonSchema(Counted)),
+          ),
+          Response.status(204, Body.empty),
+        )
+          .execute({ body: { v: Number.NaN, extra: "keep" } })
+          .pipe(Effect.provide(FetchHttpClient.layer), Effect.flip);
+        expect(failure).toBeInstanceOf(Schema.SchemaError);
+        expect(String(failure)).toContain('["v"]');
+        expect(received).toHaveLength(1);
       }),
   );
 });

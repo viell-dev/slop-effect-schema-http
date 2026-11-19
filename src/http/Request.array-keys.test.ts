@@ -861,6 +861,24 @@ const row = () => [{ limit: "x", extra: 1 }];
 /** The same item under an index-like key of an object. */
 const cell = () => ({ 0: { limit: "x", extra: 1 } });
 
+/**
+ * A list whose first cell is hidden or inherited, beside a cell with a key set to `undefined`,
+ * which normalization takes out.
+ */
+const hiddenFirst = (inherited: boolean) => {
+  const first = { limit: "first" };
+  const cells: Array<object> = [first, { limit: "last", absent: undefined }];
+  if (!inherited) Object.defineProperty(cells, "0", { enumerable: false });
+  else {
+    delete cells[0];
+    Object.setPrototypeOf(
+      cells,
+      Object.create(Array.prototype, { 0: { value: first } }),
+    );
+  }
+  return cells;
+};
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/243
 describe("members that cannot read the caller's container", () => {
   const Plain = Schema.Struct({ limit: Schema.optionalKey(Schema.String) });
@@ -967,7 +985,7 @@ describe("members that cannot read the caller's container", () => {
         Schema.Union([Schema.Struct({}), Open, Rows]),
       ])
         expect(yield* prepared(schema, row())).toEqual(kept(row()));
-      // A codec that recovers from a refused list is still a member; beside it, the list member reads.
+      // A recovery that loses the caller's cells does not take the list from the list member.
       const Recovering = Open.pipe(
         Schema.catchDecoding(() => Effect.succeedSome({ recovered: true })),
       );
@@ -976,11 +994,108 @@ describe("members that cannot read the caller's container", () => {
     }),
   );
 
+  it.effect("keeps a class codec's later steps beside a list member", () =>
+    Effect.gen(function* () {
+      class Box extends Schema.Class<Box>("Box")({ value: Schema.Unknown }) {}
+      const Boxed = Schema.Tuple([Schema.Unknown]).pipe(
+        Schema.decodeTo(
+          Box,
+          SchemaTransformation.transform({
+            decode: ([value]) => new Box({ value }),
+            encode: ({ value }) => [value] as const,
+          }),
+        ),
+      );
+      // The class's own struct cannot read the list; the tuple it is decoded from can.
+      for (const schema of [Boxed, ...either(Boxed, Rows)])
+        for (const binding of ["path", "body"] as const) {
+          const output = yield* prepare(schema, row(), binding);
+          const cells =
+            output instanceof Box ? [output.value] : (output as Array<unknown>);
+          expect(cells).toEqual(row());
+        }
+    }),
+  );
+
+  it.effect("lets a member that reads a list unseen keep it whole", () =>
+    Effect.gen(function* () {
+      const FromList = Schema.declare(
+        (input: unknown): input is ReadonlyArray<unknown> =>
+          Array.isArray(input),
+      ).pipe(
+        Schema.decodeTo(
+          Open,
+          SchemaTransformation.transform({
+            decode: (cells): Record<string, unknown> => ({ ...cells }),
+            encode: (record) => Object.values(record),
+          }),
+        ),
+      );
+      const FromUnknown = Schema.Unknown.pipe(
+        Schema.decodeTo(
+          Open,
+          SchemaTransformation.transform({
+            decode: (cells): Record<string, unknown> => ({
+              ...(cells as object),
+            }),
+            encode: (record) => record,
+          }),
+        ),
+      );
+      for (const schema of either(Rows, FromList))
+        expect(yield* prepared(schema, row())).toEqual(kept(row()));
+      for (const schema of either(Rows, FromUnknown))
+        expect(yield* prepared(schema, row())).toEqual(kept(cell()));
+    }),
+  );
+
+  it.effect("keeps the cells a recovering member restores", () =>
+    Effect.gen(function* () {
+      // The record reports the list it refused, and the recovery keeps its cells under their indexes.
+      const Reported = Schema.declareConstructor()(
+        [Open],
+        ([member]) =>
+          (input, _ast, options) =>
+            Effect.mapError(
+              Schema.decodeUnknownEffect(member)(input, {
+                ...options,
+                reportInput: true,
+              }),
+              (failure) => failure.issue,
+            ),
+      );
+      const Restored = Reported.pipe(
+        Schema.decodeTo(Open),
+        Schema.catchDecoding((issue) => {
+          let leaf: { readonly issue?: unknown; readonly input?: unknown } =
+            issue;
+          while (leaf.issue !== undefined) leaf = leaf.issue as typeof leaf;
+          return Array.isArray(leaf.input)
+            ? Effect.succeedSome(Object.fromEntries(leaf.input.entries()))
+            : Effect.fail(issue);
+        }),
+      );
+      for (const schema of [Restored, ...either(Rows, Restored)])
+        expect(yield* prepared(schema, row())).toEqual(kept(cell()));
+    }),
+  );
+
+  it.effect("keeps hidden and inherited cells beside an empty struct", () =>
+    Effect.gen(function* () {
+      for (const inherited of [false, true])
+        for (const schema of either(Rows, Schema.Struct({})))
+          expect(yield* prepared(schema, hiddenFirst(inherited))).toEqual(
+            kept([{ limit: "first" }, { limit: "last" }]),
+          );
+    }),
+  );
+
   it.effect("rules out a class for a list beside a member that reads it", () =>
     Effect.gen(function* () {
       for (const schema of [
         ...either(Rows, Limited),
         Schema.Union([Rows, Bare]),
+        Schema.Union([Rows, Open, Bare]),
       ])
         expect(yield* prepared(schema, row())).toEqual(kept([{ limit: "x" }]));
       for (const binding of ["path", "body"] as const)
@@ -992,12 +1107,14 @@ describe("members that cannot read the caller's container", () => {
 
   it.effect("keeps Effect's reading where an empty class takes a list", () =>
     Effect.gen(function* () {
-      expect(yield* prepared(Bare, row())).toEqual(kept(cell()));
-      // First in a union, Effect's first fit gives it the list. It states none of the cells' keys,
-      // so the list member's unstated key is left out first.
-      expect(yield* prepared(Schema.Union([Bare, Rows]), row())).toEqual(
-        kept({ 0: { limit: "x" } }),
-      );
+      // Alone or first in a union, Effect's first fit gives it the list, and it reads every cell.
+      for (const schema of [
+        Bare,
+        Schema.Union([Bare, Rows]),
+        Schema.Union([Bare, Rows, Open]),
+        Schema.Union([Open, Bare, Rows]),
+      ])
+        expect(yield* prepared(schema, row())).toEqual(kept(cell()));
     }),
   );
 });

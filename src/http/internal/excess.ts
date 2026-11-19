@@ -228,8 +228,8 @@ const isStructDeclaration = (ast: Ast): boolean =>
  *
  * A class has no list reading either. Its struct refuses a list once it states a field, and an empty
  * class's struct lets Effect copy the cells into an instance keyed by their indexes, the copy a list
- * never gets from preparation. So for a list's cells it states nothing, as a record does not, and
- * where it takes the list, Effect's reading of it applies.
+ * never gets from preparation. So for a list's cells it states nothing, as a record does not, unless
+ * it takes the list first, as {@link membersOf} describes.
  */
 const readsContainer = (side: Ast, value: unknown): boolean =>
   !isObject(value) ||
@@ -243,20 +243,46 @@ const readsContainer = (side: Ast, value: unknown): boolean =>
  */
 const sidesOf = (ast: Ast, value: unknown): ReadonlyArray<Ast> => {
   const reads = readsContainer(ast, value);
-  // A class ruled out for a list goes with the struct it is built from.
-  if (!reads && ast._tag === "Declaration") return [];
+  const links = ast.encoding ?? [];
   return [
     ...(ast._tag === "Union"
-      ? ast.types
-          .filter((member) => !ruledOut(member, value))
-          .flatMap((member) => sidesOf(member, value))
+      ? membersOf(ast, value)
       : ast._tag === "Suspend"
         ? sidesOf(ast.thunk(), value)
         : reads
           ? [ast]
           : []),
-    ...(ast.encoding ?? []).flatMap(({ to }) => sidesOf(to, value)),
+    // A class ruled out for a list goes with the struct it is built from, not with later links,
+    // such as the tuple a codec decodes the class from.
+    ...(!reads && ast._tag === "Declaration" ? links.slice(1) : links).flatMap(
+      ({ to }) => sidesOf(to, value),
+    ),
   ];
+};
+
+/** A class with no fields, whose struct reads any value but null and undefined. */
+const isEmptyClass = (ast: Ast): boolean =>
+  isStructDeclaration(ast) && isSignaturelessObject(ast.encoding![0]!.to);
+
+/**
+ * The sides of a union's members, each its tag leaves. An empty class before every other member that
+ * can read a list takes any list, as Effect's first fit has it, and keeps its cells as given, so it
+ * reads them as an empty struct does. A guarded Void declines a list with a defined cell, and a
+ * list without one has no cell to strip, so it takes nothing from the class here.
+ */
+const membersOf = (union: SchemaAST.Union, value: unknown) => {
+  let taken = false;
+  return union.types
+    .filter((member) => !ruledOut(member, value))
+    .flatMap((member) => {
+      if (Array.isArray(value) && !taken && isEmptyClass(member)) {
+        taken = true;
+        return [asGiven];
+      }
+      const sides = sidesOf(member, value);
+      taken ||= sides.some(({ _tag }) => _tag !== "Void");
+      return sides;
+    });
 };
 
 /** The schemas of what these sides hold under one key. */
@@ -299,15 +325,16 @@ export const isSignaturelessObject = (ast: Ast): boolean =>
   ast.propertySignatures.length === 0 &&
   ast.indexSignatures.length === 0;
 
+/** Whether these sides read a value without any struct or list to take it apart, as an open schema. */
+const readsOpaquely = (sides: ReadonlyArray<Ast>): boolean =>
+  sides.some(
+    ({ _tag }) =>
+      _tag === "Any" || _tag === "Unknown" || _tag === "ObjectKeyword",
+  ) || !sides.some(({ _tag }) => _tag === "Objects" || _tag === "Arrays");
+
 /** Whether these sides leave a value's keys open, so none can be called unstated. */
 const leaveKeysOpen = (sides: ReadonlyArray<Ast>): boolean =>
-  sides.some(
-    (side) =>
-      side._tag === "Any" ||
-      side._tag === "Unknown" ||
-      side._tag === "ObjectKeyword" ||
-      isSignaturelessObject(side),
-  ) || !sides.some(({ _tag }) => _tag === "Objects" || _tag === "Arrays");
+  readsOpaquely(sides) || sides.some(isSignaturelessObject);
 
 /**
  * An empty struct keeps the value it reads as given, so it holds each key's value as given too, at
@@ -358,10 +385,14 @@ const unlisted = (
 const readAsStruct = (sides: ReadonlyArray<Ast>, open: boolean): boolean =>
   !open && !sides.some(({ _tag }) => _tag === "Declaration");
 
-/** Discover array layout only where no open or opaque reading can retain it untouched. */
+/**
+ * Discover array layout only where no opaque reading can retain it untouched. An empty struct reads
+ * a list too, but beside a list member a rewrite still has to keep every readable cell, hidden or
+ * inherited, in place.
+ */
 const readAsArray = (sides: ReadonlyArray<Ast>): boolean =>
   sides.some(({ _tag }) => _tag === "Arrays") &&
-  readAsStruct(sides, leaveKeysOpen(sides));
+  readAsStruct(sides, readsOpaquely(sides));
 
 /** Bring a value's {@link unlisted} fields out as keys, at any depth, and take out what `drops` says. */
 const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
@@ -437,6 +468,12 @@ export const normalised = rewriting(
 
 /** A value as the caller gave it, but for what {@link unlisted} brings out as keys. */
 export const exposed = rewriting(() => false);
+
+/**
+ * A value as the caller gave it, unstated keys included, with no key set to `undefined`, which holds
+ * nothing, and with what {@link unlisted} brings out as keys.
+ */
+export const defined = rewriting((item) => item === undefined);
 
 /** The fields of a group the caller gave and a schema states, under either of their names. */
 export const statedFields = (
@@ -531,3 +568,130 @@ export const choosesMember = holding(isMemberChoice);
 export const choosing = holding(
   (ast) => isMemberChoice(ast) || isSideChoice(ast),
 );
+
+/** A step Effect reads a value through without this seeing its keys, so it may keep them all. */
+const readsUnseen = (ast: Ast): boolean =>
+  (ast._tag === "Declaration" && !isStructDeclaration(ast)) ||
+  ast._tag === "Unknown" ||
+  ast._tag === "Any" ||
+  ast._tag === "ObjectKeyword";
+
+/**
+ * Whether a schema holds a member that can take a caller's value whole where this sees no keys: an
+ * opaque declaration, a codec that reads its encoded side as an open schema or a declaration, or a
+ * middleware link, which can turn a refusal into a value. Such a member gets the value as given
+ * before one with keys left out is read. A member that is itself `Schema.Unknown` stays with the
+ * stated reading below it, as the active limits record.
+ */
+export const takesWhole = holding(
+  (ast) =>
+    (ast._tag === "Declaration" && !isStructDeclaration(ast)) ||
+    (ast.encoding ?? []).some(
+      ({ transformation, to }) =>
+        transformation._tag === "Middleware" || readsUnseen(encodedEnd(to)),
+    ),
+);
+
+/** What a writer writes as given. A value it leaves out or replaces fails this. */
+export type Carries = (value: unknown) => boolean;
+
+/** Whether these sides mix an empty struct with a struct or list that states what it reads. */
+const mixesEmpty = (sides: ReadonlyArray<Ast>): boolean =>
+  sides.some(isSignaturelessObject) &&
+  sides.some(
+    (side) =>
+      side._tag === "Arrays" ||
+      (side._tag === "Objects" && !isSignaturelessObject(side)),
+  );
+
+/** Whether a schema can hold an empty struct beside a stated struct or list, as a union can. */
+export const mixes = holding(
+  (ast) =>
+    ast._tag === "Suspend" ||
+    (ast._tag === "Union" && mixesEmpty(sidesOf(ast, undefined))),
+);
+
+/** A list or an ordinary object, which a writer takes apart; any other object it writes whole. */
+const isContainer = (value: unknown): value is Record<PropertyKey, unknown> =>
+  isObject(value) &&
+  (Array.isArray(value) ||
+    [Object.prototype, null].includes(Object.getPrototypeOf(value)));
+
+/**
+ * The fields an empty struct beside a stated member would hand a writer that cannot write them as
+ * given: a symbol key, which no writer carries, or a value `carries` refuses. Where the stated
+ * member wins, its encoding already wrote its fields for the wire. Where the empty struct wins, the
+ * caller's values go out as given, and a writer that leaves one out or replaces it, as JSON writes
+ * `NaN` as `null`, would lose that field silently. An empty struct alone keeps its own reading.
+ */
+export const uncarried = (
+  types: ReadonlyArray<Ast>,
+  output: unknown,
+  carries: Carries,
+  path: Path = [],
+): ReadonlyArray<Path> => {
+  if (!isObject(output)) return [];
+  const sides = types.flatMap((type) => sidesOf(type, output));
+  const mixed = mixesEmpty(sides);
+  const list = Array.isArray(output);
+  return Reflect.ownKeys(output).flatMap((key) => {
+    // A list's other keys are metadata, which no writer reads as a cell.
+    if (
+      !Object.prototype.propertyIsEnumerable.call(output, key) ||
+      (list && arrayIndex(key) === undefined)
+    )
+      return [];
+    const item = output[key];
+    if (item === undefined) return [];
+    const here = [...path, list ? (arrayIndex(key) ?? key) : key];
+    if (mixed && typeof key === "symbol") return [here];
+    const inner = heldAt(sides, key);
+    if (mixed && (typesAt(sides, key).length === 0 || !isContainer(item)))
+      return carries(item) ? [] : [here];
+    return inner.length > 0 ? uncarried(inner, item, carries, here) : [];
+  });
+};
+
+/**
+ * JSON writes finite numbers, text, booleans, null and plain lists and objects of those, as
+ * Effect's JSON codec requires of an `Unknown` value. `undefined` holds nothing, so it is no field.
+ */
+export const carriesJson: Carries = (value) => {
+  const visiting = new Set<object>();
+  const carried = (item: unknown): boolean => {
+    if (
+      item === null ||
+      item === undefined ||
+      typeof item === "string" ||
+      typeof item === "boolean"
+    )
+      return true;
+    if (typeof item === "number") return Number.isFinite(item);
+    if (!isContainer(item) || visiting.has(item)) return false;
+    visiting.add(item);
+    const keys = Reflect.ownKeys(item).filter((key) =>
+      Object.prototype.propertyIsEnumerable.call(item, key),
+    );
+    const ok = Array.isArray(item)
+      ? keys.every((key) => arrayIndex(key) === undefined || carried(item[key]))
+      : keys.every((key) => typeof key === "string" && carried(item[key]));
+    visiting.delete(item);
+    return ok;
+  };
+  return carried(value);
+};
+
+const isQueryScalar = (value: unknown): boolean =>
+  value === null ||
+  value === undefined ||
+  value instanceof Date ||
+  ["string", "number", "bigint", "boolean"].includes(typeof value);
+
+/** A query writes `UrlEncoding.QueryValue` text, or a list of such values, under one name. */
+export const carriesQuery: Carries = (value) =>
+  isQueryScalar(value) ||
+  (Array.isArray(value) &&
+    Array.prototype.every.call(value, (item: unknown) => isQueryScalar(item)));
+
+/** A header check of its own refuses any value that is not text, so only a symbol key is lost. */
+export const carriesHeader: Carries = () => true;
