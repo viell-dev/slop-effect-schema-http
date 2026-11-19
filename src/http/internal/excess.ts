@@ -460,15 +460,20 @@ type SymbolCheck = (
   lost: Path[],
 ) => void;
 
-/** Record each defined, enumerable symbol field of `supplied` that `result` does not have. */
+/**
+ * Record each defined, enumerable symbol field of `supplied` that `result` does not have, apart
+ * from those the schema declares, which it writes under whatever name it chooses.
+ */
 function ownLostSymbols(
   supplied: object,
   result: object,
   path: ReadonlyArray<PropertyKey>,
   lost: Path[],
+  declared?: ReadonlySet<PropertyKey>,
 ) {
   for (const key of Object.getOwnPropertySymbols(supplied))
     if (
+      declared?.has(key) !== true &&
       !Object.hasOwn(result, key) &&
       Object.prototype.propertyIsEnumerable.call(supplied, key) &&
       Reflect.get(supplied, key) !== undefined
@@ -528,12 +533,15 @@ const symbolChecks = {
  * @remarks
  * The comparison runs twice, at the same positions: from the caller's value to the decoded value,
  * and from the decoded value to what the schema writes. An index signature rebuilds its object
- * from string keys, so a record drops a symbol field on either step. So does a class, which keeps
- * only its fields, and a link whose encoded end is a record, such as a record decoded to a struct.
- * For JSON, the canonical codec of `Schema.ObjectKeyword` also copies only the top-level string
- * fields of an object and the positions of an array. Everywhere else a symbol field reaches the
- * writer, which refuses it there. Built-ins that an open schema rebuilds, such as a `Date` read by
- * `Schema.ObjectKeyword`, are not covered here (#261).
+ * from string keys, so a record drops a symbol field on either step, and so does a link whose
+ * encoded end is a record, such as a record decoded to a struct. A symbol key the node's own
+ * fields declare is the schema's to write, under whatever name it chooses. A class is read through
+ * its fields; a symbol at its root is a key no field states, which a class strips as a struct
+ * does. For JSON, the canonical codec of `Schema.ObjectKeyword` also copies only the top-level
+ * string fields of an object and the positions of an array. Everywhere else a symbol field reaches
+ * the writer, which refuses it there. Not covered: built-ins that an open schema rebuilds, such as
+ * a `Date` read by `Schema.ObjectKeyword` (#261), and values inside a declaration's type
+ * parameters, such as a record in an `Option`, which the declaration's own codec reads.
  *
  * The comparison is compiled once per schema and visits only the positions where such a node can
  * be, with one shared path that is copied only for a loss, so an array of rows checks each row
@@ -553,11 +561,12 @@ export function symbolLoss(ast: Ast, json: boolean): Comparison | undefined {
   /** Symbols compared at this very position, where the node rebuilds the object. */
   const here = (node: Ast): SymbolCheck | undefined => {
     const end = encodedEnd(node);
-    const rebuilds =
-      isIndexed(node) ||
-      (end !== node && isIndexed(end)) ||
-      classFields(node) !== undefined;
-    if (rebuilds)
+    if (isIndexed(node) || (end !== node && isIndexed(end))) {
+      const declared = new Set(
+        fieldsOf(node)
+          .map(({ name }) => name)
+          .filter((name) => typeof name === "symbol"),
+      );
       return (supplied, result, path, lost) => {
         if (
           supplied !== result &&
@@ -565,8 +574,9 @@ export function symbolLoss(ast: Ast, json: boolean): Comparison | undefined {
           isObject(result) &&
           !Array.isArray(supplied)
         )
-          ownLostSymbols(supplied, result, path, lost);
+          ownLostSymbols(supplied, result, path, lost, declared);
       };
+    }
     if (!json || node._tag !== "ObjectKeyword" || node.encoding !== undefined)
       return undefined;
     return (supplied, result, path, lost) => {

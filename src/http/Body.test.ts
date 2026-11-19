@@ -8,6 +8,7 @@ import {
   Option,
   Redacted,
   Schema,
+  SchemaTransformation,
 } from "effect";
 import { HttpBody, HttpClientError, UrlParams } from "effect/http";
 import {
@@ -16,6 +17,7 @@ import {
   response,
 } from "../../test/support.js";
 import * as Body from "./Body.js";
+import * as Request from "./Request.js";
 
 const bytesOf = (body: HttpBody.HttpBody): Uint8Array => {
   if (body._tag !== "Uint8Array") throw new Error(`body is ${body._tag}`);
@@ -608,13 +610,6 @@ describe("writers keep or refuse what they cannot write", () => {
             '[0]["meta"][Symbol(extra)]',
           ],
           [
-            Body.jsonSchema(Holder).encode({
-              meta: {},
-              [symbol]: "kept",
-            } as never),
-            "[Symbol(extra)]",
-          ],
-          [
             Body.jsonSchema(KeywordHolder).encode({ o: supplied() }),
             '["o"][Symbol(extra)]',
           ],
@@ -664,6 +659,18 @@ describe("writers keep or refuse what they cannot write", () => {
           Body.json.encode({ v: box }),
           '$["v"] cannot encode a bigint',
         );
+        // Node tests the brand, so an object that only inherits from Error.prototype is written,
+        // with or without fields of its own.
+        expect(
+          textOf(
+            yield* Body.json.encode({
+              bare: Object.create(Error.prototype) as object,
+              fields: Object.assign(Object.create(Error.prototype) as object, {
+                a: 1,
+              }),
+            }),
+          ),
+        ).toBe('{"bare":{},"fields":{"a":1}}');
       }),
   );
 
@@ -996,7 +1003,151 @@ describe("writers keep or refuse what they cannot write", () => {
     expect(refused({ v: new Blob(["bytes"]) })).toContain("cannot encode Blob");
     for (const [kind, value] of taggedBuiltins())
       expect(refused({ v: value })).toContain(`cannot encode ${kind}`);
+    // Without a brand test, a fieldless object is judged by its prototype; one with fields is not.
+    expect(refused({ v: Object.create(Error.prototype) as object })).toContain(
+      "cannot encode Error",
+    );
+    expect(
+      written({
+        v: Object.assign(Object.create(Error.prototype) as object, { a: 1 }),
+      }),
+    ).toBe('{"v":{"a":1}}');
   });
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/256
+describe("schema-side symbol checks follow what the schema itself writes", () => {
+  const TypeId = Symbol.for("test/User");
+  const symbol = Symbol("extra");
+  class User extends Schema.Class<User>("SymbolUser")({ name: Schema.String }) {
+    readonly [TypeId] = TypeId;
+  }
+  const ada = () => new User({ name: "Ada" });
+
+  it.effect("writes a class instance that holds its own symbol field", () =>
+    Effect.gen(function* () {
+      for (const [write, text] of [
+        [Body.jsonSchema(User).encode(ada()), '{"name":"Ada"}'],
+        [
+          Body.json.pipe(Body.encodeSchema(User)).encode(ada()),
+          '{"name":"Ada"}',
+        ],
+        [
+          Body.jsonSchema(Schema.Array(User)).encode([ada()]),
+          '[{"name":"Ada"}]',
+        ],
+        [
+          Body.jsonSchema(Schema.Struct({ user: User })).encode({
+            user: ada(),
+          }),
+          '{"user":{"name":"Ada"}}',
+        ],
+        [
+          Body.jsonSchema(Schema.Union([User, Schema.Null])).encode(ada()),
+          '{"name":"Ada"}',
+        ],
+        [
+          // An untyped caller can hand a class's encoded fields to the URL-encoded writer.
+          (
+            Body.urlEncoded as unknown as Body.Encoder<
+              { readonly name: string },
+              HttpBody.HttpBodyError
+            >
+          )
+            .pipe(Body.encodeSchema(User))
+            .encode(ada()),
+          "name=Ada",
+        ],
+      ] as const)
+        expect(textOf(yield* write)).toBe(text);
+      const request = Request.get("/x").pipe(
+        Request.query(User),
+        Request.headers(User),
+      );
+      const compiled = yield* Request.compile(request, {
+        query: ada(),
+        headers: ada(),
+      });
+      expect(compiled.request.url).toBe("/x?name=Ada");
+      expect(compiled.headerLines).toEqual([["name", "Ada"]]);
+    }),
+  );
+
+  it.effect(
+    "writes a declaration encoded to a struct, whatever its instance holds",
+    () =>
+      Effect.gen(function* () {
+        class Money {
+          readonly [symbol] = "state";
+          constructor(readonly amount: number) {}
+        }
+        const schema = Schema.Struct({ amount: Schema.Number }).pipe(
+          Schema.decodeTo(
+            Schema.instanceOf(Money),
+            SchemaTransformation.transform({
+              decode: ({ amount }: { readonly amount: number }) =>
+                new Money(amount),
+              encode: (money: Money) => ({ amount: money.amount }),
+            }),
+          ),
+        );
+        expect(
+          textOf(yield* Body.jsonSchema(schema).encode(new Money(5))),
+        ).toBe('{"amount":5}');
+      }),
+  );
+
+  it.effect(
+    "writes symbol keys the schema declares and encodes under another name",
+    () =>
+      Effect.gen(function* () {
+        const fields = Schema.Struct({
+          [symbol]: Schema.String,
+          a: Schema.Number,
+        });
+        // Effect accepts the renamed struct at runtime; its declaration takes a plain struct.
+        const renamed = fields.pipe(
+          Schema.encodeKeys({ [symbol]: "s" }),
+        ) as unknown as typeof fields;
+        class Renamed extends Schema.Class<Renamed>("SymbolRenamed")(renamed) {}
+        for (const value of [
+          { [symbol]: "v", a: 1 },
+          new Renamed({ [symbol]: "v", a: 1 }),
+        ])
+          expect(textOf(yield* Body.jsonSchema(Renamed).encode(value))).toBe(
+            '{"a":1,"s":"v"}',
+          );
+        const linked = Schema.Record(Schema.String, Schema.String).pipe(
+          Schema.decodeTo(
+            Schema.Struct({ [symbol]: Schema.String }),
+            SchemaTransformation.transform({
+              decode: (record: { readonly [key: string]: string }) => ({
+                [symbol]: record["s"]!,
+              }),
+              encode: (value: {
+                readonly [symbol]: string;
+              }): { readonly [key: string]: string } => ({ s: value[symbol] }),
+            }),
+          ),
+        );
+        expect(
+          textOf(yield* Body.jsonSchema(linked).encode({ [symbol]: "v" })),
+        ).toBe('{"s":"v"}');
+        const request = Request.get("/x").pipe(Request.query(linked));
+        expect(
+          (yield* Request.compile(request, { query: { [symbol]: "v" } }))
+            .request.url,
+        ).toBe("/x?s=v");
+        // An undeclared symbol is still refused at the same link.
+        const error = yield* Effect.flip(
+          Body.jsonSchema(linked).encode({
+            [symbol]: "v",
+            [TypeId]: "kept",
+          } as never),
+        );
+        expect(error.message).toContain("at [Symbol(test/User)]");
+      }),
+  );
 });
 
 describe("Body.json", () => {
@@ -1308,7 +1459,10 @@ describe("Body.urlEncoded from untyped callers", () => {
             '$["k"] must be text, a number, a bigint or a boolean',
           ],
           ["k=v", "$ must be UrlParams, a record or field pairs"],
-          [{ k: ["a", null] }, `$["k"][1] ${scalar}`],
+          [
+            { k: ["a", null] },
+            '$["k"][1] must be text, a number, a bigint or a boolean',
+          ],
           [
             Object.assign([["k", "v"]], { extra: "keep" }),
             '$["extra"] cannot encode an extra array field',

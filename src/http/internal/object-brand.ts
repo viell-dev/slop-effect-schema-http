@@ -199,8 +199,11 @@ const constructorPrototype = (name: string): object | undefined => {
 };
 
 /**
- * The prototypes of built-ins whose state is internal, most specific first, so an object that a
- * tag property disguises is still known by what it inherits from.
+ * The prototypes of built-ins whose state is internal, so an object that a tag property disguises
+ * is still known by what it inherits from. For the kinds in {@link nodeBrands}, Node's
+ * `util.types` tests the brand itself, which is the better evidence: an object that only inherits
+ * from `Error.prototype` holds no error state. Without those tests, as in a browser, such an
+ * object with no fields is refused by its prototype, while one with fields is written.
  */
 const builtinPrototypes: ReadonlyArray<readonly [object, string]> = [
   ...(
@@ -252,14 +255,49 @@ const builtinPrototypes: ReadonlyArray<readonly [object, string]> = [
   ),
 ];
 
-const isPrototypeOf = Object.prototype.isPrototypeOf;
+/** The kinds of {@link builtinPrototypes} that Node's `util.types` tests directly. */
+const nodeBrands = new Set([
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "ArrayBuffer",
+  "SharedArrayBuffer",
+  "DataView",
+  "RegExp",
+  "Error",
+  "Date",
+  "Promise",
+  "Map Iterator",
+  "Set Iterator",
+  "Generator",
+]);
 
-/** A built-in kind an object inherits from, unless its prototype is the plain one or `null`. */
+const byPrototype = (withNodeBrands: boolean) =>
+  new Map(
+    builtinPrototypes.filter(
+      ([, name]) => withNodeBrands || !nodeBrands.has(name),
+    ),
+  );
+
+/** On Node, only the kinds `util.types` cannot test; elsewhere, every kind. */
+const inheritable = byPrototype(types === undefined);
+
+/**
+ * The nearest built-in kind an object inherits from, found in one walk up its prototype chain.
+ * The plain prototype and `null` end the walk.
+ */
 function inheritedState(value: object): string | undefined {
-  const prototype: unknown = Object.getPrototypeOf(value);
-  if (prototype === null || prototype === Object.prototype) return undefined;
-  for (const [builtin, name] of builtinPrototypes)
-    if (Reflect.apply(isPrototypeOf, builtin, [value])) return name;
+  for (
+    let prototype: unknown = Object.getPrototypeOf(value);
+    typeof prototype === "object" &&
+    prototype !== null &&
+    prototype !== Object.prototype;
+    prototype = Object.getPrototypeOf(prototype)
+  ) {
+    const name = inheritable.get(prototype);
+    if (name !== undefined) return name;
+  }
   return undefined;
 }
 
