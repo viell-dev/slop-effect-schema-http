@@ -497,13 +497,14 @@ remaining list limits under #241 and #243.
   before dispatch. An unsupported query value or a defined enumerable symbol field names its field.
   Iterable outputs supply ordered pairs. `Transport.entries` and `UrlEncoding.queryEntries` throw
   `TypeError` for malformed pairs and invalid fields.
-- A successful open schema can hand a value to a writer that cannot represent it. JSON and form
-  writers check their actual output values and refuse with the field path. JSON applies `toJSON`
-  first, omits undefined object fields, and checks every array position below its length. These
-  checks apply when using either `Body.jsonSchema` or a composed JSON encoder. A string-indexed
-  record that loses a supplied symbol in construction reports a `SchemaError`. See the [Body
-  guide](./modules/body.md#text-json-and-finite-body-limits) for writer rules. An opaque
-  transformation can still choose its own encoded representation.
+- A successful open schema can hand a value to a writer that cannot represent it. Every body, query
+  and header writer checks its actual output values and refuses with the field path. JSON applies
+  `toJSON` first, omits undefined object fields, and checks every array position below its length.
+  These checks apply when using either `Body.jsonSchema` or a composed JSON encoder. A
+  string-indexed record that loses a supplied symbol, on either side of the schema, and the
+  canonical JSON codec of `Schema.ObjectKeyword`, which copies only string fields, report a
+  `SchemaError`. See the [Body guide](./modules/body.md#text-json-and-finite-body-limits) for writer
+  rules. An opaque transformation can still choose its own encoded representation.
 - Once an encoded-only alias enables whole decoding of a list, a decoded-only item beside it can
   lose its decoded name and refuse. This applies to every covered container, array-shaped unions
   included.

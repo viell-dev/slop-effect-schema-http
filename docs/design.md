@@ -31,7 +31,9 @@ disturbs the original. Defaults serve the common case and never prevent a less c
 consumer-owned contracts. It adds no transport, runtime, service registry, logging facility, cache,
 or configuration provider. Where Effect already defines a behavior, the library delegates to it:
 
-- `Body.json` encodes with `HttpBody.json`.
+- `Body.json` writes with the engine's `JSON.stringify`, as `HttpBody.json` does. Unlike
+  `HttpBody.json`, it first refuses a value that writer would omit or replace; see
+  [Bodies](#bodies).
 - `Policy.transient` follows the classification of `HttpClient.retryTransient`.
 - `Policy.retryAfterDelay` reads `Retry-After` with `Headers.parseRetryAfter`.
 - Requests are dispatched through the `HttpClient` service, so client middleware and providers apply
@@ -183,25 +185,45 @@ A body needs an encoder or a decoder, not necessarily a schema. `Body.json`, `Bo
 `Body.bytes`, `Body.formData`, `Body.urlEncoded`, and `Body.empty` cover the finite representations,
 and `Body.encodeSchema`, `Body.schema`, and `Body.jsonSchema` add validation.
 
-Request writers check the representation they actually write. This applies to open schemas, the
-output of any selected union member, and encoders composed with `Body.encodeSchema`. Schema reading
-and writer validation can each refuse before dispatch. For example, a string-indexed record can lose
-a supplied symbol during construction, while an empty struct passes the symbol through to the
-writer. Both paths refuse and name the symbol.
+Every request writer keeps what the caller supplied or refuses it before dispatch. It checks the
+representation it actually writes, in the same pass, so the check cannot disagree with the writer.
+This applies to open schemas, the output of any selected union member, and encoders composed with
+`Body.encodeSchema`. Where Effect's schema reading itself drops a supplied value before any writer
+sees it, the schema read refuses instead. For example, a string-indexed record loses a supplied
+symbol field whether it constructs or decodes the value, and `Schema.toCodecJson` of
+`Schema.ObjectKeyword` copies only string fields. Those fail with `SchemaError`. An empty struct
+passes the symbol through, and the writer refuses it with `HttpBodyError`. Both name the symbol.
 
 `Body.jsonSchema` first encodes through the schema's canonical JSON codec (`Schema.toCodecJson`). It
-then shares the JSON writer with raw and composed `Body.json`. That writer validates inside the
-native JSON traversal. It sees each value after `toJSON`, including hidden and inherited array
-positions, and refuses values that would be silently replaced or omitted. An undefined object
-property supplies no field, and a top-level `undefined` yields an empty `application/json` body.
-Validation errors name the position in `HttpBodyError`. Exceptions from getters, proxies and
-`toJSON` remain defects.
+then shares the JSON writer with raw and composed `Body.json`. That writer reads each value once, in
+the order native JSON does, applying `toJSON`, and copies what it would write. It refuses a value
+that would be omitted or replaced: a non-finite number, a bigint, a function or symbol, `undefined`
+in an array, including a hole, a defined enumerable symbol field, an own field beside an array's
+positions, and a non-array object whose content is not in its own enumerable fields. That last group
+covers built-in collections, binary data, `RegExp`, `Error`, `URLSearchParams`, `FormData`,
+`Headers`, `Blob`, `File` and boxed symbols, recognized by brand where a changed prototype or tag
+property hides them. A `toJSON` result follows the same rules; an invalid `Date` writes `null`, as
+its own `toJSON` returns, where a query writes the text
+[`Invalid Date`](#a-query-value-can-be-a-date). A `toJSON` returning `undefined` omits an object
+field and is refused in an array. An undefined object field supplies nothing, and a top-level
+`undefined` yields an empty `application/json` body. The engine's `JSON.stringify` then writes the
+copy. It runs no caller code and keeps its own nesting limit, about 4,700 levels on Node 24.
+Refusals and engine failures are `HttpBodyError` with the position. Exceptions from getters, proxies
+and `toJSON` remain defects.
 
 The Effect form schema links are checked where they flatten the encoded tree into form entries. The
-same pass validates leaves and writes the entries with Effect's bracket paths and repeated names. A
-prepared `FormData` or `URLSearchParams` that an open form schema keeps retains its entries.
-Prepared forms carry the values already chosen by their creator, so an earlier custom conversion
+same pass validates leaves and writes the entries with Effect's bracket paths and repeated names. An
+empty list or plain object writes no entries, as in Effect. A value the links would skip, including
+an object of another kind with no own fields such as a `Redacted` value, is refused with
+`HttpBodyError` naming its field, as the direct `Body.formData` and `Body.urlEncoded` encoders do. A
+prepared form that an open form schema keeps retains its entries. A prepared `FormData` is
+recognized by its tag and `append` method, so one from another realm or implementation is sent as it
+is. Prepared forms carry the values already chosen by their creator, so an earlier custom conversion
 controls what those values are.
+
+`Body.text`, `Body.bytes` and `Body.empty` refuse what their own representation cannot carry: a
+value that is not a string, not a `Uint8Array`, or any value at all. JavaScript or a schema such as
+`Schema.Any` can pass one.
 
 `Body.text` delegates incoming decoding to the provider's `response.text`. Fetch-backed providers
 decode UTF-8 regardless of a `Content-Type` charset, strip a leading UTF-8 byte-order mark, and

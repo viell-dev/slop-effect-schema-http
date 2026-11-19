@@ -116,20 +116,36 @@ and charset parameters do not select another encoding. Use `Body.bytes` with an 
 for strict or non-UTF-8 data.
 
 `Body.json`, `Body.jsonSchema`, and encoders composed from `Body.json` use the same JSON writer. It
-honours `toJSON` and checks what that conversion returns. It refuses non-finite numbers, bigints,
-functions, symbols, defined enumerable symbol keys, and undefined array positions with
-`HttpBodyError` naming the position. It omits undefined object fields and encodes top-level
+honours `toJSON` and checks what that conversion returns. Before anything is sent, it refuses with
+`HttpBodyError` naming the position:
+
+- non-finite numbers, bigints, functions and symbols;
+- `undefined` in an array, including a hole and a `toJSON` that returns `undefined`;
+- defined enumerable symbol fields, and an array's own fields beside its positions;
+- objects whose content is not in their own fields, such as a `Map`, a `Set`, binary data, a
+  `RegExp`, an `Error`, `URLSearchParams`, `FormData`, `Headers`, a `Blob` or a boxed symbol.
+
+Plain objects, class instances and `Schema.Class` values write their fields, and values such as
+`Option`, `Chunk` and `DateTime` write what their `toJSON` returns. An invalid `Date` writes `null`,
+which is its own `toJSON` result. The writer omits undefined object fields and encodes top-level
 `undefined` as an empty outgoing body. Exceptions thrown by getters, proxies and `toJSON` are
-defects. An empty incoming body is a decoding error. Choose `Body.jsonSchema` to validate the
-application shape, or `Body.empty` for a response with no useful body.
+defects. Nesting deeper than the engine's JSON writer allows, about 4,700 levels on Node 24, fails
+with `HttpBodyError` too. An empty incoming body is a decoding error. Choose `Body.jsonSchema` to
+validate the application shape, or `Body.empty` for a response with no useful body.
 
 Use `Body.formData.pipe(Body.encodeSchema(Schema.fromFormData(fields)))` when a schema supplies the
 form entries. The form writer accepts text, files and blobs, including repeated values and nested
-fields using bracket paths. If a value cannot supply a form entry, it refuses with a `SchemaError`
-naming the field. For example, a number needs a schema that encodes it to text. A prepared
-`FormData` can go directly to `Body.formData`, which reports `SchemaError` if the encoder receives a
-plain record instead. `Body.urlEncoded` writes Effect `UrlParams` text pairs, including redacted
-text values, and refuses malformed pairs or non-text values with `SchemaError`.
+fields using bracket paths. An empty list or plain object writes no entries. If a value cannot
+supply a form entry, it refuses with `HttpBodyError` naming the field. For example, a number needs a
+schema that encodes it to text, and a `Redacted` value one that reveals its text. A prepared
+`FormData` can go directly to `Body.formData`, including one from another realm or implementation,
+such as the `undici` package used with its own `fetch`. Anything that is not a form fails with
+`HttpBodyError`. `Body.urlEncoded` writes Effect `UrlParams` text pairs, including redacted text
+values, and refuses malformed pairs or non-text values with `HttpBodyError`.
+
+`Body.text`, `Body.bytes` and `Body.empty` also fail with `HttpBodyError` when JavaScript or a
+schema such as `Schema.Any` passes them a value that is not a string, not a `Uint8Array`, or any
+value at all, instead of converting or dropping it.
 
 Bodies are finite; streaming is outside the supported API. Even discarding an unmatched body can
 wait forever if the server never ends it. Set a [timeout](./policy.md#bound-execution-time) when
