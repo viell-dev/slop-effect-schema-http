@@ -508,40 +508,20 @@ describe("a caller's list beside a record member", () => {
     }),
   );
 
+  // The record cannot read a list, so its open values hold nothing at the list's positions.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/243
-  it.effect(
-    "currently refuses an item key only the record's values could hold",
-    () =>
-      Effect.gen(function* () {
-        // The record cannot read a list, yet loss accounting still counts its open values at the
-        // list's positions, so a key the list member strips counts as lost.
-        for (const [input, output, at] of [
-          [[{ page_size: "05" }], [{}], '[0]["page_size"]'],
-          [[{ page_size: "many" }], [{}], '[0]["page_size"]'],
-          [[{ limit: "x", extra: 1 }], [{ limit: "x" }], '[0]["extra"]'],
-        ] as const) {
-          expect(yield* prepared(Schema.Array(Plain), input)).toEqual(
-            kept(output),
-          );
-          for (const schema of plainUnions)
-            expect(yield* refusals(schema, input)).toEqual([
-              expect.stringContaining(at),
-              expect.stringContaining(at),
-            ]);
-        }
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
-  it.effect.fails("reads a list as its list member alone reads it", () =>
+  it.effect("reads a list as its list member alone reads it", () =>
     Effect.gen(function* () {
-      for (const schema of plainUnions) {
-        expect(yield* prepared(schema, [{ page_size: "05" }])).toEqual(
-          kept([{}]),
+      for (const [input, output] of [
+        [[{ page_size: "05" }], [{}]],
+        [[{ page_size: "many" }], [{}]],
+        [[{ limit: "x", extra: 1 }], [{ limit: "x" }]],
+      ] as const) {
+        expect(yield* prepared(Schema.Array(Plain), input)).toEqual(
+          kept(output),
         );
-        expect(yield* prepared(schema, [{ limit: "x", extra: 1 }])).toEqual(
-          kept([{ limit: "x" }]),
-        );
+        for (const schema of plainUnions)
+          expect(yield* prepared(schema, input)).toEqual(kept(output));
       }
     }),
   );
@@ -865,6 +845,708 @@ describe("positional query and header groups", () => {
       });
       expect(headerResult.headerLines).toEqual([["k", "v"]]);
       expect(fetches).toEqual({ entry: 1, name: 1, value: 1 });
+    }),
+  );
+});
+
+/** A union of two members, in each order. */
+const either = <A extends Schema.Top, B extends Schema.Top>(a: A, b: B) => [
+  Schema.Union([a, b]),
+  Schema.Union([b, a]),
+];
+
+/** A list whose one item has a key no list item states. */
+const row = () => [{ limit: "x", extra: 1 }];
+
+/** The same item under an index-like key of an object. */
+const cell = () => ({ 0: { limit: "x", extra: 1 } });
+
+/**
+ * A list whose first cell is hidden or inherited, beside a cell with a key set to `undefined`,
+ * which normalization takes out.
+ */
+const hiddenFirst = (inherited: boolean) => {
+  const first = { limit: "first" };
+  const cells: Array<object> = [first, { limit: "last", absent: undefined }];
+  if (!inherited) Object.defineProperty(cells, "0", { enumerable: false });
+  else {
+    delete cells[0];
+    Object.setPrototypeOf(
+      cells,
+      Object.create(Array.prototype, { 0: { value: first } }),
+    );
+  }
+  return cells;
+};
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/243
+describe("members that cannot read the caller's container", () => {
+  const Plain = Schema.Struct({ limit: Schema.optionalKey(Schema.String) });
+  const Open = Schema.Record(Schema.String, Schema.Unknown);
+  const Indexed = Schema.Record(Schema.String, Plain);
+  const Zero = Schema.Struct({ 0: Plain });
+  const Rows = Schema.Array(Plain);
+  class Limited extends Schema.Class<Limited>("Limited")({
+    limit: Schema.optionalKey(Schema.String),
+  }) {}
+  class Bare extends Schema.Class<Bare>("Bare")({}) {}
+
+  it("relies on Effect's parsers telling containers apart", () => {
+    const list = [{ limit: "x" }];
+    const object = { 0: { limit: "x" } };
+    for (const schema of [Open, Indexed, Zero, Plain, Limited]) {
+      expect(Exit.isFailure(Schema.decodeUnknownExit(schema)(list))).toBe(true);
+      expect(Exit.isFailure(Schema.encodeUnknownExit(schema)(list))).toBe(true);
+    }
+    for (const schema of [
+      Schema.Array(Schema.Unknown),
+      Schema.Tuple([Schema.Unknown]),
+    ]) {
+      expect(Exit.isFailure(Schema.decodeUnknownExit(schema)(object))).toBe(
+        true,
+      );
+      expect(Exit.isFailure(Schema.encodeUnknownExit(schema)(object))).toBe(
+        true,
+      );
+    }
+    // An empty struct reads a list as it is; an empty class copies its cells by index.
+    expect(Schema.decodeUnknownSync(Schema.Struct({}))(list)).toBe(list);
+    const instance = Schema.decodeUnknownSync(Bare)(list);
+    expect(instance).toBeInstanceOf(Bare);
+    expect({ ...instance }).toEqual(object);
+  });
+
+  it.effect("reads an object as its object member alone reads it", () =>
+    Effect.gen(function* () {
+      for (const object of [Indexed, Zero])
+        for (const list of [
+          Schema.Array(Schema.Unknown),
+          Schema.Tuple([Schema.Unknown]),
+        ]) {
+          for (const [input, output] of [
+            [cell(), { 0: { limit: "x" } }],
+            [{ 0: { page_size: "05" } }, { 0: {} }],
+          ] as const) {
+            expect(yield* prepared(object, input)).toEqual(kept(output));
+            for (const schema of either(object, list))
+              expect(yield* prepared(schema, input)).toEqual(kept(output));
+          }
+          // The array member still reads a list the object member cannot.
+          for (const schema of either(object, list))
+            expect(yield* prepared(schema, [{ limit: "x", extra: 1 }])).toEqual(
+              kept([{ limit: "x", extra: 1 }]),
+            );
+        }
+    }),
+  );
+
+  it.effect("rules out a child schema another parent member gives", () =>
+    Effect.gen(function* () {
+      for (const schema of either(
+        Schema.Struct({ items: Rows }),
+        Schema.Struct({ items: Open }),
+      )) {
+        expect(yield* prepared(schema, { items: row() })).toEqual(
+          kept({ items: [{ limit: "x" }] }),
+        );
+        expect(yield* prepared(schema, { items: cell() })).toEqual(
+          kept({ items: cell() }),
+        );
+      }
+      for (const schema of either(
+        Schema.Struct({ items: Indexed }),
+        Schema.Struct({ items: Schema.Array(Schema.Unknown) }),
+      )) {
+        expect(yield* prepared(schema, { items: cell() })).toEqual(
+          kept({ items: { 0: { limit: "x" } } }),
+        );
+        expect(yield* prepared(schema, { items: row() })).toEqual(
+          kept({ items: row() }),
+        );
+      }
+    }),
+  );
+
+  it.effect("names only what the list member loses", () =>
+    Effect.gen(function* () {
+      for (const schema of either(Schema.Array(Filter), Open))
+        for (const message of yield* refusals(schema, row())) {
+          expect(message).toContain('[0]["limit"]');
+          expect(message).not.toContain("extra");
+        }
+    }),
+  );
+
+  it.effect("keeps every member that can read the container", () =>
+    Effect.gen(function* () {
+      // An empty struct reads a list, so it keeps the cells' keys beside the record.
+      for (const schema of [
+        Schema.Union([Rows, Open, Schema.Struct({})]),
+        Schema.Union([Schema.Struct({}), Open, Rows]),
+      ])
+        expect(yield* prepared(schema, row())).toEqual(kept(row()));
+    }),
+  );
+
+  it.effect("keeps hidden and inherited cells beside an empty struct", () =>
+    Effect.gen(function* () {
+      for (const inherited of [false, true])
+        for (const schema of either(Rows, Schema.Struct({})))
+          expect(yield* prepared(schema, hiddenFirst(inherited))).toEqual(
+            kept([{ limit: "first" }, { limit: "last" }]),
+          );
+    }),
+  );
+
+  // The rules above apply only where every alternative at a value is a struct, a record, a list or
+  // a tuple. Beside a class, a declaration, any other codec or middleware, and inside a value that
+  // middleware reads, a value keeps the reading it had on 0.18.0.
+
+  // A codec that reads its encoded side through a declaration.
+  const Listed = Schema.declare(
+    (input: unknown): input is ReadonlyArray<unknown> => Array.isArray(input),
+  );
+  const FromList = Listed.pipe(
+    Schema.decodeTo(
+      Open,
+      SchemaTransformation.transform({
+        decode: (cells): Record<string, unknown> => ({ ...cells }),
+        encode: (record) => Object.values(record),
+      }),
+    ),
+  );
+  // The same codec with its declaration behind a suspension.
+  const FromDeferredList = Schema.suspend(() => Listed).pipe(
+    Schema.decodeTo(
+      Open,
+      SchemaTransformation.transform({
+        decode: (cells): Record<string, unknown> => ({ ...cells }),
+        encode: (record) => Object.values(record),
+      }),
+    ),
+  );
+
+  it.effect("keeps 0.18.0's reading beside a codec from a declaration", () =>
+    Effect.gen(function* () {
+      const FromTwiceDeferred = Schema.suspend(() =>
+        Schema.suspend(() => Listed),
+      ).pipe(
+        Schema.decodeTo(
+          Open,
+          SchemaTransformation.transform({
+            decode: (cells): Record<string, unknown> => ({ ...cells }),
+            encode: (record) => Object.values(record),
+          }),
+        ),
+      );
+      const FromListOrText = Schema.Union([Listed, Schema.String]).pipe(
+        Schema.decodeTo(
+          Open,
+          SchemaTransformation.transform({
+            decode: (cells): Record<string, unknown> =>
+              typeof cells === "string" ? { text: cells } : { ...cells },
+            encode: (record) => Object.values(record),
+          }),
+        ),
+      );
+      const FromDeferredUnknown = Schema.suspend(() => Schema.Unknown).pipe(
+        Schema.decodeTo(
+          Open,
+          SchemaTransformation.transform({
+            decode: (cells): Record<string, unknown> => ({
+              ...(cells as object),
+            }),
+            encode: (record) => Object.values(record),
+          }),
+        ),
+      );
+      const FromUnknown = Schema.Unknown.pipe(
+        Schema.decodeTo(
+          Open,
+          SchemaTransformation.transform({
+            decode: (cells): Record<string, unknown> => ({
+              ...(cells as object),
+            }),
+            encode: (record) => record,
+          }),
+        ),
+      );
+      for (const schema of [
+        ...either(Rows, FromList),
+        Schema.Union([Rows, Schema.suspend(() => FromList)]),
+        Schema.suspend(() => Schema.Union([Rows, FromList])),
+        ...either(Rows, FromDeferredList),
+        ...either(Rows, FromTwiceDeferred),
+        ...either(Rows, FromListOrText),
+        ...either(Rows, FromDeferredUnknown),
+      ])
+        expect(yield* prepared(schema, row())).toEqual(kept(row()));
+      for (const schema of either(Rows, FromUnknown))
+        expect(yield* prepared(schema, row())).toEqual(kept(cell()));
+      // An object beside a member decoded from a date keeps its stated reading.
+      const A = Schema.Struct({ a: Schema.String });
+      const B = Schema.Struct({ b: Schema.String });
+      const FromDate = Schema.suspend(() => Schema.Date).pipe(
+        Schema.decodeTo(
+          Schema.String,
+          SchemaTransformation.transform({
+            decode: (date) => date.toISOString(),
+            encode: (text) => new Date(text),
+          }),
+        ),
+      );
+      const FromDateOrNumber = Schema.Union([Schema.Date, Schema.Number]).pipe(
+        Schema.decodeTo(
+          Schema.String,
+          SchemaTransformation.transform({
+            decode: (moment) => String(Number(moment)),
+            encode: (text) => Number(text),
+          }),
+        ),
+      );
+      for (const schema of [
+        Schema.Union([A, B, Schema.DateTimeUtcFromDate]),
+        Schema.Union([A, FromDate]),
+        Schema.Union([A, B, FromDateOrNumber]),
+      ])
+        expect(yield* prepared(schema, { a: "x", z: 1 })).toEqual(
+          kept({ a: "x" }),
+        );
+      const Dated = Schema.Struct({
+        when: Schema.Union([A, Schema.DateTimeUtcFromDate]),
+      }).pipe(Schema.encodeKeys({ when: "at" }));
+      expect(yield* prepared(Dated, { when: { a: "x", z: 1 } })).toEqual(
+        kept({ at: { a: "x" } }),
+      );
+    }),
+  );
+
+  it.effect(
+    "refuses a cell key a list codec from a declaration cannot write",
+    () =>
+      Effect.gen(function* () {
+        // As on 0.18.0, the record behind the codec holds the cell's keys, and it takes no `undefined`
+        // inside a JSON value, so that subtree is refused rather than left out.
+        const nested = [{ limit: "x", z: { keep: 1, absent: undefined } }];
+        for (const schema of [
+          ...either(Rows, FromList),
+          ...either(Rows, FromDeferredList),
+        ]) {
+          const failure = yield* Effect.flip(prepare(schema, nested, "body"));
+          expect(failure).toBeInstanceOf(Schema.SchemaError);
+          expect(String(failure)).toContain('[0]["z"]');
+          expect(yield* prepare(schema, nested, "path")).toEqual([
+            { limit: "x", z: { keep: 1 } },
+          ]);
+        }
+      }),
+  );
+
+  it.effect("keeps 0.18.0's reading beside or inside middleware", () =>
+    Effect.gen(function* () {
+      // The record reports the list it refused, and the recovery keeps its cells under their indexes.
+      const Reported = Schema.declareConstructor()(
+        [Open],
+        ([member]) =>
+          (input, _ast, options) =>
+            Effect.mapError(
+              Schema.decodeUnknownEffect(member)(input, {
+                ...options,
+                reportInput: true,
+              }),
+              (failure) => failure.issue,
+            ),
+      );
+      const Restored = Reported.pipe(
+        Schema.decodeTo(Open),
+        Schema.catchDecoding((issue) => {
+          let leaf: { readonly issue?: unknown; readonly input?: unknown } =
+            issue;
+          while (leaf.issue !== undefined) leaf = leaf.issue as typeof leaf;
+          return Array.isArray(leaf.input)
+            ? Effect.succeedSome(Object.fromEntries(leaf.input.entries()))
+            : Effect.fail(issue);
+        }),
+      );
+      for (const schema of [Restored, ...either(Rows, Restored)])
+        expect(yield* prepared(schema, row())).toEqual(kept(cell()));
+      // A recovery that returns the caller's own cells, on a member, on the union or on a parent.
+      const cells = [{ limit: "x", extra: "unique" }];
+      const returned = () =>
+        Effect.succeedSome(Object.fromEntries(cells.entries()));
+      const Returned = Open.pipe(Schema.catchDecoding(returned));
+      for (const schema of [
+        Returned,
+        ...either(Rows, Returned),
+        Schema.Union([Rows, Open]).pipe(Schema.catchDecoding(returned)),
+        Schema.Union([
+          Rows,
+          Schema.Union([Open, Schema.String]).pipe(
+            Schema.catchDecoding(returned),
+          ),
+        ]),
+      ])
+        expect(yield* prepared(schema, cells)).toEqual(
+          kept({ 0: { limit: "x", extra: "unique" } }),
+        );
+      const Parent = Schema.Struct({ items: Schema.Union([Rows, Open]) }).pipe(
+        Schema.catchDecoding(() =>
+          Effect.succeedSome({ items: Object.fromEntries(cells.entries()) }),
+        ),
+      );
+      expect(yield* prepared(Parent, { items: cells })).toEqual(
+        kept({ items: { 0: { limit: "x", extra: "unique" } } }),
+      );
+      // A list a codec reads as text beside a record whose recovery fails keeps that codec's text.
+      const Joined = Schema.Unknown.pipe(
+        Schema.decodeTo(
+          Schema.String,
+          SchemaTransformation.transform({
+            decode: (items) =>
+              Array.isArray(items) ? items.join(",") : String(items),
+            encode: (text) => text,
+          }),
+        ),
+      );
+      const Failing = Open.pipe(
+        Schema.catchDecoding((issue) => Effect.fail(issue)),
+      );
+      expect(
+        yield* prepared(Schema.Struct({ a: Schema.Union([Joined, Failing]) }), {
+          a: ["x", "y"],
+        }),
+      ).toEqual(kept({ a: "x,y" }));
+      expect(
+        yield* prepared(Schema.Union([Failing, Joined]), ["x", "y"]),
+      ).toEqual(kept("x,y"));
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+  const Recovering = Open.pipe(
+    Schema.catchDecoding(() => Effect.succeedSome({ recovered: true })),
+  );
+
+  it.effect("currently sends a recovery's value in place of a valid list", () =>
+    Effect.gen(function* () {
+      // The record holds the cell key, so the list member refuses it and the recovery takes the list.
+      expect(yield* prepared(Schema.Union([Rows, Recovering]), row())).toEqual(
+        kept({ recovered: true }),
+      );
+      expect(
+        yield* prepared(Schema.Union([Rows, Recovering]), [{ limit: "x" }]),
+      ).toEqual(kept([{ limit: "x" }]));
+    }),
+  );
+
+  it.effect.fails("reads a valid list as its list member does", () =>
+    Effect.gen(function* () {
+      expect(yield* prepared(Schema.Union([Rows, Recovering]), row())).toEqual(
+        kept([{ limit: "x" }]),
+      );
+    }),
+  );
+
+  // A recovery's value is not checked against the cells it was given.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+  const Substituted = Open.pipe(
+    Schema.catchDecoding(() =>
+      Effect.succeedSome({ 0: { limit: "altered", extra: 99 } }),
+    ),
+  );
+
+  it.effect("currently sends a cell a recovery puts in a caller's place", () =>
+    Effect.gen(function* () {
+      for (const schema of either(Rows, Substituted))
+        expect(yield* prepared(schema, [{ limit: 5, extra: 1 }])).toEqual(
+          kept({ 0: { limit: "altered", extra: 99 } }),
+        );
+    }),
+  );
+
+  it.effect.fails("refuses a cell a recovery puts in a caller's place", () =>
+    Effect.gen(function* () {
+      for (const schema of either(Rows, Substituted))
+        expect(yield* prepared(schema, [{ limit: 5, extra: 1 }])).toEqual(
+          refused,
+        );
+    }),
+  );
+
+  it.effect("keeps 0.18.0's reading beside a class", () =>
+    Effect.gen(function* () {
+      // A class has no list reading of its own here, so a list member placed first keeps the list.
+      for (const schema of [
+        ...either(Rows, Limited),
+        Schema.Union([Rows, Bare]),
+      ])
+        expect(yield* prepared(schema, row())).toEqual(kept([{ limit: "x" }]));
+      // Where Effect's first fit or a record's open values leave the list to the empty class, the
+      // class takes every cell.
+      for (const schema of [
+        Bare,
+        Schema.Union([Rows, Open, Bare]),
+        Schema.Union([Rows, Schema.Union([Bare, Open])]),
+        Schema.Union([Bare, Rows, Open]),
+        Schema.Union([Open, Bare, Rows]),
+        Schema.Union([Schema.Union([Open, Bare]), Rows]),
+        Schema.Union([Schema.suspend(() => Bare), Rows, Open]),
+        Schema.Union([
+          Schema.suspend(() => Schema.suspend(() => Bare)),
+          Rows,
+          Open,
+        ]),
+        Schema.Union([
+          Schema.Tuple([Schema.Number, Schema.Number]),
+          Bare,
+          Rows,
+          Open,
+        ]),
+        Schema.Union([
+          Schema.Tuple([Schema.Number, Schema.Number]),
+          Schema.suspend(() => Schema.suspend(() => Bare)),
+          Rows,
+          Open,
+        ]),
+      ])
+        expect(yield* prepared(schema, row())).toEqual(kept(cell()));
+      for (const binding of ["path", "body"] as const)
+        expect(
+          yield* Effect.flip(prepare(Limited, row(), binding)),
+        ).toBeInstanceOf(Schema.SchemaError);
+    }),
+  );
+
+  it.effect("keeps a class codec's reading beside a list member", () =>
+    Effect.gen(function* () {
+      class Box extends Schema.Class<Box>("Box")({ value: Schema.Unknown }) {}
+      const Boxed = Schema.Tuple([Schema.Unknown]).pipe(
+        Schema.decodeTo(
+          Box,
+          SchemaTransformation.transform({
+            decode: ([value]) => new Box({ value }),
+            encode: ({ value }) => [value] as const,
+          }),
+        ),
+      );
+      // The tuple a class is decoded from reads the list.
+      for (const schema of [Boxed, ...either(Boxed, Rows)])
+        for (const binding of ["path", "body"] as const) {
+          const output = yield* prepare(schema, row(), binding);
+          const cells =
+            output instanceof Box ? [output.value] : (output as Array<unknown>);
+          expect(cells).toEqual(row());
+        }
+      const fromCell = SchemaTransformation.transform({
+        decode: ([value]: readonly [unknown]) => new Bare({ 0: value }),
+        encode: (bare: Bare): readonly [unknown] => [Reflect.get(bare, 0)],
+      });
+      const Cell = Schema.Tuple([Schema.Unknown]);
+      for (const codec of [
+        Cell.pipe(Schema.decodeTo(Bare, fromCell)),
+        Cell.pipe(
+          Schema.decodeTo(
+            Schema.suspend(() => Bare),
+            fromCell,
+          ),
+        ),
+      ])
+        for (const schema of [codec, ...either(Rows, codec)])
+          expect(yield* prepared(schema, row())).toEqual(kept(row()));
+    }),
+  );
+
+  it.effect("reads a class field's list without changing its siblings", () =>
+    Effect.gen(function* () {
+      const counts = { decode: 0, encode: 0 };
+      const Price = Schema.String.pipe(
+        Schema.decodeTo(
+          Schema.Number,
+          SchemaTransformation.transform({
+            decode: (text) => {
+              counts.decode++;
+              return Number(text);
+            },
+            encode: (price) => {
+              counts.encode++;
+              return String(price);
+            },
+          }),
+        ),
+      );
+      const Late = Schema.Union([
+        Schema.Tuple([Schema.Number, Schema.Number]),
+        Bare,
+        Rows,
+        Open,
+      ]);
+      const Tail = Schema.Union([Rows, Bare]);
+      for (const schema of [
+        Schema.Struct({ first: Late, second: Tail }),
+        Schema.Struct({ second: Tail, first: Late }),
+      ])
+        expect(
+          yield* prepared(schema, { first: row(), second: row() }),
+        ).toEqual(kept({ first: cell(), second: [{ limit: "x" }] }));
+      // Under a renamed key too.
+      expect(
+        yield* prepared(
+          Schema.Struct({ items: Late }).pipe(
+            Schema.encodeKeys({ items: "ITEMS" }),
+          ),
+          { items: row() },
+        ),
+      ).toEqual(kept({ ITEMS: cell() }));
+      // A sibling's decoder and encoder run once, as for any value.
+      for (const binding of ["path", "body"] as const) {
+        counts.decode = counts.encode = 0;
+        expect(
+          yield* prepare(
+            Schema.Struct({ price: Price, items: Late }),
+            { price: "05", items: row() },
+            binding,
+          ),
+        ).toEqual({ price: "5", items: cell() });
+        expect(counts).toEqual({ decode: 1, encode: 1 });
+      }
+      // A list another member writes as a record keeps that record, whatever else changes.
+      const ListAsRecord = Schema.Record(Schema.String, Schema.String).pipe(
+        Schema.decodeTo(
+          Schema.Array(Schema.Number),
+          SchemaTransformation.transform({
+            decode: (record): ReadonlyArray<number> =>
+              Object.values(record).map(Number),
+            encode: (numbers) =>
+              Object.fromEntries(
+                numbers.map((number, index) => [String(index), String(number)]),
+              ),
+          }),
+        ),
+      );
+      const Listing = Schema.Struct({
+        a: Schema.String,
+        items: Schema.Union([ListAsRecord, Bare]),
+      });
+      for (const input of [
+        { a: "x", items: [1, 2] },
+        { a: "x", extra: 1, items: [1, 2] },
+        { a: "x", gone: undefined, items: [1, 2] },
+      ])
+        expect(yield* prepared(Listing, input)).toEqual(
+          kept({ a: "x", items: { 0: "1", 1: "2" } }),
+        );
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+  const Parted = Schema.Union([
+    Schema.Struct({ items: Bare }),
+    Schema.Struct({ items: Rows }),
+  ]);
+
+  it.effect("currently cuts the cells an empty class takes beside a list", () =>
+    Effect.gen(function* () {
+      expect(yield* prepared(Schema.Union([Bare, Rows]), row())).toEqual(
+        kept({ 0: { limit: "x" } }),
+      );
+      expect(yield* prepared(Parted, { items: row() })).toEqual(
+        kept({ items: { 0: { limit: "x" } } }),
+      );
+    }),
+  );
+
+  it.effect.fails("keeps the cells an empty class takes beside a list", () =>
+    Effect.gen(function* () {
+      // Effect's first fit gives the list to the class, which keeps every cell.
+      expect(yield* prepared(Schema.Union([Bare, Rows]), row())).toEqual(
+        kept(cell()),
+      );
+      expect(yield* prepared(Parted, { items: row() })).toEqual(
+        kept({ items: cell() }),
+      );
+    }),
+  );
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/257
+describe("a list beside an open member", () => {
+  const Rows = Schema.Array(
+    Schema.Struct({ limit: Schema.optionalKey(Schema.String) }),
+  );
+
+  it.effect(
+    "keeps a hidden or inherited cell when a later cell is rewritten",
+    () =>
+      Effect.gen(function* () {
+        // The key set to undefined makes normalization rebuild the list; the first cell stays.
+        for (const inherited of [false, true])
+          for (const open of [Schema.Unknown, Schema.Any, Schema.ObjectKeyword])
+            for (const schema of either(Rows, open))
+              for (const binding of ["path", "body"] as const)
+                // The cell keeps its own place, so the list reads as the caller's does.
+                expect(
+                  JSON.stringify(
+                    yield* prepare(schema, hiddenFirst(inherited), binding),
+                  ),
+                ).toBe('[{"limit":"first"},{"limit":"last"}]');
+      }),
+  );
+
+  it.effect("asks a list for its own keys no more often than 0.18.0", () =>
+    Effect.gen(function* () {
+      // Copying hidden cells reuses the own keys and descriptors already read for the list's keys.
+      for (const hidden of [false, true]) {
+        const counts = { ownKeys: 0, getOwnPropertyDescriptor: 0 };
+        const cells: Array<object> = [
+          { limit: "first" },
+          { limit: "last", absent: undefined },
+        ];
+        if (hidden) Object.defineProperty(cells, "0", { enumerable: false });
+        const input = new Proxy(cells, {
+          ownKeys(target) {
+            counts.ownKeys++;
+            return Reflect.ownKeys(target);
+          },
+          getOwnPropertyDescriptor(target, key) {
+            counts.getOwnPropertyDescriptor++;
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        });
+        expect(
+          JSON.stringify(
+            yield* prepare(Schema.Union([Rows, Schema.Unknown]), input, "path"),
+          ),
+        ).toBe('[{"limit":"first"},{"limit":"last"}]');
+        // 0.18.0 asked for the own keys twice and for seven descriptors.
+        expect(counts.ownKeys).toBe(2);
+        expect(counts.getOwnPropertyDescriptor).toBeLessThanOrEqual(7);
+      }
+    }),
+  );
+
+  it.effect("reads no prototype of a dense list it rebuilds", () =>
+    Effect.gen(function* () {
+      // Its own positions cover the list, so nothing can be inherited.
+      for (const failing of [false, true])
+        for (const schema of either(Rows, Schema.Unknown))
+          for (const binding of ["path", "body"] as const) {
+            let inspected = 0;
+            const input = new Proxy(
+              [{ limit: "first" }, { limit: "last", absent: undefined }],
+              {
+                getPrototypeOf(target) {
+                  inspected++;
+                  if (failing) throw new Error("prototype inspected");
+                  return Reflect.getPrototypeOf(target);
+                },
+              },
+            );
+            const output = yield* prepare(schema, input, binding);
+            expect(inspected).toBe(0);
+            expect(JSON.stringify(output)).toBe(
+              '[{"limit":"first"},{"limit":"last"}]',
+            );
+          }
     }),
   );
 });

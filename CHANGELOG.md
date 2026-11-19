@@ -27,6 +27,45 @@
   computed value that returns a list fails with `InvalidRequest` during preparation.
 - **Breaking:** write `Date`s using their native timestamp. Dates from another realm now use ISO
   text. Own formatting methods have no effect, and invalid dates write the literal `Invalid Date`.
+- **Breaking:** keep the keys an empty struct member holds beside members that state fields, in
+  either order and at any depth (#249). `Union([A, Schema.Struct({})])` with
+  `A = Schema.Struct({ a: Schema.String })` now sends `{ a: "x", z: 1 }` as `{"a":"x","z":1}`, where
+  0.18.0 sent `{"a":"x"}`, and `Union([Filter, Schema.Struct({})])` sends `?tag=a` for
+  `{ tag: "a" }` instead of the stated member's default `?page_size=25`. When both members keep the
+  value, member order still decides: `Union([Schema.Struct({}), Filter])` sends `{ limit: 5 }` as
+  `?limit=5`. This applies where every alternative at the value is a struct, a record, a list or a
+  tuple, guarded Void beside them included; beside a class, including an empty `Schema.Class`, a
+  declaration, an open schema, middleware or any other codec, a value keeps 0.18.0's reading. A
+  class instance the empty struct keeps reaches a path renderer as the same instance, except that an
+  inherited accessor a stated member names makes it a plain copy. A kept field the request cannot
+  carry now refuses before dispatch: a header value that is not a string is `InvalidRequest`, and a
+  field the writer would leave out or replace is a `SchemaError` that names it, such as a symbol key
+  in JSON, a query or headers, `NaN` or a BigInt in a JSON body, or an object in a query. In a
+  stacked query or header group, such a union bound after a schema that states the field writes the
+  caller's value in its place: `Count = Schema.Struct({ z: Schema.FiniteFromString })` stacked
+  before `Union([A, Struct({})])` sends `{ a: "x", z: "05" }` as `?a=x&z=05`, where 0.18.0 sent
+  `?z=5&a=x`. Bind the stated member directly, or bind the union first, to keep its reading. See the
+  [migration
+  note](https://viell-dev.github.io/slop-effect-schema-http/schema-input#a-union-keeps-what-the-caller-gave).
+- **Breaking:** count only members that can read the caller's container during normalization and
+  field-loss accounting (#243). A record or a struct that states a field holds none of a list's
+  cells, and an array or tuple holds none of an object's keys, including schemas different parent
+  members give one field. Beside `Schema.Record(Schema.String, Schema.Unknown)`,
+  `[{ page_size: "05" }]` now writes `[{}]`, as the list member alone does, where 0.18.0 refused it.
+  A numeric-keyed object beside an array or tuple member is read as its object member alone reads
+  it, so beside an empty struct as well, `{ "0": { limit: "x", extra: 1 } }` keeps `extra`, which
+  0.18.0 left out. Like the empty-struct rule, this applies only where every alternative at the
+  value is a struct, a record, a list or a tuple, `encodeKeys` renames included; a value beside a
+  class, a declaration, an open schema, middleware or any other codec, or inside a value middleware
+  reads, keeps 0.18.0's reading. A query or header schema that only a cast admits, with a list
+  member that writes objects, now refuses with `InvalidRequest` from the field-pair check instead of
+  a `SchemaError`.
+- Keep a hidden or inherited list cell when normalization rebuilds the list beside `Schema.Unknown`,
+  `Schema.Any` or `Schema.Object`
+  ([#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257)). With a non-enumerable
+  first cell and a later cell holding a key set to `undefined`,
+  `Union([Schema.Array(A), Schema.Unknown])` passed `[null, …]` to a path renderer; the rebuilt list
+  now keeps the cell where the caller put it.
 
 ## 0.18.0 — 2026-11-18
 
