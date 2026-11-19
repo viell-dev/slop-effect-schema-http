@@ -262,12 +262,6 @@ const readsContainer = (side: Ast, value: unknown): boolean =>
     ? !stageRefuses(side, "array") && !isStructDeclaration(side)
     : !stageRefuses(side, "record"));
 
-/**
- * Which empty classes read a list's cells as given: the one Effect's first fit gives the list, or,
- * once a reading shows that a later one took it, every one.
- */
-export type Classes = "first" | "all";
-
 /** A step Effect reads a value through without this seeing its keys, so it keeps them all. */
 const readsUnseen = (ast: Ast): boolean =>
   (ast._tag === "Declaration" && !isStructDeclaration(ast)) ||
@@ -276,24 +270,64 @@ const readsUnseen = (ast: Ast): boolean =>
   ast._tag === "ObjectKeyword";
 
 /**
+ * The schema a suspension stands for, through any chain of suspensions. A suspension with an encoding
+ * of its own is a codec, so it stays as it is. Resolving runs the thunks, so ask only once a value
+ * is read.
+ */
+const resolved = (ast: Ast): Ast => {
+  const seen = new Set<Ast>();
+  let node = ast;
+  while (
+    node._tag === "Suspend" &&
+    node.encoding === undefined &&
+    !seen.has(node)
+  ) {
+    seen.add(node);
+    node = node.thunk();
+  }
+  return node;
+};
+
+/** Whether a codec reads this encoded side, or a member of it, through an unseen step. */
+const unseenAt = (to: Ast, value: unknown, seen = new Set<Ast>()): boolean => {
+  const node = resolved(to);
+  if (seen.has(node)) return false;
+  seen.add(node);
+  return node._tag === "Union"
+    ? node.types.some((member) => unseenAt(member, value, seen))
+    : readsUnseen(node) && readsContainer(node, value);
+};
+
+/** Middleware on this very node, which can turn a refusal into a value of its own. */
+const recoversHere = (ast: Ast): boolean =>
+  (ast.encoding ?? []).some(
+    ({ transformation }) => transformation._tag === "Middleware",
+  );
+
+/**
  * The schemas a value can be read against here: each member its tag leaves, on each side that can
  * read the value's container. A codec that reads its encoded side through an opaque declaration or
- * an open schema holds what it reads as given, as an empty struct does: its keys are not unstated,
- * so if it cannot take the value, they are refused rather than stripped. A member that is itself
- * such a schema keeps the opaque reading below it.
+ * an open schema, suspended or as a member of a union there, holds what it reads as given, as an
+ * empty struct does: its keys are not unstated, so if it cannot take the value, they are refused
+ * rather than stripped. A member that is itself such a schema keeps the opaque reading below it.
+ *
+ * Middleware can recover from any refusal, which only its reading shows, so a node with middleware
+ * and its encoding keep every side, as before container kinds were judged; its recovery is held to
+ * {@link lostCells} instead.
  */
 const sidesOf = (
   ast: Ast,
   value: unknown,
-  classes: Classes = "first",
+  judged = true,
 ): ReadonlyArray<Ast> => {
-  const reads = readsContainer(ast, value);
+  const judges = judged && !recoversHere(ast);
+  const reads = !judges || readsContainer(ast, value);
   const links = ast.encoding ?? [];
   return [
     ...(ast._tag === "Union"
-      ? membersOf(ast, value, classes)
+      ? membersOf(ast, value)
       : ast._tag === "Suspend"
-        ? sidesOf(ast.thunk(), value, classes)
+        ? sidesOf(ast.thunk(), value, judges)
         : reads
           ? [ast]
           : []),
@@ -301,16 +335,18 @@ const sidesOf = (
     // such as the tuple a codec decodes the class from.
     ...(!reads && ast._tag === "Declaration" ? links.slice(1) : links).flatMap(
       ({ to }) => [
-        ...(readsUnseen(to) && readsContainer(to, value) ? [asGiven] : []),
-        ...sidesOf(to, value, classes),
+        ...(unseenAt(to, value) ? [asGiven] : []),
+        ...sidesOf(to, value, judges),
       ],
     ),
   ];
 };
 
-/** A class with no fields, whose struct reads any value but null and undefined. */
+/** A class with no fields, whose struct reads any value but null and undefined. A codec is not one. */
 const isEmptyClass = (ast: Ast): boolean =>
-  isStructDeclaration(ast) && isSignaturelessObject(ast.encoding![0]!.to);
+  isStructDeclaration(ast) &&
+  ast.encoding!.length === 1 &&
+  isSignaturelessObject(ast.encoding![0]!.to);
 
 /** A union whose members Effect tries in order, as one list with the members around it. */
 const isAnyOf = (ast: Ast): ast is SchemaAST.Union =>
@@ -323,13 +359,13 @@ const isAnyOf = (ast: Ast): ast is SchemaAST.Union =>
  * any-of union and a suspended member take their place in that order. An empty class before every
  * other member that can read a list takes any list by first fit and keeps its cells as given, so it
  * reads them as an empty struct does. A later one takes the list only when every earlier reader
- * refuses it, which only a reading shows, so it then needs `classes` to be `"all"`. A guarded Void
- * declines a list with a defined cell, and a list without one has no cell to strip.
+ * refuses it, which only a reading shows; it is noted in `passed`, and {@link restoredCells} gives
+ * it the caller's cells when it does. A guarded Void declines a list with a defined cell, and a list
+ * without one has no cell to strip.
  */
 const membersOf = (
   union: SchemaAST.Union,
   value: unknown,
-  classes: Classes,
   passed?: Array<Ast>,
 ) => {
   let taken = false;
@@ -337,17 +373,17 @@ const membersOf = (
     members
       .filter((member) => !ruledOut(member, value))
       .flatMap((member) => {
-        const resolved = member._tag === "Suspend" ? member.thunk() : member;
-        if (isAnyOf(resolved)) return visit(resolved.types);
-        if (Array.isArray(value) && isEmptyClass(resolved)) {
-          if (!taken || classes === "all") {
+        const node = resolved(member);
+        if (isAnyOf(node)) return visit(node.types);
+        if (Array.isArray(value) && isEmptyClass(node)) {
+          if (!taken) {
             taken = true;
             return [asGiven];
           }
-          passed?.push(resolved);
+          passed?.push(node);
           return [];
         }
-        const sides = sidesOf(resolved, value, classes);
+        const sides = sidesOf(node, value);
         taken ||= sides.some(({ _tag }) => _tag !== "Void");
         return sides;
       });
@@ -464,13 +500,10 @@ const readAsArray = (sides: ReadonlyArray<Ast>): boolean =>
   readAsStruct(sides, readsOpaquely(sides));
 
 /** Bring a value's {@link unlisted} fields out as keys, at any depth, and take out what `drops` says. */
-const rewriting = (
-  drops: (item: unknown, stated: boolean) => boolean,
-  classes: Classes = "first",
-) => {
+const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
   const rewrite = (types: ReadonlyArray<Ast>, value: unknown): unknown => {
     if (types.length === 0 || !isObject(value)) return value;
-    const sides = types.flatMap((type) => sidesOf(type, value, classes));
+    const sides = types.flatMap((type) => sidesOf(type, value));
     const hidden = unlisted(sides, value);
     const open = leaveKeysOpen(sides);
     const plain = isPlain(value);
@@ -531,18 +564,31 @@ const rewriting = (
       // A view that does not read array layout still keeps every cell the caller supplied: an own
       // cell it did not rewrite keeps its descriptor, and an inherited one stays inherited.
       const rewritten = new Set(entries.map(([key]) => key));
+      let positions = 0;
       for (const key of Reflect.ownKeys(value)) {
         const index = arrayIndex(key);
-        if (index !== undefined && index < length && !rewritten.has(key))
+        if (index === undefined || index >= length) continue;
+        positions++;
+        if (!rewritten.has(key))
           Object.defineProperty(
             output,
             key,
             Object.getOwnPropertyDescriptor(value, key)!,
           );
       }
-      const prototype: unknown = Object.getPrototypeOf(value);
-      if (prototype !== Array.prototype)
-        Object.setPrototypeOf(output, prototype as object | null);
+      // Own cells at every position leave no cell to inherit, so the prototype is not asked, which
+      // a Proxy would observe. Where one is, a prototype that cannot be read leaves the list as it
+      // was read before this kept inherited cells.
+      if (positions < length) {
+        let prototype: unknown = Array.prototype;
+        try {
+          prototype = Object.getPrototypeOf(value);
+        } catch {
+          // Keep the ordinary prototype.
+        }
+        if (prototype !== Array.prototype)
+          Object.setPrototypeOf(output, prototype as object | null);
+      }
     }
     return output;
   };
@@ -556,12 +602,6 @@ const rewriting = (
  */
 export const normalised = rewriting(
   (item, stated) => item === undefined || !stated,
-);
-
-/** {@link normalised}, with every empty class reading a list's cells as given. */
-export const normalisedForClasses = rewriting(
-  (item, stated) => item === undefined || !stated,
-  "all",
 );
 
 /** A value as the caller gave it, but for what {@link unlisted} brings out as keys. */
@@ -675,44 +715,108 @@ export const recovers = holdingResolved((ast) =>
 /** Whether a schema holds an empty class. Ask it once a value is read, through {@link lazily}. */
 export const holdsEmptyClass = holdingResolved(isEmptyClass);
 
+/** Whether a member these schemas offer at a value has middleware, through groups and suspensions. */
+const offersRecovery = (types: ReadonlyArray<Ast>): boolean => {
+  const seen = new Set<Ast>();
+  const offers = (ast: Ast): boolean => {
+    const node = resolved(ast);
+    if (seen.has(node)) return false;
+    seen.add(node);
+    return (
+      recoversHere(node) || (node._tag === "Union" && node.types.some(offers))
+    );
+  };
+  return types.some(offers);
+};
+
 /**
- * The cells of a caller's list a reading lost. Middleware that takes a list it cannot read keeps the
- * cells or the request is refused. For any other value it gives its own reading, as Effect's does.
+ * The cells of a caller's list a reading lost where middleware could take that list. Middleware that
+ * takes a list keeps its cells, or the request is refused; for any other value it gives its own
+ * reading, as Effect's does. This follows only the schemas stated for a value, so it reads nothing
+ * that an opaque or open schema holds.
  */
 export const lostCells = (
   types: ReadonlyArray<Ast>,
   given: unknown,
   value: unknown,
   output: unknown,
-): ReadonlyArray<Path> =>
-  missing(types, given, value, output).filter(
-    (path) => typeof path.at(-1) === "number",
-  );
+  path: Path = [],
+): ReadonlyArray<Path> => {
+  if (types.length === 0 || !isObject(given)) return [];
+  if (Array.isArray(given) && offersRecovery(types))
+    return keysOf(given).flatMap((key) => {
+      const index = arrayIndex(key);
+      return index === undefined ||
+        given[key] === undefined ||
+        has(value, key) ||
+        has(output, key)
+        ? []
+        : [[...path, index]];
+    });
+  const sides = types.flatMap((type) => sidesOf(type, given));
+  return keysOf(given, readAsArray(sides)).flatMap((key) => {
+    const inner = heldAt(sides, key);
+    return inner.length === 0
+      ? []
+      : lostCells(inner, given[key], at(value, key), at(output, key), [
+          ...path,
+          Array.isArray(given) ? (arrayIndex(key) ?? key) : key,
+        ]);
+  });
+};
+
+/** Whether a union these schemas offer at a list has an empty class after another list reader. */
+const passesClass = (types: ReadonlyArray<Ast>, list: unknown): boolean => {
+  const passed: Array<Ast> = [];
+  for (const type of types) {
+    const node = resolved(type);
+    if (node._tag === "Union") membersOf(node, list, passed);
+  }
+  return passed.length > 0;
+};
+
+/** A copy of an output this module made, with the same prototype, which can take a changed key. */
+const copied = (output: Record<PropertyKey, unknown>) =>
+  Array.isArray(output)
+    ? output.slice()
+    : Object.defineProperties(
+        Object.create(Object.getPrototypeOf(output) as object | null),
+        Object.getOwnPropertyDescriptors(output),
+      );
 
 /**
- * Whether a reading gave a list of the caller's to an empty class that comes after another member
- * that can read lists. Such a class read the cells that member's reading left out, so the cells
- * have to be read again, as given; see {@link normalisedForClasses}.
+ * A reading's output with the caller's cells given back to an empty class that took a list after
+ * another member that reads lists refused it. The class read the cells that member's reading cut, so
+ * its copy gets the caller's, at that list only; nothing is read again. This follows only the
+ * schemas stated for a value, so it reads nothing that an opaque or open schema holds.
  */
-export const passedClassTook = (
+export const restoredCells = (
   types: ReadonlyArray<Ast>,
   given: unknown,
+  input: unknown,
   output: unknown,
-): boolean => {
-  if (!isObject(given)) return false;
-  if (Array.isArray(given) && isObject(output) && !Array.isArray(output)) {
-    const passed: Array<Ast> = [];
-    for (const type of types) {
-      const resolved = type._tag === "Suspend" ? type.thunk() : type;
-      if (resolved._tag === "Union")
-        membersOf(resolved, given, "first", passed);
-    }
-    if (passed.length > 0) return true;
+): unknown => {
+  if (types.length === 0 || !isObject(given) || !isObject(output))
+    return output;
+  if (Array.isArray(given) && !Array.isArray(output)) {
+    if (!Array.isArray(input) || !passesClass(types, given)) return output;
+    const cells = input as unknown as Record<PropertyKey, unknown>;
+    const copy = copied(output);
+    for (const key of keysOf(cells))
+      if (arrayIndex(key) !== undefined && Object.hasOwn(copy, key))
+        copy[key] = cells[key];
+    return copy;
   }
   const sides = types.flatMap((type) => sidesOf(type, given));
-  return keysOf(given, readAsArray(sides)).some((key) =>
-    passedClassTook(heldAt(sides, key), given[key], at(output, key)),
-  );
+  let copy: Record<PropertyKey, unknown> | undefined;
+  for (const key of keysOf(given, readAsArray(sides))) {
+    const inner = heldAt(sides, key);
+    if (inner.length === 0) continue;
+    const before = at(output, key);
+    const after = restoredCells(inner, given[key], at(input, key), before);
+    if (after !== before) (copy ??= copied(output))[key] = after;
+  }
+  return copy ?? output;
 };
 
 /** What a writer writes as given. A value it leaves out or replaces fails this. */

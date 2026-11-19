@@ -985,12 +985,16 @@ describe("members that cannot read the caller's container", () => {
         Schema.Union([Schema.Struct({}), Open, Rows]),
       ])
         expect(yield* prepared(schema, row())).toEqual(kept(row()));
-      // A recovery that loses the caller's cells does not take the list from the list member.
+      // Middleware keeps the reading it had before container kinds were judged, so the record's
+      // values hold the cell key and the recovery takes the list; it loses every cell, so it refuses.
       const Recovering = Open.pipe(
         Schema.catchDecoding(() => Effect.succeedSome({ recovered: true })),
       );
       for (const schema of either(Rows, Recovering))
-        expect(yield* prepared(schema, row())).toEqual(kept([{ limit: "x" }]));
+        expect(yield* prepared(schema, row())).toEqual(refused);
+      expect(
+        yield* prepared(Schema.Union([Rows, Recovering]), [{ limit: "x" }]),
+      ).toEqual(kept([{ limit: "x" }]));
     }),
   );
 
@@ -1018,9 +1022,20 @@ describe("members that cannot read the caller's container", () => {
   );
 
   // A codec that reads its encoded side through an opaque declaration.
-  const FromList = Schema.declare(
+  const Listed = Schema.declare(
     (input: unknown): input is ReadonlyArray<unknown> => Array.isArray(input),
-  ).pipe(
+  );
+  const FromList = Listed.pipe(
+    Schema.decodeTo(
+      Open,
+      SchemaTransformation.transform({
+        decode: (cells): Record<string, unknown> => ({ ...cells }),
+        encode: (record) => Object.values(record),
+      }),
+    ),
+  );
+  // The same codec with its declaration behind a suspension.
+  const FromDeferredList = Schema.suspend(() => Listed).pipe(
     Schema.decodeTo(
       Open,
       SchemaTransformation.transform({
@@ -1056,12 +1071,63 @@ describe("members that cannot read the caller's container", () => {
     }),
   );
 
+  it.effect(
+    "keeps a list a codec reads through a deferred or grouped side",
+    () =>
+      Effect.gen(function* () {
+        const FromTwiceDeferred = Schema.suspend(() =>
+          Schema.suspend(() => Listed),
+        ).pipe(
+          Schema.decodeTo(
+            Open,
+            SchemaTransformation.transform({
+              decode: (cells): Record<string, unknown> => ({ ...cells }),
+              encode: (record) => Object.values(record),
+            }),
+          ),
+        );
+        const FromListOrText = Schema.Union([Listed, Schema.String]).pipe(
+          Schema.decodeTo(
+            Open,
+            SchemaTransformation.transform({
+              decode: (cells): Record<string, unknown> =>
+                typeof cells === "string" ? { text: cells } : { ...cells },
+              encode: (record) => Object.values(record),
+            }),
+          ),
+        );
+        const FromDeferredUnknown = Schema.suspend(() => Schema.Unknown).pipe(
+          Schema.decodeTo(
+            Open,
+            SchemaTransformation.transform({
+              decode: (cells): Record<string, unknown> => ({
+                ...(cells as object),
+              }),
+              encode: (record) => Object.values(record),
+            }),
+          ),
+        );
+        // The encoded side holds the cells as given wherever the codec reaches its declaration.
+        for (const codec of [
+          FromDeferredList,
+          FromTwiceDeferred,
+          FromListOrText,
+          FromDeferredUnknown,
+        ])
+          for (const schema of either(Rows, codec))
+            expect(yield* prepared(schema, row())).toEqual(kept(row()));
+      }),
+  );
+
   it.effect("refuses a cell key the unseen member then cannot write", () =>
     Effect.gen(function* () {
       // The record behind the codec takes no `undefined` inside a JSON value, so the subtree that
       // only the codec held is refused, not left out with the list member's reading.
       const nested = [{ limit: "x", z: { keep: 1, absent: undefined } }];
-      for (const schema of either(Rows, FromList)) {
+      for (const schema of [
+        ...either(Rows, FromList),
+        ...either(Rows, FromDeferredList),
+      ]) {
         const failure = yield* Effect.flip(prepare(schema, nested, "body"));
         expect(failure).toBeInstanceOf(Schema.SchemaError);
         expect(String(failure)).toContain('[0]["z"]');
@@ -1080,6 +1146,31 @@ describe("members that cannot read the caller's container", () => {
       // The item is invalid for the list member, so only the recovery can take the list.
       for (const schema of either(Rows, Replaced))
         expect(yield* prepared(schema, [{ limit: 5 }])).toEqual(refused);
+    }),
+  );
+
+  // A recovery's value is checked only for the cells it leaves out, not for what it puts in them.
+  const Substituted = Open.pipe(
+    Schema.catchDecoding(() =>
+      Effect.succeedSome({ 0: { limit: "altered", extra: 99 } }),
+    ),
+  );
+
+  it.effect("currently sends a cell a recovery puts in a caller's place", () =>
+    Effect.gen(function* () {
+      for (const schema of either(Rows, Substituted))
+        expect(yield* prepared(schema, [{ limit: 5, extra: 1 }])).toEqual(
+          kept({ 0: { limit: "altered", extra: 99 } }),
+        );
+    }),
+  );
+
+  it.effect.fails("refuses a cell a recovery puts in a caller's place", () =>
+    Effect.gen(function* () {
+      for (const schema of either(Rows, Substituted))
+        expect(yield* prepared(schema, [{ limit: 5, extra: 1 }])).toEqual(
+          refused,
+        );
     }),
   );
 
@@ -1111,6 +1202,20 @@ describe("members that cannot read the caller's container", () => {
       );
       for (const schema of [Restored, ...either(Rows, Restored)])
         expect(yield* prepared(schema, row())).toEqual(kept(cell()));
+    }),
+  );
+
+  it.effect("keeps the caller's own cells a recovery returns", () =>
+    Effect.gen(function* () {
+      // The recovery returns the cells it was given; its reading is not judged before it runs.
+      const cells = row();
+      const Returned = Open.pipe(
+        Schema.catchDecoding(() =>
+          Effect.succeedSome(Object.fromEntries(cells.entries())),
+        ),
+      );
+      for (const schema of [Returned, ...either(Rows, Returned)])
+        expect(yield* prepared(schema, cells)).toEqual(kept(cell()));
     }),
   );
 
@@ -1151,6 +1256,11 @@ describe("members that cannot read the caller's container", () => {
         Schema.Union([Open, Bare, Rows]),
         Schema.Union([Schema.Union([Open, Bare]), Rows]),
         Schema.Union([Schema.suspend(() => Bare), Rows, Open]),
+        Schema.Union([
+          Schema.suspend(() => Schema.suspend(() => Bare)),
+          Rows,
+          Open,
+        ]),
         // An earlier reader that refuses the list leaves it to the class.
         Schema.Union([
           Schema.Tuple([Schema.Number, Schema.Number]),
@@ -1158,9 +1268,112 @@ describe("members that cannot read the caller's container", () => {
           Rows,
           Open,
         ]),
+        Schema.Union([
+          Schema.Tuple([Schema.Number, Schema.Number]),
+          Schema.suspend(() => Schema.suspend(() => Bare)),
+          Rows,
+          Open,
+        ]),
       ])
         expect(yield* prepared(schema, row())).toEqual(kept(cell()));
     }),
+  );
+
+  it.effect("reads a class's cells again only where it takes the list", () =>
+    Effect.gen(function* () {
+      const counts = { decode: 0, encode: 0 };
+      const Price = Schema.String.pipe(
+        Schema.decodeTo(
+          Schema.Number,
+          SchemaTransformation.transform({
+            decode: (text) => {
+              counts.decode++;
+              return Number(text);
+            },
+            encode: (price) => {
+              counts.encode++;
+              return String(price);
+            },
+          }),
+        ),
+      );
+      const Late = Schema.Union([
+        Schema.Tuple([Schema.Number, Schema.Number]),
+        Bare,
+        Rows,
+        Open,
+      ]);
+      const Tail = Schema.Union([Rows, Bare]);
+      // The class takes the first list; the second stays with the list member that reads it.
+      for (const schema of [
+        Schema.Struct({ first: Late, second: Tail }),
+        Schema.Struct({ second: Tail, first: Late }),
+      ])
+        expect(
+          yield* prepared(schema, { first: row(), second: row() }),
+        ).toEqual(kept({ first: cell(), second: [{ limit: "x" }] }));
+      // A sibling's decoder and encoder run once, as for any value.
+      for (const binding of ["path", "body"] as const) {
+        counts.decode = counts.encode = 0;
+        expect(
+          yield* prepare(
+            Schema.Struct({ price: Price, items: Late }),
+            { price: "05", items: row() },
+            binding,
+          ),
+        ).toEqual({ price: "5", items: cell() });
+        expect(counts).toEqual({ decode: 1, encode: 1 });
+      }
+    }),
+  );
+
+  it.effect("keeps the cells an empty class codec reads from a list", () =>
+    Effect.gen(function* () {
+      const fromCell = SchemaTransformation.transform({
+        decode: ([value]: readonly [unknown]) => new Bare({ 0: value }),
+        encode: (bare: Bare): readonly [unknown] => [Reflect.get(bare, 0)],
+      });
+      const Cell = Schema.Tuple([Schema.Unknown]);
+      // The tuple it is decoded from reads the list, before or after the list member.
+      for (const codec of [
+        Cell.pipe(Schema.decodeTo(Bare, fromCell)),
+        Cell.pipe(
+          Schema.decodeTo(
+            Schema.suspend(() => Bare),
+            fromCell,
+          ),
+        ),
+      ])
+        for (const schema of [codec, ...either(Rows, codec)])
+          expect(yield* prepared(schema, row())).toEqual(kept(row()));
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+  const Parted = Schema.Union([
+    Schema.Struct({ items: Bare }),
+    Schema.Struct({ items: Rows }),
+  ]);
+
+  it.effect(
+    "currently cuts the cells of a class another parent member reads",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* prepared(Parted, { items: row() })).toEqual(
+          kept({ items: { 0: { limit: "x" } } }),
+        );
+      }),
+  );
+
+  it.effect.fails(
+    "keeps the cells of a class another parent member reads",
+    () =>
+      Effect.gen(function* () {
+        // Effect's first fit gives the list to the class, which keeps every cell.
+        expect(yield* prepared(Parted, { items: row() })).toEqual(
+          kept({ items: cell() }),
+        );
+      }),
   );
 });
 
@@ -1186,5 +1399,31 @@ describe("a list beside an open member", () => {
                   ),
                 ).toBe('[{"limit":"first"},{"limit":"last"}]');
       }),
+  );
+
+  it.effect("reads no prototype of a dense list it rebuilds", () =>
+    Effect.gen(function* () {
+      // Its own positions cover the list, so nothing can be inherited.
+      for (const failing of [false, true])
+        for (const schema of either(Rows, Schema.Unknown))
+          for (const binding of ["path", "body"] as const) {
+            let inspected = 0;
+            const input = new Proxy(
+              [{ limit: "first" }, { limit: "last", absent: undefined }],
+              {
+                getPrototypeOf(target) {
+                  inspected++;
+                  if (failing) throw new Error("prototype inspected");
+                  return Reflect.getPrototypeOf(target);
+                },
+              },
+            );
+            const output = yield* prepare(schema, input, binding);
+            expect(inspected).toBe(0);
+            expect(JSON.stringify(output)).toBe(
+              '[{"limit":"first"},{"limit":"last"}]',
+            );
+          }
+    }),
   );
 });

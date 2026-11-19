@@ -381,25 +381,20 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     const seen = (
       given === input ? input : Excess.exposed([ast], input)
     ) as Input<S>;
-    // An empty class after a list member takes a list only when that member refuses it. It then
-    // reads the caller's cells as given, so they are read again with no cell key left out for it.
-    const forClasses = (read: Written<A>, options: SchemaAST.ParseOptions) =>
-      holdsEmptyClass() && Excess.passedClassTook([ast], given, read.output)
-        ? Effect.orElseSucceed(
-            kept(
-              Excess.normalisedForClasses([ast], input) as Input<S>,
-              options,
-            ),
-            () => read,
-          )
-        : Effect.succeed(read);
+    // An empty class after a list member takes a list only when that member refuses it. It reads
+    // the caller's cells as given, so its output gets them back at that list; nothing is read again.
+    const forClasses = (read: Written<A>): Written<A> =>
+      holdsEmptyClass()
+        ? {
+            ...read,
+            output: Excess.restoredCells([ast], given, input, read.output) as A,
+          }
+        : read;
     const attempt = (options: SchemaAST.ParseOptions) =>
       given === input
         ? kept(input, options)
         : Effect.catch(
-            Effect.flatMap(kept(given as Input<S>, options), (read) =>
-              forClasses(read, options),
-            ),
+            Effect.map(kept(given as Input<S>, options), forClasses),
             (first) =>
               Effect.mapError(kept(seen, options), (last) => ({
                 ...last,

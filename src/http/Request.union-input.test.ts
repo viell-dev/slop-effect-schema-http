@@ -379,9 +379,68 @@ describe("signature-less object candidates under unions", () => {
           );
           runs.push({ ...counts });
         }
-        expect(runs[0]).toMatchObject({ decode: 1, recover: 0 });
-        for (const run of runs) expect(run).toEqual(runs[0]);
+        // Normalization reads the getter once and the decoder once more; 0.18.0 read it three times.
+        for (const run of runs)
+          expect(run).toEqual({ decode: 1, recover: 0, reads: 2 });
       }),
+  );
+
+  // An omitted field's member reads nothing, so it neither refuses a sibling's value nor runs code
+  // inside an opaque one.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+  it.effect("leaves sibling values alone beside an omitted field", () =>
+    Effect.gen(function* () {
+      class Bare extends Schema.Class<Bare>("Bare")({}) {}
+      const Open = Schema.Record(Schema.String, Schema.Unknown);
+      const Failing = Open.pipe(
+        Schema.catchDecoding((issue) => Effect.fail(issue)),
+      );
+      const Joined = Schema.Unknown.pipe(
+        Schema.decodeTo(
+          Schema.String,
+          SchemaTransformation.transform({
+            decode: (cells) =>
+              Array.isArray(cells) ? cells.join(",") : String(cells),
+            encode: (text) => text,
+          }),
+        ),
+      );
+      const joined = Schema.Union([
+        Schema.Struct({ a: Joined, r: Schema.optionalKey(Failing) }),
+        Schema.Struct({ b: Schema.Boolean }),
+      ]);
+      expect(
+        yield* bodyOf(post(joined), { body: { a: ["x", "y"] } as never }),
+      ).toBe('{"a":"x,y"}');
+      for (const unused of [Bare, Failing])
+        for (const failing of [false, true]) {
+          let reads = 0;
+          const schema = Schema.Union([
+            Schema.Struct({
+              a: Schema.String,
+              b: Schema.Unknown,
+              c: Schema.optionalKey(unused),
+            }),
+            Schema.Struct({ id: Schema.String }),
+          ]);
+          const opaque = {
+            deep: {
+              get field() {
+                reads++;
+                if (failing) throw new Error("opaque field read");
+                return 42;
+              },
+            },
+          };
+          expect(
+            yield* urlOf(
+              Request.get("/x").pipe(Request.path(schema, () => "/ok")),
+              { path: { a: "ok", extra: "dropped", b: opaque } as never },
+            ),
+          ).toBe("/x/ok");
+          expect(reads).toBe(0);
+        }
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/249

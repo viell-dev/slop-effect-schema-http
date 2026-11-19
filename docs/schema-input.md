@@ -395,12 +395,15 @@ list leaves the codec's other steps, so a class decoded from `Schema.Tuple([Sche
 reads a list through the tuple.
 
 A codec Effect reads through an encoded side this library cannot see into, such as `Schema.declare`
-or `Schema.Unknown`, holds what it reads as given, as an empty struct does. So beside a list member
-it keeps a cell key that member does not state, and when it cannot take the value, such as when its
-own JSON reading refuses an `undefined` inside the cell, that key is refused rather than left out.
-`Schema.catchDecoding` middleware that takes a caller's list must keep its cells: a recovery that
-returns a value of its own instead is refused. For any other value, middleware gives its own
-reading, as Effect's does. These limits remain:
+or `Schema.Unknown`, holds what it reads as given, as an empty struct does, including through
+`Schema.suspend` or a union on that side. So beside a list member it keeps a cell key that member
+does not state, and when it cannot take the value, such as when its own JSON reading refuses an
+`undefined` inside the cell, that key is refused rather than left out. `Schema.catchDecoding`
+middleware keeps its 0.18.0 reading: a record that recovers is not ruled out for a list before it
+runs. When it takes a caller's list, a recovery that leaves out the list's cells, such as one that
+returns a value of its own under other keys, is refused. One that puts a value of its own at a
+cell's index is not refused yet, as the [active limits](#active-limits-and-recovery) give. For any
+other value, middleware gives its own reading, as Effect's does. These limits remain:
 
 - When another field makes a parent read field by field, a constructor default can still replace an
   invalid decoded item value, with or without the record: `{ n: 1, items: [{ limit: "x" }] }` under
@@ -510,8 +513,9 @@ bounded case.
 ## Active limits and recovery
 
 The kept-or-refused rule is the intended contract. Known violations remain under
-[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143) and
-[#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170); an unsupported proof is not
+[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143),
+[#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170) and
+[#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243); an unsupported proof is not
 a guarantee that preparation refuses safely. [A list stays a list](#a-list-stays-a-list) lists the
 remaining list limit under #241.
 
@@ -525,6 +529,18 @@ remaining list limit under #241.
   leaves out symbol keys and symbol values
   ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). Beside a stated member
   the same fields are refused, as above.
+- A `Schema.catchDecoding` recovery that takes a caller's list is checked only for the cells it
+  leaves out, not for what it puts in them. A record beside `Schema.Array(Plain)` whose recovery
+  returns `{ 0: { limit: "altered" } }` sends that for `[{ limit: 5, extra: 1 }]`
+  ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). Have the recovery
+  return the caller's cells or fail.
+- An empty `Schema.Class` under one parent member loses the cells' unstated keys when a list member
+  under another parent member reads the same field. With
+  `Union([Schema.Struct({ items: Bare }), Schema.Struct({ items: Schema.Array(Plain) })])`, where
+  `Bare` is an empty class, `{ items: [{ limit: "x", extra: 1 }] }` sends
+  `{"items":{"0":{"limit":"x"}}}`, although Effect's first fit gives the class every cell
+  ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). Put both in one union,
+  as in `Schema.Struct({ items: Schema.Union([Bare, Schema.Array(Plain)]) })`, which keeps them.
 - Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
   name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that
   choice for the whole value. The [0.14 migration](./release-notes/0.14.md#account-for-both-names)

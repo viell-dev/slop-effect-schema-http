@@ -141,17 +141,24 @@ preparation never makes itself. So a class states nothing for a list's cells; ru
 leaves a codec's later steps, such as a tuple the class is decoded from. This does not change member
 choice. An empty class that takes a list by first fit reads the cells as given, as an empty struct
 does. Normalization follows Effect's member order through grouped any-of unions and suspended
-members; when an earlier reader refuses the list at run time and a later empty class takes it, the
-reading shows that, and the cells are read again as given for the class. Elsewhere the list member
-reads the list, with its unstated cell keys left out.
+members, however deeply suspended; when an earlier reader refuses the list at run time and a later
+empty class takes it, the reading shows that, and the class's cells are put back from the caller's
+list at that value alone. Sibling values keep their own reading, and no caller code runs again.
+Elsewhere the list member reads the list, with its unstated cell keys left out.
 
 A codec Effect reads through an encoded side this library cannot see into, an opaque declaration or
-an open schema, holds what it reads as given, as an empty struct does, so a key it holds is not
-unstated; if it cannot take the value, the key is refused rather than left out. Middleware that
-turns a refusal into a value is held to the field-loss check for a caller's list, so a recovery that
-keeps none of its cells is refused. A schema question that needs a suspended schema waits until a
-value is read, so a binding can be made before the suspension's target is defined. A rebuilt list
-keeps every cell the caller supplied, hidden or inherited, beside any member.
+an open schema, holds what it reads as given, as an empty struct does, including through a
+suspension or a union on that side. So a key it holds is not unstated; if it cannot take the value,
+the key is refused rather than left out. Middleware that turns a refusal into a value keeps the
+reading it had before container kinds were judged: nothing inside it is ruled out for a container,
+so a recovery is not judged before it runs. Its result is then held to the field-loss check for a
+caller's list, so a recovery that keeps none of its cells is refused; one that puts a value of its
+own at a cell's index is not checked yet, as the [active
+limits](./schema-input.md#active-limits-and-recovery) give. Field-loss accounting does not walk into
+a value a member reads as given. A schema question that needs a suspended schema waits until a value
+is read, so a binding can be made before the suspension's target is defined. A rebuilt list keeps
+every cell the caller supplied, hidden or inherited, beside any member, and reads the list's
+prototype only when its own positions do not cover its length.
 
 An empty struct, alone or as an empty class's fields, keeps every key of the value it reads, at
 every depth. Beside a member that states fields, it is the member that keeps them all, so a key only

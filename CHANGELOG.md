@@ -56,11 +56,13 @@
   class that takes a list by first fit, including through a grouped union, a suspension or after an
   earlier reader that refuses the list, reads every cell as given, so
   `Union([EmptyClass, Schema.Array(Plain)])` keeps `extra` in `{"0":{...}}`, which 0.18.0 left out.
-  A codec whose encoded side is an opaque declaration or `Schema.Unknown` keeps the cell keys it
-  reads, or refuses them when it cannot take the list. `catchDecoding` middleware that takes a
-  caller's list with a value of its own, keeping none of its cells, now refuses where 0.18.0 sent
-  that value. A query or header schema that only a cast admits, with a list member that writes
-  objects, now refuses with `InvalidRequest` from the field-pair check instead of a `SchemaError`.
+  A codec whose encoded side is an opaque declaration or `Schema.Unknown`, also through a suspension
+  or a union, keeps the cell keys it reads, or refuses them when it cannot take the list.
+  `catchDecoding` middleware keeps its 0.18.0 reading, but one that takes a caller's list with a
+  value of its own, keeping none of its cells, now refuses where 0.18.0 sent that value; a recovery
+  that puts its own value at a cell's index still sends it. A query or header schema that only a
+  cast admits, with a list member that writes objects, now refuses with `InvalidRequest` from the
+  field-pair check instead of a `SchemaError`.
 - Keep a hidden or inherited list cell when normalization rebuilds the list beside `Schema.Unknown`,
   `Schema.Any` or `Schema.Object`
   ([#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257)). With a non-enumerable
