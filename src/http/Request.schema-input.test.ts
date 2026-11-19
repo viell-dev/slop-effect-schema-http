@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import {
   DateTime,
   Effect,
+  Exit,
   Option,
   Schema,
   SchemaGetter,
@@ -1965,6 +1966,51 @@ describe("a field a part lost under a parent read field by field", () => {
         expect(yield* sentBy(parent.schema, parent.body(pair))).toBe(
           parent.sent({ p: "1", q: "2" }),
         );
+      }),
+  );
+
+  it.effect(
+    "does not count a name every object inherits as the caller's field",
+    () =>
+      Effect.gen(function* () {
+        // Each part's value inherits the name the schema renames on the wire, as every object
+        // inherits `toString` and `constructor`, but the caller gave only `w` and `a`.
+        for (const name of [
+          "label",
+          "toString",
+          "constructor",
+          "valueOf",
+          "hasOwnProperty",
+        ]) {
+          const Renamed = Schema.Struct({
+            [name]: Schema.String,
+            a: Schema.String,
+          }).pipe(Schema.encodeKeys({ [name]: "w" })) as unknown as Field;
+          const parent = parentOf(Renamed, false);
+          expect(
+            yield* sentBy(parent.schema, parent.body({ w: "x", a: "y" })),
+          ).toBe(parent.sent({ w: "x", a: "y" }));
+        }
+        // An optional field named after one is left out of a part read beside a sibling that relaxes
+        // the write. The part reads as Effect reads the caller's value: Effect 4.1.4 reads only a
+        // field the value holds, and Effect 4.0.7 reads the inherited `constructor` and refuses it.
+        const Optional = Schema.Struct({
+          a: Schema.Number,
+          b: n,
+          constructor: Schema.optionalKey(Schema.String),
+        }).pipe(Schema.encodeKeys({ b: "w_b" } as never));
+        const part = { a: 1, w_b: "1" };
+        const sent = yield* Effect.exit(
+          sentBy(Schema.Struct({ a: Optional, rename: Relaxing }), {
+            a: part,
+            rename: { b: "go" },
+          } as never),
+        );
+        if (Exit.isSuccess(Schema.decodeUnknownExit(Optional)(part)))
+          expect(sent).toEqual(
+            Exit.succeed('{"a":{"a":1,"w_b":"1"},"rename":{"a":"go"}}'),
+          );
+        else expect(Exit.isFailure(sent)).toBe(true);
       }),
   );
 });

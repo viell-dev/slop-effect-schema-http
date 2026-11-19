@@ -26,6 +26,11 @@ const everyKind: ReadonlyArray<Kind> = [
   "function",
 ];
 
+/** What a struct that states no field is offered: any value but `null` and `undefined`. */
+const anyValue: ReadonlyArray<Kind> = everyKind.filter(
+  (kind) => kind !== "null" && kind !== "undefined",
+);
+
 const kindOf = (input: unknown): Kind =>
   input === null
     ? "null"
@@ -78,7 +83,7 @@ const kindsOf = (ast: SchemaAST.AST): ReadonlyArray<Kind> => {
     case "Objects":
       return ast.propertySignatures.length > 0 || ast.indexSignatures.length > 0
         ? ["object"]
-        : everyKind;
+        : anyValue;
     case "Enum":
       return [...new Set(ast.enums.map(([, value]) => typeof value as Kind))];
     case "Literal":
@@ -106,7 +111,11 @@ const literalOf = (
       ? { value: ast.symbol }
       : undefined;
 
-/** Required literal fields, which pre-select members as tags. A class keeps its own in an annotation. */
+/**
+ * Required literal fields, which pre-select members as tags. A class keeps its own in an annotation.
+ * A field is followed to the end of its encoding before Effect asks whether it is optional, so a tag
+ * that is optional on one side only counts by the side the union parses.
+ */
 const sentinelsOf = (ast: SchemaAST.AST): ReadonlyArray<Sentinel> => {
   switch (ast._tag) {
     case "Declaration": {
@@ -115,18 +124,20 @@ const sentinelsOf = (ast: SchemaAST.AST): ReadonlyArray<Sentinel> => {
     }
     case "Objects":
       return ast.propertySignatures.flatMap(({ name, type }) => {
-        const literal = SchemaAST.isOptional(type)
+        const candidate = candidateOf(type);
+        const literal = SchemaAST.isOptional(candidate)
           ? undefined
-          : literalOf(candidateOf(type));
+          : literalOf(candidate);
         return literal === undefined
           ? []
           : [{ key: name, literal: literal.value }];
       });
     case "Arrays":
       return ast.elements.flatMap((element, index) => {
-        const literal = SchemaAST.isOptional(element)
+        const candidate = candidateOf(element);
+        const literal = SchemaAST.isOptional(candidate)
           ? undefined
-          : literalOf(candidateOf(element));
+          : literalOf(candidate);
         return literal === undefined
           ? []
           : [{ key: index, literal: literal.value }];
@@ -154,15 +165,46 @@ const prototypeKeys = new Set<PropertyKey>(
   Reflect.ownKeys(Object.prototype),
 ).add("__proto__");
 
-const hasField = (input: object, key: PropertyKey): boolean =>
+/**
+ * Whether a value holds a field: an own property, or one it inherits from somewhere other than
+ * `Object.prototype`, as an accessor on a class is. A name every object inherits, such as
+ * `toString`, is no field of the value. This is also how Effect 4.1.4 looks for a tag.
+ */
+export const hasField = (input: object, key: PropertyKey): boolean =>
   Object.hasOwn(input, key) ||
   (key in input &&
     !prototypeKeys.has(typeof key === "number" ? String(key) : key));
 
-const fieldOf = (input: object, key: PropertyKey): unknown =>
-  hasField(input, key)
-    ? (input as Record<PropertyKey, unknown>)[key]
-    : undefined;
+/** Effect 4.0.7's rule: any name the value has through `in`, but `__proto__` only as its own. */
+const hasName = (input: object, key: PropertyKey): boolean =>
+  key === "__proto__" ? Object.hasOwn(input, key) : key in input;
+
+let installedRule: typeof hasField | undefined;
+
+/**
+ * How the installed Effect looks for a tag, found once by encoding through a union whose two
+ * readings differ. Under {@link hasField} the first member's tag named `constructor` is missing, so
+ * that member is tried and its first field's middleware runs; under {@link hasName} every object
+ * has a `constructor`, which does not match, so that member is never tried.
+ */
+const tagRule = (): typeof hasField => {
+  if (installedRule !== undefined) return installedRule;
+  let tried = false;
+  const Tagged = Schema.Struct({
+    seen: Schema.String.pipe(
+      Schema.middlewareEncoding((effect) => {
+        tried = true;
+        return effect;
+      }),
+    ),
+    kind: Schema.Literal("a"),
+    constructor: Schema.Literal("b"),
+  });
+  Schema.encodeUnknownExit(
+    Schema.Union([Tagged, Schema.Struct({ kind: Schema.Literal("a") })]),
+  )({ seen: "", kind: "a" });
+  return (installedRule = tried ? hasField : hasName);
+};
 
 const none: ReadonlyArray<number> = [];
 
@@ -172,15 +214,20 @@ const none: ReadonlyArray<number> = [];
  * @remarks
  * Effect pre-selects a union's members by kind of value and by literal tags before it runs any
  * member, so a member whose tag does not match never runs its encoder, middleware or checks. The
- * index Effect builds for that is internal, so this reads the same facts from the members' ASTs and
- * applies the rules of Effect 4.1.4, which 4.0.7 shares apart from tags named after
- * `Object.prototype` members. `members` are the union's members as encoding parses them. Revisit when
- * a supported Effect changes how it selects union members.
+ * index Effect builds for that is internal, so this reads the same facts from the members' ASTs, as
+ * Effect follows each one to the end of its encoding, and applies the same rules. Effect 4.0.7 and
+ * 4.1.4 differ only in how they look for a tag named after an `Object.prototype` member, and the
+ * installed version's way is used. `members` are the union's members as encoding parses them. The
+ * parity tests compare this with Effect's own writes; revisit it when a supported Effect changes how
+ * it selects union members.
  */
 export const candidates = (
   members: ReadonlyArray<SchemaAST.AST>,
 ): ((input: unknown) => ReadonlyArray<number>) => {
   type Index = [Map<unknown, Set<number>>, Set<number>];
+  const has = tagRule();
+  const fieldOf = (input: object, key: PropertyKey): unknown =>
+    has(input, key) ? (input as Record<PropertyKey, unknown>)[key] : undefined;
   let bySentinel: Map<PropertyKey, Index> | undefined;
   let sentinelCount = 0;
   let otherwise: Partial<Record<Kind, Array<number>>> | undefined;
@@ -251,7 +298,7 @@ export const candidates = (
       let direct: PropertyKey | undefined;
       if (common !== undefined) {
         const [key, [byValue]] = common;
-        if (hasField(input, key)) {
+        if (has(input, key)) {
           const match = byValue.get(fieldOf(input, key));
           if (match === undefined) return fallback(kind);
           for (const index of match) selected.add(index);
@@ -260,12 +307,12 @@ export const candidates = (
       }
       if (direct === undefined)
         for (const [key, [byValue]] of sentinels)
-          if (hasField(input, key))
+          if (has(input, key))
             for (const index of byValue.get(fieldOf(input, key)) ?? [])
               selected.add(index);
       // A missing key is neutral; an observed one rules out the members that own it and differ.
       for (const [key, [byValue, owners]] of sentinels) {
-        if (key === direct || !hasField(input, key)) continue;
+        if (key === direct || !has(input, key)) continue;
         const match = byValue.get(fieldOf(input, key));
         for (const index of selected)
           if (owners.has(index) && match?.has(index) !== true)

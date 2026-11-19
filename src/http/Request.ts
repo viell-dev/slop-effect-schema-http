@@ -130,8 +130,8 @@ export type QueryFields = Readonly<
  * Beside a visible object or list candidate in an any-of union, the strict read declines built-in
  * `Schema.Void` for defined enumerable own fields and defined own array cells. The strict write
  * declines Void for every object and array, including when it retries without strict excess
- * checking. That retry selects members by kind and literal tags as Effect does, and a struct
- * member it takes has to state every supplied field it was given.
+ * checking. That retry selects members by kind and literal tags as the installed Effect does, and
+ * a struct member it takes has to state every supplied field it was given.
  * Otherwise the first member that could not write the value gives its own `SchemaError`. The
  * guard includes annotated and checked Void and unencoded any-of member unions.
  * The read keeps first-fit order when it sees no defined fields or cells. A union of Void and

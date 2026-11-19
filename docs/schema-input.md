@@ -274,6 +274,8 @@ that key is refused even where a decoding default fills its name again. A field 
 names cannot keep both, so it is refused too. A value the constructor returns unchanged, as an
 opaque declaration's is, lost nothing, and nothing inside it is read again. A key that a decoder or
 transformation adds to the value it makes is not the caller's, so it is never counted as lost.
+Neither is a name every object inherits, such as `constructor`, where the caller's value does not
+hold it as its own.
 
 A union field read field by field takes its first member reading that keeps everything, ahead of an
 earlier one that loses a field. The object's constructor then runs again over the fields' results,
@@ -352,13 +354,16 @@ write it, the relaxed write that follows can take a later member. That write not
 wrote each value, and a struct member reads only the names it states, so a supplied field it does
 not state is lost, whatever else it writes under that name. A struct that states no field keeps
 every key, and a record keeps the keys its key schema takes. Nothing is decoded from what was sent.
-The relaxed write selects the members to try by kind of value and literal tags, as Effect does,
-before it runs any of them, so a member Effect rules out runs none of its encoders, middleware or
-checks. A nested union that fails its own check or one-of rule credits none of its members, and each
-place a value is written from is checked on its own, so one object given to two fields is checked
-against each field's member. When no member can both keep and write the value, the refusal is the
-error of the first member that could not write it, the error that member alone gives. That holds
-through grouped and suspended unions:
+The relaxed write selects the members to try by kind of value and literal tags, as the installed
+Effect does, before it runs any of them, so a member Effect rules out runs none of its encoders,
+middleware or checks. Like Effect, it follows each tag field through its encoding before it asks
+whether the tag is required. A name every object inherits, such as `toString`, is no field of a
+value that does not hold it as its own, so a member that does not state it loses nothing. A nested
+union that fails its own check or one-of rule credits none of its members, and each place a value is
+written from is checked on its own, so one object given to two fields is checked against each
+field's member. When no member can both keep and write the value, the refusal is the error of the
+first member that could not write it, the error that member alone gives. That holds through grouped
+and suspended unions:
 
 ```ts
 import { Schema } from "effect";
@@ -528,11 +533,12 @@ remaining list limit under #243.
   can still drop `meta` ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)).
   When the member the relaxed write takes loses a supplied field, the request is refused; a later
   member that strips only unsupplied keys is not tried.
-- The relaxed write selects each union's members by kind and literal tags with Effect 4.1.4's rules,
-  before it runs any member. A member with encoding middleware or a suspension is tried for every
-  input, as Effect tries it, so its own steps can run before it fails. Effect 4.0.7 also reads a tag
-  named after an `Object.prototype` member, such as `constructor`, from the prototype when the value
-  lacks it; there the relaxed write follows 4.1.4 instead.
+- The relaxed write selects each union's members by kind and literal tags with a copy of Effect's
+  own selection rules, which Effect keeps internal. Effect 4.0.7 and 4.1.4 differ only for a tag
+  named after an `Object.prototype` member, such as `constructor`, that the value does not hold as
+  its own: 4.0.7 reads the inherited value and 4.1.4 treats the tag as missing. The copy finds the
+  installed version's rule once, with a test write. A member with encoding middleware or a
+  suspension is tried for every input, as Effect tries it, so its own steps can run before it fails.
 - Beside a field that only the relaxed write can send, such as one whose encoder hands on a key its
   struct does not state, that write chooses each union's member as Effect does. That can be an
   earlier member than the one the field's reading or the strict write took, and where it drops a

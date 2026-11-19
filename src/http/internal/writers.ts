@@ -1,8 +1,8 @@
 import { Effect, Schema, SchemaAST, SchemaIssue, SchemaParser } from "effect";
-import { candidates } from "./candidates.js";
+import { candidates, hasField } from "./candidates.js";
 
 /** A union a write went through, the member that wrote the value, and the first that could not. */
-export interface Written {
+export interface WriterNote {
   readonly value: object;
   readonly union: SchemaAST.AST;
   readonly member: SchemaAST.AST;
@@ -10,18 +10,18 @@ export interface Written {
 }
 
 /** What one write noted, in the order its unions finished. */
-export type Writers = Array<Written>;
+export type WriterNotes = Array<WriterNote>;
 
 // Effect 4.0.7 and 4.1.4 spread parse options, preserving this per-write record. Revisit the
 // channel if a supported peer stops forwarding symbol keys.
 const record = Symbol("record union writers");
 type RecordingOptions = SchemaAST.ParseOptions & {
-  readonly [record]?: Writers;
+  readonly [record]?: WriterNotes;
 };
 
 /** Parse options that make a recording writer note each member that wrote a value. */
 export const recordingInto = (
-  writers: Writers,
+  writers: WriterNotes,
   options?: SchemaAST.ParseOptions,
 ): RecordingOptions => ({ ...options, [record]: writers });
 
@@ -179,10 +179,8 @@ function mapSame<A>(items: readonly A[], map: (item: A) => A): readonly A[] {
  * The writer with every visible union noting which member wrote each value.
  *
  * @remarks
- * Each union pre-selects and orders its members by Effect 4.1.4's rules, so with that Effect it
- * writes what the plain writer writes and runs the same member code. Effect 4.0.7 reads a tag named
- * after an `Object.prototype` member from the prototype where a value lacks it, so there it can try
- * other members than this does. It follows a suspended schema when it is
+ * Each union pre-selects and orders its members by the installed Effect's rules, so it writes what
+ * the plain writer writes and runs the same member code. It follows a suspended schema when it is
  * written and stays out of declarations, as the Void guard does. A transformation or middleware on a
  * union itself makes Effect choose again on a transformed copy, which no caller field can be traced
  * to; that choice is noted against the copy and so remains the schema's own.
@@ -268,7 +266,10 @@ export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
   return visit(root);
 };
 
-const isObject = (value: unknown): value is Record<PropertyKey, unknown> =>
+/** Any object or list, whose keys can be read. */
+export const isKeyed = (
+  value: unknown,
+): value is Record<PropertyKey, unknown> =>
   typeof value === "object" && value !== null;
 
 /** Whether an index signature's parameter takes a key, as Effect selects a record's keys. */
@@ -305,15 +306,15 @@ const takes = (parameter: SchemaAST.AST, key: PropertyKey): boolean => {
 };
 
 /** A struct's fields by name, read once for each struct the walk meets. */
-const fieldsBy = new WeakMap<
+const fieldTypesBy = new WeakMap<
   SchemaAST.Objects,
   ReadonlyMap<PropertyKey, SchemaAST.AST>
 >();
 
-const fieldsOf = (ast: SchemaAST.Objects) => {
-  let fields = fieldsBy.get(ast);
+const fieldTypesOf = (ast: SchemaAST.Objects) => {
+  let fields = fieldTypesBy.get(ast);
   if (fields === undefined)
-    fieldsBy.set(
+    fieldTypesBy.set(
       ast,
       (fields = new Map(
         ast.propertySignatures.map(({ name, type }) => [name, type]),
@@ -326,11 +327,11 @@ const fieldsOf = (ast: SchemaAST.Objects) => {
  * The schemas a struct writes a key with: its field of that name and the signatures that take it,
  * or undefined where it drops the key. A struct that states no key keeps them all.
  */
-const typesAt = (
+const writtenWith = (
   ast: SchemaAST.Objects,
   key: PropertyKey,
 ): ReadonlyArray<SchemaAST.AST> | undefined => {
-  const field = fieldsOf(ast).get(key);
+  const field = fieldTypesOf(ast).get(key);
   if (ast.indexSignatures.length === 0)
     return field !== undefined
       ? [field]
@@ -357,8 +358,9 @@ export interface Dropped {
  * @remarks
  * A struct's type side reads only the names it states, so every struct the write goes through drops
  * the other keys of the value before any of its own steps run. A struct that states no key keeps
- * them all. A key counts when the caller supplied it and the decoded value holds it under the same
- * name; one a decoder made is in neither. Each union is followed into the member that wrote the
+ * them all. A key counts when the caller supplied it and the decoded value holds it as a field under
+ * the same name; one a decoder made is in neither, and a name every object inherits, such as
+ * `toString`, is no field of a value that does not hold it. Each union is followed into the member that wrote the
  * value at that place, as the write noted it. A class or other declaration, and a union no member
  * of which wrote there, is the schema's own reading. Only the structure the writer states is
  * followed, so nothing inside an opaque value is read.
@@ -367,10 +369,10 @@ export const dropped = (
   writer: SchemaAST.AST,
   given: unknown,
   value: unknown,
-  written: Writers,
+  written: WriterNotes,
 ): ReadonlyArray<Dropped> => {
   if (written.length === 0) return [];
-  const writers = new WeakMap<object, Map<SchemaAST.AST, Written>>();
+  const writers = new WeakMap<object, Map<SchemaAST.AST, WriterNote>>();
   for (const entry of written) {
     let at = writers.get(entry.value);
     if (at === undefined) writers.set(entry.value, (at = new Map()));
@@ -388,7 +390,7 @@ export const dropped = (
     path: ReadonlyArray<PropertyKey>,
     choice: Choice | undefined,
   ): void => {
-    if (!isObject(supplied) || !isObject(held)) return;
+    if (!isKeyed(supplied) || !isKeyed(held)) return;
     let node: SchemaAST.AST | undefined = ast;
     let chosen = choice;
     while (node?._tag === "Suspend" || node?._tag === "Union") {
@@ -396,7 +398,7 @@ export const dropped = (
         node = node.thunk();
         continue;
       }
-      const entry: Written | undefined = writers.get(held)?.get(node);
+      const entry: WriterNote | undefined = writers.get(held)?.get(node);
       if (entry === undefined) return;
       chosen = { path, before: entry.before };
       node = entry.member;
@@ -406,18 +408,18 @@ export const dropped = (
         if (
           !Object.prototype.propertyIsEnumerable.call(supplied, key) ||
           supplied[key] === undefined ||
-          !(key in held) ||
+          !hasField(held, key) ||
           held[key] === undefined
         )
           continue;
-        const types = typesAt(node, key);
+        const types = writtenWith(node, key);
         if (types === undefined)
           lost.push({
             path: [...path, key],
             union: chosen?.path,
             before: chosen?.before,
           });
-        else if (isObject(supplied[key]) && isObject(held[key])) {
+        else if (isKeyed(supplied[key]) && isKeyed(held[key])) {
           const at = [...path, key];
           for (const type of types)
             visit(type, supplied[key], held[key], at, chosen);

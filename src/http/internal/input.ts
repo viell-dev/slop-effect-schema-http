@@ -1,4 +1,5 @@
 import { Effect, Schema, SchemaAST, SchemaIssue } from "effect";
+import { hasField } from "./candidates.js";
 import { encodedInput } from "./encoded-input.js";
 import * as Excess from "./excess.js";
 import { nestedEncodedInput } from "./nested-input.js";
@@ -8,9 +9,10 @@ import {
   declinedByVoid,
   type Dropped,
   dropped as droppedBy,
+  isKeyed,
   recordingInto,
   recordingWriter,
-  type Writers,
+  type WriterNotes,
 } from "./writers.js";
 
 /** What a schema's constructor takes. This is the one place that names the `~`-prefixed key. */
@@ -80,9 +82,6 @@ interface Decoded<A> {
 
 const whole = <A>(value: A): Decoded<A> => ({ value, lost: [] });
 
-const isObject = (value: unknown): value is Record<PropertyKey, unknown> =>
-  typeof value === "object" && value !== null;
-
 /** Parse options for a strict read that reports every issue with the object it was found in. */
 const reporting: SchemaAST.ParseOptions = {
   onExcessProperty: "error",
@@ -96,9 +95,10 @@ const reporting: SchemaAST.ParseOptions = {
  *
  * @remarks
  * A strict and a loose read part only on excess keys. A key counts as the caller's when the object
- * it was found in is the caller's own object at that place; a decoder or transformation makes a new
- * object, so a key it adds is not the caller's. A union takes its first member that only strips,
- * as a loose read would.
+ * it was found in is the caller's own object at that place, as a part's normalised input holds it.
+ * That input holds only names the caller's value holds, as {@link ownFields} says. A decoder or
+ * transformation makes a new object, so a key it adds is not the caller's. A union takes its first
+ * member that only strips, as a loose read would.
  */
 const strippedFrom = (
   issue: SchemaIssue.Issue,
@@ -114,14 +114,14 @@ const strippedFrom = (
       if (issue.issue._tag === "UnexpectedKey") return owned ? [at] : [];
       const below = owned
         ? issue.path.reduce<unknown>(
-            (value, key) => (isObject(value) ? value[key] : undefined),
+            (value, key) => (isKeyed(value) ? value[key] : undefined),
             given,
           )
         : undefined;
       return strippedFrom(issue.issue, below, at);
     }
     case "Composite": {
-      const own = isObject(given) && issue.input === given;
+      const own = isKeyed(given) && issue.input === given;
       const found: Array<Excess.Path> = [];
       for (const inner of issue.issues) {
         const stripped = strippedFrom(inner, given, path, own);
@@ -167,6 +167,41 @@ const sliceOf = (given: unknown, name: PropertyKey): unknown =>
   typeof given === "object" && given !== null
     ? (given as Record<PropertyKey, unknown>)[name]
     : undefined;
+
+/**
+ * The normalised input without the names it brought out that the caller's value does not hold.
+ *
+ * @remarks
+ * Normalising brings a field the value inherits out as a key under a name the schema states, as an
+ * accessor on a class is. A name every object inherits from `Object.prototype`, such as
+ * `constructor`, is not a field the caller gave, and a struct does not read it from a value that
+ * lacks it. Parts read this view, so a strict read does not refuse such a name as a wrong value.
+ * Whatever is unchanged is returned as it was.
+ */
+const ownFields = (given: unknown, caller: unknown): unknown => {
+  if (!isKeyed(given) || !isKeyed(caller) || given === caller) return given;
+  if (Array.isArray(given)) {
+    let changed = false;
+    const items = given.map((item: unknown, index) => {
+      const kept = ownFields(item, caller[index]);
+      if (kept !== item) changed = true;
+      return kept;
+    });
+    return changed ? items : given;
+  }
+  let changed = false;
+  const entries: Array<readonly [PropertyKey, unknown]> = [];
+  for (const key of Reflect.ownKeys(given)) {
+    if (!hasField(caller, key)) {
+      changed = true;
+      continue;
+    }
+    const kept = ownFields(given[key], caller[key]);
+    if (kept !== given[key]) changed = true;
+    entries.push([key, kept]);
+  }
+  return changed ? Object.fromEntries(entries) : given;
+};
 
 /** The normalised input without the fields a parent already read as parts. */
 const withoutFields = (
@@ -231,6 +266,8 @@ const decodedReading = <S extends Schema.Top>(
     onFieldwise?: () => void,
   ) {
     const output: Record<PropertyKey, unknown> = { ...input };
+    // Parts read the caller's own fields. A part's slice already comes from such a view.
+    const view = part ? given : ownFields(given, input);
     // A field need not be a key, as an accessor on a class is not, so it comes from `input`.
     const fields: Record<PropertyKey, unknown> = input as never;
     const read: Array<PropertyKey> = [];
@@ -238,14 +275,11 @@ const decodedReading = <S extends Schema.Top>(
     const lost: Array<Excess.Path> = [];
     for (const { name, type } of Excess.fieldsOf(contract.ast)) {
       if (fields[name] === undefined) continue;
-      const field = yield* fromPart(
-        type,
-        fields[name],
-        parseOptions,
-        true,
-        undefined,
-        sliceOf(given, name),
-      );
+      const field = yield* fromPart(type, fields[name], {
+        options: parseOptions,
+        part: true,
+        given: sliceOf(view, name),
+      });
       output[name] = field.value;
       parts[name] = field.value;
       read.push(name);
@@ -253,10 +287,10 @@ const decodedReading = <S extends Schema.Top>(
     }
     // The constructor runs again over each part's result. Strictly, a union there keeps the member
     // the part was read by instead of taking an earlier one that strips it; loosely, as Effect would.
-    const value = yield* isObject(given)
+    const value = yield* isKeyed(view)
       ? Effect.catch(
           make(
-            { ...(withoutFields(given, read) as object), ...parts },
+            { ...(withoutFields(view, read) as object), ...parts },
             { ...parseOptions, onExcessProperty: "error" },
           ),
           () => make(output, parseOptions),
@@ -264,8 +298,8 @@ const decodedReading = <S extends Schema.Top>(
       : make(output, parseOptions);
     onFieldwise?.();
     // The root's encoded-only names have their own proof; a part's are checked here.
-    if (part && given !== undefined)
-      lost.push(...unkept(withoutFields(given, read), value));
+    if (part && view !== undefined)
+      lost.push(...unkept(withoutFields(view, read), value));
     return { value, lost };
   });
   const byMember = (
@@ -278,7 +312,12 @@ const decodedReading = <S extends Schema.Top>(
     contract.ast._tag === "Union" && contract.ast.types.length > 0
       ? (part && given !== undefined ? keepingFirst : Effect.firstSuccessOf)(
           contract.ast.types.map((member) =>
-            fromPart(member, input, parseOptions, part, onFieldwise, given),
+            fromPart(member, input, {
+              options: parseOptions,
+              part,
+              given,
+              onFieldwise,
+            }),
           ),
         )
       : // A copy of a list is an object keyed by its indexes, which a record or struct could take.
@@ -320,7 +359,7 @@ const decodedReading = <S extends Schema.Top>(
                 decode(input, parseOptions),
                 (value): Decoded<unknown> => ({ value, lost: stripped }),
               );
-        const fieldwise = isObject(input)
+        const fieldwise = isKeyed(input)
           ? byMember(input, strictFailure, given, parseOptions, onFieldwise)
           : Effect.fail(strictFailure);
         // A loose read that strips only keys a decoder made keeps what the caller gave, and comes
@@ -411,17 +450,23 @@ export const toDecoded = <S extends Schema.Top>(
 const fromPart = (
   ast: SchemaAST.AST,
   value: unknown,
-  options: SchemaAST.ParseOptions | undefined,
-  part: boolean,
-  onFieldwise?: () => void,
-  given?: unknown,
+  reading: {
+    /** Options for every parse. */
+    readonly options: SchemaAST.ParseOptions | undefined;
+    /** Whether the value is a part: a field, or a member of a part, whose losses are checked. */
+    readonly part: boolean;
+    /** The normalised input at this place, where the value is a part. */
+    readonly given?: unknown;
+    /** Told when the reading goes field by field. */
+    readonly onFieldwise?: (() => void) | undefined;
+  },
 ): Effect.Effect<Decoded<unknown>, Schema.SchemaError, unknown> =>
-  decodedReading(Schema.make<Schema.Top>(ast), options, part)(
+  decodedReading(Schema.make<Schema.Top>(ast), reading.options, reading.part)(
     value,
     undefined,
-    onFieldwise,
-    options,
-    given,
+    reading.onFieldwise,
+    reading.options,
+    reading.given,
   );
 
 /** What a schema wrote, and the fields of its input it would lose, which may be held elsewhere. */
@@ -692,7 +737,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   interface Sent {
     readonly output: A;
     readonly strict?: Schema.SchemaError;
-    readonly writers?: Writers | undefined;
+    readonly writers?: WriterNotes | undefined;
   }
   /** The loose write, and which member wrote each value where the writer can say. */
   const looseWrite = (
@@ -703,7 +748,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
         output,
         writers: undefined,
       }));
-    const writers: Writers = [];
+    const writers: WriterNotes = [];
     return Effect.map(
       recordingWrite(value, recordingInto(writers)),
       (output) => ({ output, writers }),

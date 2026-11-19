@@ -2029,6 +2029,185 @@ describe("a caller's field under a union", () => {
           ).toBe("Expected JSON value");
         }),
     );
+
+    it.effect(
+      "selects by a tag that is optional on one side only, as Effect does",
+      () =>
+        Effect.gen(function* () {
+          let runs = 0;
+          const Counted = Schema.Struct({
+            v: text.pipe(
+              Schema.middlewareEncoding((effect) =>
+                Effect.andThen(
+                  Effect.sync(() => {
+                    runs++;
+                  }),
+                  effect,
+                ),
+              ),
+            ),
+            _tag: Schema.tagDefaultOmit("A"),
+          });
+          const Thrown = Schema.Struct({
+            v: text.pipe(
+              Schema.middlewareEncoding((effect) =>
+                Effect.andThen(
+                  Effect.sync(() => {
+                    throw new Error("ran a member its tag rules out");
+                  }),
+                  effect,
+                ),
+              ),
+            ),
+            _tag: Schema.tagDefaultOmit("A"),
+          });
+          // The selected member writes how many times the other one ran.
+          const Selected = Schema.Struct({
+            v: text.pipe(
+              Schema.encodeTo(text, {
+                decode: SchemaGetter.passthrough(),
+                encode: SchemaGetter.transform((value) => `${value}-${runs}`),
+              }),
+            ),
+            _tag: Schema.tagDefaultOmit("B"),
+          });
+          const body = {
+            choice: { _tag: "B", v: "right" },
+            rename: relaxed,
+          } as const;
+          for (const other of [Counted, Thrown])
+            expect(
+              yield* bodyOf(
+                post(
+                  Schema.Struct({
+                    choice: Schema.Union([other, Selected]),
+                    rename: Relaxing,
+                  }),
+                ),
+                { body },
+              ),
+            ).toBe('{"choice":{"v":"right-0"},"rename":{"a":"ok"}}');
+          expect(runs).toBe(0);
+          // A tag the wire gives a default is not one in the value, so it selects nothing there.
+          const K1 = Schema.Struct({
+            kind: Schema.Literal("k1").pipe(
+              Schema.withDecodingDefaultKey(Effect.succeed("k1")),
+            ),
+            b: text,
+          });
+          const Other = Schema.Struct({
+            a: Schema.FiniteFromString,
+            b: Schema.optionalKey(text),
+          });
+          expect(
+            yield* bodyOf(
+              post(
+                Schema.Struct({
+                  d: Schema.Union([K1, Other]),
+                  rename: Relaxing,
+                }),
+              ),
+              { body: { d: { a: 5, b: "z" }, rename: relaxed } },
+            ),
+          ).toBe('{"d":{"a":"5","b":"z"},"rename":{"a":"ok"}}');
+          expect(
+            yield* bodyOf(
+              post(Schema.Struct({ d: Schema.Union([K1, Relaxing]) })),
+              { body: { d: { b: "go" } } },
+            ),
+          ).toBe('{"d":{"a":"go"}}');
+          // A tag the value may leave out but the wire always carries does select there.
+          const stamped = Schema.optionalKey(Schema.Literal("a")).pipe(
+            Schema.encodeTo(Schema.Literal("a"), {
+              decode: SchemaGetter.passthrough(),
+              encode: SchemaGetter.transformOptional(() =>
+                Option.some("a" as const),
+              ),
+            }),
+          );
+          const Stamped = Schema.Struct({ kind: stamped, p: text });
+          for (const other of [
+            Schema.Struct({ q: text }),
+            Schema.Struct({ p: text }),
+          ])
+            expect(
+              yield* bodyOf(
+                post(
+                  Schema.Struct({
+                    choice: Schema.Union([Stamped, other]),
+                    rename: Relaxing,
+                  }),
+                ),
+                { body: { choice: { p: "x" }, rename: relaxed } },
+              ),
+            ).toBe('{"choice":{"kind":"a","p":"x"},"rename":{"a":"ok"}}');
+        }),
+    );
+
+    it.effect("does not count a name every object inherits as written", () =>
+      Effect.gen(function* () {
+        // The value `{ c: false }` inherits `toString` and `constructor`, which it was not given.
+        for (const Named of [
+          Schema.Struct({ toString: text }),
+          Schema.Struct({ constructor: text }),
+        ])
+          expect(
+            yield* bodyOf(
+              post(
+                Schema.Struct({
+                  choice: Schema.Union([
+                    Schema.Struct({ c: Schema.Boolean }),
+                    Named,
+                  ]),
+                  rename: Relaxing,
+                }),
+              ),
+              { body: { choice: { c: false }, rename: relaxed } },
+            ),
+          ).toBe('{"choice":{"c":false},"rename":{"a":"ok"}}');
+        const Wire = Schema.Struct({ text }).pipe(
+          Schema.encodeKeys({ text: "constructor" }),
+        );
+        const schema = Schema.Struct({
+          any: Schema.Union([
+            Schema.Struct({ a: text }),
+            Schema.Struct({ b: text }),
+          ]),
+          rename: Relaxing,
+          f: Wire,
+        });
+        for (const f of [{ constructor: "x" }, { text: "x" }])
+          expect(
+            yield* bodyOf(post(schema), {
+              body: { any: { a: "x" }, rename: relaxed, f } as never,
+            }),
+          ).toBe(
+            '{"any":{"a":"x"},"rename":{"a":"ok"},"f":{"constructor":"x"}}',
+          );
+      }),
+    );
+
+    it.effect("offers no struct for null, as Effect does not", () =>
+      Effect.gen(function* () {
+        const NullText = Schema.Null.pipe(
+          Schema.encodeTo(text.check(Schema.isMinLength(9)), {
+            decode: SchemaGetter.transform(() => null),
+            encode: SchemaGetter.transform(() => "null"),
+          }),
+        );
+        expect(
+          yield* schemaFailure(
+            post(
+              Schema.Struct({
+                choice: Schema.Union([Schema.Struct({}), NullText]),
+                rename: Relaxing,
+              }),
+            ),
+            { body: { choice: null, rename: relaxed } },
+          ),
+        ).toBe('Expected a value with a length of at least 9\n  at ["choice"]');
+      }),
+    );
   });
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
