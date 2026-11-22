@@ -134,16 +134,17 @@
   value, member order still decides: `Union([Schema.Struct({}), Filter])` sends `{ limit: 5 }` as
   `?limit=5`. This applies where every alternative at the value is a struct, a record, a list or a
   tuple, guarded Void beside them included; beside a class, including an empty `Schema.Class`, a
-  declaration, an open schema, middleware or any other codec, a value keeps 0.18.0's reading. A
-  class instance the empty struct keeps reaches a path renderer as the same instance, except that an
-  inherited accessor a stated member names makes it a plain copy. What the empty struct keeps goes
-  to the writer as given, and the writers refuse a kept value they would leave out or replace, as
-  for any value: a symbol key, `NaN` or a BigInt in a JSON body is `HttpBodyError`, and a header
-  value that is not text or an object in a query is `InvalidRequest`. In a stacked query or header
-  group, such a union bound after a schema that states the field writes the caller's value in its
-  place: `Count = Schema.Struct({ z: Schema.FiniteFromString })` stacked before
-  `Union([A, Struct({})])` sends `{ a: "x", z: "05" }` as `?a=x&z=05`, where 0.18.0 sent `?z=5&a=x`.
-  Bind the stated member directly, or bind the union first, to keep its reading. See the [migration
+  declaration, an open schema, middleware or any other codec, a value and every value inside it keep
+  0.18.0's reading. A class instance the empty struct keeps reaches a path renderer as the same
+  instance, except that an inherited accessor a stated member names makes it a plain copy. What the
+  empty struct keeps goes to the writer as given, and the writers refuse a kept value they would
+  leave out or replace, as for any value: a symbol key, `NaN` or a BigInt in a JSON body is
+  `HttpBodyError`, and a header value that is not text or an object in a query is `InvalidRequest`.
+  In a stacked query or header group, such a union bound after a schema that states the field writes
+  the caller's value in its place: `Count = Schema.Struct({ z: Schema.FiniteFromString })` stacked
+  before `Union([A, Struct({})])` sends `{ a: "x", z: "05" }` as `?a=x&z=05`, where 0.18.0 sent
+  `?z=5&a=x`. Bind the stated member directly, or bind the union first, to keep its reading. See the
+  [migration
   note](https://viell-dev.github.io/slop-effect-schema-http/schema-input#a-union-keeps-what-the-caller-gave).
 - **Breaking:** count only members that can read the caller's container during normalization and
   field-loss accounting (#243). A record or a struct that states a field holds none of a list's
@@ -154,10 +155,12 @@
   it, so beside an empty struct as well, `{ "0": { limit: "x", extra: 1 } }` keeps `extra`, which
   0.18.0 left out. Like the empty-struct rule, this applies only where every alternative at the
   value is a struct, a record, a list or a tuple, `encodeKeys` renames included; a value beside a
-  class, a declaration, an open schema, middleware or any other codec, or inside a value middleware
-  reads, keeps 0.18.0's reading. A query or header schema that only a cast admits, with a list
-  member that writes objects, now refuses with `InvalidRequest` from the field-pair check instead of
-  a `SchemaError`.
+  class, a declaration, an open schema, middleware or any other codec, and every value inside one,
+  keeps 0.18.0's reading. So does a value beside a guarded Void where this rule would leave every
+  field the caller supplied unstated: `Union([A, Schema.Void, Schema.Array(A)])` refuses
+  `{ 0: { a: "ok" } }` as 0.18.0 did, rather than sending `null`. A query or header schema that only
+  a cast admits, with a list member that writes objects, now refuses with `InvalidRequest` from the
+  field-pair check instead of a `SchemaError`.
 - Keep a hidden or inherited list cell when normalization rebuilds the list beside `Schema.Unknown`,
   `Schema.Any` or `Schema.Object`
   ([#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257)). With a non-enumerable

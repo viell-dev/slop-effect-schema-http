@@ -152,13 +152,16 @@ and a struct whose keys `Schema.encodeKeys` renames, and no other change. An alt
 no object, such as text, a number or `null`, leaves that set known, and so does built-in
 `Schema.Void` where the Void rule below guards it: in an any-of union beside an object or list
 member, on a path that rule reaches, which passes through no suspension and no declaration. Field
-types can be anything: each child value is judged again at its own level. Every member counts,
-including one a tag rules out: it states no key, but its middleware still runs. Anywhere else the
-value keeps 0.18.0's reading. That covers any alternative that is a class, a declaration, an open
-schema, middleware, an unguarded Void or a codec with any other transformation, a struct decoded
-from another struct included, and every value inside one that middleware reads, because a recovery
-can turn a failure anywhere inside into a value of its own. Suspended schemas are read as what they
-stand for once a value is read, as Effect reads them.
+types can be anything: each child value of a known value is judged again at its own level. Every
+member counts, including one a tag rules out: it states no key, but its middleware still runs.
+Anywhere else the value keeps 0.18.0's reading. That covers any alternative that is a class, a
+declaration, an open schema, middleware, an unguarded Void or a codec with any other transformation,
+a struct decoded from another struct included. It covers every value inside such a value too: an
+alternative there that is not known, such as an open schema, can take the whole value, and a
+recovery can turn a failure anywhere inside into a value of its own. Beside a guarded Void, a value
+also keeps 0.18.0's reading where the first rule below would leave every field the caller supplied
+unstated, because the Void would then take the value and send none of them, where 0.18.0 refused it.
+Suspended schemas are read as what they stand for once a value is read, as Effect reads them.
 
 The first rule counts only members that can read the caller's container, as Effect's own parsers
 tell them apart with `Array.isArray`. A record or a struct that states a field holds none of a
@@ -177,18 +180,19 @@ keys once more and whether it has each stated field. 0.18.0 made the same calls 
 nothing to strip, and the calls in all are fewer than 0.18.0's.
 
 The second rule: an empty struct that is an alternative of its own, not one end of a codec, keeps
-every key of the value it reads, at every depth where the alternatives stay known. Beside a member
-that states fields, it is the member that keeps them all, so a key only it holds is kept rather than
-stripped as unstated. The kept-or-refused rule prefers it for that reason. Effect's own first-fit
-reading keeps the key when the empty struct comes first, and an open record, `Schema.Unknown` or
-`Schema.Object` already won over a stated member this way at the value it reads. An empty class is a
-class, so it keeps 0.18.0's reading, and so does a child value with an alternative outside the known
-set, even below an empty struct that holds its parent, as the [active
-limits](./schema-input.md#active-limits-and-recovery) give. When both members keep the whole value,
-first fit decides. What the empty struct keeps goes to the writer as given, and the writers refuse
-before dispatch a value they would leave out or replace, such as a symbol key, or `NaN`, which JSON
-would write as `null`. Below a stated member's field, `Unknown`, `Any` and `Object` do not yet keep
-such a key; the [active limits](./schema-input.md#active-limits-and-recovery) give it.
+every key of the value it reads, at every depth where the alternatives stay known, and not inside a
+value that keeps 0.18.0's reading. Beside a member that states fields, it is the member that keeps
+them all, so a key only it holds is kept rather than stripped as unstated. The kept-or-refused rule
+prefers it for that reason. Effect's own first-fit reading keeps the key when the empty struct comes
+first, and an open record, `Schema.Unknown` or `Schema.Object` already won over a stated member this
+way at the value it reads. An empty class is a class, so it keeps 0.18.0's reading, and so does a
+child value with an alternative outside the known set, even below an empty struct that holds its
+parent, as the [active limits](./schema-input.md#active-limits-and-recovery) give. When both members
+keep the whole value, first fit decides. What the empty struct keeps goes to the writer as given,
+and the writers refuse before dispatch a value they would leave out or replace, such as a symbol
+key, or `NaN`, which JSON would write as `null`. Below a stated member's field, `Unknown`, `Any` and
+`Object` do not yet keep such a key; the [active
+limits](./schema-input.md#active-limits-and-recovery) give it.
 
 Within a visible any-of union beside an object or list candidate, the strict read declines built-in
 `Schema.Void` for an object with a defined enumerable own field or a list with a defined own cell.

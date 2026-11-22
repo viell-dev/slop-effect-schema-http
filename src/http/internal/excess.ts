@@ -1,6 +1,6 @@
 import { Equal, Schema, SchemaAST, SchemaIssue } from "effect";
 import { extraArrayField } from "./writer-error.js";
-import { stageRefuses } from "./primitive.js";
+import { isObjectMember, stageRefuses } from "./primitive.js";
 
 /** Where a key sits in a value, one step for each level. */
 export type Path = ReadonlyArray<PropertyKey>;
@@ -308,24 +308,6 @@ const isKnown = (ast: Ast): boolean => {
   return known;
 };
 
-const objectMembers = new WeakMap<Ast, boolean>();
-
-/** A member beside which the Void rule guards a Void, as `guardVoidMembers` tells them. */
-const isObjectMember = (ast: Ast): boolean => {
-  let result = objectMembers.get(ast);
-  if (result === undefined) {
-    result =
-      ast._tag === "Objects" ||
-      ast._tag === "Arrays" ||
-      ast._tag === "Any" ||
-      ast._tag === "Unknown" ||
-      ast._tag === "ObjectKeyword" ||
-      (ast._tag === "Union" && ast.types.some(isObjectMember));
-    objectMembers.set(ast, result);
-  }
-  return result;
-};
-
 /**
  * Whether this one side can read a value of this kind of container, as Effect's parser tells them
  * apart: a record or a struct that states a field refuses an actual array, and an array or tuple
@@ -341,39 +323,38 @@ const readsContainer = (side: Ast, value: unknown): boolean =>
  */
 type Unreached = ReadonlySet<Ast> | "all";
 
-/** Where a value sits: inside a value middleware reads, and which of its schemas are unreached. */
+/**
+ * Where a value sits: inside a value that keeps the earlier reading, and which of its schemas are
+ * unreached.
+ */
 interface Within {
-  readonly recovering: boolean;
+  readonly earlier: boolean;
   readonly unreached: Unreached;
 }
 
-const atRoot: Within = { recovering: false, unreached: new Set() };
-
-const inRecovery: Within = { recovering: true, unreached: atRoot.unreached };
+const atRoot: Within = { earlier: false, unreached: new Set() };
 
 // Shared for every value below an unreached side, so no set is built per key or per value.
-const below: Within = { recovering: false, unreached: "all" };
+const below: Within = { earlier: false, unreached: "all" };
 
-const belowInRecovery: Within = { recovering: true, unreached: "all" };
+// Shared for every value inside one that keeps the earlier reading, where nothing is guarded.
+const insideEarlier: Within = { earlier: true, unreached: "all" };
 
 /**
  * The sides a value is read against here, and whether its alternatives are all known, with no
- * middleware reading it or a value around it. Only then do the rules this library adds apply at the
- * value: a side that cannot read the value's container holds none of its keys, wherever in a union
- * or under whichever parent it comes from, and an empty struct holds every key it reads. Anywhere
- * else the value keeps the reading these had before those rules, side for side. Each child value is
- * judged again at its own level.
+ * middleware reading it and no value around it keeping the earlier reading. Only then do the rules
+ * this library adds apply at the value: a side that cannot read the value's container holds none of
+ * its keys, wherever in a union or under whichever parent it comes from, and an empty struct holds
+ * every key it reads. Anywhere else the value keeps the reading these had before those rules, side
+ * for side, and so does every value inside it: an alternative that is not known, such as an open
+ * schema, can take the whole value, and middleware can turn a failure anywhere inside into a value
+ * of its own.
  */
 interface View {
   readonly sides: ReadonlyArray<Ast>;
   readonly known: boolean;
   /** Whether an empty struct among the alternatives holds each key here as given, at any depth. */
   readonly holdsAsGiven: boolean;
-  /**
-   * Whether middleware reads this value. Its recovery can turn a failure anywhere inside into a
-   * value of its own, so what the value holds below is not known either.
-   */
-  readonly recovers: boolean;
   /** The sides the Void rule does not reach, if any. */
   readonly unreached: Unreached | undefined;
 }
@@ -456,50 +437,82 @@ const collect = (
   return known;
 };
 
+/** The {@link View} of a value that keeps the earlier reading. */
+const earlierView = ({ sides, unreached }: Collected): View => ({
+  // An empty struct a parent holds a key with is no side of the earlier reading.
+  sides: sides.includes(asGiven)
+    ? sides.filter((side) => side !== asGiven)
+    : sides,
+  known: false,
+  holdsAsGiven: false,
+  unreached,
+});
+
+/**
+ * Whether a value holds a field the Void rule counts as defined, and these sides, which take its
+ * keys apart, state none of them: normalization would then strip every field the caller gave.
+ */
+const statesNoField = (
+  sides: ReadonlyArray<Ast>,
+  value: Record<PropertyKey, unknown>,
+): boolean => {
+  if (readsOpaquely(sides)) return false;
+  let defined = false;
+  for (const key of Reflect.ownKeys(value)) {
+    const field = Array.isArray(value)
+      ? arrayIndex(key) !== undefined
+      : Object.prototype.propertyIsEnumerable.call(value, key);
+    if (!field || value[key] === undefined) continue;
+    if (typesAt(sides, key).length > 0) return false;
+    defined = true;
+  }
+  return defined;
+};
+
 /** {@link View} of a value at the place {@link Within} gives. */
 const viewAt = (
   types: ReadonlyArray<Ast>,
   value: unknown,
-  { recovering, unreached }: Within = atRoot,
+  { earlier, unreached }: Within = atRoot,
 ): View => {
   const into = collected();
-  into.recovers = recovering;
   if (unreached === "all") into.unreached = "all";
   let known = isObject(value);
   for (const type of types)
     known =
       collect(type, value, into, unreached !== "all" && !unreached.has(type)) &&
       known;
-  const { recovers } = into;
-  if (!known || recovers)
-    return {
-      // An empty struct a parent holds a key with is no side of 0.18.0's reading.
-      sides: into.sides.includes(asGiven)
-        ? into.sides.filter((side) => side !== asGiven)
-        : into.sides,
-      known: false,
-      holdsAsGiven: false,
-      recovers,
-      unreached: into.unreached,
-    };
+  if (!known || earlier || into.recovers) return earlierView(into);
+  const sides = into.sides.filter((side) => readsContainer(side, value));
+  // Beside a Void, a side the container rule leaves out may be the only one stating the caller's
+  // fields. Stripping them all would let the Void take the whole value where the earlier reading
+  // refuses it, so such a value keeps that reading.
+  if (
+    sides.length < into.sides.length &&
+    !into.holds &&
+    into.sides.some(({ _tag }) => _tag === "Void") &&
+    statesNoField(sides, value as Record<PropertyKey, unknown>)
+  )
+    return earlierView(into);
   return {
-    sides: into.sides.filter((side) => readsContainer(side, value)),
+    sides,
     known,
     holdsAsGiven: into.holds,
-    recovers,
     unreached: into.unreached,
   };
 };
 
 /** Where the value under one key sits, for the schemas {@link heldAt} gives for it. */
 const inside = (view: View, key: PropertyKey): Within => {
-  const { unreached, recovers } = view;
-  if (unreached === undefined) return recovers ? inRecovery : atRoot;
+  // A value inside one that keeps the earlier reading keeps it too.
+  if (!view.known) return insideEarlier;
+  const { unreached } = view;
+  if (unreached === undefined) return atRoot;
   // Every side unreached leaves every child schema unreached.
   if (unreached === "all" || view.sides.every((side) => unreached.has(side)))
-    return recovers ? belowInRecovery : below;
+    return below;
   return {
-    recovering: recovers,
+    earlier: false,
     unreached: new Set(
       typesAt(
         view.sides.filter((side) => unreached.has(side)),

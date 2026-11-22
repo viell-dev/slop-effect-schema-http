@@ -147,7 +147,8 @@ export type QueryFields = Readonly<
  * struct keeps every key of what it reads, at any depth, so beside members that state fields it is
  * the member that keeps them all. What it keeps goes to the writer as given, which refuses a value
  * it would leave out or replace. Beside a class, a declaration, an open schema, middleware or
- * another codec, a value keeps 0.18.0's reading.
+ * another codec, a value and every value inside it keep 0.18.0's reading, and so does a value a
+ * guarded Void would take because the container rule left every field the caller gave unstated.
  * A required literal tag can choose by its decoded or encoded name. Both views must rule a member
  * out before its fields go; a constructor default is not guessed to make that choice.
  * A key set to `undefined` is no field, and an accessor on a class is one, as it is to a struct. In a
