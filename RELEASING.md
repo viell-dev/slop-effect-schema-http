@@ -228,7 +228,8 @@ and evidence are retained in #68.
 The exact-artifact and trust approach follows [Markdown Tools' release
 guide](https://github.com/viell-dev/slop-markdown-tools/blob/main/RELEASING.md#publication-prerequisites).
 Its workflow filename, immutable-release setting and product-specific test matrix are not this
-project's configuration. This project's release-review scope is recorded in #67.
+project's configuration. This project's release-review scope is in [Before a
+release](./CONTRIBUTING.md#before-a-release).
 
 ## Use a prerelease
 
@@ -347,14 +348,10 @@ run it at any time.
 - A Pages failure does not invalidate the package. Fix/retry the verified release or a scoped docs
   correction, then run `npm run check-live`. Keep the prior deployment until success.
 
-## Release history
+## Release goal and human checkpoint
 
-`0.1.0` was the first stable release, retaining the API and behavior of `0.1.0-rc.1` with completed
-documentation and release metadata. Its goal was the finite-body API, ESM, Node.js 24 on
-Windows/Linux and Chromium Fetch with Effect 4. [Issue
-#2](https://github.com/viell-dev/slop-effect-schema-http/issues/2) records the owner's release
-direction and qualification. The owner completed the final documentation review and authorized
-continuation on 2026-11-04 in [#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67),
-which was the owner-selected human checkpoint for that release; no human runtime testing or code
-review is claimed. Publication setup and execution are recorded in
-[#68](https://github.com/viell-dev/slop-effect-schema-http/issues/68).
+The agreed goal of the first stable release, `0.1.0`, covers the finite-body API, ESM, Node.js 24 on
+Windows and Linux, and Chromium Fetch with Effect 4. The [release
+tracker](https://github.com/viell-dev/slop-effect-schema-http/issues/2) records that goal and its
+qualification. [Before a release](./CONTRIBUTING.md#before-a-release) defines the human release
+checkpoint and links the decision that sets its scope.
