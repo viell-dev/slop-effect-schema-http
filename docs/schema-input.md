@@ -478,17 +478,26 @@ record, a list or a tuple, an empty struct and a struct whose keys `Schema.encod
 included. An alternative that takes no object, such as text, a number or `null`, does not change
 that, nor does built-in `Schema.Void` where the Void rule below guards it, in an any-of union beside
 an object or list member and not inside a suspension or a class. Field types can be anything; each
-child value is judged again at its own level. Every member counts, one a tag rules out included.
-`Schema.Struct({})` keeps a list as it is there, and only as an alternative of its own does an empty
-struct keep the keys it reads.
+child value of such a value is judged again at its own level. Every member counts, one a tag rules
+out included. `Schema.Struct({})` keeps a list as it is there, and only as an alternative of its own
+does an empty struct keep the keys it reads.
 
-Anywhere else a value keeps 0.18.0's reading. That covers any alternative that is a class, a
-declaration such as `Schema.Date`, an open schema such as `Schema.Unknown`, `Schema.catchDecoding`
-or `Schema.catchEncoding` middleware, a Void the Void rule does not guard, or a codec with any other
-transformation, such as a struct decoded from another struct, and every value inside one that
-middleware reads, since a recovery can turn a failure anywhere inside into a value of its own. So
-beside an empty `Schema.Class`, a class decoded from a tuple, a codec decoded from `Schema.declare`
-or `Schema.Unknown`, or a record with a recovery, a list and its cells read as they did on 0.18.0.
+Anywhere else a value keeps 0.18.0's reading, and so does every value inside it. That covers any
+alternative that is a class, a declaration such as `Schema.Date`, an open schema such as
+`Schema.Unknown`, `Schema.catchDecoding` or `Schema.catchEncoding` middleware, a Void the Void rule
+does not guard, or a codec with any other transformation, such as a struct decoded from another
+struct. Such an alternative can take the whole value, and a recovery can turn a failure anywhere
+inside into a value of its own. So beside an empty `Schema.Class`, a class decoded from a tuple, a
+codec decoded from `Schema.declare` or `Schema.Unknown`, or a record with a recovery, a list and its
+cells read as they did on 0.18.0. Under `Union([Schema.Struct({ p: Listed }), Schema.Unknown])`,
+`{ p: [{ limit: "x", extra: 1 }] }` keeps `extra`, as on 0.18.0.
+
+Beside a guarded Void, a value also keeps 0.18.0's reading where the container rule would leave
+every field the caller supplied unstated, because the Void would then take the value and send none
+of them. With `Named = Schema.Struct({ a: Schema.String })`,
+`Union([Named, Schema.Void, Schema.Array(Named)])` refuses `{ 0: { a: "ok" } }` before dispatch, as
+0.18.0 did, rather than sending `null`. `Union([Named, Schema.Void])` alone still reads such a value
+as its Void member, as the Void rule below describes.
 
 A query or header group that encodes to an array of field pairs is read by position, including when
 `Schema.Struct({})` keeps the original array. Both the list and its pairs can have a `null`
@@ -601,8 +610,8 @@ a guarantee that preparation refuses safely.
   lose a key only the open member would hold. With
   `Union([Schema.Struct({ b: A }), Schema.Unknown])`, `{ b: { a: "x", z: 1 } }` sends
   `{"b":{"a":"x"}}` ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)). A key
-  at the open member's own value is kept, and an empty struct keeps such keys at every depth where
-  the alternatives stay known, as [A list stays a list](#a-list-stays-a-list) describes.
+  at the open member's own value is kept. Below it every value keeps 0.18.0's reading, so an empty
+  struct there keeps no more than it did, as [A list stays a list](#a-list-stays-a-list) describes.
 - A record with a `Schema.catchDecoding` recovery beside a list member keeps 0.18.0's reading, in
   which the record's values hold a cell key the list member does not state. The list member then
   refuses a valid list, and the recovery's value is sent instead: under

@@ -1311,6 +1311,97 @@ describe("members that cannot read the caller's container", () => {
     }),
   );
 
+  it.effect(
+    "keeps the earlier reading inside a value an open member can take",
+    () =>
+      Effect.gen(function* () {
+        // The open member can take the whole value, so no value inside it is read by the list rule.
+        const FromUnknown = Schema.Unknown.pipe(
+          Schema.decodeTo(
+            Schema.Unknown,
+            SchemaTransformation.transform({
+              decode: (value) => value,
+              encode: (value) => value,
+            }),
+          ),
+        );
+        const cases = [
+          [Schema.Union([Rows, Open]), row(), row()],
+          [Schema.Union([Plain, Rows]), cell(), { 0: { limit: "x" } }],
+        ] as const;
+        for (const open of [
+          Schema.Unknown,
+          Schema.Any,
+          Schema.ObjectKeyword,
+          Schema.suspend(() => Schema.Unknown),
+          FromUnknown,
+        ])
+          for (const [child, given, held] of cases) {
+            const parent = Schema.Struct({ p: child });
+            for (const schema of either(parent, open))
+              expect(yield* prepared(schema, { p: given, top: 1 })).toEqual(
+                kept({ p: held, top: 1 }),
+              );
+            const deeper = Schema.Struct({ q: parent });
+            expect(
+              yield* prepared(Schema.Union([deeper, open]), {
+                q: { p: given },
+              }),
+            ).toEqual(kept({ q: { p: held } }));
+            expect(
+              yield* prepared(Schema.Union([Schema.Array(parent), open]), [
+                { p: given },
+              ]),
+            ).toEqual(kept([{ p: held }]));
+          }
+        // Without the open member the list rule reads the child.
+        expect(
+          yield* prepared(Schema.Struct({ p: Schema.Union([Rows, Open]) }), {
+            p: row(),
+          }),
+        ).toEqual(kept({ p: [{ limit: "x" }] }));
+      }),
+  );
+
+  it.effect(
+    "refuses where a guarded Void would take what the list rule leaves unstated",
+    () =>
+      Effect.gen(function* () {
+        // The list member is the only one stating the caller's key `0`. Stripping it would leave the
+        // value to the Void, which would send nothing the caller gave, so the value is read as before.
+        const Named = Schema.Struct({ a: Schema.String });
+        const keyed = () => ({ 0: { a: "ok", z: 1 } });
+        const List = Schema.Array(Named);
+        for (const schema of [
+          Schema.Union([Named, Schema.Void, List]),
+          Schema.Union([List, Named, Schema.Void]),
+          Schema.Union([Named, Schema.Void, Schema.Tuple([Named])]),
+        ])
+          for (const given of [keyed(), { 0: { a: "ok" } }])
+            for (const message of yield* refusals(schema, given))
+              expect(message).toContain('at ["0"]');
+        for (const schema of [
+          Schema.Union([
+            Schema.Struct({ p: Schema.Union([Named, Schema.Void]) }),
+            Schema.Struct({ p: List }),
+          ]),
+          Schema.Union([
+            Schema.Struct({ p: List }),
+            Schema.Struct({ p: Schema.Union([Named, Schema.Void]) }),
+          ]),
+          Schema.Struct({ p: Schema.Union([Named, Schema.Void, List]) }),
+        ])
+          for (const message of yield* refusals(schema, { p: keyed() }))
+            expect(message).toContain('at ["p"]');
+        // A key the object member states keeps the Void out, and a list stays the list member's.
+        const union = Schema.Union([Named, Schema.Void, List]);
+        expect(yield* prepared(union, { a: "x" })).toEqual(kept({ a: "x" }));
+        expect(yield* prepared(union, [{ a: "ok", z: 1 }])).toEqual(
+          kept([{ a: "ok" }]),
+        );
+      }),
+  );
+
   it.effect("keeps a class codec's reading beside a list member", () =>
     Effect.gen(function* () {
       class Box extends Schema.Class<Box>("Box")({ value: Schema.Unknown }) {}

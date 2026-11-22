@@ -3401,4 +3401,23 @@ describe("values at the edge of the known alternatives", () => {
         );
       }),
   );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/249
+  it.effect(
+    "sends a child below an unguarded Void the empty member holds the parent of",
+    () =>
+      Effect.gen(function* () {
+        // The Void rule reaches no suspension, so the child is normalized as before and loses `z`,
+        // but the empty struct keeps the parent, so the Void no longer erases the child.
+        const Suspended = Schema.Union([
+          Schema.Struct({
+            p: Schema.suspend(() => Schema.Union([A, Schema.Void])),
+          }),
+          Empty,
+        ]);
+        expect(yield* sent(Suspended, { p: { z: 1 }, top: 1 })).toBe(
+          '{"p":{},"top":1}',
+        );
+      }),
+  );
 });

@@ -7,7 +7,7 @@ import {
   SchemaParser,
 } from "effect";
 import { hasDefinedFields, isSignaturelessObject } from "./excess.js";
-import { shapes } from "./primitive.js";
+import { isObjectMember, shapes } from "./primitive.js";
 
 // Effect 4.0.7 and 4.1.4 spread parse options, preserving this per-read observer. Revisit the
 // channel if a supported peer stops forwarding symbol keys.
@@ -85,20 +85,6 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
   const choices = new WeakSet<SchemaAST.AST>();
   const cache = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
   const alternatives = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
-  const objectMembers = new WeakMap<SchemaAST.AST, boolean>();
-  const objectMember = (ast: SchemaAST.AST): boolean => {
-    const cached = objectMembers.get(ast);
-    if (cached !== undefined) return cached;
-    const result =
-      ast._tag === "Objects" ||
-      ast._tag === "Arrays" ||
-      ast._tag === "Any" ||
-      ast._tag === "Unknown" ||
-      ast._tag === "ObjectKeyword" ||
-      (ast._tag === "Union" && ast.types.some(objectMember));
-    objectMembers.set(ast, result);
-    return result;
-  };
   // One classification per build. A primitive here refuses both an object and a list.
   const shape = shapes();
   const guardedPrimitives = new WeakSet<SchemaAST.AST>();
@@ -188,7 +174,7 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
     }
     const protect =
       (ast.options?.mode ?? "anyOf") === "anyOf" &&
-      (besideObject || ast.types.some(objectMember));
+      (besideObject || ast.types.some(isObjectMember));
     if (!protect) unguarded.add(ast);
     // An empty struct accepts arbitrary keys but states none. Where it is the only alternative,
     // keep first-fit reading for objects and the existing defined-cell guard for lists.
