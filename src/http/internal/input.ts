@@ -699,8 +699,8 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     );
   const withParts = decodedReading(contract);
   // The root's own checks run where its value is plain data and its schema names nothing every
-  // object has; its parts are then each checked as they are.
-  const plainRoot = !statesPrototypeName(ast, false);
+  // object has; its parts are then each checked as they are. The schema is asked on the first read,
+  // so building an encoder runs no suspended schema.
   const readDecoded = (
     input: Input<S>,
     onConstructed?: () => void,
@@ -712,7 +712,9 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       onConstructed,
       onFieldwise,
       undefined,
-      plainRoot && isPlainData(input) ? given : undefined,
+      isPlainData(input) && !statesPrototypeName(ast, false)
+        ? given
+        : undefined,
     );
   // A custom writer is the caller's own. Only the schema's own writer can note its members.
   const recordingAst =
