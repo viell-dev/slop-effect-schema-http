@@ -85,6 +85,39 @@ Release preparation separately checks strict package consumers with TypeScript 7
 and reconsideration trigger. Keep compatible peer installation; do not force the development
 compiler past the lint tools' supported range.
 
+### Dependency advisories
+
+Dependabot proposes routine version updates monthly, grouped into one pull request, and they get no
+release of their own. A published security advisory that covers a dependency version resolved in
+`package-lock.json` does not wait for that batch. Dependabot security updates are enabled and may
+propose the fix; either way, handle it as follows:
+
+1. Confirm that the advisory covers the resolved version, and that the fixed release comes from the
+   package's usual publisher and source and is named as the fix by the advisory, changelog or
+   release notes.
+2. Take the smallest release that resolves the advisory, normally its patch release. Leave unrelated
+   updates, and later releases of the same package, to the monthly batch.
+3. If the fixed release is within the declared range of the package, or of the dependency that
+   brings it in, update the lockfile to it. If that dependency has not adopted the fix yet, add an
+   npm [`overrides`](https://docs.npmjs.com/cli/v11/configuring-npm/package-json#overrides) entry
+   for the vulnerable package, scoped as narrowly as works, and show with the required checks that
+   the dependency still works. Record the advisory and the removal condition, a release of that
+   dependency that adopts the fix, in the PR and in the [dependency
+   overview](https://github.com/viell-dev/slop-effect-schema-http/issues/41). When that release
+   appears, update to it in the same way and remove the override.
+4. If no working fixed release exists, record the advisory in the dependency overview as blocked
+   upstream or worked around, with its impact. A development-only advisory that release preparation
+   must tolerate needs a named allowance in
+   [`scripts/release-audit.mjs`](./scripts/release-audit.mjs), as [RELEASING](./RELEASING.md)
+   describes.
+5. Decide whether the version change needs an independent review of the published package contents
+   between the current and fixed versions. Release notes and the diff can suffice for a widely used,
+   actively maintained package with an established release process. Get the review for a less widely
+   used package, a recent change of maintainer or publishing method, or a fix release that carries
+   substantial unrelated changes.
+6. Record in the PR the advisory, the affected and fixed versions, the dependency path, and the
+   review decision with its reason. The ordinary required checks still apply.
+
 ### Behavior tests
 
 Module tests sit beside their module as `src/**/*.test.ts` and use `@effect/vitest`. Shared fixtures
@@ -363,23 +396,17 @@ Agents own functional verification and investigation of reproducible defects. Th
 checkpoint assesses whether the documentation and workflow are understandable; it is not a request
 to find bugs missed by tests or agent review.
 
-The owner set that checkpoint on 2026-11-06 in
-[#92](https://github.com/viell-dev/slop-effect-schema-http/issues/92): substantial changes to the
-API or main workflow get an agent usability review instead of a human use pass. A separate agent
-with fresh context works through the changed API and guides as a new user would and reports what is
-confusing or awkward. The release pull request records the result. This is not evidence of human
-use. The owner may still comment on what they notice while reading the documentation; treat those
-comments as consumer reports, not as a step a release waits for. Reconsider this scope when the
-owner has time to use the library themselves.
+Substantial changes to the API or main workflow get an agent usability review in place of a human
+use pass, as the owner decided in
+[#92](https://github.com/viell-dev/slop-effect-schema-http/issues/92). A separate agent with fresh
+context works through the changed API and guides as a new user would and reports what is confusing
+or awkward. The release pull request records the result. This is not evidence of human use. The
+owner may still comment on what they notice while reading the documentation; treat those comments as
+consumer reports, not as a step a release waits for. Reconsider this scope when the owner has time
+to use the library themselves.
 
 Routine fixes may reuse relevant evidence, with its limits recorded. No review changes the required
 automated gates.
 
-`0.1.0` was the first stable release. Its agreed goal was the finite-body API, ESM, Node 24 on
-Windows/Linux and Chromium Fetch with Effect 4, and the [release
-tracker](https://github.com/viell-dev/slop-effect-schema-http/issues/2) owns its evidence. For that
-release only, the owner chose and completed a final documentation read-through as the checkpoint on
-2026-11-04, recorded in [#67](https://github.com/viell-dev/slop-effect-schema-http/issues/67). It
-replaced the earlier hands-on request. It did not establish human runtime testing or code review;
-the substitute functional evidence was automated consumer, package, socket and hostile-suite
-qualification plus independent agent review.
+[RELEASING](./RELEASING.md#release-goal-and-human-checkpoint) links the first stable release's
+agreed goal.
