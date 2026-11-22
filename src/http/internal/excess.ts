@@ -1,5 +1,6 @@
 import { Equal, Schema, SchemaAST, SchemaIssue } from "effect";
 import { extraArrayField } from "./writer-error.js";
+import { stageRefuses } from "./primitive.js";
 
 /** Where a key sits in a value, one step for each level. */
 export type Path = ReadonlyArray<PropertyKey>;
@@ -121,15 +122,41 @@ export const hasDefinedFields = (value: unknown): boolean =>
       value[key] !== undefined,
   );
 
-const keysOf = (value: object, arrays = false): ReadonlyArray<PropertyKey> => {
+/** A value's own keys with their descriptors, each read once, in the order the value gives them. */
+interface OwnDescriptors {
+  readonly keys: ReadonlyArray<PropertyKey>;
+  /** The descriptor of each key, at its index in `keys`. */
+  readonly descriptors: ReadonlyArray<PropertyDescriptor | undefined>;
+}
+
+const ownDescriptors = (value: object): OwnDescriptors => {
+  const keys = Reflect.ownKeys(value);
+  return {
+    keys,
+    descriptors: keys.map((key) => Object.getOwnPropertyDescriptor(value, key)),
+  };
+};
+
+/**
+ * The keys a value supplies, and with `arrays`, a list's hidden and inherited cells. `descriptors`
+ * are its own keys as {@link ownDescriptors} already read them, so a Proxy is not asked again.
+ */
+const keysOf = (
+  value: object,
+  arrays = false,
+  descriptors?: OwnDescriptors,
+): ReadonlyArray<PropertyKey> => {
   const list = arrays && Array.isArray(value);
   const length = list ? value.length : 0;
-  const own = Reflect.ownKeys(value);
+  const own = descriptors?.keys ?? Reflect.ownKeys(value);
+  const enumerable = (key: PropertyKey, index: number) =>
+    descriptors === undefined
+      ? Object.prototype.propertyIsEnumerable.call(value, key)
+      : descriptors.descriptors[index]?.enumerable === true;
   const keys = new Set(
     own.filter(
-      (key) =>
-        Object.prototype.propertyIsEnumerable.call(value, key) ||
-        (list && arrayIndex(key) !== undefined),
+      (key, index) =>
+        enumerable(key, index) || (list && arrayIndex(key) !== undefined),
     ),
   );
   const positions = list
@@ -215,17 +242,272 @@ const ruledOut = (member: Ast, value: unknown): boolean => {
   );
 };
 
-/** The schemas a value can be read against here: each member its tag leaves, on each side. */
-const sidesOf = (ast: Ast, value: unknown): ReadonlyArray<Ast> => [
-  ...(ast._tag === "Union"
-    ? ast.types
-        .filter((member) => !ruledOut(member, value))
-        .flatMap((member) => sidesOf(member, value))
-    : ast._tag === "Suspend"
-      ? sidesOf(ast.thunk(), value)
-      : [ast]),
-  ...(ast.encoding ?? []).flatMap(({ to }) => sidesOf(to, value)),
-];
+/**
+ * A struct decoded from another one under new key names and nothing else, as `Schema.encodeKeys`
+ * builds it: one plain link to an unchecked struct with no encoding of its own, holding the same
+ * fields in the same order, each with the same optionality and the encoded form of the same type.
+ */
+const isKeyRename = (ast: SchemaAST.Objects): boolean => {
+  const [link, ...others] = ast.encoding ?? [];
+  if (link === undefined || others.length > 0) return false;
+  const { to, transformation } = link;
+  return (
+    transformation._tag === "Transformation" &&
+    to._tag === "Objects" &&
+    to.encoding === undefined &&
+    to.checks === undefined &&
+    ast.indexSignatures.length === 0 &&
+    to.indexSignatures.length === 0 &&
+    to.propertySignatures.length === ast.propertySignatures.length &&
+    ast.propertySignatures.every(({ type }, index) => {
+      const encoded = to.propertySignatures[index]!.type;
+      return (
+        SchemaAST.isOptional(type) === SchemaAST.isOptional(encoded) &&
+        SchemaAST.toEncoded(type) === encoded
+      );
+    })
+  );
+};
+
+/**
+ * A struct, record, list or tuple, or a struct renamed with `Schema.encodeKeys`. Effect's parser
+ * tells containers apart for these by `Array.isArray` alone. Field types can be anything: each child
+ * value is judged at its own level.
+ */
+const isStructural = (ast: Ast): boolean =>
+  (ast._tag === "Objects" || ast._tag === "Arrays") &&
+  (ast.encoding === undefined || (ast._tag === "Objects" && isKeyRename(ast)));
+
+/**
+ * An alternative Effect's parser refuses any object for, as text, a number or `null` is, also
+ * through plain transformations between such schemas, as `Schema.FiniteFromString` is.
+ */
+const takesNoObject = (ast: Ast): boolean =>
+  (ast._tag === "Union"
+    ? ast.types.every(takesNoObject)
+    : stageRefuses(ast, "record") && stageRefuses(ast, "array")) &&
+  (ast.encoding ?? []).every(
+    ({ transformation, to }) =>
+      transformation._tag === "Transformation" && takesNoObject(to),
+  );
+
+const knownNodes = new WeakMap<Ast, boolean>();
+
+/**
+ * Whether what this one alternative reads from an object or a list is known from the schema alone:
+ * it is {@link isStructural} or it {@link takesNoObject}. A class, a declaration, an open schema,
+ * middleware and any other codec are not. Built-in `Schema.Void` is known only where the Void rule
+ * guards it, which {@link collect} decides.
+ */
+const isKnown = (ast: Ast): boolean => {
+  let known = knownNodes.get(ast);
+  if (known === undefined) {
+    known = isStructural(ast) || takesNoObject(ast);
+    knownNodes.set(ast, known);
+  }
+  return known;
+};
+
+const objectMembers = new WeakMap<Ast, boolean>();
+
+/** A member beside which the Void rule guards a Void, as `guardVoidMembers` tells them. */
+const isObjectMember = (ast: Ast): boolean => {
+  let result = objectMembers.get(ast);
+  if (result === undefined) {
+    result =
+      ast._tag === "Objects" ||
+      ast._tag === "Arrays" ||
+      ast._tag === "Any" ||
+      ast._tag === "Unknown" ||
+      ast._tag === "ObjectKeyword" ||
+      (ast._tag === "Union" && ast.types.some(isObjectMember));
+    objectMembers.set(ast, result);
+  }
+  return result;
+};
+
+/**
+ * Whether this one side can read a value of this kind of container, as Effect's parser tells them
+ * apart: a record or a struct that states a field refuses an actual array, and an array or tuple
+ * refuses any other object.
+ */
+const readsContainer = (side: Ast, value: unknown): boolean =>
+  !isObject(value) ||
+  !stageRefuses(side, Array.isArray(value) ? "array" : "record");
+
+/**
+ * The schemas the Void rule does not reach at a value, as inside a suspension or a declaration, or
+ * `"all"` below sides it reaches none of, where it reaches nothing more.
+ */
+type Unreached = ReadonlySet<Ast> | "all";
+
+/** Where a value sits: inside a value middleware reads, and which of its schemas are unreached. */
+interface Within {
+  readonly recovering: boolean;
+  readonly unreached: Unreached;
+}
+
+const atRoot: Within = { recovering: false, unreached: new Set() };
+
+const inRecovery: Within = { recovering: true, unreached: atRoot.unreached };
+
+// Shared for every value below an unreached side, so no set is built per key or per value.
+const below: Within = { recovering: false, unreached: "all" };
+
+const belowInRecovery: Within = { recovering: true, unreached: "all" };
+
+/**
+ * The sides a value is read against here, and whether its alternatives are all known, with no
+ * middleware reading it or a value around it. Only then do the rules this library adds apply at the
+ * value: a side that cannot read the value's container holds none of its keys, wherever in a union
+ * or under whichever parent it comes from, and an empty struct holds every key it reads. Anywhere
+ * else the value keeps the reading these had before those rules, side for side. Each child value is
+ * judged again at its own level.
+ */
+interface View {
+  readonly sides: ReadonlyArray<Ast>;
+  readonly known: boolean;
+  /** Whether an empty struct among the alternatives holds each key here as given, at any depth. */
+  readonly holdsAsGiven: boolean;
+  /**
+   * Whether middleware reads this value. Its recovery can turn a failure anywhere inside into a
+   * value of its own, so what the value holds below is not known either.
+   */
+  readonly recovers: boolean;
+  /** The sides the Void rule does not reach, if any. */
+  readonly unreached: Unreached | undefined;
+}
+
+interface Collected {
+  readonly sides: Array<Ast>;
+  unreached: Set<Ast> | "all" | undefined;
+  recovers: boolean;
+  holds: boolean;
+}
+
+const collected = (): Collected => ({
+  sides: [],
+  unreached: undefined,
+  recovers: false,
+  holds: false,
+});
+
+/**
+ * The schemas a value can be read against here, pushed into `sides`: each member its tag leaves,
+ * through unions and suspended schemas, as Effect reads them at this value, and each node's encoding
+ * sides after it. Returns whether this alternative is known. A union or a suspension with an
+ * encoding of its own is a codec, so it is judged as one node.
+ *
+ * A member a tag rules out states nothing, so it adds no side, but it is still an alternative: its
+ * middleware runs because the value does not fit it. The Void rule reaches what `guardVoidMembers`
+ * visits, which is no suspension and no declaration, and guards a Void in an any-of union there
+ * beside an object or list member, or grouped inside such a union. An empty struct holds the keys
+ * it reads only as an alternative of its own, not as one end of a codec.
+ */
+const collect = (
+  ast: Ast,
+  value: unknown,
+  into: Collected,
+  reaches: boolean,
+  guarded = false,
+  besideObject = false,
+  end = false,
+): boolean => {
+  let known: boolean;
+  if (ast._tag === "Union") {
+    const guards =
+      reaches &&
+      (ast.options?.mode ?? "anyOf") === "anyOf" &&
+      (besideObject || isObjectMember(ast));
+    known = true;
+    for (const member of ast.types) {
+      const target = ruledOut(member, value) ? collected() : into;
+      const grouped =
+        guards && member._tag === "Union" && member.encoding === undefined;
+      known =
+        collect(member, value, target, reaches, guards, grouped, end) && known;
+      if (target.recovers) into.recovers = true;
+    }
+    if (ast.encoding !== undefined) known = isKnown(ast);
+  } else if (ast._tag === "Suspend") {
+    known =
+      collect(ast.thunk(), value, into, false, false, false, end) &&
+      ast.encoding === undefined;
+  } else {
+    into.sides.push(ast);
+    if (!reaches && into.unreached !== "all") {
+      into.unreached ??= new Set();
+      into.unreached.add(ast);
+    }
+    known =
+      ast._tag === "Void"
+        ? guarded && ast.encoding === undefined
+        : isKnown(ast);
+    if (!end && ast.encoding === undefined && isSignaturelessObject(ast))
+      into.holds = true;
+  }
+  const visited =
+    reaches &&
+    (ast._tag === "Objects" || ast._tag === "Arrays" || ast._tag === "Union");
+  for (const { to, transformation } of ast.encoding ?? []) {
+    if (transformation._tag === "Middleware") into.recovers = true;
+    collect(to, value, into, visited, false, false, true);
+  }
+  return known;
+};
+
+/** {@link View} of a value at the place {@link Within} gives. */
+const viewAt = (
+  types: ReadonlyArray<Ast>,
+  value: unknown,
+  { recovering, unreached }: Within = atRoot,
+): View => {
+  const into = collected();
+  into.recovers = recovering;
+  if (unreached === "all") into.unreached = "all";
+  let known = isObject(value);
+  for (const type of types)
+    known =
+      collect(type, value, into, unreached !== "all" && !unreached.has(type)) &&
+      known;
+  const { recovers } = into;
+  if (!known || recovers)
+    return {
+      // An empty struct a parent holds a key with is no side of 0.18.0's reading.
+      sides: into.sides.includes(asGiven)
+        ? into.sides.filter((side) => side !== asGiven)
+        : into.sides,
+      known: false,
+      holdsAsGiven: false,
+      recovers,
+      unreached: into.unreached,
+    };
+  return {
+    sides: into.sides.filter((side) => readsContainer(side, value)),
+    known,
+    holdsAsGiven: into.holds,
+    recovers,
+    unreached: into.unreached,
+  };
+};
+
+/** Where the value under one key sits, for the schemas {@link heldAt} gives for it. */
+const inside = (view: View, key: PropertyKey): Within => {
+  const { unreached, recovers } = view;
+  if (unreached === undefined) return recovers ? inRecovery : atRoot;
+  // Every side unreached leaves every child schema unreached.
+  if (unreached === "all" || view.sides.every((side) => unreached.has(side)))
+    return recovers ? belowInRecovery : below;
+  return {
+    recovering: recovers,
+    unreached: new Set(
+      typesAt(
+        view.sides.filter((side) => unreached.has(side)),
+        key,
+      ),
+    ),
+  };
+};
 
 /** The schemas of what these sides hold under one key. */
 const typesAt = (
@@ -249,28 +531,75 @@ const typesAt = (
       : [];
   });
 
-/** The names on a schema's decoded side, which a value can use as well as the wire names. */
-const decodedNames = (ast: Ast, value?: unknown): ReadonlyArray<string> =>
+/**
+ * The names on a schema's decoded side, which a value can use as well as the wire names. Where the
+ * value's alternatives are {@link isKnown}, a side that cannot read its container names none.
+ */
+const decodedNames = (
+  ast: Ast,
+  value: unknown,
+  known: boolean,
+): ReadonlyArray<string> =>
   ast._tag === "Union"
     ? ast.types
         .filter((member) => !ruledOut(member, value))
-        .flatMap((member) => decodedNames(member, value))
+        .flatMap((member) => decodedNames(member, value, known))
     : ast._tag === "Suspend"
-      ? decodedNames(ast.thunk(), value)
-      : fieldsOf(ast).map(({ name }) => String(name));
-
-/** Whether these sides leave a value's keys open, so none can be called unstated. */
-const leaveKeysOpen = (sides: ReadonlyArray<Ast>): boolean =>
-  sides.some(
-    ({ _tag }) =>
-      _tag === "Any" || _tag === "Unknown" || _tag === "ObjectKeyword",
-  ) || !sides.some(({ _tag }) => _tag === "Objects" || _tag === "Arrays");
+      ? decodedNames(ast.thunk(), value, known)
+      : !known || readsContainer(ast, value)
+        ? fieldsOf(ast).map(({ name }) => String(name))
+        : [];
 
 /** Effect's empty struct has no shape checks on the keys of a supplied value. */
 export const isSignaturelessObject = (ast: Ast): boolean =>
   ast._tag === "Objects" &&
   ast.propertySignatures.length === 0 &&
   ast.indexSignatures.length === 0;
+
+/** Whether these sides read a value without any struct or list to take it apart, as an open schema. */
+const readsOpaquely = (sides: ReadonlyArray<Ast>): boolean =>
+  sides.some(
+    ({ _tag }) =>
+      _tag === "Any" || _tag === "Unknown" || _tag === "ObjectKeyword",
+  ) || !sides.some(({ _tag }) => _tag === "Objects" || _tag === "Arrays");
+
+/**
+ * Whether a value's keys are open here, so none can be called unstated: an open schema reads it, or
+ * its alternatives are {@link isKnown} and an empty struct is among them.
+ */
+const leaveKeysOpen = ({ sides, holdsAsGiven }: View): boolean =>
+  holdsAsGiven || readsOpaquely(sides);
+
+/**
+ * Whether no side states a key here, as before an empty struct held every key: then an empty struct
+ * keeps the keys it reads.
+ */
+const statesNothing = (sides: ReadonlyArray<Ast>): boolean =>
+  sides.some(isSignaturelessObject) &&
+  !sides.some(
+    (side) => side._tag === "Objects" && !isSignaturelessObject(side),
+  );
+
+/**
+ * An empty struct keeps the value it reads as given, so it holds each key's value as given too, at
+ * every depth: as an empty struct would read it again.
+ */
+const asGiven = Schema.Struct({}).ast;
+
+/**
+ * What these sides hold under one key: the schemas they state for it, and, where the value's
+ * alternatives are {@link isKnown}, beside an empty struct, the value as given. An empty struct is
+ * then the member that keeps a key the others leave out, at any depth, so that key is not unstated.
+ * With no stated schema nothing here can strip below the key, so the empty struct's reading needs
+ * no walk through the value.
+ */
+const heldAt = (
+  { sides, holdsAsGiven }: View,
+  key: PropertyKey,
+): ReadonlyArray<Ast> => {
+  const stated = typesAt(sides, key);
+  return holdsAsGiven && stated.length > 0 ? [...stated, asGiven] : stated;
+};
 
 /**
  * The names a struct here reads from a value although they are no keys of it, as an accessor on a
@@ -299,50 +628,61 @@ const unlisted = (
 const readAsStruct = (sides: ReadonlyArray<Ast>, open: boolean): boolean =>
   !open && !sides.some(({ _tag }) => _tag === "Declaration");
 
-/** Discover array layout only where no open or opaque reading can retain it untouched. */
+/**
+ * Discover array layout only where no opaque reading can retain it untouched. An empty struct reads
+ * a list too, but beside a list member a rewrite still has to keep every readable cell, hidden or
+ * inherited, in place.
+ */
 const readAsArray = (sides: ReadonlyArray<Ast>): boolean =>
   sides.some(({ _tag }) => _tag === "Arrays") &&
-  readAsStruct(sides, leaveKeysOpen(sides));
+  readAsStruct(sides, readsOpaquely(sides));
 
 /** Bring a value's {@link unlisted} fields out as keys, at any depth, and take out what `drops` says. */
 const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
-  const rewrite = (types: ReadonlyArray<Ast>, value: unknown): unknown => {
+  const rewrite = (
+    types: ReadonlyArray<Ast>,
+    value: unknown,
+    within: Within,
+  ): unknown => {
     if (types.length === 0 || !isObject(value)) return value;
-    const sides = types.flatMap((type) => sidesOf(type, value));
+    const view = viewAt(types, value, within);
+    const { sides } = view;
     const hidden = unlisted(sides, value);
-    const open = leaveKeysOpen(sides);
-    const keepKeys =
-      open ||
-      (sides.some(isSignaturelessObject) &&
-        !sides.some(
-          (side) => side._tag === "Objects" && !isSignaturelessObject(side),
-        ));
+    const open = leaveKeysOpen(view);
+    const keepKeys = open || statesNothing(sides);
     const plain = isPlain(value);
     const asStruct = !plain && readAsStruct(sides, open);
     const asArray = readAsArray(sides);
     const isList = Array.isArray(value);
-    const keys = [...keysOf(value, asArray), ...hidden];
+    // A list rebuilt in a view that does not read its layout copies its own cells' descriptors, so
+    // read them once here, for the keys too.
+    const own = isList && !asArray ? ownDescriptors(value) : undefined;
+    const keys = [...keysOf(value, asArray, own), ...hidden];
+    // Read each key once: a getter is the caller's code.
+    let changed = asStruct || hidden.length > 0;
     const entries = keys.flatMap((key) => {
       const item = value[key];
-      const inner = typesAt(sides, key);
-      return (plain || asStruct) &&
+      const inner = heldAt(view, key);
+      if (
+        (plain || asStruct) &&
         !isList &&
         drops(item, keepKeys || inner.length > 0)
-        ? []
-        : [[key, rewrite(inner, item)] as const];
+      ) {
+        changed = true;
+        return [];
+      }
+      const next = rewrite(inner, item, inside(view, key));
+      changed ||= next !== item;
+      return [[key, next] as const];
     });
-    const same =
-      !asStruct &&
-      hidden.length === 0 &&
-      entries.length === keys.length &&
-      entries.every(([key, item]) => item === value[key]);
-    if (same) return value;
+    if (!changed) return value;
     if (!isList) return Object.fromEntries(entries);
-    // Own-key inspection already reads this descriptor. Do not add a length getter read when an
+    // Own-key inspection already read this descriptor. Do not add a length getter read when an
     // enumerable child changes through a mixed opaque view, which may never read array layout.
-    const length: unknown = asArray
-      ? value.length
-      : Object.getOwnPropertyDescriptor(value, "length")?.value;
+    const length: unknown =
+      own === undefined
+        ? value.length
+        : (own.descriptors[own.keys.lastIndexOf("length")]?.value as unknown);
     if (
       typeof length !== "number" ||
       !Number.isInteger(length) ||
@@ -368,9 +708,37 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
         writable: true,
         configurable: true,
       });
+    if (own !== undefined) {
+      // A view that does not read array layout still keeps every cell the caller supplied: an own
+      // cell it did not rewrite keeps its descriptor, and an inherited one stays inherited.
+      const rewritten = new Set(entries.map(([key]) => key));
+      let positions = 0;
+      for (const [at, key] of own.keys.entries()) {
+        const descriptor = own.descriptors[at];
+        const index = arrayIndex(key);
+        if (index === undefined || index >= length || descriptor === undefined)
+          continue;
+        positions++;
+        if (!rewritten.has(key)) Object.defineProperty(output, key, descriptor);
+      }
+      // Own cells at every position leave no cell to inherit, so the prototype is not asked, which
+      // a Proxy would observe. Where one is, a prototype that cannot be read leaves the list as it
+      // was read before this kept inherited cells.
+      if (positions < length) {
+        let prototype: unknown = Array.prototype;
+        try {
+          prototype = Object.getPrototypeOf(value);
+        } catch {
+          // Keep the ordinary prototype.
+        }
+        if (prototype !== Array.prototype)
+          Object.setPrototypeOf(output, prototype as object | null);
+      }
+    }
     return output;
   };
-  return rewrite;
+  return (types: ReadonlyArray<Ast>, value: unknown): unknown =>
+    rewrite(types, value, atRoot);
 };
 
 /**
@@ -391,7 +759,7 @@ export const statedFields = (
   value: unknown,
 ): ReadonlyArray<PropertyKey> => {
   if (!isObject(value) || Array.isArray(value)) return [];
-  const sides = sidesOf(ast, value);
+  const { sides } = viewAt([ast], value);
   return [...keysOf(value), ...unlisted(sides, value)].filter(
     (key) => value[key] !== undefined && typesAt(sides, key).length > 0,
   );
@@ -420,12 +788,16 @@ export const missing = (
   output: unknown,
   path: Path = [],
   voidChoices?: WeakSet<Ast>,
+  within: Within = atRoot,
 ): ReadonlyArray<Path> => {
   // A value kept as given holds every key in it; reading it again could only run its accessors.
   if (!isObject(given) || given === value) return [];
-  const sides = types.flatMap((type) => sidesOf(type, given));
+  const view = viewAt(types, given, within);
+  const { sides } = view;
   if (!comparable(sides, given)) return [];
-  const decoded = new Set(types.flatMap((type) => decodedNames(type, given)));
+  const decoded = new Set(
+    types.flatMap((type) => decodedNames(type, given, view.known)),
+  );
   const voidChoice = types.some((type) => voidChoices?.has(type));
   const holdsAsWritten = (key: PropertyKey) =>
     has(output, key) &&
@@ -442,12 +814,13 @@ export const missing = (
     ];
     return given[key] === undefined || has(value, key) || holdsAsWritten(key)
       ? missing(
-          typesAt(sides, key),
+          heldAt(view, key),
           given[key],
           at(value, key),
           at(output, key),
           here,
           voidChoices,
+          inside(view, key),
         )
       : [here];
   });
