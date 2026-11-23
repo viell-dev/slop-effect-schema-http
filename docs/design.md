@@ -148,20 +148,22 @@ reading. Known violations, conflicting aliases and unsupported recovery remain e
 Two rules decide how normalization and field-loss accounting read a value, and they apply only where
 what each alternative reads from an object or a list is known from the schema alone. That holds when
 every alternative at the value is a struct, a record, a list or a tuple, including an empty struct
-and a struct whose keys `Schema.encodeKeys` renames, and no other change. An alternative that takes
-no object, such as text, a number or `null`, leaves that set known, and so does built-in
-`Schema.Void` where the Void rule below guards it: in an any-of union beside an object or list
-member, on a path that rule reaches, which passes through no suspension and no declaration. Field
-types can be anything: each child value of a known value is judged again at its own level. Every
-member counts, including one a tag rules out: it states no key, but its middleware still runs.
-Anywhere else the value keeps 0.18.0's reading. That covers any alternative that is a class, a
-declaration, an open schema, middleware, an unguarded Void or a codec with any other transformation,
-a struct decoded from another struct included. It covers every value inside such a value too: an
-alternative there that is not known, such as an open schema, can take the whole value, and a
-recovery can turn a failure anywhere inside into a value of its own. Beside a guarded Void, a value
-also keeps 0.18.0's reading where the first rule below would leave every field the caller supplied
-unstated, because the Void would then take the value and send none of them, where 0.18.0 refused it.
-Suspended schemas are read as what they stand for once a value is read, as Effect reads them.
+and a struct decoded through one plain transformation from an unchecked struct of the same shape: as
+many fields in the same order, each with the same optionality and the encoded form of the same type,
+as `Schema.encodeKeys` builds. An alternative that takes no object, such as text, a number or
+`null`, leaves that set known, and so does built-in `Schema.Void` where the Void rule below guards
+it: in an any-of union beside an object or list member, on a path that rule reaches, which passes
+through no suspension and no declaration. Field types can be anything: each child value of a known
+value is judged again at its own level. Every member counts, including one a tag rules out: it
+states no key, but its middleware still runs. Anywhere else the value keeps 0.18.0's reading. That
+covers any alternative that is a class, a declaration, an open schema, middleware, an unguarded Void
+or a codec with any other transformation, a struct decoded from a struct of another shape included.
+It covers every value inside such a value too: an alternative there that is not known, such as an
+open schema, can take the whole value, and a recovery can turn a failure anywhere inside into a
+value of its own. Beside a guarded Void, a value also keeps 0.18.0's reading where the first rule
+below would leave every field the caller supplied unstated, because the Void would then take the
+value and send none of them, where 0.18.0 refused it. Suspended schemas are read as what they stand
+for once a value is read, as Effect reads them.
 
 The first rule counts only members that can read the caller's container, as Effect's own parsers
 tell them apart with `Array.isArray`. A record or a struct that states a field holds none of a
