@@ -154,13 +154,13 @@
   A numeric-keyed object beside an array or tuple member is read as its object member alone reads
   it, so beside an empty struct as well, `{ "0": { limit: "x", extra: 1 } }` keeps `extra`, which
   0.18.0 left out. Like the empty-struct rule, this applies only where every alternative at the
-  value is a struct, a record, a list or a tuple, `encodeKeys` renames included; a value beside a
-  class, a declaration, an open schema, middleware or any other codec, and every value inside one,
-  keeps 0.18.0's reading. So does a value beside a guarded Void where this rule would leave every
-  field the caller supplied unstated: `Union([A, Schema.Void, Schema.Array(A)])` refuses
-  `{ 0: { a: "ok" } }` as 0.18.0 did, rather than sending `null`. A query or header schema that only
-  a cast admits, with a list member that writes objects, now refuses with `InvalidRequest` from the
-  field-pair check instead of a `SchemaError`.
+  value is a struct, a record, a list or a tuple, `encodeKeys` renames and other same-shaped struct
+  codecs included; a value beside a class, a declaration, an open schema, middleware or any other
+  codec, and every value inside one, keeps 0.18.0's reading. So does a value beside a guarded Void
+  where this rule would leave every field the caller supplied unstated:
+  `Union([A, Schema.Void, Schema.Array(A)])` refuses `{ 0: { a: "ok" } }` as 0.18.0 did, rather than
+  sending `null`. A query or header schema that only a cast admits, with a list member that writes
+  objects, now refuses with `InvalidRequest` from the field-pair check instead of a `SchemaError`.
 - Keep a hidden or inherited list cell when normalization rebuilds the list beside `Schema.Unknown`,
   `Schema.Any` or `Schema.Object`
   ([#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257)). With a non-enumerable

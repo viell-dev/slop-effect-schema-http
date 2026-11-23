@@ -1399,8 +1399,114 @@ describe("members that cannot read the caller's container", () => {
         expect(yield* prepared(union, [{ a: "ok", z: 1 }])).toEqual(
           kept([{ a: "ok" }]),
         );
+        // With no struct or list side left beside the Void, nothing stands between a class instance
+        // and the Void, so it is read as before too, like a plain or null-prototype object.
+        class Keyed {
+          readonly 0 = { a: "ok", z: 1 };
+        }
+        class Both {
+          readonly 0 = { a: "ok" };
+          readonly a = "x";
+        }
+        const bare = Object.assign(Object.create(null), { 0: { a: "ok" } });
+        for (const schema of [
+          Schema.Union([List, Schema.Void]),
+          Schema.Union([Schema.Void, List]),
+          Schema.Union([Schema.Tuple([Named]), Schema.Void]),
+          Schema.Union([List, Schema.Union([Schema.Void, Schema.Null])]),
+          Schema.Union([List, Schema.Void, Schema.String]),
+        ])
+          for (const given of [new Keyed(), new Both(), keyed(), bare])
+            for (const message of yield* refusals(schema, given))
+              expect(message).toContain('at ["0"]');
+        const inner = Schema.Union([List, Schema.Void]);
+        // A field the list member does not state either keeps its refusal: the Void would take the
+        // value as given there, where the earlier reading sends nothing.
+        expect(yield* prepared(inner, { a: "x" })).toEqual(refused);
+        for (const message of yield* refusals(Schema.Array(inner), [
+          new Keyed(),
+        ]))
+          expect(message).toContain("at [0]");
+        for (const message of yield* refusals(
+          Schema.Record(Schema.String, inner),
+          { k: new Keyed() },
+        ))
+          expect(message).toContain('at ["k"]');
       }),
   );
+
+  it.effect(
+    "strips a key only a list member states from an object an all-optional struct reads",
+    () =>
+      Effect.gen(function* () {
+        // A list member reads no object, so `0` is unstated, as under the struct alone.
+        const Loose = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+        const List = Schema.Array(Schema.Struct({ a: Schema.String }));
+        const keyed = () => ({ 0: { a: "ok", z: 1 } });
+        expect(yield* prepared(Loose, keyed())).toEqual(kept({}));
+        for (const schema of either(Loose, List))
+          expect(yield* prepared(schema, keyed())).toEqual(kept({}));
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+  describe("a list beside a record inside a value that keeps the earlier reading", () => {
+    const Listed = Schema.Union([Rows, Open]);
+    class Page extends Schema.Class<Page>("Page")({ items: Listed }) {}
+    class Shelf extends Schema.Class<Shelf>("Shelf")({
+      page: Schema.Struct({ items: Listed }),
+    }) {}
+    const Failing = Schema.Struct({ items: Listed }).pipe(
+      Schema.catchDecoding((issue) => Effect.fail(issue)),
+    );
+    const groups = [
+      [
+        "below a class parent",
+        Page,
+        { items: row() },
+        { items: [{ limit: "x" }] },
+      ],
+      [
+        "inside a class grandparent",
+        Shelf,
+        { page: { items: row() } },
+        { page: { items: [{ limit: "x" }] } },
+      ],
+      [
+        "below a parent beside Schema.Date",
+        Schema.Union([Schema.Struct({ items: Listed }), Schema.Date]),
+        { items: row() },
+        { items: [{ limit: "x" }] },
+      ],
+      [
+        "at a value beside Schema.Date",
+        Schema.Union([Rows, Open, Schema.Date]),
+        row(),
+        [{ limit: "x" }],
+      ],
+      [
+        "inside middleware whose recovery fails",
+        Failing,
+        { items: row() },
+        { items: [{ limit: "x" }] },
+      ],
+    ] as const;
+    for (const [where, schema, given, goal] of groups) {
+      it.effect(
+        `currently refuses a key the list member leaves out ${where}`,
+        () =>
+          Effect.gen(function* () {
+            for (const message of yield* refusals(schema, given))
+              expect(message).toContain('[0]["extra"]');
+          }),
+      );
+      it.effect.fails(`writes the list member's reading ${where}`, () =>
+        Effect.gen(function* () {
+          expect(yield* prepared(schema, given)).toEqual(kept(goal));
+        }),
+      );
+    }
+  });
 
   it.effect("keeps a class codec's reading beside a list member", () =>
     Effect.gen(function* () {

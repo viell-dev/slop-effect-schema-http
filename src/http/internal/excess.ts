@@ -449,24 +449,26 @@ const earlierView = ({ sides, unreached }: Collected): View => ({
 });
 
 /**
- * Whether a value holds a field the Void rule counts as defined, and these sides, which take its
- * keys apart, state none of them: normalization would then strip every field the caller gave.
+ * Whether the container rule leaves a value's fields to the Void: a side it removed states one of
+ * the fields the Void rule counts as defined, and no side left states any. Then nothing left holds
+ * what the earlier reading kept: normalization strips those fields, or, with no struct or list side
+ * left, nothing stands between the value and the Void.
  */
-const statesNoField = (
-  sides: ReadonlyArray<Ast>,
+const leavesToVoid = (
+  kept: ReadonlyArray<Ast>,
+  removed: ReadonlyArray<Ast>,
   value: Record<PropertyKey, unknown>,
 ): boolean => {
-  if (readsOpaquely(sides)) return false;
-  let defined = false;
+  let held = false;
   for (const key of Reflect.ownKeys(value)) {
     const field = Array.isArray(value)
       ? arrayIndex(key) !== undefined
       : Object.prototype.propertyIsEnumerable.call(value, key);
     if (!field || value[key] === undefined) continue;
-    if (typesAt(sides, key).length > 0) return false;
-    defined = true;
+    if (typesAt(kept, key).length > 0) return false;
+    held ||= typesAt(removed, key).length > 0;
   }
-  return defined;
+  return held;
 };
 
 /** {@link View} of a value at the place {@link Within} gives. */
@@ -485,13 +487,17 @@ const viewAt = (
   if (!known || earlier || into.recovers) return earlierView(into);
   const sides = into.sides.filter((side) => readsContainer(side, value));
   // Beside a Void, a side the container rule leaves out may be the only one stating the caller's
-  // fields. Stripping them all would let the Void take the whole value where the earlier reading
-  // refuses it, so such a value keeps that reading.
+  // fields. Leaving them all unstated would let the Void take the whole value where the earlier
+  // reading refuses it, so such a value keeps that reading.
   if (
     sides.length < into.sides.length &&
     !into.holds &&
     into.sides.some(({ _tag }) => _tag === "Void") &&
-    statesNoField(sides, value as Record<PropertyKey, unknown>)
+    leavesToVoid(
+      sides,
+      into.sides.filter((side) => !sides.includes(side)),
+      value as Record<PropertyKey, unknown>,
+    )
   )
     return earlierView(into);
   return {
