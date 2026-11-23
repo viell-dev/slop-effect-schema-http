@@ -243,9 +243,11 @@ const ruledOut = (member: Ast, value: unknown): boolean => {
 };
 
 /**
- * A struct decoded from another one under new key names and nothing else, as `Schema.encodeKeys`
- * builds it: one plain link to an unchecked struct with no encoding of its own, holding the same
- * fields in the same order, each with the same optionality and the encoded form of the same type.
+ * A struct decoded from a struct of the same shape through any single plain transformation, as
+ * `Schema.encodeKeys` builds one: one plain link to an unchecked struct with no encoding of its
+ * own, holding as many fields in the same order, each with the same optionality and the encoded
+ * form of the same type. The key names and what the transformation does with the fields are not
+ * inspected.
  */
 const isKeyRename = (ast: SchemaAST.Objects): boolean => {
   const [link, ...others] = ast.encoding ?? [];
@@ -270,7 +272,8 @@ const isKeyRename = (ast: SchemaAST.Objects): boolean => {
 };
 
 /**
- * A struct, record, list or tuple, or a struct renamed with `Schema.encodeKeys`. Effect's parser
+ * A struct, record, list or tuple, or a struct decoded from a same-shaped struct through any single
+ * plain transformation, as {@link isKeyRename} accepts, such as `Schema.encodeKeys`. Effect's parser
  * tells containers apart for these by `Array.isArray` alone. Field types can be anything: each child
  * value is judged at its own level.
  */
