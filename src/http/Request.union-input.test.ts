@@ -3420,4 +3420,33 @@ describe("values at the edge of the known alternatives", () => {
         );
       }),
   );
+
+  // A class instance whose only own key is an index set to `undefined`.
+  class Unset {
+    readonly 0 = undefined;
+  }
+  const Unsettled = Schema.Union([
+    Schema.Struct({ a: Schema.optionalKey(Schema.String) }),
+    Schema.Void,
+    Empty,
+  ]);
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/264
+  it.effect(
+    "currently lets the Void take a class instance whose only key is undefined",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* sent(Unsettled, new Unset())).toBe("null");
+        expect(yield* rendered(Unsettled, new Unset())).toBeUndefined();
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/264
+  it.effect.fails(
+    "sends a class instance whose only key is undefined as an empty object",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* sent(Unsettled, new Unset())).toBe("{}");
+      }),
+  );
 });

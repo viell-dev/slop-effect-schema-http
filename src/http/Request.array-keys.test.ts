@@ -1420,8 +1420,9 @@ describe("members that cannot read the caller's container", () => {
             for (const message of yield* refusals(schema, given))
               expect(message).toContain('at ["0"]');
         const inner = Schema.Union([List, Schema.Void]);
-        // A field the list member does not state either keeps its refusal: the Void would take the
-        // value as given there, where the earlier reading sends nothing.
+        // A field that no member states, the list member included, keeps its refusal. The rule above
+        // applies only where a member the container rule set aside states the field; the earlier
+        // reading would strip `a` here and let the Void send `null`.
         expect(yield* prepared(inner, { a: "x" })).toEqual(refused);
         for (const message of yield* refusals(Schema.Array(inner), [
           new Keyed(),
@@ -1459,12 +1460,37 @@ describe("members that cannot read the caller's container", () => {
     const Failing = Schema.Struct({ items: Listed }).pipe(
       Schema.catchDecoding((issue) => Effect.fail(issue)),
     );
+    class Titled extends Schema.Class<Titled>("Titled")({
+      title: Schema.String,
+    }) {}
+    // The twin form: an index-keyed object beside a list member, which states its key `0`.
+    class Indexed extends Schema.Class<Indexed>("Indexed")({
+      p: Schema.Union([Plain, Rows]),
+    }) {}
     const groups = [
       [
         "below a class parent",
         Page,
         { items: row() },
         { items: [{ limit: "x" }] },
+      ],
+      [
+        "in a class in a list",
+        Schema.Array(Page),
+        [{ items: row() }],
+        [{ items: [{ limit: "x" }] }],
+      ],
+      [
+        "below a parent beside a class",
+        Schema.Union([Schema.Struct({ items: Listed }), Titled]),
+        { items: row() },
+        { items: [{ limit: "x" }] },
+      ],
+      [
+        "at a value beside a class",
+        Schema.Union([Rows, Open, Titled]),
+        row(),
+        [{ limit: "x" }],
       ],
       [
         "inside a class grandparent",
@@ -1492,6 +1518,7 @@ describe("members that cannot read the caller's container", () => {
       ],
     ] as const;
     for (const [where, schema, given, goal] of groups) {
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/243
       it.effect(
         `currently refuses a key the list member leaves out ${where}`,
         () =>
@@ -1500,12 +1527,34 @@ describe("members that cannot read the caller's container", () => {
               expect(message).toContain('[0]["extra"]');
           }),
       );
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/243
       it.effect.fails(`writes the list member's reading ${where}`, () =>
         Effect.gen(function* () {
           expect(yield* prepared(schema, given)).toEqual(kept(goal));
         }),
       );
     }
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+    it.effect(
+      "currently refuses an index key beside a list member below a class parent",
+      () =>
+        Effect.gen(function* () {
+          for (const message of yield* refusals(Indexed, { p: cell() }))
+            expect(message).toContain('at ["p"]["0"]');
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+    it.effect.fails(
+      "reads an index-keyed object as its object member below a class parent",
+      () =>
+        Effect.gen(function* () {
+          expect(yield* prepared(Indexed, { p: cell() })).toEqual(
+            kept({ p: {} }),
+          );
+        }),
+    );
   });
 
   it.effect("keeps a class codec's reading beside a list member", () =>

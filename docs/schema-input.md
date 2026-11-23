@@ -626,13 +626,23 @@ a guarantee that preparation refuses safely.
   member does not state, and have a recovery return the caller's cells or fail.
 - Inside a value that keeps 0.18.0's reading, a list beside a record still refuses a cell key the
   list member does not state, as 0.18.0 did. That covers a field of a class, or of a struct inside a
-  class or a class in a list, a field of a parent beside `Schema.Date` or a class, a value beside
-  `Schema.Date` or a class itself, and a value inside middleware whose recovery fails. Under a class
-  `Page` with `items: Schema.Union([Schema.Array(Plain), Open])`,
-  `{ items: [{ limit: "x", extra: 1 }] }` refuses at `["items"][0]["extra"]`, where `Schema.Struct`
-  in the class's place writes `{"items":[{"limit":"x"}]}`
-  ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). Leave out keys the list
-  member does not state.
+  class or a class in a list, a field of a parent beside `Schema.Date` or a class, a field of a
+  parent that is a struct codec of another shape, a value beside `Schema.Date` or a class itself,
+  and a value inside middleware whose recovery fails. Under a class `Page` with
+  `items: Schema.Union([Schema.Array(Plain), Open])`, `{ items: [{ limit: "x", extra: 1 }] }`
+  refuses at `["items"][0]["extra"]`, where `Schema.Struct` in the class's place writes
+  `{"items":[{"limit":"x"}]}`. In the same places an index-keyed object beside a list member still
+  refuses too: under a class with `p: Schema.Union([Plain, Schema.Array(Plain)])`,
+  `{ p: { 0: { limit: "x", extra: 1 } } }` refuses at `["p"]["0"]`, where `Schema.Struct` writes
+  `{"p":{}}` ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). Leave out
+  keys the list member does not state, and do not give a list's cells as index keys of an object.
+- Beside a guarded Void and an empty struct, a class instance whose only own key is an index set to
+  `undefined` is taken by the Void. Under
+  `Union([Schema.Struct({ a: Schema.optionalKey(Schema.String) }), Schema.Void, Schema.Struct({})])`,
+  such an instance is sent as `null` in a JSON body and reaches a path renderer as `undefined`,
+  where 0.18.0 sent `{}`. No field with a value is lost
+  ([#264](https://github.com/viell-dev/slop-effect-schema-http/issues/264)). Leave out keys set to
+  `undefined`, or give a plain object.
 - An empty `Schema.Class` keeps 0.18.0's reading beside a list member or a member that states
   fields. `Union([Bare, Schema.Array(Plain)])`, where `Bare` is an empty class, sends
   `{"0":{"limit":"x"}}` for `[{ limit: "x", extra: 1 }]`, although Effect's first fit gives the
