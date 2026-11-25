@@ -1,7 +1,7 @@
 /**
  * Consumer-authored from the public #143 acceptance and 0.16 migration, using echo's HTTP contract:
  * https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6750236968
- * These are retained conflict limits, not a request to change constructor or decoder priority.
+ * Each list keeps its complete-side controls and refuses items supplied under both names.
  */
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
@@ -172,7 +172,7 @@ const jsonFor = (cells: ReadonlyArray<string>, hasHole: boolean) =>
   `[${hasHole ? [cells[0], "null", ...cells.slice(1)].join(",") : cells.join(",")}]`;
 
 // The nonliteral input is accepted on all three public input types without casts. This is a
-// compatibility limit that TypeScript does not prohibit; the ordinary wire pins keep it visible.
+// runtime refusal that the input types cannot express for nonliteral values.
 const inputTypes = () => {
   const bothNames = [{ limit: 1, page_size: "02" }, { page_size: "25" }];
   const optional: Request.Input<typeof OptionalFilters> = bothNames;
@@ -187,39 +187,27 @@ describe(`constructor alias conflicts (${lane.name})`, () => {
     const { schema } = fixture;
     for (const binding of ["path", "JSON"] as const) {
       it.live(
-        `${fixture.id} currently ${binding} ${fixture.name} changes a dual-name item only beside an encoded-only neighbor`,
+        `${fixture.id} ${binding} ${fixture.name} keeps complete single-side lists`,
         () =>
           Effect.gen(function* () {
             const backend = yield* lane.backend("echo", undefined, {
               listener: "socket",
             });
             const execute = operation(backend.origin, schema, binding);
-            const bothNames = { limit: 1, page_size: "02" };
             const examples = [
               {
-                cells: [{ page_size: "01" }, { page_size: "25" }],
+                input: fixture.arrange([
+                  { page_size: "01" },
+                  { page_size: "25" },
+                ]),
                 output: ['{"page_size":"1"}', '{"page_size":"25"}'],
               },
               {
-                cells: [{ limit: 1 }, { limit: 25 }],
+                input: fixture.arrange([{ limit: 1 }, { limit: 25 }]),
                 output: ['{"page_size":"1"}', '{"page_size":"25"}'],
-              },
-              { cells: [bothNames], output: ['{"page_size":"1"}'] },
-              {
-                cells: [bothNames, { limit: 25 }],
-                output: ['{"page_size":"1"}', '{"page_size":"25"}'],
-              },
-              {
-                cells: [bothNames, {}],
-                output: ['{"page_size":"1"}', '{"page_size":"25"}'],
-              },
-              {
-                cells: [bothNames, { page_size: "25" }],
-                output: ['{"page_size":"2"}', '{"page_size":"25"}'],
               },
             ];
-            for (const { cells, output } of examples) {
-              const input = fixture.arrange(cells);
+            for (const { input, output } of examples) {
               const supplied: Request.Input<typeof schema> = input;
               const before = snapshot(input);
               expect(yield* execute(supplied)).toBe("Not Found");
@@ -232,11 +220,11 @@ describe(`constructor alias conflicts (${lane.name})`, () => {
                 jsonFor(output, fixture.sparse),
               );
             }
-            expect(yield* backend.ledger).toHaveLength(6);
+            expect(yield* backend.ledger).toHaveLength(2);
           }),
       );
-      it.live.fails(
-        `[EXT-48d] goal ${binding} ${fixture.name} contradictory aliases refuse before dispatch`,
+      it.live(
+        `[EXT-48d] ${binding} ${fixture.name} contradictory aliases refuse before dispatch`,
         () =>
           Effect.gen(function* () {
             const backend = yield* lane.backend("echo", undefined, {

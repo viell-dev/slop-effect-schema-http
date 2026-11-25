@@ -432,7 +432,7 @@ describe(`constructor input profiles (${lane.name})`, () => {
       "subclass",
     ] as const) {
       it.live(
-        `[EXT-47k] currently ${binding} ${shape} iterator profiles remain excluded without iteration`,
+        `[EXT-47k] ${binding} ${shape} iterator profile reads positions without invoking the iterator`,
         () =>
           Effect.gen(function* () {
             const backend = yield* start();
@@ -467,14 +467,22 @@ describe(`constructor input profiles (${lane.name})`, () => {
               });
             }
             const before = snapshot(input);
-            expect(
-              yield* operation(backend.origin, Filters, binding)(input),
-            ).toBe("Not Found");
+            const actual = yield* operation(
+              backend.origin,
+              Filters,
+              binding,
+            )(input).pipe(result);
             expect({ calls, gets }).toEqual({ calls: 0, gets: 0 });
             unchanged(input, before);
             const ledger = yield* backend.ledger;
-            expect(ledger).toHaveLength(1);
-            wire(ledger[0]!, binding, '[{"page_size":"25"}]');
+            if (shape === "accessor" || shape === "subclass") {
+              expect(actual).toEqual({ value: "Not Found" });
+              expect(ledger).toHaveLength(1);
+              wire(ledger[0]!, binding, '[{"page_size":"25"}]');
+            } else {
+              expect(actual).toMatchObject({ error: { _tag: "SchemaError" } });
+              expect(ledger).toEqual([]);
+            }
           }),
       );
     }

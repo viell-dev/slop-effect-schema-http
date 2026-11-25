@@ -19,6 +19,14 @@ const groups = {
   "55b": "[EXT-55b]",
   "55c": "[EXT-55c]",
   "55d": "[EXT-55d]",
+  "57a": "[EXT-57a]",
+  "57b": "[EXT-57b]",
+  "58": "[EXT-58]",
+  "59": "[EXT-59]",
+  "60": "[EXT-60]",
+  "61": "[EXT-61]",
+  "62": "[EXT-62]",
+  "63": "[EXT-63]",
 } as const;
 
 for (const id of Object.keys(groups) as Array<keyof typeof groups>) {

@@ -146,9 +146,13 @@ const fieldwiseTrace = [
   "limit.read:05",
   "gate.read:03",
   "n.read:07",
+  "shared.read:aGk=",
   "limit.default",
   "limit.read:05",
   "gate.read:03",
+  "limit.read:05",
+  "gate.read:03",
+  "n.read:07",
   "n.read:07",
   "limit.write:5",
   "gate.write:3",
@@ -290,7 +294,6 @@ describe(`nested constructor defaults (${lane.name})`, () => {
             { page_size: "05", term: "a/b" },
             { limit: 5, term: "a/b" },
             {},
-            { limit: 5, page_size: "many" },
           ] as const) {
             expect(
               yield* operation
@@ -298,12 +301,15 @@ describe(`nested constructor defaults (${lane.name})`, () => {
                 .pipe(Effect.provide(lane.fetchClient)),
             ).toBe("Not Found");
           }
+          const dual = yield* operation
+            .execute({ path: { filter: { limit: 5, page_size: "many" } } })
+            .pipe(Effect.provide(lane.fetchClient), outcome);
+          expect(dual).toMatchObject({ error: { _tag: "SchemaError" } });
           const ledger = yield* backend.ledger;
-          expect(ledger).toHaveLength(4);
+          expect(ledger).toHaveLength(3);
           expectEntry(ledger[0]!, "/x/page/5/a%2Fb");
           expectEntry(ledger[1]!, "/x/page/5/a%2Fb");
           expectEntry(ledger[2]!, "/x/page/25/none");
-          expectEntry(ledger[3]!, "/x/page/5/none");
         }),
     );
 
@@ -322,7 +328,6 @@ describe(`nested constructor defaults (${lane.name})`, () => {
             { page_size: "05", term: "a/b" },
             { limit: 5, term: "a/b" },
             {},
-            { limit: 5, page_size: "many" },
           ] as const) {
             expect(
               yield* operation
@@ -330,8 +335,12 @@ describe(`nested constructor defaults (${lane.name})`, () => {
                 .pipe(Effect.provide(lane.fetchClient)),
             ).toBe("Not Found");
           }
+          const dual = yield* operation
+            .execute({ body: { filter: { limit: 5, page_size: "many" } } })
+            .pipe(Effect.provide(lane.fetchClient), outcome);
+          expect(dual).toMatchObject({ error: { _tag: "SchemaError" } });
           const ledger = yield* backend.ledger;
-          expect(ledger).toHaveLength(4);
+          expect(ledger).toHaveLength(3);
           expectEntry(
             ledger[0]!,
             "/x",
@@ -343,7 +352,6 @@ describe(`nested constructor defaults (${lane.name})`, () => {
             '{"filter":{"term":"a/b","page_size":"5"}}',
           );
           expectEntry(ledger[2]!, "/x", '{"filter":{"page_size":"25"}}');
-          expectEntry(ledger[3]!, "/x", '{"filter":{"page_size":"5"}}');
         }),
     );
   }
@@ -677,7 +685,7 @@ describe(`nested constructor defaults (${lane.name})`, () => {
     "terminal value",
   ] as const) {
     it.live(
-      `[EXT-42m] control: ${mutation} changes during construction cannot authorize new nested decoding`,
+      `[EXT-42m] ${mutation} changes during construction leave preparation to read the current input`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
@@ -713,26 +721,34 @@ describe(`nested constructor defaults (${lane.name})`, () => {
             ),
             response,
           );
-          expect(
-            yield* operation
-              .execute({ body: input })
-              .pipe(Effect.provide(lane.fetchClient)),
-          ).toBe("Not Found");
+          const actual = yield* operation
+            .execute({ body: input })
+            .pipe(Effect.provide(lane.fetchClient), outcome);
           const ledger = yield* backend.ledger;
-          expect(ledger).toHaveLength(1);
-          expectEntry(ledger[0]!, "/x", '{"filter":{"page_size":"25"}}');
-          expect(trace).toEqual([
-            "limit.read:many",
-            "limit.read:many",
-            "default",
-            "limit.write:25",
-          ]);
+          if (
+            mutation === "terminal value" ||
+            mutation === "ancestor descriptor"
+          ) {
+            expect(actual).toEqual({ kind: "success", value: "Not Found" });
+            expect(ledger).toHaveLength(1);
+            expectEntry(
+              ledger[0]!,
+              "/x",
+              mutation === "terminal value"
+                ? '{"filter":{"page_size":"5"}}'
+                : '{"filter":{"page_size":"25"}}',
+            );
+          } else {
+            expect(actual).toMatchObject({ error: { _tag: "SchemaError" } });
+            expect(ledger).toEqual([]);
+          }
+          expect(trace).toContain("default");
         }),
     );
   }
 
   it.live(
-    "[EXT-42n] control: an ancestor replaced while a default waits retains the baseline route",
+    "[EXT-42n] an invalid alias still refuses after its ancestor is replaced during a default",
     () =>
       Effect.gen(function* () {
         const backend = yield* start();
@@ -772,17 +788,12 @@ describe(`nested constructor defaults (${lane.name})`, () => {
         yield* Deferred.await(entered).pipe(Effect.timeout("2 seconds"));
         input.filter = { page_size: "many" };
         yield* Deferred.succeed(release, undefined);
-        expect(yield* Fiber.join(running)).toBe("Not Found");
-        const ledger = yield* backend.ledger;
-        expect(ledger).toHaveLength(1);
-        expectEntry(ledger[0]!, "/x", '{"filter":{"page_size":"25"}}');
-        expect(trace).toEqual([
-          "limit.read:many",
-          "limit.read:many",
-          "default.enter",
-          "default.exit",
-          "limit.write:25",
-        ]);
+        expect(yield* Fiber.join(running).pipe(outcome)).toMatchObject({
+          error: { _tag: "SchemaError" },
+        });
+        expect(yield* backend.ledger).toEqual([]);
+        expect(trace).toContain("default.enter");
+        expect(trace).toContain("default.exit");
       }),
   );
 
@@ -869,6 +880,12 @@ describe(`nested constructor defaults (${lane.name})`, () => {
           "left.read:many",
           "left.default",
           "right.default",
+          "left.read:many",
+          "right.read:many",
+          "left.default",
+          "left.read:many",
+          "right.default",
+          "right.read:many",
           "left.replace",
           "left.write:25",
           "right.omit:25",

@@ -552,7 +552,7 @@ describe(`opaque neighbors and visible request fields (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-35n] limit: an iterable parent is not reconstructed as an ordinary record",
+    "[EXT-35n] an iterable parent keeps its fields and declared iterator in a path binding",
     () =>
       Effect.gen(function* () {
         const Iterable = Schema.Struct({
@@ -562,11 +562,20 @@ describe(`opaque neighbors and visible request fields (${lane.name})`, () => {
             (value): value is typeof empty => typeof value === "function",
           ),
         });
-        const error = yield* refused(
-          (origin) => get(origin).pipe(Request.path(Iterable, () => "/x")),
+        const ledger = yield* sent(
+          (origin) =>
+            get(origin).pipe(
+              Request.path(Iterable, (value, encode) => {
+                expect(value[Symbol.iterator]).toBe(empty);
+                return `/${encode(JSON.stringify(value))}`;
+              }),
+            ),
           { path: { ...input(), [Symbol.iterator]: empty } },
         );
-        expect(error).toContain('["f"]["b"]');
+        expectWire(
+          ledger,
+          `/${encodeURIComponent(JSON.stringify(completePathWire))}`,
+        );
       }),
   );
 
@@ -661,7 +670,7 @@ describe(`opaque neighbors and visible request fields (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-35r] a visible field added after creating a pending body cannot disappear during recovery",
+    "[EXT-35r] a field added before evaluating a pending body is kept",
     () =>
       Effect.gen(function* () {
         // Public pending-input regression, exercised through the Body.encoder extension point:
@@ -672,34 +681,37 @@ describe(`opaque neighbors and visible request fields (${lane.name})`, () => {
         };
         const pending = Body.jsonSchema(Parent).encode(value);
         value.f.b = "y";
-        const error = yield* refused(
+        const ledger = yield* sent(
           (origin) =>
             post(origin).pipe(
               Request.body(Body.encoder((_body: void) => pending)),
             ),
           { body: undefined },
         );
-        expect(error).toContain('["f"]["b"]');
+        expectWire(ledger, "/x", completeWire);
         expect(value.f).toEqual({ a: "x", b: "y" });
       }),
   );
 
   it.live(
-    "[EXT-35s] a visible value changed after creating a pending body cannot recover its old value",
+    "[EXT-35s] a value changed before evaluating a pending body is kept",
     () =>
       Effect.gen(function* () {
         // https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6726041080
         const value = input();
         const pending = Body.jsonSchema(Parent).encode(value);
         value.f.a = "current";
-        const error = yield* refused(
+        const ledger = yield* sent(
           (origin) =>
             post(origin).pipe(
               Request.body(Body.encoder((_body: void) => pending)),
             ),
           { body: undefined },
         );
-        expect(error).toContain('["f"]["b"]');
+        expectWire(ledger, "/x", {
+          ...completeWire,
+          f: { a: "current", b: "y" },
+        });
         expect(value.f.a).toBe("current");
       }),
   );

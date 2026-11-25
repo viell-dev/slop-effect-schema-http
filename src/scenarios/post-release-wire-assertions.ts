@@ -32,7 +32,7 @@ export const assertWireCase = (
       typeof expected.omitted === "string"
         ? [expected.omitted]
         : (expected.omitted ?? []);
-    for (const text of omitted) expect(diagnostic).not.toContain(text);
+    for (const text of omitted) expect(`${diagnostic}\n`).not.toContain(text);
     return;
   }
 
@@ -48,6 +48,9 @@ export const assertWireCase = (
   );
   const headerNames = new Set([
     "x-value",
+    "a",
+    "page_size",
+    "limit",
     ...(expected.headers ?? []).map(([name]) => name),
   ]);
   // Chromium and Node Fetch can order distinct names differently. The stable sort
@@ -79,6 +82,6 @@ export const assertWireCase = (
       typeof expected.body === "string" || expected.body === undefined
         ? new TextEncoder().encode(expected.body ?? "")
         : Uint8Array.from(expected.body);
-    expect(entry.body).toEqual(bytes);
+    expect(entry.body, new TextDecoder().decode(entry.body)).toEqual(bytes);
   }
 };

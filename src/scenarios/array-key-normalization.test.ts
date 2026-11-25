@@ -599,7 +599,7 @@ describe(`array key normalization (${lane.name})`, () => {
         it.live(
           shape === "normal iterator"
             ? `[EXT-45o] ${binding} ${position.name} native iterator invalid aliases refuse without dispatch`
-            : `[EXT-45o] currently ${binding} ${position.name} watched iterator invalid aliases expose unsupported defaults`,
+            : `[EXT-45o] ${binding} ${position.name} watched iterator invalid aliases refuse without dispatch`,
           () =>
             Effect.gen(function* () {
               const backend = yield* start();
@@ -644,16 +644,12 @@ describe(`array key normalization (${lane.name})`, () => {
                 outcomes,
                 requests: received(ledger),
               }).toMatchObject({
-                outcomes: Array.from({ length: 4 }, () =>
-                  shape === "normal iterator"
-                    ? { kind: "failure", error: { _tag: "SchemaError" } }
-                    : { kind: "success", value: "Not Found" },
-                ),
-                requests: shape === "normal iterator" ? [] : [{}, {}, {}, {}],
+                outcomes: Array.from({ length: 4 }, () => ({
+                  kind: "failure",
+                  error: { _tag: "SchemaError" },
+                })),
+                requests: [],
               });
-              expect(ledger).toHaveLength(shape === "normal iterator" ? 0 : 4);
-              for (const entry of ledger)
-                wire(entry, binding, position.json('{"page_size":"25"}'));
             }),
         );
       }
@@ -704,8 +700,6 @@ describe(`array key normalization (${lane.name})`, () => {
                 expect(watched.calls()).toBe(0);
               }
           }
-          // Exact native data is covered. Arbitrary wrappers remain outside the accepted
-          // evidence, so their separate kept-or-refused goal stays an expected failure.
           expectOutcomes({
             outcomes,
             requests: received(yield* backend.ledger),
@@ -721,8 +715,8 @@ describe(`array key normalization (${lane.name})`, () => {
       `[EXT-45p] ${binding} invalid enumerable native iterator aliases refuse before dispatch`,
       iteratorGoal("normal iterator"),
     );
-    it.live.fails(
-      `[EXT-45p] goal ${binding} invalid enumerable watched iterator aliases are kept or refused`,
+    it.live(
+      `[EXT-45p] ${binding} invalid enumerable watched iterator aliases refuse before dispatch`,
       iteratorGoal("watched iterator"),
     );
 
@@ -877,7 +871,7 @@ describe(`array key normalization (${lane.name})`, () => {
     );
 
     it.live(
-      `[EXT-45i] currently ${binding} hidden iterators retain their unsupported default meaning`,
+      `[EXT-45i] ${binding} hidden data iterators refuse invalid cell aliases without invocation`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
@@ -910,13 +904,11 @@ describe(`array key normalization (${lane.name})`, () => {
               binding === "path"
                 ? path.execute({ path: input })
                 : body.execute({ body: input })
-            ).pipe(Effect.provide(lane.fetchClient)),
-          ).toBe("Not Found");
+            ).pipe(Effect.provide(lane.fetchClient), observe),
+          ).toMatchObject({ kind: "failure", error: { _tag: "SchemaError" } });
           expect(calls).toBe(0);
           unchanged(input, before);
-          const ledger = yield* backend.ledger;
-          expect(ledger).toHaveLength(1);
-          wire(ledger[0]!, binding, '[{"page_size":"25"}]');
+          expect(yield* backend.ledger).toEqual([]);
         }),
     );
 
@@ -1498,8 +1490,9 @@ describe(`array key normalization (${lane.name})`, () => {
           }),
       );
     }
+    const keepsExtra = name !== "Declaration";
     it.live(
-      `[EXT-45w] control ${name} enumerable mixed cells retain their existing normalized interpretation`,
+      `[EXT-45w] ${name} enumerable mixed cells ${keepsExtra ? "retain their additional field" : "retain their opaque reading"}`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
@@ -1537,13 +1530,19 @@ describe(`array key normalization (${lane.name})`, () => {
             requests: received(ledger),
           }).toMatchObject({
             outcome: { kind: "success", value: "Not Found" },
-            rendered: [{ sameArray: false, sameCell: false, extra: undefined }],
+            rendered: [
+              {
+                sameArray: keepsExtra,
+                sameCell: keepsExtra,
+                extra: keepsExtra ? "retain" : undefined,
+              },
+            ],
             requests: [{}],
           });
           expect(ledger).toHaveLength(1);
           textPathWire(
             ledger[0]!,
-            `/x/mixed/5/${encodeURIComponent('[{"VALUE":5}]')}`,
+            `/x/mixed/5/${encodeURIComponent(keepsExtra ? '[{"VALUE":5,"additional":"retain"}]' : '[{"VALUE":5}]')}`,
           );
         }),
     );
@@ -1653,7 +1652,7 @@ describe(`array key normalization (${lane.name})`, () => {
   for (const reflection of ["length", "hidden cell", "prototype"] as const) {
     it.live(
       reflection === "prototype"
-        ? "[EXT-45y] a sparse mixed array can probe its prototype once and still dispatch"
+        ? "[EXT-45y] an accepting opaque alternative keeps the sparse list without probing its prototype"
         : `[EXT-45y] an accepting opaque alternative avoids ${reflection} reflection through a mixed array view`,
       () =>
         Effect.gen(function* () {
@@ -1709,9 +1708,6 @@ describe(`array key normalization (${lane.name})`, () => {
           expect(target.length).toBe(reflection === "prototype" ? 2 : 1);
           expect(target[reflection === "prototype" ? 1 : 0]).toBe(cell);
           expect(cell.additional).toBe("retain");
-          // The sparse profile rebuilds the list when its enumerable cell changes, so it
-          // checks the prototype once for inherited positions (#257). The throwing trap still
-          // allows dispatch. The other profiles keep the original opaque value.
           expectOutcomes({
             outcome,
             identities,
@@ -1719,8 +1715,8 @@ describe(`array key normalization (${lane.name})`, () => {
             requests: received(ledger),
           }).toMatchObject({
             outcome: { kind: "success", value: "Not Found" },
-            identities: [reflection !== "prototype"],
-            forbiddenReads: reflection === "prototype" ? 1 : 0,
+            identities: [true],
+            forbiddenReads: 0,
             requests: [{}],
           });
           expect(ledger).toHaveLength(1);
@@ -1787,7 +1783,7 @@ describe(`array key normalization (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-46a] mixed opaque enumerable rewriting avoids adding a length getter read",
+    "[EXT-46a] mixed opaque enumerable cells keep their array without adding a length getter read",
     () =>
       Effect.gen(function* () {
         const backend = yield* start();
@@ -1846,7 +1842,7 @@ describe(`array key normalization (${lane.name})`, () => {
             { kind: "success", value: "Not Found" },
             { kind: "success", value: "Not Found" },
           ],
-          identities: [true, false],
+          identities: [true, true],
           reads: [0, 0],
           requests: [{}, {}],
         });

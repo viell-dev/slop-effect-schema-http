@@ -15,11 +15,12 @@ const Open = Schema.Record(Schema.String, Schema.Unknown);
 const secret = "private-fixture-value";
 const privateFixtureValue = () => secret;
 const substitute = () => ["substituted"];
-const Filter = Schema.Struct({
-  limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
-    Schema.withConstructorDefault(Effect.succeed(25)),
-  ),
-}).pipe(Schema.encodeKeys({ limit: "page_size" }));
+const limit = Schema.optionalKey(Schema.FiniteFromString).pipe(
+  Schema.withConstructorDefault(Effect.succeed(25)),
+);
+const Filter = Schema.Struct({ limit }).pipe(
+  Schema.encodeKeys({ limit: "page_size" }),
+);
 
 // Unknown values at these boundaries model JavaScript callers of the public API.
 const body =
@@ -160,6 +161,64 @@ const NamedOrEmpty = Schema.Union([Named, Empty]);
 const Names = Schema.Array(Named);
 const HiddenOrOpen = Schema.Union([Names, Schema.Unknown]);
 
+class Counted extends Schema.Class<Counted>("Counted")({ a: Schema.String }) {
+  readonly reads = 1;
+}
+
+const CountedRoot = Schema.Struct({ limit, counted: Counted }).pipe(
+  Schema.encodeKeys({ limit: "page_size" }),
+);
+class UnionHolder extends Schema.Class<UnionHolder>("UnionHolder")({
+  item: Schema.Union([Filter, Counted]),
+}) {
+  readonly reads = 1;
+}
+class NestedClass extends Schema.Class<NestedClass>("NestedClass")({
+  row: Named,
+}) {}
+class ListHolder extends Schema.Class<ListHolder>("ListHolder")({
+  item: Schema.Union([Open, Names]),
+}) {}
+class UndefinedOnly {
+  readonly z = undefined;
+}
+
+const groupWire = (
+  kind: Group,
+  pairs: ReadonlyArray<readonly [string, string]>,
+) =>
+  kind === "query"
+    ? get(`/x?${pairs.map(([name, value]) => `${name}=${value}`).join("&")}`)
+    : get(
+        "/x",
+        pairs.toSorted(([name], [other]) => name.localeCompare(other)),
+      );
+
+const stacked =
+  (
+    kind: Group,
+    [first, second]: readonly [WireSchema, WireSchema],
+    input: () => unknown,
+  ): Send =>
+  (origin) => {
+    const request = Request.get(`${origin}/x`);
+    return kind === "query"
+      ? Operation.make(
+          request.pipe(
+            Request.query(first as never),
+            Request.query(second as never),
+          ),
+          response,
+        ).execute({ query: input() as never })
+      : Operation.make(
+          request.pipe(
+            Request.headers(first as never),
+            Request.headers(second as never),
+          ),
+          response,
+        ).execute({ headers: input() as never });
+  };
+
 export const wireCases = {
   "52a": groups.flatMap((kind) => [
     sent(
@@ -198,17 +257,17 @@ export const wireCases = {
   ]),
   "52b": groups.flatMap((kind) => [
     refused(
-      `currently ${kind} refuses a three-cell pair without identifying it`,
+      `${kind} refuses a three-cell pair at its position`,
       group(kind, Empty, () => [["x-value", secret, "third"]]),
       "InvalidRequest",
-      "A field pair must be a two-position array with a string name",
+      "The field pair at $[0] must be a two-position array with a string name",
       [secret, "x-value"],
     ),
     refused(
-      `currently ${kind} refuses a non-array iterable entry without identifying it`,
+      `${kind} refuses a non-array iterable entry at its position`,
       group(kind, Empty, () => new Set(["ab"])),
       "InvalidRequest",
-      "A field pair must be a two-position array with a string name",
+      "The field pair at $[0] must be a two-position array with a string name",
     ),
     refused(
       `${kind} refuses a defined enumerable non-callable iterator`,
@@ -221,10 +280,10 @@ export const wireCases = {
       secret,
     ),
     refused(
-      `currently ${kind} refuses a numeric pair without identifying its position`,
+      `${kind} refuses a numeric pair at its position`,
       group(kind, Empty, () => [1]),
       "InvalidRequest",
-      "A field pair must be a two-position array with a string name",
+      "The field pair at $[0] must be a two-position array with a string name",
     ),
     sent(
       `${kind} reads a record with a non-enumerable non-callable iterator`,
@@ -675,14 +734,371 @@ export const wireCases = {
   ),
   "55d": [
     refused(
-      "currently the header writer refuses a non-text value without naming the field",
+      "the header writer refuses a non-text value and names the field",
       group("headers", NamedOrEmpty, () => ({
         a: "x",
         "x-value": { note: secret },
       })),
       "InvalidRequest",
-      "A header line must have a string value",
-      [secret, "x-value"],
+      'The header field "x-value" must have a string value',
+      secret,
+    ),
+  ],
+  "57a": [
+    ...(
+      [
+        [
+          "root class sibling",
+          CountedRoot,
+          (page_size: string) => ({ page_size, counted: { a: "x" } }),
+          '{"page_size":"5","counted":{"a":"x"}}',
+          '["page_size"]',
+        ],
+        [
+          "class field sibling",
+          Schema.Struct({ item: Filter, counted: Counted }),
+          (page_size: string) => ({ item: { page_size }, counted: { a: "x" } }),
+          '{"item":{"page_size":"5"},"counted":{"a":"x"}}',
+          '["item"]["page_size"]',
+        ],
+        [
+          "record",
+          Schema.Record(Schema.String, Filter),
+          (page_size: string) => ({ row: { page_size } }),
+          '{"row":{"page_size":"5"}}',
+          '["row"]["page_size"]',
+        ],
+        [
+          "suspension",
+          Schema.suspend(() => Filter),
+          (page_size: string) => ({ page_size }),
+          '{"page_size":"5"}',
+          '["page_size"]',
+        ],
+        [
+          "list",
+          Schema.Array(Filter),
+          (page_size: string) => [{ page_size }],
+          '[{"page_size":"5"}]',
+          '[0]["page_size"]',
+        ],
+        [
+          "union",
+          Schema.Union([Filter, Schema.Struct({ cursor: Schema.String })]),
+          (page_size: string) => ({ page_size }),
+          '{"page_size":"5"}',
+          '["page_size"]',
+        ],
+      ] as const satisfies ReadonlyArray<
+        readonly [
+          string,
+          WireSchema,
+          (alias: string) => unknown,
+          string,
+          string,
+        ]
+      >
+    ).flatMap(([name, schema, input, bytes, field]) => [
+      sent(
+        `JSON ${name} keeps the encoded alias`,
+        json(schema, () => input("05")),
+        post(bytes),
+      ),
+      refused(
+        `JSON ${name} refuses an invalid alias`,
+        json(schema, () => input("many")),
+        "SchemaError",
+        field,
+      ),
+    ]),
+    sent(
+      "JSON omitted root alias takes the constructor default",
+      json(CountedRoot, () => ({ counted: { a: "x" } })),
+      post('{"page_size":"25","counted":{"a":"x"}}'),
+    ),
+    refused(
+      "JSON agreeing root names refuse",
+      json(Filter, () => ({ limit: 5, page_size: "5" })),
+      "SchemaError",
+      '["page_size"]',
+    ),
+  ],
+  "57b": [
+    refused(
+      "JSON decoding default cannot replace invalid root input",
+      json(DecodingFilter, () => ({ limit: "x" })),
+      "SchemaError",
+      '["limit"]',
+    ),
+    refused(
+      "JSON decoding default cannot replace invalid list input",
+      json(Schema.Array(DecodingFilter), () => [{ limit: "x" }]),
+      "SchemaError",
+      '[0]["limit"]',
+    ),
+    refused(
+      "JSON decoding default cannot replace valid decoded list input beside an omission",
+      json(Schema.Array(DecodingFilter), () => [{ limit: 5 }, {}]),
+      "SchemaError",
+      '[0]["limit"]',
+    ),
+    sent(
+      "JSON decoding default list control keeps a decoded value",
+      json(Schema.Array(DecodingFilter), () => [{ limit: 5 }]),
+      post('[{"page_size":"5"}]'),
+    ),
+    ...groups.flatMap((kind) => [
+      sent(
+        `${kind} encodes a valid alias`,
+        group(kind, Filter, () => ({ page_size: "05" })),
+        groupWire(kind, [["page_size", "5"]]),
+      ),
+      refused(
+        `${kind} refuses an invalid alias despite a constructor default`,
+        group(kind, Filter, () => ({ page_size: "many" })),
+        "SchemaError",
+        '["page_size"]',
+      ),
+      refused(
+        `${kind} refuses an invalid decoded name despite a decoding default`,
+        group(kind, DecodingFilter, () => ({ limit: "x" })),
+        "SchemaError",
+        '["limit"]',
+      ),
+    ]),
+  ],
+  "58": groups.flatMap((kind) =>
+    [false, true].flatMap((reverse) => {
+      const order = reverse ? "sibling first" : "sibling last";
+      const sibling = Schema.Struct({ page_size: Schema.String });
+      const side = Schema.Struct({ a: Schema.String });
+      const canLose = Schema.Union([
+        side,
+        Schema.Struct({ page_size: Schema.FiniteFromString }),
+      ]);
+      const canReplace = Schema.Union([Filter, side]);
+      const bind = (schema: WireSchema, input: () => unknown) =>
+        stacked(kind, reverse ? [sibling, schema] : [schema, sibling], input);
+      return [
+        sent(
+          `${kind} ${order} leaves a field to its sibling when it writes nothing in its place`,
+          bind(canLose, () => ({
+            a: "x",
+            page_size: "many",
+          })),
+          groupWire(
+            kind,
+            reverse
+              ? [
+                  ["page_size", "many"],
+                  ["a", "x"],
+                ]
+              : [
+                  ["a", "x"],
+                  ["page_size", "many"],
+                ],
+          ),
+        ),
+        refused(
+          `${kind} ${order} cannot substitute a default for the sibling's field`,
+          bind(canReplace, () => ({ page_size: "many" })),
+          "SchemaError",
+          '["page_size"]',
+        ),
+      ];
+    }),
+  ),
+  "59": [
+    refused(
+      "a class instance beside a struct that would strip it is refused",
+      json(
+        Schema.Struct({
+          item: Schema.Union([Filter, Counted]),
+          counted: Counted,
+        }),
+        () => ({
+          item: new Counted({ a: "item" }),
+          counted: new Counted({ a: "sibling" }),
+        }),
+      ),
+      "SchemaError",
+      '["item"]["a"]',
+    ),
+    sent(
+      "known mismatch: loose JSON write must retain the union member in a class field",
+      json(
+        UnionHolder,
+        () => new UnionHolder({ item: new Counted({ a: "item" }) }),
+      ),
+      post('{"item":{"a":"item"}}'),
+    ),
+    sent(
+      "a later open member does not take a class value the first member holds",
+      json(
+        Schema.Struct({
+          item: Schema.Union([Counted, Schema.Unknown]),
+          counted: Counted,
+        }),
+        () => ({
+          item: new Counted({ a: "item" }),
+          counted: new Counted({ a: "sibling" }),
+        }),
+      ),
+      post('{"item":{"a":"item"},"counted":{"a":"sibling"}}'),
+    ),
+  ],
+  "60": [
+    refused(
+      "open JSON record refuses a Map before rebuilding it",
+      json(Open, () => new Map([["a", 1]])),
+      "SchemaError",
+      "The schema cannot keep the content of this value",
+    ),
+    refused(
+      "ObjectKeyword JSON root refuses a Date before rebuilding it",
+      json(Schema.ObjectKeyword, () => new Date(0)),
+      "SchemaError",
+      "The schema cannot keep the content of this value",
+    ),
+    refused(
+      "nested ObjectKeyword refuses a Map",
+      json(Schema.Struct({ row: Schema.ObjectKeyword }), () => ({
+        row: new Map([["a", 1]]),
+      })),
+      "SchemaError",
+      '["row"]',
+    ),
+    refused(
+      "open record inside a JSON list refuses a URL",
+      json(Schema.Array(Open), () => [new URL("https://example.test/x")]),
+      "SchemaError",
+      "[0]",
+    ),
+    ...groups.map((kind) =>
+      refused(
+        `${kind} open record refuses a Date`,
+        group(
+          kind,
+          Schema.Record(Schema.String, Schema.String),
+          () => new Date(0),
+        ),
+        "SchemaError",
+        "The schema cannot keep the content of this value",
+      ),
+    ),
+    sent(
+      "open JSON record still writes an instance with fields",
+      json(Open, () => new Counted({ a: "x" })),
+      post('{"a":"x","reads":1}'),
+    ),
+  ],
+  "61": [
+    refused(
+      "a JSON list refusal names only the innermost lost field",
+      json(
+        Schema.Struct({
+          item: Schema.Array(DecodingFilter),
+          n: Schema.FiniteFromString,
+        }),
+        () => ({ item: [{ limit: "x" }], n: 1 }),
+      ),
+      "SchemaError",
+      '["item"][0]["limit"]',
+      ['at ["item"]\n', 'at ["item"][0]\n'],
+    ),
+    refused(
+      "malformed query pair refuses at the second position",
+      group("query", Empty, () => [["a", "ok"], ["b"]]),
+      "InvalidRequest",
+      "The field pair at $[1] must be",
+    ),
+  ],
+  "62": [
+    sent(
+      "undefined-only instance beside Void and an empty struct stays an object",
+      json(
+        Schema.Union([
+          Schema.Struct({ a: Schema.optionalKey(Schema.String) }),
+          Schema.Void,
+          Empty,
+        ]),
+        () => new UndefinedOnly(),
+      ),
+      post("{}"),
+    ),
+    sent(
+      "Void before a suspended class leaves the populated value to it",
+      json(Schema.Union([Schema.Void, Schema.suspend(() => Counted)]), () => ({
+        a: "x",
+      })),
+      post('{"a":"x"}'),
+    ),
+    refused(
+      "a scalar union cannot discard a populated list through Void",
+      json(Schema.Union([Schema.String, Schema.Void]), () => ["kept"]),
+      "SchemaError",
+      "Expected void",
+    ),
+    refused(
+      "standalone Void cannot discard a hidden populated cell",
+      json(Schema.Void, () => Object.defineProperty([], 0, { value: "kept" })),
+      "SchemaError",
+      "Expected void",
+    ),
+    sent(
+      "an empty struct after Void keeps a populated object",
+      json(Schema.Union([Schema.Void, Empty]), () => ({ tag: "kept" })),
+      post('{"tag":"kept"}'),
+    ),
+    refused(
+      "a renamed encoded field cannot lose a populated value through Void",
+      json(
+        Schema.Struct({ item: Schema.Void }).pipe(
+          Schema.encodeKeys({ item: "wire" }),
+        ),
+        () => ({ wire: { a: "kept" } }),
+      ),
+      "SchemaError",
+      '["wire"]',
+    ),
+    sent(
+      "a suspended encoded member beside Void preserves its alias",
+      json(Schema.Union([Schema.Void, Schema.suspend(() => Filter)]), () => ({
+        page_size: "05",
+      })),
+      post('{"page_size":"5"}'),
+    ),
+    ...(
+      [
+        ["Unknown", Schema.Unknown],
+        ["Any", Schema.Any],
+        ["ObjectKeyword", Schema.ObjectKeyword],
+        ["empty struct", Empty],
+      ] as const
+    ).map(([name, member]) =>
+      sent(
+        `${name} retains list items' nested keys beside a class`,
+        json(Schema.Array(Schema.Union([NestedClass, member])), () => [
+          { row: { a: "x", extra: "kept" } },
+        ]),
+        post('[{"row":{"a":"x","extra":"kept"}}]'),
+      ),
+    ),
+  ],
+  "63": [
+    sent(
+      "path list beside a class and record uses the list member",
+      path(Schema.Union([Counted, Open, Names]), () => [
+        { a: "x", extra: "not stated by list" },
+      ]),
+      segment('[{"a":"x"}]'),
+    ),
+    sent(
+      "class field list beside a record uses the list member",
+      json(ListHolder, () => ({
+        item: [{ a: "x", extra: "not stated by list" }],
+      })),
+      post('{"item":[{"a":"x"}]}'),
     ),
   ],
 } satisfies Record<string, ReadonlyArray<WireCase>>;
