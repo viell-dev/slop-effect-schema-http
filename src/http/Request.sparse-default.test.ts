@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import * as Body from "./Body.js";
-import { nestedEncodedInput } from "./internal/nested-input.js";
 import * as Request from "./Request.js";
 
 const Filter = Schema.Struct({
@@ -121,127 +120,6 @@ describe("constructor defaults below sparse own positions", () => {
       );
     }
   }
-  it("captures huge sparse own-cell evidence with a bounded number of reflections", () => {
-    let reads = 0;
-    const input: object[] = [];
-    input.length = 0xffff_ffff;
-    input[1] = { page_size: "many" };
-    const watched = new Proxy(input, {
-      ownKeys(target) {
-        reads++;
-        return Reflect.ownKeys(target);
-      },
-      getOwnPropertyDescriptor(target, key) {
-        reads++;
-        return Reflect.getOwnPropertyDescriptor(target, key);
-      },
-    });
-    const evidence = nestedEncodedInput(Schema.Array(Filter).ast)!(watched);
-    expect(evidence).toBeDefined();
-    expect(reads).toBeLessThanOrEqual(12);
-  });
-
-  it("selects an own sparse cell and keeps the strict written-array guard", () => {
-    const input = sparse({ page_size: "many" });
-    const capture = nestedEncodedInput(
-      Schema.Array(Schema.optional(Filter)).ast,
-    )!;
-    const output = [undefined, { page_size: "25" }];
-    const selected = capture(input)!.select(output)!;
-    expect(selected.matches()).toBe(true);
-    expect(capture(input)!.select(sparse({ page_size: "25" }))).toBeUndefined();
-    const iterableOutput = Object.defineProperty(output, Symbol.iterator, {
-      value: Array.prototype[Symbol.iterator],
-    });
-    expect(capture(input)!.select(iterableOutput)).toBeUndefined();
-    input[0] = {};
-    expect(selected.matches()).toBe(false);
-  });
-
-  it("admits only exact native own iterator data and rechecks its identity and flags", () => {
-    const capture = nestedEncodedInput(Schema.Array(Filter).ast)!;
-    const native = Array.prototype[Symbol.iterator];
-    for (const enumerable of [false, true]) {
-      const input = Object.defineProperty(
-        [{ page_size: "many" }],
-        Symbol.iterator,
-        { value: native, enumerable, writable: true, configurable: true },
-      );
-      const selected = capture(input)!.select([{ page_size: "25" }])!;
-      expect(selected.matches()).toBe(true);
-      Object.defineProperty(input, Symbol.iterator, {
-        enumerable: !enumerable,
-      });
-      expect(selected.matches()).toBe(false);
-    }
-    let reads = 0;
-    const original = [{ page_size: "many" }];
-    for (const iterator of [
-      Array.prototype.entries,
-      native.bind([]),
-      function* () {
-        reads++;
-        yield { page_size: "many" };
-      },
-    ])
-      expect(
-        capture(
-          Object.defineProperty([...original], Symbol.iterator, {
-            value: iterator,
-          }),
-        ),
-      ).toBeUndefined();
-    expect(
-      capture(
-        Object.defineProperty([...original], Symbol.iterator, {
-          get() {
-            reads++;
-            return native;
-          },
-        }),
-      ),
-    ).toBeUndefined();
-    expect(reads).toBe(0);
-    const input = Object.defineProperty([...original], Symbol.iterator, {
-      value: native,
-      writable: true,
-    });
-    const selected = capture(input)!.select([{ page_size: "25" }])!;
-    Object.defineProperty(input, Symbol.iterator, {
-      value: Array.prototype.entries,
-    });
-    expect(selected.matches()).toBe(false);
-  });
-
-  it("invalidates native-own evidence if the ordinary iterator uses a different data function", () => {
-    const capture = nestedEncodedInput(Schema.Array(Filter).ast)!;
-    const descriptor = Object.getOwnPropertyDescriptor(
-      Array.prototype,
-      Symbol.iterator,
-    )!;
-    const input = Object.defineProperty(
-      [{ page_size: "many" }],
-      Symbol.iterator,
-      { value: descriptor.value },
-    );
-    const selected = capture(input)!.select([{ page_size: "25" }])!;
-    const native = Array.prototype[Symbol.iterator];
-    let matches: boolean | undefined;
-    try {
-      // oxlint-disable-next-line no-extend-native -- Test prototype identity and restore it below.
-      Object.defineProperty(Array.prototype, Symbol.iterator, {
-        value: function (this: unknown[]) {
-          return native.call(this);
-        },
-        configurable: true,
-      });
-      matches = selected.matches();
-    } finally {
-      // oxlint-disable-next-line no-extend-native -- Restore the prototype after this isolated test.
-      Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
-    }
-    expect(matches).toBe(false);
-  });
 
   it.effect(
     "uses an own valid cell to refuse an inherited invalid neighbor",

@@ -49,11 +49,9 @@ declaration, the schema's own reading applies, and nothing is refused for what h
 choose a union member for certain, bind that member directly.
 
 Known violations of this rule remain in
-[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). In particular, giving a
-renamed field under both names can lose one value: a constructor/decoded read prefers the decoded
-name, while a whole encoded read uses the encoded name. Added whole-group validation can change that
-choice. Defaults hidden by group transformations or fallback routes can still replace raw edits. The
-rules and limits below state where the current checks apply.
+[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). Defaults hidden by group
+transformations can still replace raw edits, and the [active limits](#active-limits-and-recovery)
+list the shapes outside the checks below.
 
 ### Array normalization preserves positions
 
@@ -68,10 +66,7 @@ struct member is no such alternative, so beside one a structural view still disc
 rebuilt view that does not discover them keeps them where the caller put them: an own cell it does
 not rewrite keeps its descriptor, and an inherited one stays inherited from the same prototype.
 Existing enumerable-child normalization still applies across views and does not select or execute an
-alternative. The [0.15 migration](./release-notes/0.15.md) states the normalization changes and
-exposed default substitutions. The [0.16 batch](./release-notes/0.16.md),
-[0.17](./release-notes/0.17.md) and [0.18](./release-notes/0.18.md) extend the separate
-constructor-default proof to the bounded profiles below.
+alternative. The [0.15 migration](./release-notes/0.15.md) states the normalization changes.
 
 ### The decoded side is what the schema's constructor takes
 
@@ -80,123 +75,100 @@ The library builds the schema's value before encoding it, so a plain object work
 `Schema.Top`, the bound that has a constructor. Building and then encoding validates twice, which is
 part of preparation; neither step is skipped.
 
-## Constructor-default validation
+## A default never takes a supplied field's place {#constructor-default-validation}
 
-Every additional check below requires stable caller evidence and successful actual strict output.
-Eligibility is not a promise that every schema or value in the listed container is safe.
+Preparation tries the decoded side first, with the schema's constructor, then the decoder as a
+whole, then, for an object that is not a list, the decoder field by field. If all fail, it reports
+the decoded side's error, a `SchemaError` before dispatch. [A list stays a
+list](#a-list-stays-a-list) describes that rule and its limits.
 
-| Actual route/container                                               | Added validation                                               | Retained limit                                                                   |
-| -------------------------------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Initial whole construction at the root                               | Decode the supplied encoded-only input as a whole              | No decoded-only or ambiguous witness names                                       |
-| Final fieldwise construction at the root                             | Retain the original strict refusal after failed whole decoding | No decoder replay or nested ownership inferred from property reads               |
-| Initial whole construction below direct objects/closed parent unions | Follow stable unchanged declared fields                        | Every declaring member must share the same field schema                          |
-| Initial whole construction below arrays/tuples                       | Follow own data positions with matching output length          | Holes/inherited cells supply no witness; arbitrary own iterators remain excluded |
-| Initial whole construction below array-shaped unions                 | Follow an array cell into the one member that can read it      | Every other member must refuse arrays at every stage                             |
+A route can succeed without reading everything. The constructor strips a name only the encoded side
+states, and the decoder strips one only the decoded side states. A constructor default or a decoding
+default can then fill the field that was not read. So each route accounts for what it was given:
 
-Preparation tries the decoded side first, then the decoder as a whole, then, for an object that is
-not a list, the decoder field by field. If all fail, it reports the decoded side's error, a
-`SchemaError` before dispatch. [A list stays a list](#a-list-stays-a-list) describes that rule and
-its limits. After a typed strict read failure, stable plain root input can establish an additional
-encoded check from finite closed object/union names: it supplies an encoded-only name and no
-decoded-only name.
+- **The constructor** has to hold every supplied field in what it made.
+- **The decoder** reads strictly, so it consumes every name or fails. A name that only a loose
+  decode could strip is lost, even where a decoding default fills it again.
+- **Field by field**, each field's own reading accounts for its slice of the value. The object's
+  constructor then runs again over the results, so it also has to hold what it took as given.
 
-Primitive alternatives that cannot consume an object contribute no object fields or names. This
-includes the Undefined/Null members of optional, nullable and nullish object schemas. The allow-list
-is String, Number, Boolean, BigInt, Symbol, UniqueSymbol, Literal, Enum, TemplateLiteral, Null,
-Undefined and Never. A union whose members all qualify counts as one such alternative, at any depth.
-Effect builds `Schema.Literals([...])`, `Schema.NullOr(Schema.String)` and
-`Schema.NullishOr(Schema.Number)` this way, so `Union([Filter, Schema.Literals(["all"])])` behaves
-like the flat `Union([Filter, Schema.Literal("all")])`. An encoded alternative qualifies when every
-link of its encoding is a plain transformation and every stage qualifies, as in
-`Schema.FiniteFromString`, `Schema.NumberFromString` or a codec from text to nullable text. Effect
-reads the encoded end first, and a plain transformation cannot recover from that read's failure. A
-middleware link, as `Schema.catchDecoding` adds, can turn the failure into a value, so it never
-qualifies. A Void alternative qualifies only where the [strict Void
-rule](#a-union-keeps-what-the-caller-gave) guards it, including inside an unencoded any-of member
-union made up of these alternatives. Void elsewhere, unions with any other member, primitive
-encoding intermediates and open/opaque/suspended alternatives do not qualify. The object members
-retain the same field-identity and closed-name rules. A union of primitives alone still supplies no
-object view at either level. A codec's closed object encoding view may include these alternatives,
-such as `NullOr(Struct)` or `Union([Struct, Schema.Literals([...])])`; this can establish root or
-terminal evidence too.
+A route that keeps everything is used. A constructor that lost a field runs again strictly, which
+takes a union's first member that keeps everything, and otherwise gives way to a route that loses
+fewer of the fields it lost. What is still lost is a `SchemaError` naming the field, unless another
+schema in the group takes it.
 
-Array-shaped members are told apart from objects as Effect's parsers tell them, with
-`Array.isArray`. An array or tuple member, or a plain-transformation chain of such stages such as an
-array-to-array codec, cannot read an ordinary or null-prototype object cell. Beside an object member
-it contributes nothing there, so the one-or-many `Union([Schema.Array(Filter), Filter])` reads
-`{ page_size: "many" }` as `Filter` alone does. Such a view does not vouch for a list cell, which
-the array member can read. A list under an object schema without such a member keeps its object
-evidence, because the fieldwise route copies the list's own named properties into an object.
+```ts
+import { Effect, Schema } from "effect";
+import { Body, Request } from "viell-effect-schema-http";
 
-An actual array cell follows a union's one member that can read an array, when every other member
-refuses arrays at every stage: a primitive alternative above, an object that states at least one
-property or index signature, or a guarded Void, which declines a list with a defined own cell. So
-`Union([Schema.Array(Filter), Schema.Void])` refuses `[{ page_size: "many" }]`. The followed member
-must be an unencoded array or tuple, or another such union, and uses the array rules below.
-`Schema.Struct({})` states no signature and reads every value except `null` and `undefined`, lists
-included. The proof stops at a union with it, with a second array-reading member, or with an encoded
-array member as the reader; ordinary selection decides those cells, which can keep the supplied
-alias or replace it with a default.
+const Filter = Schema.Struct({
+  limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+    Schema.withConstructorDefault(Effect.succeed(25)),
+  ),
+}).pipe(Schema.encodeKeys({ limit: "page_size" }));
+const search = Request.get("https://api.example.test/things").pipe(
+  Request.query(Filter),
+);
+// Input: { query: {} }; URL query: ?page_size=25
+// Input: { query: { limit: 5 } } or { query: { page_size: "05" } }; URL query: ?page_size=5
+// Input: { query: { page_size: "many" } }
+// SchemaError: The schema cannot keep this field ... at ["page_size"]
 
-Grouping members does not change either reading. An unencoded any-of member union refuses a kind of
-cell when each of its own members does, and the Void rule of that inner union decides its Void
-branch. With `Cursor = Schema.Struct({ cursor: Schema.String })`,
-`Union([Schema.Array(Filter), Schema.Union([Cursor, Schema.Void])])` reads a list as the flat
-`Union([Schema.Array(Filter), Cursor, Schema.Void])` does. With
-`Parent = Schema.Struct({ filter: Filter })`,
-`Union([Parent, Schema.Union([Schema.Array(Schema.String), Schema.Void])])` reads an object as its
-flat union does. A `oneOf` member union leaves its Void unguarded, so that Void still counts as a
-reader. One member union value used both where its Void is guarded and where it is not counts as
-unguarded in every grouping, as it would be wherever that guard is missing; the active limits below
-give the consequence.
+const Page = Schema.Struct({
+  n: Schema.FiniteFromString,
+  items: Schema.Array(Filter),
+});
+const send = Request.post("https://api.example.test/pages").pipe(
+  Request.body(Body.jsonSchema(Page)),
+);
+// Input: { body: { n: 1, items: [{ limit: 5 }, {}] } }
+// JSON body: {"n":"1","items":[{"page_size":"5"},{"page_size":"25"}]}
+// Input: { body: { n: 1, items: [{ limit: "x" }] } }
+// SchemaError: The schema cannot keep this field ... at ["items"][0]["limit"]
+```
 
-Capture reads each own cell's descriptor, while the Void rule reads the cell by index. A proxy can
-answer the two differently, and then the guarded Void sees no defined cell and can take the list.
+This holds at any depth, in struct, class, list, tuple, record and union fields, and whatever stands
+beside them: another union member, a class, a suspended schema, or a value the library cannot see
+into, as an `Option` is. It has these consequences:
 
-### Initial whole construction
+- **A field given under both its names** refuses, even where the two agree. Give each field one
+  name.
+- **A decoded name below a name the parent writes**, as `{ w: { limit: 5 } }` where `f: Filter` is
+  renamed to `w`, refuses too. Below a renamed field, use the same side as its own name.
+- **A list is read as one value**, not item by item, so items on different sides refuse:
+  `[{ limit: 5 }, { page_size: "6" }]` names `[1]["page_size"]`. Give every item on one side.
+- **A field both sides can hold**, as under a schema from text to text, means what the route that
+  read it takes it for. Built by a constructor or read field by field it is decoded, so it is
+  encoded again. Decoded as part of the whole it is already encoded.
+- **A key a decoder or transformation adds** to the value it makes is not the caller's, so it is
+  never counted as lost. A value that middleware or a transformation puts in the caller's place, as
+  `Schema.catchDecoding` does, is the schema's own reading.
+- **Defaults, checks, decoders and services can run more than once**, because a later route can be
+  tried after one that lost a field.
+- **A refusal names the innermost fields.** Where one check finds a whole field lost and another
+  finds a field inside it lost, only the inner one is named.
 
-The initial whole constructor still runs first, followed by existing strict-first writing. Only a
-successful strict write that actually writes that supplied encoded-only name permits whole decoding
-to replace the constructor result. The additional check retains loss/sibling certificates and
-preserves the original strict refusal if decoding fails.
+### Where it applies
 
-### Final fieldwise construction
+These checks run where a value is plain data: a list whose prototype is `Array.prototype` or `null`,
+or an object whose prototype is `Object.prototype` or `null`, holding only own data properties, none
+named after an `Object.prototype` member such as `toString` or `__proto__`, under a schema that
+states no field and no wire name named after one there. They are judged place by place: a value that
+is not plain data turns nothing off around it, and nothing is accounted for inside it. A value held
+behind an accessor, a class instance, including a `Schema.Class` instance, and a schema that uses
+such a name read as Effect reads them. Effect 4.0.7 and 4.1.4 read those names differently, so
+preparation does not guess what the caller gave there. [Active limits](#active-limits-and-recovery)
+lists what that leaves.
 
-If the actual winning route instead ends in fieldwise construction, at the root or through root
-union members, its preceding whole decoder has already failed. Under the same stable caller/output
-proof and successful strict write, retain the original strict refusal rather than accepting the
-ignored alias's generated replacement. Do not observe individual property reads as this route,
-replay decoding, or rebuild encoded input from prepared output. Successful strict reads,
-writer-failure fallback and other constructor or decoder choices keep their paths. Existing
-defaults/writer effects can precede refusal; construction is not repeated to classify the input.
+Own data properties include symbol keys, keys that are not enumerable, a list's own named properties
+and the fields of a frozen or sealed object. A proxy over plain data cannot be told from its target,
+so it is plain data too, and its traps run whenever preparation reads it. Preparation reads the
+value as it runs and does not detect a schema step that changes the value meanwhile.
 
-### Nested paths and positional ancestors
-
-For successful initial whole construction, finite closed untransformed object/union ancestors can
-also establish a nested terminal proof. A parent union retains all member names, but follows a field
-only when every declaring member has the identical field AST type; missing fields on other closed
-members do not supply ownership. Normalize and merge declarations inside objects with the same
-guard, including numeric/string collisions for one JavaScript key. A conflicting type stays
-ambiguous after later repeated declarations. Distinct declarations remain names in ancestor evidence
-but end that path. Untransformed array nodes also contribute explicit element/rest positions.
-Capture stable own-data arrays of ordinary/null prototype, including sparse and nonenumerable/frozen
-cells. Record all own keys/descriptors/identities and known fixed positional absences, without
-invoking caller iterators/getters or cloning values. Visit own keys rather than allocating by
-length. Holes and inherited cells supply no witness; an own cell can still establish a whole read
-that validates an inherited neighbor. Use actual length for post-rest positions and require every
-selected strict-output array to have matching length and dense own data cells. An own
-Symbol.iterator data property qualifies only when its value is the unchanged native array iterator;
-the reference is Array.prototype's iterator as installed when the module loaded. Capture and recheck
-its descriptor. Accessors, subclasses, custom prototypes/iterators and changing paths remain
-excluded. A union ancestor passes an actual array cell only to its one array-reading member, as
-described above. Metadata and selected-path validation have linear reflection gates; capture each
-ancestor frame once. No schema, default or suspension runs to build this metadata. Capture stable
-own-data paths before callbacks and select one coherent caller path and actual strict output write,
-never independent candidates. Validate output correspondence at selection, then retain caller
-evidence through whole decoding and loss checks. Whole decoding can repeat checks and services; do
-not replay construction. Root fieldwise success cannot establish nested ownership because its
-property reader can already consume that alias. Unsupported evidence remains under
-[#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170).
+A value read by a later route is used where it can be written strictly, or where its schema has no
+union between objects. A relaxed write, which a value needs where its class instance holds a member
+of its own, could choose another union member than the one that read it, and not everything that
+drops can be seen. There preparation writes what Effect itself reads, and refuses what that loses.
 
 ## Preservation and selection
 
@@ -211,8 +183,7 @@ is read as encoded.
 ### Each route validates what it consumes
 
 An encoded field read through the decoder is validated; a value fitting neither reading fails during
-preparation. Unsupported constructor-default paths can still ignore an alias instead, as recorded
-under #170 above.
+preparation, and [no default stands in for it](#constructor-default-validation).
 
 ### A value stays on the side it was given on
 
@@ -239,68 +210,15 @@ const search = Request.get("https://api.example.test/things").pipe(
 
 ### A field keeps what its own reading lost
 
-The last route reads each field of an object on its own, then builds the object with the schema's
-constructor. That constructor runs again over each field's result and fills a default where the
-field's reading produced nothing, so each field's reading has to account for what the caller gave
-it. A supplied field that a field's reading dropped is a `SchemaError` naming it, as the same value
-at the root would be. This holds at any depth and in struct, list, tuple, record and union fields:
-
-```ts
-import { Effect, Schema } from "effect";
-import { Body, Request } from "viell-effect-schema-http";
-
-const Filter = Schema.Struct({
-  limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
-    Schema.withConstructorDefault(Effect.succeed(25)),
-  ),
-}).pipe(Schema.encodeKeys({ limit: "page_size" }));
-const Page = Schema.Struct({
-  n: Schema.FiniteFromString,
-  items: Schema.Array(Filter),
-});
-const send = Request.post("https://api.example.test/pages").pipe(
-  Request.body(Body.jsonSchema(Page)),
-);
-// Input: { body: { n: 1, items: [{ limit: 5 }, {}] } }
-// JSON body: {"n":"1","items":[{"page_size":"5"},{"page_size":"25"}]}
-// Input: { body: { n: 1, items: [{ limit: "x" }] } }
-// SchemaError: The schema cannot keep this field ... at ["items"][0]["limit"]
-```
-
-A field's own constructor reads the decoded side and strips the rest, such as an encoded name, so
-what it made has to hold every supplied field. Where it would drop one, the field is read by its
-decoder, strictly, so a union field takes its first member that keeps everything. Then it is read
-field by field. A valid `{ page_size: "05" }` writes `5`. `{ page_size: "many" }` is a `SchemaError`
-that names it, including under `Union([Filter, Cursor])`, where `Cursor` would read it as an empty
-object. A decoder that can read the field only by stripping a supplied key is the last route, and
-that key is refused even where a decoding default fills its name again. A field given under both its
-names cannot keep both, so it is refused too. A value the constructor returns unchanged, as an
-opaque declaration's is, lost nothing, and nothing inside it is read again. A key that a decoder or
-transformation adds to the value it makes is not the caller's, so it is never counted as lost.
-
-These checks run where a field's value is plain data throughout: lists and objects whose prototype
-is `Object.prototype` or `null`, holding only own data properties, none named after an
-`Object.prototype` member such as `toString` or `__proto__`, under a schema that states no field and
-no wire name named after one at any depth. The root's own checks need the same of its value and of
-the names its schema states. A value held behind an accessor, a class instance, including a
-`Schema.Class` instance, and a schema that uses such a name read as Effect reads them. Effect 4.0.7
-and 4.1.4 read those names differently, so preparation does not guess what the caller gave there.
-[Active limits](#active-limits-and-recovery) lists what that leaves.
-
-Own data properties include symbol keys, keys that are not enumerable, a list's own named properties
-and the fields of a frozen or sealed object. A proxy over plain data cannot be told from its target,
-so it is plain data too, and its traps run whenever preparation reads it.
-
-A union field read field by field takes its first member reading that keeps everything, ahead of an
-earlier one that loses a field. The object's constructor then runs again over the fields' results,
-strictly first, so each union field keeps the member it was read by. Loosely, it could take an
-earlier member that strips the value and fill that member's default instead. Only if the strict pass
-fails does it run as Effect runs it. The strict pass runs wherever the object itself is plain data,
-so it can also keep a union member beside a field whose own value is not and was not checked. The
-write can still take another member, as [Active limits](#active-limits-and-recovery) describes.
-
-A refusal names the innermost fields. Where one check finds a whole field lost and another finds a
-field inside it lost, only the inner one is named.
+Read field by field, each field is read on its own, and its reading accounts for what the caller
+gave it, as [above](#constructor-default-validation). A union field takes its first member reading
+that keeps everything, ahead of an earlier one that loses a field. The object's constructor then
+runs again over the fields' results, strictly first, so each union field keeps the member it was
+read by. Loosely, it could take an earlier member that strips the value and fill that member's
+default instead. Only if the strict pass fails does it run as Effect runs it. The strict pass runs
+wherever the object itself is plain data, so it can also keep a union member beside a field whose
+own value is not. The write can still take another member, as [Active
+limits](#active-limits-and-recovery) describes.
 
 ### A union keeps what the caller gave
 
@@ -583,41 +501,19 @@ predictable decoded route.
 
 ## Recovery beside an opaque value
 
-A strict whole read can fail inside an opaque field and leave a visible union with its narrower
-member. If the original reader reports a nested caller field it would lose, a direct closed struct
-can try a constructor-only recovery. Root losses alone do not start it, because a sibling schema can
-hold those names. No earlier successful call takes this additional route.
-
-The attempt keeps the full original input and stable evidence captured before callbacks. Visible
-data must still match that evidence when recovery starts; input changed while its encoding Effect
-was pending retains the original refusal. The comparison does not inspect inside opaque values. It
-constructs supplied visible fields strictly, and direct opaque declarations without an encoding
-ordinarily. It then runs the original parent's strict constructor and writer, including its checks
-and defaults, and compares the actual result with the original visible fields. It accepts only
-complete preservation. A typed candidate failure or a remaining loss keeps the original refusal;
-defects and interruption propagate.
-
-Shared references and object values under open or empty schemas do not provide that evidence:
-copying them can change identity checks that the schema itself preserves. Arrays need their ordinary
-prototype and no inherited in-range elements. Accessors, inherited or nonplain visible data and
-suspended structure also prevent a stable capture.
-
-Every supplied field must fit its constructor. Trying each field's decoder as well would change
-whole-input priority: one field might require whole decoding while another fits both sides and would
-be read differently in isolation. That case retains the original refusal. JSON text and broader
-transformed, open or unstable inputs remain outside this recovery; opaque values are not decoded and
-re-encoded to prepare a different input. New attempts can repeat effects and require schema
-services. The [0.6.1
+A strict whole read can fail inside an opaque field, such as an `Option` whose contents hold a key
+its schema does not state, and Effect's own reading can then leave a visible union with its narrower
+member. The [later routes](#constructor-default-validation) apply there as anywhere else: they keep
+the visible fields beside the opaque value, or the request is refused naming them. Opaque values are
+not decoded and re-encoded to prepare a different input. The [0.6.1
 example](./release-notes/0.6.md#since-0-6-1-keep-visible-fields-beside-an-opaque-value) shows the
-bounded case.
+common case.
 
 ## Active limits and recovery
 
 The kept-or-refused rule is the intended contract. Known violations remain under
-[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143),
-[#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170) and
-[#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243); an unsupported proof is not
-a guarantee that preparation refuses safely.
+[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143) and
+[#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243).
 
 - Beside `Schema.Unknown`, `Schema.Any` or `Schema.Object`, a stated member's nested value can still
   lose a key only the open member would hold. With
@@ -686,9 +582,8 @@ a guarantee that preparation refuses safely.
   field the request is refused. Under `Union([Filter, Word])`, where `Word` reads `page_size` as
   text, `{ page_size: "many" }` is sent as text where nothing else relaxes the write, and refused
   beside such a field ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)).
-- Outside plain data, as [a field keeps what its own reading
-  lost](#a-field-keeps-what-its-own-reading-lost) defines it, a value reads and writes as Effect
-  reads and writes it, so both checks above are off there
+- Outside plain data, as [where it applies](#where-it-applies) defines it, a value reads and writes
+  as Effect reads and writes it, so these checks are off there
   ([#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241),
   [#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)). Under the `Page`
   example, `{ n: 1, items: [{ limit: "x" }] }` held behind a getter, or given as a class instance,
@@ -702,26 +597,6 @@ a guarantee that preparation refuses safely.
   `Struct({ d: Dropping }).pipe(Schema.encodeKeys({ d: "w_d" }))` sends `{ d: { e: new Date(0) } }`
   as `{"w_d":{}}`, which the same struct without the rename refuses
   ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)).
-- Reading field by field, a field's constructor can run, fill its defaults and then give way to the
-  field's decoder or a field-by-field reading, which constructs again. A default can therefore run
-  more than once, and a decoder can run strictly and then loosely when the strict read named an
-  unstated key. A union field's later members are read after an earlier member's reading that lost a
-  field, and the object's constructor can run strictly and then as Effect runs it.
-- Conflicting aliases can lose one supplied value. A decoded/constructor route prefers the decoded
-  name, while whole encoded reading uses the encoded name. An encoded-only sibling can change that
-  choice for the whole value. The [0.14 migration](./release-notes/0.14.md#account-for-both-names)
-  includes a typed nonliteral example. Supply only one side or validate a decoded mapping.
-- Conflicting normalized declarations, including numeric 1 and string "1" for the same JavaScript
-  key, cannot establish an unchanged nested path. The ambiguity guard can therefore leave a supplied
-  invalid alias replaced by a generated default.
-- Unsupported object alternatives and construction phases can still lose aliases. Optional,
-  nullable/nullish, array-shaped and the listed primitive alternatives, including unions and
-  plain-transformation codecs of them, extend the bounded proof; guarded Void can qualify there too.
-  Other Void, open/opaque/suspended members and middleware-encoded alternatives do not. For an array
-  cell, the proof stops at a union with `Schema.Struct({})`, a second array-reading member or an
-  encoded array reader; there the schema's own selection decides, and a generated default can still
-  replace the alias. A successful actual member-fieldwise reading is not reclassified as initial
-  whole construction.
 - Void protection applies to built-in Void beside a visible object or list candidate in an any-of
   union, including through unencoded any-of member unions. Standalone Void, a union whose other
   members give it no visible object or list candidate, unions inside `Schema.Class` fields, opaque
@@ -732,11 +607,6 @@ a guarantee that preparation refuses safely.
   non-enumerable, can still be discarded and read as `undefined`. Such a cell declines Void on the
   strict read, but a struct cannot read a list and the field-loss check does not see the cell.
   Beside an array member, such a cell is read, so an invalid alias in it refuses.
-- One member union value reused where its Void is guarded and where it is not gets the grouped proof
-  at neither use. An example is the same union of `Schema.Void` and a text member decoded from an
-  object, placed under an any-of union and under a `oneOf` union. An invalid alias that only that
-  proof would catch then keeps the constructor default, as on 0.17. A union of primitive members and
-  Void keeps the proof at its guarded use. Build a separate member union for each use.
 - A proxy list whose index read answers `undefined` for a cell its descriptor holds can be taken by
   Void beside an array member and read as `undefined`.
 - A populated object constructor default can select the object member beside Void. A default of
@@ -769,14 +639,6 @@ a guarantee that preparation refuses safely.
   symbol key the schema declares is written as it chooses, and one at a class's root is stripped.
   See the [Body guide](./modules/body.md#text-json-and-finite-body-limits) for writer rules. An
   opaque transformation can still choose its own encoded representation.
-- Once an encoded-only alias enables whole decoding of a list, a decoded-only item beside it can
-  lose its decoded name and refuse. This applies to every covered container, array-shaped unions
-  included.
-- Inherited cells, accessors, subclasses, custom prototypes/iterators and changing paths do not
-  establish the new array proof. Sparse own cells and exact native own iterator data do qualify. The
-  [0.16](./release-notes/0.16.md) and [0.18](./release-notes/0.18.md) migrations cover newly refused
-  aliases, whole-reading changes and executable validated decoded mappings; the [0.15
-  article](./release-notes/0.15.md) retains the earlier substitutions as historical evidence.
 - Opaque contents use their schema's own reading. A `ReadonlyMap` containing
   `{ term: "x", page_size: "05" }` can lose the alias through construction. Use decoded contents
   such as `{ term: "x", limit: "05" }` for a predictable decoded route.

@@ -318,10 +318,7 @@ const encodedOne = Request.compile(filters, { body: { page_size: "05" } });
 const decodedMany = Request.compile(filters, { body: [{ limit: 5 }] });
 const omittedMany = Request.compile(filters, { body: [{}] });
 // #endregion one-or-many
-assert.match(
-  await refused(invalidOne),
-  /Expected no excess property\s+at \["page_size"\]/,
-);
+assert.match(await refused(invalidOne), /at \["page_size"\]/);
 assert.match(await refused(invalidMany), /at \[0\]\["page_size"\]/);
 assert.equal(await prepared(encodedOne), '{"page_size":"5"}');
 assert.equal(await prepared(decodedMany), '[{"page_size":"5"}]');
@@ -359,13 +356,13 @@ const decodedItems = Request.compile(filters, {
   body: [{ limit: 5 }, { limit: 7 }],
 });
 // #endregion list-sides
-assert.match(await refused(mixedItems), /at \[1\]\["limit"\]/);
+assert.match(await refused(mixedItems), /at \[0\]\["page_size"\]/);
 // The decoded item first refuses as well.
 assert.match(
   await refused(
     Request.compile(filters, { body: [{ limit: 1 }, { page_size: "30" }] }),
   ),
-  /at \[0\]\["limit"\]/,
+  /at \[1\]\["page_size"\]/,
 );
 assert.equal(
   await prepared(encodedItems),
@@ -399,10 +396,8 @@ const oneName = Request.compile(filters, {
   body: [{ limit: 1 }, { limit: 25 }],
 });
 // #endregion dual-names
-assert.equal(
-  await prepared(conflicting),
-  '[{"page_size":"2"},{"page_size":"25"}]',
-);
+// Since 0.19 a field given under both its names refuses.
+assert.match(await refused(conflicting), /at \[0\]\["page_size"\]/);
 assert.equal(await prepared(oneName), '[{"page_size":"1"},{"page_size":"25"}]');
 
 // #region proof-stops
@@ -425,11 +420,11 @@ const stillListed = Request.compile(twoLists, {
 });
 // #endregion proof-stops
 assert.equal(await prepared(stillRecovered), '"0"');
-assert.equal(await prepared(stillListed), '[{"page_size":"25"}]');
-// A conflicting alias in one filter is still read by its decoded name.
-assert.equal(
-  await prepared(
+// Since 0.19 no default takes a supplied field's place there either.
+assert.match(await refused(stillListed), /at \[0\]\["page_size"\]/);
+assert.match(
+  await refused(
     Request.compile(filters, { body: { limit: 5, page_size: "many" } }),
   ),
-  '{"page_size":"5"}',
+  /at \["page_size"\]/,
 );

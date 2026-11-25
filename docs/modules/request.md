@@ -380,15 +380,15 @@ reports the decoded side's error if all fail. The type of such an input is `Requ
 The type keeps whole constructor and encoded shapes, including nested aliases. Mixing by field is
 one level deep in the type. A helper that accepts `Request.Input` must handle both sides, or declare
 a decoded-only argument explicitly. The [input reference](../schema-input.md) owns the complete
-reading order, preservation rules and constructor-default boundaries.
+reading order, preservation rules and where a default can stand in.
 
 #### What the library promises
 
-Visible caller fields should be kept or the request refused. Known violations remain: conflicting
-aliases can lose a value, and unsupported constructor-default paths can substitute a default. Opaque
-contents retain their schema's own reading. See the [active limits and
-recovery](../schema-input.md#active-limits-and-recovery) before relying on those cases; use
-validated decoded input or bind a specific union member when needed.
+Visible caller fields are kept or the request is refused, and [a default never takes a supplied
+field's place](../schema-input.md#constructor-default-validation). Opaque contents retain their
+schema's own reading. See the [active limits and
+recovery](../schema-input.md#active-limits-and-recovery) for the shapes where that does not hold
+yet; use validated decoded input or bind a specific union member when needed.
 
 #### When both sides share a type
 
@@ -399,9 +399,9 @@ encoded text again; whole encoded group reading can change that interpretation.
 
 #### When the two sides state different names
 
-Renamed fields accept complete encoded shapes, but mixing renamed names or supplying both aliases
-has limits. The [input reference](../schema-input.md#preservation-and-selection) explains strict
-reading and the remaining conflict cases.
+Renamed fields accept complete encoded shapes. Mixing the names of two sides refuses, and so does
+supplying both names of one field. The [input
+reference](../schema-input.md#preservation-and-selection) explains strict reading.
 
 #### Under a union
 

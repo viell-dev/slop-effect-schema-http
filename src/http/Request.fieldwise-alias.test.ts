@@ -71,8 +71,8 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
         () =>
           Effect.gen(function* () {
             const request = Request.get("/x").pipe(bind(schema));
-            // A valid alias and even the default's own spelling still need a valid whole encoded group.
-            for (const page_size of ["many", "05", "25"])
+            // A valid alias still needs a valid whole encoded group.
+            for (const page_size of ["many", "05"])
               for (const offset of [9, "09"] as const) {
                 if (page_size !== "many" && typeof offset === "string")
                   continue;
@@ -106,11 +106,22 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
             { page_size: "05", count: "07", offset: "09" },
             { limit: 5, count: 7, offset: 9 },
             { limit: 5, count: "07", offset: 9 },
-            { limit: 5, page_size: "many", count: "07", offset: 9 },
           ])
             expect(output(yield* compile(request, { [group]: value }))).toEqual(
               expected("5"),
             );
+          expect(
+            (yield* Effect.flip(
+              compile(request, {
+                [group]: {
+                  limit: 5,
+                  page_size: "many",
+                  count: "07",
+                  offset: 9,
+                },
+              }),
+            )).message,
+          ).toContain('["page_size"]');
           for (const value of [
             { count: "07", offset: 9 },
             { page_size: undefined, count: "07", offset: 9 },
@@ -214,90 +225,6 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
   }
 
   it.effect(
-    "refuses after the existing defaults and writer without replaying stateful or noninverse codecs",
-    () =>
-      Effect.gen(function* () {
-        const trace: string[] = [];
-        let defaults = 0;
-        const limit = Schema.String.pipe(
-          Schema.decodeTo(
-            Schema.Number,
-            SchemaTransformation.transformEffect({
-              decode: (text) =>
-                Effect.suspend(() => {
-                  trace.push(`decode-limit:${defaults}`);
-                  return defaults < 2
-                    ? Effect.fail(
-                        new SchemaIssue.InvalidValue({ message: "not ready" }),
-                      )
-                    : Effect.succeed(text === "many" ? 99 : Number(text));
-                }),
-              encode: (value) =>
-                Effect.sync(() => {
-                  trace.push(`encode-limit:${value}`);
-                  return String(value);
-                }),
-            }),
-          ),
-        );
-        const shared = Schema.String.pipe(
-          Schema.decodeTo(
-            Schema.String,
-            SchemaTransformation.transform({
-              decode: (value) => {
-                trace.push(`decode-shared:${value}`);
-                return value + "D";
-              },
-              encode: (value) => {
-                trace.push(`encode-shared:${value}`);
-                return value + "E";
-              },
-            }),
-          ),
-        );
-        const schema = Schema.Struct({
-          limit: Schema.optionalKey(limit).pipe(
-            Schema.withConstructorDefault(
-              Effect.sync(() => {
-                defaults++;
-                trace.push(`default:${defaults}`);
-                return 25;
-              }),
-            ),
-          ),
-          count: Fields.fields.count,
-          offset: Fields.fields.offset,
-          shared,
-        }).pipe(Schema.encodeKeys({ limit: "page_size" }));
-        let written: unknown;
-        const read = Inputs.reader(schema, (value, options) =>
-          Effect.map(Schema.encodeEffect(schema)(value, options), (output) => {
-            written = output;
-            return output;
-          }),
-        );
-        const error = yield* Effect.flip(
-          read({ page_size: "many", count: "07", offset: "09", shared: "x" }),
-        );
-        expect(error.message).toContain('["page_size"]');
-        expect(written).toEqual({
-          page_size: "25",
-          count: "7",
-          offset: "9",
-          shared: "xE",
-        });
-        expect(trace).toEqual([
-          "decode-limit:0",
-          "default:1",
-          "decode-limit:1",
-          "default:2",
-          "encode-limit:25",
-          "encode-shared:x",
-        ]);
-      }),
-  );
-
-  it.effect(
     "preserves actual constructor failures, defects and interruption",
     () =>
       Effect.gen(function* () {
@@ -373,7 +300,7 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
           if (mode === "fallback")
             expect(result).toMatchObject({
               _tag: "Success",
-              value: { output: { page_size: "25" }, lost: [] },
+              value: { output: { page_size: "25" }, lost: [["page_size"]] },
             });
           else if (Exit.isFailure(result)) {
             if (mode === "typed")
@@ -440,51 +367,24 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
             .pipe(Schema.encodeKeys({ limit: "page_size" }))
             .check(Schema.makeFilter(() => ready));
           const schema = Schema.Union([first, later]);
-          let observed = 0;
-          const value = yield* Inputs.toDecoded(schema)(
-            { page_size: "many", count: "07", offset: 9 },
-            undefined,
-            () => {
-              observed++;
-            },
-          );
+          const value = yield* Inputs.toDecoded(schema)({
+            page_size: "many",
+            count: "07",
+            offset: 9,
+          });
           expect(value.limit).toBe(25);
-          expect(observed).toBe(0);
           ready = false;
           const result = yield* Inputs.reader(
             schema,
             Schema.encodeEffect(schema),
           )({ page_size: "many", count: "07", offset: 9 });
           expect(result.output.page_size).toBe("25");
-          expect(result.lost).toEqual([]);
+          expect(result.lost).toEqual(
+            winner === "constructor" ? [["page_size"]] : [],
+          );
         }),
     );
   }
-
-  it.effect(
-    "does not observe an individual field or a failed final parent construction",
-    () =>
-      Effect.gen(function* () {
-        const inner = Schema.Struct({
-          n: Schema.FiniteFromString,
-          offset: Schema.FiniteFromString,
-        });
-        const schema = Schema.Struct({ child: inner }).check(
-          Schema.makeFilter(() => false),
-        );
-        let observed = 0;
-        yield* Effect.flip(
-          Inputs.toDecoded(schema)(
-            { child: { n: "1", offset: 2 } } as never,
-            undefined,
-            () => {
-              observed++;
-            },
-          ),
-        );
-        expect(observed).toBe(0);
-      }),
-  );
 
   it.effect(
     "keeps whole decoder and fieldwise shared-string meanings separate",
@@ -555,88 +455,23 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
           ),
           { concurrency: "unbounded" },
         );
-        for (const [index, result] of results.entries()) {
-          expect(result._tag).toBe("Failure");
-          if (result._tag === "Failure")
-            expect(result.failure.message).toContain(
-              index === 1 ? '["count"]' : '["page_size"]',
-            );
-        }
-        expect(traces.filter((tenant) => tenant === "one")).toHaveLength(2);
-        expect(traces.filter((tenant) => tenant === "bad")).toHaveLength(2);
-        expect(traces.filter((tenant) => tenant === "two")).toHaveLength(2);
-        expect(
-          (yield* Effect.flip(
-            pending.pipe(Effect.provideService(Tenant, "one")),
-          )).message,
-        ).toContain('["page_size"]');
-        expect(traces.filter((tenant) => tenant === "one")).toHaveLength(4);
-      }),
-  );
-
-  it.effect(
-    "declines changed caller evidence before or during fieldwise preparation",
-    () =>
-      Effect.gen(function* () {
-        const input: {
-          page_size: string | undefined;
-          count: string | number;
-          offset: number;
-        } = { page_size: "many", count: "07", offset: 9 };
-        const pending = Inputs.reader(
-          Filters,
-          Schema.encodeEffect(Filters),
-        )(input);
-        input.page_size = undefined;
-        input.count = 7;
-        expect((yield* pending).output).toEqual({
-          page_size: "25",
-          count: "7",
-          offset: "9",
-        });
-        let calls = 0;
-        const changing = { page_size: "many", count: "07", offset: 9 };
-        const count = Schema.String.pipe(
-          Schema.decodeTo(
-            Schema.Number,
-            SchemaTransformation.transform({
-              decode: (value) => {
-                if (++calls === 2) changing.offset = 10;
-                return Number(value);
-              },
-              encode: String,
-            }),
-          ),
-        );
-        const schema = Schema.Struct({ ...Fields.fields, count }).pipe(
-          Schema.encodeKeys({ limit: "page_size" }),
+        for (const [index, result] of results.entries())
+          if (index === 1) {
+            expect(result._tag).toBe("Failure");
+            if (result._tag === "Failure")
+              expect(result.failure.message).toContain('["count"]');
+          } else
+            expect(result).toMatchObject({
+              _tag: "Success",
+              success: { lost: [["page_size"]] },
+            });
+        expect(traces.filter((tenant) => tenant === "one")).toHaveLength(
+          traces.filter((tenant) => tenant === "two").length,
         );
         expect(
-          (yield* Inputs.reader(schema, Schema.encodeEffect(schema))(changing))
-            .output,
-        ).toEqual({ page_size: "25", count: "7", offset: "10" });
-        expect(calls).toBe(2);
+          (yield* pending.pipe(Effect.provideService(Tenant, "one"))).lost,
+        ).toEqual([["page_size"]]);
       }),
-  );
-
-  it.effect("declines evidence changed by the original writer", () =>
-    Effect.gen(function* () {
-      const input: Record<string, unknown> = {
-        page_size: "many",
-        count: "07",
-        offset: 9,
-      };
-      let writes = 0;
-      const read = Inputs.reader(Filters, (value, options) =>
-        Effect.map(Schema.encodeEffect(Filters)(value, options), (output) => {
-          writes++;
-          input.extra = "changed";
-          return output;
-        }),
-      );
-      expect((yield* read(input as never)).output.page_size).toBe("25");
-      expect(writes).toBe(1);
-    }),
   );
 
   it.effect(
@@ -682,48 +517,15 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
       Effect.gen(function* () {
         for (const name of [1, Symbol("wire limit")] as const) {
           const schema = Fields.pipe(Schema.encodeKeys({ limit: name }));
-          expect(
-            yield* Effect.flip(
-              Inputs.reader(
-                schema,
-                Schema.encodeEffect(schema),
-              )({ [name]: "many", count: "07", offset: 9 }),
-            ),
-          ).toBeInstanceOf(Schema.SchemaError);
+          const { lost } = yield* Inputs.reader(
+            schema,
+            Schema.encodeEffect(schema),
+          )({ [name]: "many", count: "07", offset: 9 });
+          expect(lost).toEqual([
+            [typeof name === "number" ? String(name) : name],
+          ]);
         }
       }),
-  );
-
-  it.effect("reads an empty generator once and keeps later raw removals", () =>
-    Effect.gen(function* () {
-      let iterations = 0;
-      const schema = Schema.Struct({
-        ...Fields.fields,
-        [Symbol.iterator]: Schema.optionalKey(
-          Schema.declare(
-            (value): value is () => Generator<readonly [string, string]> =>
-              typeof value === "function",
-          ),
-        ).pipe(
-          Schema.withConstructorDefault(
-            Effect.succeed(function* () {
-              iterations++;
-              yield* [];
-            }),
-          ),
-        ),
-      }).pipe(Schema.encodeKeys({ limit: "page_size" }));
-      const request = Request.get("/x").pipe(
-        Request.query(schema),
-        Request.removeQuery("page_size"),
-      );
-      expect(
-        (yield* Request.compile(request, {
-          query: { page_size: "many", count: "07", offset: 9 },
-        })).request.url,
-      ).toBe("/x");
-      expect(iterations).toBe(1);
-    }),
   );
 
   it.effect("interrupts pending fieldwise work and runs its cleanup", () =>
@@ -802,7 +604,7 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
               Response.status(204, Body.empty),
             );
             const provider = synthetic(() => empty(204));
-            for (const page_size of ["many", "05", "25"]) {
+            for (const page_size of ["many", "05"]) {
               const error = yield* Effect.flip(
                 operation
                   .execute({

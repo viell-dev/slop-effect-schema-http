@@ -7,7 +7,7 @@ import {
   SchemaParser,
 } from "effect";
 import { hasDefinedFields, isSignaturelessObject } from "./excess.js";
-import { isObjectMember, shapes } from "./primitive.js";
+import { isObjectMember } from "./primitive.js";
 
 // Effect 4.0.7 and 4.1.4 spread parse options, preserving this per-read observer. Revisit the
 // channel if a supported peer stops forwarding symbol keys.
@@ -27,16 +27,6 @@ const isPlainVoid = (ast: SchemaAST.AST): ast is SchemaAST.Void =>
   ast._tag === "Void" &&
   (ast.encoding === undefined ||
     (ast.encoding.length === 1 && ast.encoding[0] === jsonVoid));
-
-/**
- * Tests alternatives at their containing union, including any protected Void branch. `grouped`
- * asks about a member of a member union, which the caller reached without the union's context.
- */
-export type AliasAlternative = (
-  union: SchemaAST.AST,
-  member: SchemaAST.AST,
-  grouped?: boolean,
-) => boolean;
 
 const guard = (member: SchemaAST.Void, listsOnly: boolean) => {
   // Declaration.flip swaps checks to the opposite side. Delegate to the original type parser
@@ -85,21 +75,6 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
   const choices = new WeakSet<SchemaAST.AST>();
   const cache = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
   const alternatives = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
-  // One classification per build. A primitive here refuses both an object and a list.
-  const shape = shapes();
-  const guardedPrimitives = new WeakSet<SchemaAST.AST>();
-  const guardedMembers = new WeakMap<SchemaAST.AST, WeakSet<SchemaAST.AST>>();
-  // One union can be rewritten guarded in one place and left unguarded in another, yet its guard is
-  // filed under the shared identity. A grouped lookup trusts that guard only if no rewrite left it.
-  const unguarded = new WeakSet<SchemaAST.AST>();
-  const isAliasAlternative: AliasAlternative = (
-    union,
-    member,
-    grouped = false,
-  ) =>
-    (guardedMembers.get(union)?.has(member) === true &&
-      !(grouped && unguarded.has(union))) ||
-    (shape.record(member) && shape.array(member));
   const visit = (ast: SchemaAST.AST) => visitAlternative(ast, false);
   const visitAlternative = (
     ast: SchemaAST.AST,
@@ -175,7 +150,6 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
     const protect =
       (ast.options?.mode ?? "anyOf") === "anyOf" &&
       (besideObject || ast.types.some(isObjectMember));
-    if (!protect) unguarded.add(ast);
     // An empty struct accepts arbitrary keys but states none. Where it is the only alternative,
     // keep first-fit reading for objects and the existing defined-cell guard for lists.
     const listsOnly =
@@ -188,26 +162,18 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
             member.encoding === undefined &&
             member.checks === undefined),
       );
-    const guarded = new WeakSet<SchemaAST.AST>();
     const members = mapSame(ast.types, (member) => {
       if (protect && isPlainVoid(member)) {
         choices.add(ast);
-        if (!listsOnly) guarded.add(member);
         return guard(member, listsOnly);
       }
       if (protect && member._tag === "Union" && member.encoding === undefined) {
         const rewritten = visitAlternative(member, true);
         if (choices.has(member)) choices.add(ast);
-        if (guardedPrimitives.has(member)) guarded.add(member);
         return rewritten;
       }
       return visit(member);
     });
-    if (protect && choices.has(ast)) {
-      guardedMembers.set(ast, guarded);
-      if (ast.types.every((member) => isAliasAlternative(ast, member)))
-        guardedPrimitives.add(ast);
-    }
     return encoding === ast.encoding && members === ast.types
       ? ast
       : new SchemaAST.Union(
@@ -220,5 +186,5 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
           ast.encodingChecks,
         );
   };
-  return { ast: visit(root), choices, isAliasAlternative };
+  return { ast: visit(root), choices };
 };

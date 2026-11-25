@@ -91,7 +91,6 @@ const Mixed = Schema.Struct({
 const mixed = Request.get("").pipe(
   Request.path(Mixed, ({ filter, count }) => `/${filter.page_size}/${count}`),
 );
-// Even the same text as the default cannot bypass validation of the whole encoded group.
 const mixedInput = Request.compile(mixed, {
   path: { filter: { page_size: "25" }, count: 3, opaque },
 });
@@ -103,9 +102,17 @@ const completeEncodedInput = Request.compile(mixed, {
 });
 // #endregion whole-group
 
+// Since 0.19 each field is read on its own side here, so the alias is kept.
+assert.equal((await Effect.runPromise(mixedInput)).request.url, "/25/3");
 assert.equal(
-  (await Effect.runPromise(Effect.flip(mixedInput)))._tag,
-  "SchemaError",
+  (
+    await Effect.runPromise(
+      Request.compile(mixed, {
+        path: { filter: { page_size: "05" }, count: 3, opaque },
+      }),
+    )
+  ).request.url,
+  "/5/3",
 );
 assert.equal((await Effect.runPromise(mappedInput)).request.url, "/25/3");
 assert.equal(

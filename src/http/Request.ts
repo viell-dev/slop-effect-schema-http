@@ -86,43 +86,33 @@ export type QueryFields = Readonly<
  *
  * Preparation tries the decoded side first, then the decoder as a whole, then, for an object that
  * is not a list, the decoder field by field. If all fail, it reports the decoded side's error, a
- * `SchemaError` before dispatch. Both routes validate the values they consume. The last route never
+ * `SchemaError` before dispatch. Each route validates the values it consumes. The last route never
  * copies a list into an object keyed by its indexes, so a record or struct member cannot take such
- * a copy; Effect's own readings, such as an empty `Schema.Class`, still apply. On that route each
- * field accounts for what it was given, so a supplied field its reading dropped is a `SchemaError`
- * rather than replaced by a constructor default. A key a decoder adds is not the caller's, and the
- * object is built again strictly first, so a union field keeps the member it was read by. A
- * relaxed write can still take another member and refuse. Unsupported constructor-default paths
- * below can still ignore a supplied alias. A weak schema can accept more values.
- * `Schema.NumberFromString` turns `"many"` into `NaN` and `Schema.FiniteFromString` refuses it.
+ * a copy; Effect's own readings, such as an empty `Schema.Class`, still apply. A weak schema can
+ * accept more values: `Schema.NumberFromString` turns `"many"` into `NaN` and
+ * `Schema.FiniteFromString` refuses it.
+ *
+ * On plain data each route accounts for what it was given, so a default never takes the place of a
+ * supplied field. A constructor that lost a field gives way to a route that loses less, and what is
+ * still lost is a `SchemaError` naming the field. A field given under both its names refuses, and so
+ * does a list whose items are on different sides. A key a decoder adds is not
+ * the caller's. Where only a relaxed write can send a value, a schema with a union between objects
+ * is read as Effect reads it, and what that loses is refused. Defaults, checks, decoders and their
+ * services can run more than once. A value held behind an accessor, a class instance, and a schema
+ * that uses a name every object has, such as `toString`, read as Effect reads them.
  *
  * A value that fits the decoded side is read as decoded. Under a schema whose two sides share a
  * type, such as one from text to text, an already encoded value fits the decoded side, so it is
  * encoded again, with no error. The type retains whole constructor and encoded input shapes,
  * including nested aliases in objects, lists, tuples and classes. Mixing by field stays one level
  * deep in the type; it does not recursively rebuild nested fields.
- * When both names are supplied, a constructor/decoded read prefers the decoded name. A whole
- * encoded read uses the encoded name instead, including after the added whole-group validation.
- * Conflicting values are not generally refused; give one side's name or validate a decoded mapping.
- *
- * Constructor-default validation is bounded: where its proof stops, the schema's own selection
- * decides and a supplied alias can still be ignored in favor of a default. It stops at
- * inherited-only cells, arbitrary iterators, middleware-encoded alternatives, a list under a union
- * whose list reader is encoded or not its only member that can read lists (`Schema.Struct({})`
- * reads them), and opaque or ambiguous paths (issue #170). Stable sparse own cells, exact native
- * own iterator data, plain-transformation primitive codecs such as `Schema.FiniteFromString`, and
- * one-or-many unions of an object and its list can qualify.
- * Array normalization preserves positions and symbol identity but does not expand that proof.
- * Supply one decoded shape, validated and mapped explicitly when needed, for unsupported inputs.
- * Whole encoded reading can refuse mixed-side input or change a shared-type field's interpretation;
- * schema checks and services can run more than once.
  *
  * A helper accepting `Input` must handle nested encoded alternatives too, or declare its own
  * decoded-only input shape. Opaque values use their schema's own reading; supply decoded contents
  * when constructor priority would otherwise lose an inner alias.
  *
  * See https://viell-dev.github.io/slop-effect-schema-http/schema-input for the complete current
- * reading order, preservation/default boundaries and recovery.
+ * reading order, preservation rules and limits.
  * https://viell-dev.github.io/slop-effect-schema-http/schema-groups covers raw defaults and stacking.
  *
  * Under a union, a member that keeps every field wins over an earlier one that would strip one, on
@@ -155,12 +145,6 @@ export type QueryFields = Readonly<
  * header or query group, a field a schema stacked with the union takes is not lost. Inside text given
  * as text, a `Schema.ReadonlyMap`, a `Schema.Option` or a declaration with no struct behind it, the
  * schema's own reading applies.
- *
- * A direct closed struct can recover an otherwise-refused nested field through constructor-only
- * validation beside an opaque declaration. The original parent and output remain strictly
- * validated, and complete preservation is required. Already successful calls keep their original
- * path; new attempts can repeat effects or fail. Encoded-side recovery and unstable field evidence
- * remain outside this bounded route.
  */
 export type Input<S extends Schema.Top> = Inputs.Input<S>;
 

@@ -135,10 +135,8 @@ const completeDecoded = Request.compile(mixed, {
 });
 // #endregion whole-group
 
-assert.equal(
-  (await Effect.runPromise(Effect.flip(mixedInput)))._tag,
-  "SchemaError",
-);
+// Since 0.19 each field is read on its own side here, so the alias is kept.
+assert.equal((await Effect.runPromise(mixedInput)).request.url, "/25/3");
 assert.equal((await Effect.runPromise(completeEncoded)).request.url, "/25/3");
 assert.equal((await Effect.runPromise(completeDecoded)).request.url, "/25/3");
 

@@ -1,10 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Option, Schema, SchemaAST, SchemaGetter } from "effect";
+import { Cause, Effect, Option, Schema, SchemaGetter } from "effect";
 import { bodyOf, schemaFailure, Tenant, urlOf } from "../../test/request.js";
 import * as Body from "./Body.js";
-import { encodedInput } from "./internal/encoded-input.js";
-import { nestedEncodedInput } from "./internal/nested-input.js";
-import { guardVoidMembers } from "./internal/void-member.js";
 import * as Request from "./Request.js";
 
 /** What path and JSON body preparation write, or `"refused"` for a `SchemaError`. */
@@ -54,18 +51,6 @@ const RenamedSort = Schema.Struct({
 
 const hiddenFilterCell = (page_size: string) =>
   Object.defineProperty([], 0, { value: { page_size } });
-
-const guardedAliasView = (schema: Schema.Top) =>
-  nestedEncodedInput(
-    schema.ast,
-    guardVoidMembers(schema.ast).isAliasAlternative,
-  );
-
-const hidingList = () =>
-  new Proxy([{ page_size: "many" }], {
-    get: (target, key, receiver) =>
-      key === "0" ? undefined : Reflect.get(target, key, receiver),
-  });
 
 describe("request preparation beside Void", () => {
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
@@ -263,53 +248,26 @@ describe("request preparation beside Void", () => {
           ),
         }).pipe(Schema.encodeKeys({ limit: "page_size" }));
         for (const [prepared, path] of [
-          [
-            schemaFailure(post(nested), { body: wire } as never),
-            '["extra"]["a"]',
-          ],
+          [schemaFailure(post(nested), { body: wire } as never), '["extra"]'],
           [
             schemaFailure(post(Schema.Array(nested)), {
               body: [wire],
             } as never),
-            '[0]["extra"]["a"]',
+            '[0]["extra"]',
           ],
           [
             schemaFailure(post(root), {
               body: { extra: wire.extra, page_size: "05" },
             } as never),
-            '["extra"]["a"]',
+            '["extra"]',
           ],
         ] as const) {
           const error = yield* prepared;
           expect(error).toContain(path);
-          expect(error).not.toContain("page_size");
         }
       }
     }),
   );
-
-  it("reuses member classification for deeply nested alias proofs", () => {
-    let visits = 0;
-    let ast: SchemaAST.AST = VoidFirst.ast;
-    const depth = 100;
-    for (let i = 0; i < depth; i++) {
-      const types: ReadonlyArray<SchemaAST.AST> = [
-        new SchemaAST.Literal(i),
-        ast,
-      ];
-      ast = new SchemaAST.Union(types);
-      Object.defineProperty(ast, "types", {
-        get: () => {
-          visits++;
-          return types;
-        },
-      });
-    }
-    const { isAliasAlternative } = guardVoidMembers(ast);
-    expect(encodedInput(ast, isAliasAlternative)).toBeDefined();
-    nestedEncodedInput(ast, isAliasAlternative);
-    expect(visits).toBeLessThan(depth * 20);
-  });
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
   it.effect("keeps an encoded field beneath a renamed parent key", () =>
@@ -494,9 +452,7 @@ describe("request preparation beside Void", () => {
           yield* schemaFailure(post(schema), {
             body: { extra: { a: "x" }, filter: { page_size: "many" } },
           } as never),
-        ).toBe(
-          'The schema cannot keep this field with the rest of the value\n  at ["filter"]["page_size"]',
-        );
+        ).toContain('["filter"]["page_size"]');
       }),
   );
 
@@ -762,118 +718,10 @@ describe("request preparation beside Void", () => {
           }
       }),
     );
-
-  it("classifies a grouped Void by the guard of the union that holds it", () => {
-    const input = [{ page_size: "many" }];
-    const output = [{ page_size: "25" }];
-    for (const schema of grouped[0].schemas)
-      expect(guardedAliasView(schema)?.(input)?.select(output)?.matches()).toBe(
-        true,
-      );
-    // An unguarded Void, as under a oneOf member union, can read the list.
-    expect(
-      guardedAliasView(
-        Schema.Union([
-          Schema.Array(Filter),
-          Schema.Union([Cursor, Schema.Void], { mode: "oneOf" }),
-        ]),
-      ),
-    ).toBeUndefined();
-    expect(
-      nestedEncodedInput(
-        Schema.Union([
-          Schema.Array(Filter),
-          Schema.Union([Cursor, Schema.Void]),
-        ]).ast,
-      ),
-    ).toBeUndefined();
-  });
-
-  // One member union can be guarded in one place and left unguarded in another. The occurrence
-  // shared with the unguarded position keeps main's result. With these primitive members, the
-  // guarded occurrence keeps its proof as well, so both read as separate copies would.
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect(
-    "keeps main's result where a member union is shared with an unguarded position",
-    () =>
-      Effect.gen(function* () {
-        // A Void whose check always fails reads no list, so the oneOf member keeps the list member.
-        const checked = Schema.Void.check(Schema.makeFilter(() => false));
-        const readers = [
-          {
-            reader: Schema.Array(Filter),
-            leaf: (page_size: string) => [{ page_size }],
-            output: [{ page_size: "25" }],
-          },
-          {
-            reader: Parent,
-            leaf: (page_size: string) => ({ filter: { page_size } }),
-            output: { filter: { page_size: "25" } },
-          },
-        ] as const;
-        for (const empty of [Schema.Void, checked])
-          for (const { reader, leaf, output } of readers) {
-            const inner = () => Schema.Union([Schema.String, empty]);
-            const contract = (looseFirst: boolean, sharing: boolean) => {
-              const first = inner();
-              const second = sharing ? first : inner();
-              const guarded = Schema.optionalKey(Schema.Union([reader, first]));
-              const loose = Schema.Union([reader, second], { mode: "oneOf" });
-              return Schema.Array(
-                looseFirst
-                  ? Schema.Struct({
-                      loose,
-                      guarded,
-                      n: Schema.FiniteFromString,
-                    })
-                  : Schema.Struct({
-                      guarded,
-                      loose,
-                      n: Schema.FiniteFromString,
-                    }),
-              );
-            };
-            const view = (schema: Schema.Top, input: unknown) =>
-              nestedEncodedInput(
-                schema.ast,
-                guardVoidMembers(schema.ast).isAliasAlternative,
-              )?.(input)
-                ?.select([{ loose: output, n: "2" }])
-                ?.matches();
-            for (const looseFirst of [false, true])
-              for (const input of [
-                [{ loose: leaf("025"), n: 2 }],
-                [{ loose: leaf("many"), n: 2 }],
-                [{ loose: leaf("025"), n: "2" }],
-                [{ guarded: leaf("many"), n: 2 }],
-              ]) {
-                const fresh = contract(looseFirst, false);
-                const shared = contract(looseFirst, true);
-                expect(yield* outcomes(shared, input)).toEqual(
-                  yield* outcomes(fresh, input),
-                );
-                expect(view(shared, input)).toBe(view(fresh, input));
-              }
-            if (empty === checked && reader === readers[0].reader)
-              expect(
-                yield* outcomes(contract(false, true), [
-                  { loose: leaf("025"), n: 2 },
-                ]),
-              ).toEqual(
-                Array(2).fill('[{"loose":[{"page_size":"25"}],"n":"2"}]'),
-              );
-            // Unshared, the same grouping refuses an invalid alias.
-            expect(
-              yield* outcomes(Schema.Union([reader, inner()]), leaf("many")),
-            ).toEqual(["refused", "refused"]);
-          }
-      }),
-  );
 });
 
-// A member union reused where its Void is unguarded loses the grouped proof at its guarded use
-// too: the guard is recorded per union value, not per use. Its string member reads an object on
-// its encoded side, so no proof but the grouped one covers that use.
+// One member union used both where its Void is guarded and where it is not. Its string member reads
+// an object on its encoded side.
 const reusedGrouping = (sharing: boolean) => {
   const cursorText = Schema.Struct({ cursor: Schema.String }).pipe(
     Schema.decodeTo(Schema.String, {
@@ -900,29 +748,13 @@ const reusedInput = [{ guarded: [{ page_size: "many" }], n: 2 }];
 describe("known Void selection limits", () => {
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
   it.effect(
-    "currently substitutes the default where a member union is also used unguarded",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* outcomes(reusedGrouping(true), reusedInput)).toEqual(
-          Array(2).fill('[{"guarded":[{"page_size":"25"}],"n":"2"}]'),
-        );
-        // A separate member union value for each use keeps the proof.
-        expect(yield* outcomes(reusedGrouping(false), reusedInput)).toEqual([
-          "refused",
-          "refused",
-        ]);
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect.fails(
     "refuses an invalid alias where a member union is also used unguarded",
     () =>
       Effect.gen(function* () {
-        expect(yield* outcomes(reusedGrouping(true), reusedInput)).toEqual([
-          "refused",
-          "refused",
-        ]);
+        for (const sharing of [true, false])
+          expect(yield* outcomes(reusedGrouping(sharing), reusedInput)).toEqual(
+            ["refused", "refused"],
+          );
       }),
   );
 
@@ -945,33 +777,6 @@ describe("known Void selection limits", () => {
             [{ page_size: "many" }],
           ),
         ).toEqual(["undefined", "null"]);
-      }),
-  );
-
-  // Capture reads a list's own descriptors; the guard reads `list[0]`. A proxy can answer the two
-  // differently, so the guard can see no defined cell and let Void take the list.
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "currently lets Void take a proxy list whose index read hides its cell",
-    () =>
-      Effect.gen(function* () {
-        for (const schema of [
-          Schema.Union([Schema.Array(Filter), Schema.Void]),
-          Schema.Union([Schema.Void, Schema.Array(Filter)]),
-        ]) {
-          expect(
-            nestedEncodedInput(
-              schema.ast,
-              guardVoidMembers(schema.ast).isAliasAlternative,
-            )?.(hidingList())
-              ?.select([{ page_size: "25" }])
-              ?.matches(),
-          ).toBe(true);
-          expect(yield* outcomes(schema, hidingList())).toEqual([
-            "undefined",
-            "null",
-          ]);
-        }
       }),
   );
 
@@ -1049,11 +854,14 @@ describe("known Void selection limits", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect("currently lets a custom transformation discard its input", () =>
+  it.effect("keeps what a custom transformation would discard", () =>
     Effect.gen(function* () {
       expect(yield* bodyOf(post(Custom), { body: { page_size: "05" } })).toBe(
-        '{"page_size":"25"}',
+        '{"page_size":"5"}',
       );
+      expect(
+        yield* schemaFailure(post(Custom), { body: { page_size: "many" } }),
+      ).toContain('["page_size"]');
     }),
   );
 

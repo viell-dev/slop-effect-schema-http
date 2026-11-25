@@ -1430,11 +1430,12 @@ describe("a value on the encoded side stays there", () => {
     }),
   );
 
-  it.effect("reads the decoded name beside its encoded twin", () =>
+  it.effect("refuses a name beside its encoded twin", () =>
     Effect.gen(function* () {
-      expect(
-        yield* urlOf(queried(Renamed), { query: { a: "1", A: "2" } }),
-      ).toBe("/x?A=1");
+      for (const A of ["1", "2"])
+        expect(
+          yield* schemaFailure(queried(Renamed), { query: { a: "1", A } }),
+        ).toContain('["A"]');
     }),
   );
 
@@ -2034,9 +2035,10 @@ describe("a field a part lost under a parent read field by field", () => {
     "reads a field a part's value inherits from its own prototype as Effect reads it",
     () =>
       Effect.gen(function* () {
-        // Such a value is not plain data. Effect 4.1.4 reads a field named after an
-        // `Object.prototype` member only as the value's own; Effect 4.0.7 also reads one the value
-        // inherits from its own prototype. The part reads as the installed Effect does.
+        // Effect 4.1.4 reads a field named after an `Object.prototype` member only as the value's
+        // own; Effect 4.0.7 also reads one the value inherits from its own prototype. A strict read
+        // takes an inherited field for a key, so a value inside plain data keeps it, and a field that
+        // is no plain data itself reads as the installed Effect does.
         for (const name of [
           "toString",
           "constructor",
@@ -2054,7 +2056,7 @@ describe("a field a part lost under a parent read field by field", () => {
             [name]: Schema.optionalKey(Schema.String),
           }) as unknown as Field;
           const item = () => inheriting(name, { a: "6" });
-          const written = read ? { a: "6", [name]: "x" } : { a: "6" };
+          const written = { a: "6", [name]: "x" };
           for (const [field, value, sent] of [
             [
               Schema.Tuple([Item, n]) as unknown as Field,

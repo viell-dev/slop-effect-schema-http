@@ -354,7 +354,7 @@ assert.equal(
 );
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6735302019
-// Pin the disclosed whole-group interpretation, not a general alias-conflict repair.
+// A field given under both its names refuses.
 const arrayAliasSchema = Schema.Array(nestedDefaultInner);
 for (const kind of ["path", "body"]) {
   let rendered;
@@ -369,21 +369,17 @@ for (const kind of ["path", "body"]) {
       : root.Request.post("/array-aliases").pipe(
           root.Request.body(root.Body.jsonSchema(arrayAliasSchema)),
         );
-  const input = [{ limit: 1, page_size: "02" }, { page_size: "25" }];
-  const prepared = await Effect.runPromise(
-    root.Request.compile(request, { [kind]: input }),
-  );
-  if (kind === "path")
-    assert.deepEqual(rendered, [{ page_size: "2" }, { page_size: "25" }]);
-  else {
-    assert.equal(prepared.request.body._tag, "Uint8Array");
-    assert.deepEqual(
-      JSON.parse(
-        new globalThis.TextDecoder().decode(prepared.request.body.body),
-      ),
-      [{ page_size: "2" }, { page_size: "25" }],
+  for (const input of [
+    [{ limit: 1, page_size: "02" }, { page_size: "25" }],
+    [{ limit: 1, page_size: "1" }],
+  ]) {
+    const error = await Effect.runPromise(
+      Effect.flip(root.Request.compile(request, { [kind]: input })),
     );
+    assert.equal(error._tag, "SchemaError");
+    assert.match(error.message, /\[0\]\["page_size"\]/);
   }
+  assert.equal(rendered, undefined);
 }
 
 // Array-key fixes preserve physical positions; accepted constructor profiles now refuse (#170).

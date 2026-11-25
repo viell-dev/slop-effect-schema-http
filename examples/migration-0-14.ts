@@ -124,16 +124,16 @@ const typedBothNames: Request.Input<typeof Filters> = bothNames;
 const wholeEncodedChoice = Request.compile(lookup, { path: typedBothNames });
 // #endregion dual-names
 
-assert.equal(
-  (await Effect.runPromise(wholeEncodedChoice)).request.url,
-  "/pages/2/25",
-);
+// Since 0.19 a field given under both its names refuses.
 const oneBothNames = [{ limit: 1, page_size: "02" }];
-assert.equal(
-  (await Effect.runPromise(Request.compile(lookup, { path: oneBothNames })))
-    .request.url,
-  "/pages/1",
-);
+for (const pending of [
+  wholeEncodedChoice,
+  Request.compile(lookup, { path: oneBothNames }),
+])
+  assert.equal(
+    (await Effect.runPromise(Effect.flip(pending)))._tag,
+    "SchemaError",
+  );
 
 // #region decoded-mapping
 interface FilterForm {
