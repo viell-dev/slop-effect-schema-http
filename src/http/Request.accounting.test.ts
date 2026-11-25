@@ -1,5 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Option, Schema, SchemaGetter } from "effect";
+import {
+  Context,
+  Effect,
+  Option,
+  Schema,
+  SchemaGetter,
+  SchemaIssue,
+} from "effect";
 import * as Body from "./Body.js";
 import * as Request from "./Request.js";
 import { bodyOf, compile } from "../../test/request.js";
@@ -354,6 +361,179 @@ describe("a default never takes the place of a supplied field", () => {
   );
 });
 
+describe("a field lost in a stacked group", () => {
+  const text = Schema.String;
+  const url = (schemas: ReadonlyArray<Schema.Top>, query: unknown) =>
+    Effect.forEach([schemas, [...schemas].reverse()], (order) =>
+      Effect.catch(
+        Effect.map(
+          compile(
+            order.reduce<Request.Request<never, unknown, unknown>>(
+              (request, schema) =>
+                Request.query(
+                  schema as Schema.Codec<unknown, Record<string, string>>,
+                )(request) as never,
+              Request.get("/x") as never,
+            ) as Request.Request<unknown>,
+            { query },
+          ),
+          ({ request }) => request.url,
+        ),
+        (error: unknown) =>
+          error instanceof Schema.SchemaError
+            ? Effect.succeed((error.message.match(/at .*/g) ?? []).join(" "))
+            : Effect.die(error),
+      ),
+    );
+
+  it.effect("is refused where the schema that lost it writes its name", () =>
+    Effect.gen(function* () {
+      // The sibling took what the caller gave, but this schema would send its default there too.
+      for (const schemas of [
+        [Schema.Record(text, text), Schema.Union([Filter, Cursor])],
+        [Schema.Struct({}), Schema.Union([Filter, Cursor])],
+        [Schema.Union([Schema.Struct({ page_size: text }), Cursor]), Filter],
+        [Schema.Struct({ page_size: Schema.optionalKey(text) }), Filter],
+      ])
+        expect(yield* url(schemas, { page_size: "many" })).toEqual(
+          both('at ["page_size"]'),
+        );
+      const B = Schema.Union([
+        Schema.Struct({ b: Schema.FiniteFromString }).pipe(
+          Schema.encodeKeys({ b: "w_b" }),
+        ),
+        Schema.Struct({ b: text }),
+      ]);
+      expect(yield* url([Schema.Struct({}), B], { b: 1, w_b: "2" })).toEqual(
+        both('at ["w_b"]'),
+      );
+      const headers = Request.get("/x").pipe(
+        Request.headers(Schema.Record(text, text)),
+        Request.headers(Schema.Union([Filter, Cursor])),
+      );
+      const refusal = yield* Effect.flip(
+        Effect.mapError(
+          compile(headers as Request.Request<unknown, unknown>, {
+            headers: { page_size: "many" },
+          }),
+          String,
+        ),
+      );
+      expect(refusal).toContain('["page_size"]');
+    }),
+  );
+
+  it.effect("is left to a sibling that takes it, with or without a union", () =>
+    Effect.gen(function* () {
+      const taking = Schema.Struct({ limit: Schema.optionalKey(text) });
+      for (const sibling of [taking, Schema.Union([taking, Cursor])])
+        expect(
+          (yield* url([sibling, Page], { limit: "x" })).map((sent) =>
+            Array.from(new URL(sent, "https://x.test").searchParams).sort(),
+          ),
+        ).toEqual(
+          both([
+            ["limit", "x"],
+            ["page_size", "30"],
+          ] as never),
+        );
+      for (const schemas of [
+        [taking, Filter],
+        [Schema.Struct({ other: Schema.optionalKey(text) }), Page],
+      ])
+        for (const sent of yield* url(schemas, { page_size: "05" }))
+          expect(sent).toBe("/x?page_size=5");
+    }),
+  );
+});
+
+describe("the cost of accounting", () => {
+  it.effect("runs a default a few times a level under refused unions", () =>
+    Effect.gen(function* () {
+      for (const depth of [2, 4, 8]) {
+        let runs = 0;
+        let schema: Schema.Top = Schema.Struct({
+          limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+            Schema.withConstructorDefault(Effect.sync(() => ++runs)),
+          ),
+        }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+        let input: unknown = { page_size: "many" };
+        for (let level = 0; level < depth; level++) {
+          const x = schema;
+          schema = Schema.Union([
+            Schema.Struct({ x, a: Schema.optionalKey(Schema.String) }),
+            Schema.Struct({ x, b: Schema.optionalKey(Schema.String) }),
+          ]);
+          input = { x: input };
+        }
+        for (const outcome of yield* outcomes(schema, input))
+          expect(outcome).toContain('["page_size"]');
+        expect(runs).toBeLessThanOrEqual(8 * (depth + 1));
+      }
+    }),
+  );
+
+  it.effect("reads a list's own keys a fixed number of times", () =>
+    Effect.gen(function* () {
+      const reads = (length: number) =>
+        Effect.gen(function* () {
+          let descriptors = 0;
+          const list = new Proxy(
+            Array.from({ length }, () => ({ page_size: "many" })),
+            {
+              getOwnPropertyDescriptor(target, key) {
+                descriptors++;
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              },
+            },
+          );
+          yield* outcomes(Schema.Array(Filter), list);
+          return descriptors;
+        });
+      const [short, long] = [yield* reads(50), yield* reads(400)];
+      expect(long).toBeLessThan(short * 10);
+    }),
+  );
+
+  it.effect("names the item that keeps a list from being decoded", () =>
+    Effect.gen(function* () {
+      const list = Array.from({ length: 30 }, (_, index) => ({
+        page_size: index === 20 ? "many" : String(index),
+      }));
+      expect(yield* outcomes(Schema.Array(Filter), list)).toEqual(
+        both('at [20]["page_size"]'),
+      );
+      expect(
+        yield* outcomes(Schema.Struct({ rows: Schema.Array(Filter) }), {
+          rows: list,
+        }),
+      ).toEqual(both('at ["rows"][20]["page_size"]'));
+      // A refusal elsewhere is still named.
+      expect(
+        yield* outcomes(
+          Schema.Struct({
+            rows: Schema.Array(Filter),
+            g: Schema.Struct({ h: Schema.Struct({ f: Filter }) }),
+          }),
+          { rows: list, g: { h: { f: { page_size: "many" } } } },
+        ),
+      ).toEqual(
+        both('at ["rows"][20]["page_size"] at ["g"]["h"]["f"]["page_size"]'),
+      );
+      // A union is named by what the member that keeps most of it loses.
+      expect(
+        yield* outcomes(
+          Schema.Union([
+            Schema.Struct({ a: Schema.optionalKey(Schema.String) }),
+            Page,
+          ]),
+          { limit: 5, page_size: "7" },
+        ),
+      ).toEqual(both('at ["page_size"]'));
+    }),
+  );
+});
+
 describe("a reading that keeps everything", () => {
   it.effect("keeps its fields beside a value it cannot see into", () =>
     Effect.gen(function* () {
@@ -404,17 +584,193 @@ describe("a reading that keeps everything", () => {
     }),
   );
 
-  it.effect("is not written by a member that would drop its fields", () =>
+  it.effect("is written by the member that holds it, beside a class", () =>
     Effect.gen(function* () {
-      // Only a relaxed write can send the class, and it would choose the first member.
+      // Only a relaxed write can send the class. It writes each union strictly where a member can.
       const Title = Schema.Struct({ title: Schema.optionalKey(Schema.String) });
+      const AB = Schema.Struct({ a: Schema.String, b: Schema.String });
+      const A = Schema.Struct({ a: Schema.String });
+      const Other = Schema.Struct({ limit });
+      for (const [schema, f, sent] of [
+        [Schema.Union([Title, Counted]), { a: "x" }, { a: "x" }],
+        [Schema.Union([Page, Counted]), new Counted({ a: "x" }), { a: "x" }],
+        [Schema.Union([Page, Other]), { limit: "6" }, { page_size: "6" }],
+        [
+          Schema.Array(Schema.Union([A, Schema.Array(Schema.String), AB])),
+          [{ a: "1", b: "2" }],
+          [{ a: "1", b: "2" }],
+        ],
+        [
+          Schema.Union([A, Schema.Union([Schema.Null, AB])]),
+          { a: "1", b: "2" },
+          { a: "1", b: "2" },
+        ],
+      ] as const) {
+        const fields = { f: schema as Schema.Top, c: Counted };
+        const input = { f, c: { a: "y" } };
+        expect(yield* outcomes(Schema.Struct(fields), input)).toEqual(
+          written({ f: sent, c: { a: "y" } }),
+        );
+        expect(
+          yield* outcomes(
+            Schema.Struct(fields).pipe(Schema.encodeKeys({ f: "w" })),
+            input,
+          ),
+        ).toEqual(written({ w: sent, c: { a: "y" } }));
+      }
+    }),
+  );
+
+  it.effect("is kept beside a union nothing in it goes through", () =>
+    Effect.gen(function* () {
+      const either = Schema.Union([
+        Schema.Struct({ a: Schema.String }),
+        Schema.Struct({ b: Schema.String }),
+      ]);
       const schema = Schema.Struct({
-        f: Schema.Union([Title, Counted]),
+        f: Filter,
         c: Counted,
-      }).pipe(Schema.encodeKeys({ f: "w" }));
-      for (const f of [{ a: "x" }, new Counted({ a: "x" })])
-        for (const outcome of yield* outcomes(schema, { f, c: { a: "y" } }))
-          expect(outcome).toMatch(/^at \["f"\]/);
+        u: Schema.optionalKey(either),
+      });
+      for (const u of [undefined, { b: "x" }])
+        expect(
+          yield* outcomes(schema, {
+            f: { page_size: "05" },
+            c: { a: "y" },
+            ...(u && { u }),
+          }),
+        ).toEqual(
+          written({ f: { page_size: "5" }, c: { a: "y" }, ...(u && { u }) }),
+        );
+    }),
+  );
+
+  it.effect(
+    "takes a union's strict member beside a value it cannot see into",
+    () =>
+      Effect.gen(function* () {
+        const A = Schema.Struct({ a: Schema.String });
+        const AB = Schema.Struct({ a: Schema.String, b: Schema.String });
+        const Title = Schema.Struct({
+          title: Schema.optionalKey(Schema.String),
+        });
+        const schema = Schema.Struct({
+          rows: Schema.Array(Schema.Union([A, AB])),
+          mixed: Schema.Array(
+            Schema.Union([Title, Schema.Struct({ f: Filter })]),
+          ),
+          o: Schema.Option(A),
+        });
+        const rows = [{ a: "1", b: "2" }, { a: "3" }];
+        // Only the constructor reads a decoded name, and loosely it would take the first member.
+        const [body] = yield* outcomes(schema, {
+          rows,
+          mixed: [{ f: { limit: 5 } }],
+          o: Option.some({ a: "x", z: 1 }),
+        });
+        expect(JSON.parse(body!)).toMatchObject({
+          rows,
+          mixed: [{ f: { page_size: "5" } }],
+        });
+      }),
+  );
+
+  it.effect("is not replaced by a looser member's reading", () =>
+    Effect.gen(function* () {
+      // A loose decode would take `Filter`, which strips `limit` with no error.
+      const schema = Schema.Struct({
+        o: Schema.Option(Schema.Struct({ a: Schema.String })),
+        b: Schema.Union([Filter, Schema.Unknown]),
+      });
+      const b = { limit: 5, page_size: "7" };
+      const [body] = yield* outcomes(schema, {
+        o: Option.some({ a: "o", z: 1 }),
+        b,
+      });
+      expect(JSON.parse(body!)).toMatchObject({ b });
+    }),
+  );
+
+  it.effect("keeps a value a Void beside a class would read", () =>
+    Effect.gen(function* () {
+      const list = Schema.Array(
+        Schema.Union([Schema.Void, Schema.Array(Counted)]),
+      );
+      expect(yield* outcomes(list, [[{ a: "x" }]])).toEqual(
+        written([[{ a: "x" }]]),
+      );
+      // A value that holds nothing is kept as the Void reads it.
+      expect((yield* outcomes(list, [null, [{ a: "x" }]]))[0]).toBe(
+        '[null,[{"a":"x"}]]',
+      );
+    }),
+  );
+
+  it.effect("is refused where its own member cannot write it", () =>
+    Effect.gen(function* () {
+      // Read loosely, the value would be a `Page` that strips `limit` and sends its default.
+      const ReadOnly = Schema.Struct({
+        limit: Schema.String.pipe(
+          Schema.decodeTo(Schema.Struct({ text: Schema.String }), {
+            decode: SchemaGetter.transform((text: string) => ({ text })),
+            encode: SchemaGetter.fail<string, { readonly text: string }>(
+              () => new SchemaIssue.InvalidValue({ message: "read only" }),
+            ),
+          }),
+        ),
+      });
+      const f = Schema.Union([Page, ReadOnly]);
+      for (const [schema, input] of [
+        [f, { limit: "6" }],
+        [
+          Schema.Struct({ f, c: Counted }),
+          { f: { limit: "6" }, c: { a: "x" } },
+        ],
+        [Schema.Array(f), [{ limit: "6" }]],
+      ] as const)
+        for (const outcome of yield* outcomes(schema, input))
+          expect(outcome).toMatch(/^at |read only|^Expected/);
+    }),
+  );
+
+  it.effect("reads an input whose undefined key its decoder needs", () =>
+    Effect.gen(function* () {
+      const schema = Schema.Struct({
+        inner: Schema.UndefinedOr(Schema.String),
+        f: Filter,
+        c: Counted,
+      });
+      const input = {
+        inner: undefined,
+        f: { page_size: "05" },
+        c: { a: "x" },
+      };
+      const body = { inner: null, f: { page_size: "5" }, c: { a: "x" } };
+      const path = { f: { page_size: "5" }, c: { a: "x" } };
+      expect(yield* outcomes(schema, input)).toEqual([
+        JSON.stringify(body),
+        JSON.stringify(path),
+      ]);
+      expect(yield* outcomes(Schema.Array(schema), [input])).toEqual([
+        JSON.stringify([body]),
+        JSON.stringify([path]),
+      ]);
+    }),
+  );
+
+  it.effect("accounts for nothing inside a value that is not plain data", () =>
+    Effect.gen(function* () {
+      class Rows {
+        readonly items = [{ page_size: "many" }];
+      }
+      const page = Schema.Struct({ items: Schema.Array(Filter) });
+      const sent = { items: [{ page_size: "25" }] };
+      for (const [schema, input, output] of [
+        [page, new Rows(), sent],
+        [Schema.Struct({ page }), { page: new Rows() }, { page: sent }],
+        [Schema.Array(page), [new Rows()], [sent]],
+      ] as const)
+        expect(yield* outcomes(schema, input)).toEqual(written(output));
     }),
   );
 

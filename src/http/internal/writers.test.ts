@@ -232,18 +232,6 @@ const cases: ReadonlyArray<Case> = [
     value: { v: "x", tag: "B" },
   },
   {
-    name: "one-of members that both write",
-    schema: (seen) =>
-      Schema.Union(
-        [
-          tagged(seen, 0, { a: text }),
-          tagged(seen, 1, { a: text, b: Schema.optionalKey(text) }),
-        ],
-        { mode: "oneOf" },
-      ),
-    value: { v: "x", a: "y" },
-  },
-  {
     name: "one-of members with tags",
     schema: (seen) =>
       Schema.Union(
@@ -315,6 +303,45 @@ const outcome = (exit: Exit.Exit<unknown, Schema.SchemaError>) =>
 // These run on every supported Effect in CI, so the reimplementation is checked against the
 // installed version's own writes.
 describe("the recording writer", () => {
+  it("writes a union strictly where a member can, and else as Effect does", () => {
+    const write = (schema: Schema.Top, value: unknown) =>
+      Schema.encodeUnknownExit(
+        Schema.make<Schema.Codec<unknown, unknown>>(
+          recordingWriter(schema.ast),
+        ),
+      )(value, recordingInto([]));
+    const A = Schema.Struct({ a: text });
+    const AB = Schema.Struct({ a: text, b: text });
+    const value = { a: "x", b: "y" };
+    const sent = (exit: Exit.Exit<unknown, unknown>) =>
+      Exit.isSuccess(exit) ? exit.value : "refused";
+    for (const schema of [
+      Schema.Union([A, AB]),
+      Schema.Union([A, Schema.Union([Schema.Null, AB])]),
+      Schema.Union([A, AB], { mode: "oneOf" }),
+      Schema.Union([Schema.Void, A, AB]),
+    ])
+      expect(sent(write(schema, value))).toEqual(value);
+    // No member writes the stray key, so the first that fits strips it, as Effect has it.
+    expect(sent(write(Schema.Union([A, AB]), { ...value, z: 1 }))).toEqual({
+      a: "x",
+    });
+    // Two members still write it strictly, so one-of refuses, as Effect does.
+    const loose = Schema.Struct({ a: text, b: Schema.optionalKey(text) });
+    expect(
+      sent(write(Schema.Union([A, loose], { mode: "oneOf" }), { a: "x" })),
+    ).toBe("refused");
+    class Own extends Schema.Class<Own>("Own")({ a: text }) {
+      readonly own = 1;
+    }
+    for (const schema of [
+      Schema.Union([A, Own]),
+      Schema.Union([Own, Schema.Struct({})]),
+      Schema.Union([Schema.Null, Schema.Union([Own, Schema.Struct({})])]),
+    ])
+      expect(sent(write(schema, new Own({ a: "x" })))).toEqual({ a: "x" });
+  });
+
   it.each(cases)(
     "selects, runs and writes as Effect does: $name",
     ({ schema, value }) => {

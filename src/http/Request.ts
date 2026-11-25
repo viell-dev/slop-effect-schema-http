@@ -946,7 +946,7 @@ const prepareGroup = <
                 Inputs.refuseLost(
                   contract,
                   lostFromInput,
-                  prepared[takenKey]?.fields,
+                  Shapes.takenElsewhere(prepared[takenKey], undefined, fold),
                   unwritten,
                 ),
                 Effect.fail(error),
@@ -987,7 +987,7 @@ const prepareGroup = <
         yield* Inputs.refuseLost(
           contract,
           lostFromInput,
-          prepared[takenKey]?.fields,
+          Shapes.takenElsewhere(prepared[takenKey], snapshot, fold),
           unwritten,
         );
       }
@@ -1726,7 +1726,7 @@ export interface Compiled {
 
 /** A record to start from where a schema in the group can lose a field to another one. */
 const takenRecord = (shapes: ReadonlyArray<Shape>): Taken | undefined =>
-  shapes.length > 1 && shapes.some(({ chooses }) => chooses)
+  shapes.length > 1
     ? {
         fields: new Set(),
         certificates: new Map(),
