@@ -452,7 +452,7 @@ describe(`a union's fields at the wire (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-30j] limit: a stray key inside an Option beside a visible union makes the union read loosely, so a wider member's field is refused, and nothing is sent",
+    "[EXT-30j] currently a stray OptionFromNullOr payload key beside a visible union refuses before dispatch",
     () =>
       Effect.gen(function* () {
         const { error, ledger } = yield* refused(
@@ -475,7 +475,8 @@ describe(`a union's fields at the wire (${lane.name})`, () => {
           },
         );
         expect(error._tag).toBe("SchemaError");
-        expect(error.message).toContain('["filter"]["limit"]');
+        expect(error.message).toContain('["held"]["value"]["stray"]');
+        expect(error.message).not.toContain('["filter"]["limit"]');
         expect(error.message).not.toContain(secret);
         expect(ledger).toEqual([]);
       }),
