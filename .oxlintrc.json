@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "eslint/no-underscore-dangle": "off"
+  },
+  "ignorePatterns": [
+    ".library/**",
+    ".host/**",
+    "host/target/**",
+    "artifacts/**"
+  ]
+}

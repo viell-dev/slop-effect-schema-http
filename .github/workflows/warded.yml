@@ -1,0 +1,43 @@
+name: Warded suite
+
+on:
+  # Pull requests into this branch; pull requests into the library's main do not contain this file.
+  pull_request:
+  push:
+    branches: [warded-test]
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      # rust-toolchain.toml names the version; this installs it with the components it lists.
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run library
+      - run: npm run host
+      - run: npm run check
+      - run: npm run lint
+      # Each lane runs on its own, so a lane that finds no tests fails instead of hiding behind the
+      # other. The browser lane runs even if the Node lane failed.
+      - id: node
+        run: npm run test:node
+      - if: ${{ !cancelled() && steps.node.outcome != 'skipped' }}
+        run: npm run test:browser
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: warded-suite-results
+          path: artifacts/
+          if-no-files-found: error

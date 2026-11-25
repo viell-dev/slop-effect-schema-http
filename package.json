@@ -1,0 +1,44 @@
+{
+  "name": "warded-cross-suite",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Effect Schema HTTP and Warded tested against each other over real sockets.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "npm@11.19.1",
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "^11.19.1",
+      "onFail": "error"
+    }
+  },
+  "scripts": {
+    "library": "node scripts/library.mjs",
+    "host": "node scripts/host.mjs",
+    "check": "run-p check:*",
+    "check:tsc": "tsc --noEmit",
+    "check:prettier": "prettier --check .",
+    "check:rustfmt": "cargo fmt --manifest-path host/Cargo.toml --check",
+    "check:clippy": "cargo clippy --manifest-path host/Cargo.toml --locked --all-targets -- -D warnings",
+    "lint": "oxlint",
+    "test": "run-s test:node test:browser",
+    "test:node": "vitest run --project node --reporter=default --reporter=junit --outputFile.junit=artifacts/junit-node.xml",
+    "test:browser": "vitest run --project browser --reporter=default --reporter=junit --outputFile.junit=artifacts/junit-browser.xml",
+    "format": "prettier --write . && cargo fmt --manifest-path host/Cargo.toml"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "4.1.4",
+    "@effect/vitest": "4.1.4",
+    "@types/node": "^26.6.6",
+    "@vitest/browser-playwright": "5.1.0",
+    "effect": "4.1.4",
+    "npm-run-all2": "^9.0.4",
+    "oxlint": "^1.92.0",
+    "playwright": "1.65.0",
+    "prettier": "^3.9.10",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
+  }
+}

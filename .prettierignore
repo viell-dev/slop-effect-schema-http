@@ -1,0 +1,6 @@
+.library/
+.host/
+host/target/
+artifacts/
+package-lock.json
+.vitest/
