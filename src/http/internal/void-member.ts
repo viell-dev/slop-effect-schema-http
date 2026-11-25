@@ -6,20 +6,7 @@ import {
   SchemaIssue,
   SchemaParser,
 } from "effect";
-import { hasDefinedFields, isSignaturelessObject } from "./excess.js";
-import { isObjectMember } from "./primitive.js";
-
-// Effect 4.0.7 and 4.1.4 spread parse options, preserving this per-read observer. Revisit the
-// channel if a supported peer stops forwarding symbol keys.
-const onDecline = Symbol("track Void refusal");
-type GuardOptions = SchemaAST.ParseOptions & {
-  readonly [onDecline]?: () => void;
-};
-
-export const observeVoid = (
-  options: SchemaAST.ParseOptions,
-  declined: () => void,
-): GuardOptions => ({ ...options, [onDecline]: declined });
+import { classFields, hasDefinedFields } from "./excess.js";
 
 const jsonVoid = Schema.toCodecJson(Schema.Void).ast.encoding?.[0];
 
@@ -28,7 +15,7 @@ const isPlainVoid = (ast: SchemaAST.AST): ast is SchemaAST.Void =>
   (ast.encoding === undefined ||
     (ast.encoding.length === 1 && ast.encoding[0] === jsonVoid));
 
-const guard = (member: SchemaAST.Void, listsOnly: boolean) => {
+const guard = (member: SchemaAST.Void) => {
   // Declaration.flip swaps checks to the opposite side. Delegate to the original type parser
   // so checks still run on Void's result in both directions.
   const parse = SchemaParser.decodeUnknownEffect(
@@ -38,12 +25,10 @@ const guard = (member: SchemaAST.Void, listsOnly: boolean) => {
   );
   return new SchemaAST.Declaration(
     [],
-    () => (input, _self, options: GuardOptions) => {
-      if ((listsOnly && !Array.isArray(input)) || !hasDefinedFields(input))
-        return parse(input, options);
-      options[onDecline]?.();
-      return Effect.fail(new SchemaIssue.InvalidType(member, input, options));
-    },
+    () => (input, _self, options) =>
+      hasDefinedFields(input)
+        ? Effect.fail(new SchemaIssue.InvalidType(member, input, options))
+        : parse(input, options),
     { expected: "void", ...member.annotations },
     undefined,
     member.encoding,
@@ -66,33 +51,46 @@ function mapSame<A>(items: readonly A[], map: (item: A) => A): readonly A[] {
   return mapped.every((item, index) => item === items[index]) ? items : mapped;
 }
 
+const guardedVoids = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
+
 /**
- * Keep the union and its other members intact. The strict parser can decline the built-in Void
- * member before it erases the value. Its ordinary behavior (including missing and JSON null)
- * is represented by the same context and encoding links.
+ * A schema whose every visible Void declines what it would erase: an object or a list that holds
+ * something. Nothing else changes: in a union another member can then keep the value, and anywhere
+ * else the parser refuses it where it is. Void's ordinary behavior, missing and JSON null included,
+ * stays with its context and encoding links.
+ *
+ * @remarks
+ * Visible means through structs, lists, unions, suspensions and encodings, and a class's fields.
+ * Effect builds a class from fields its struct has read, without reading them again, so the struct
+ * it is built from can stand in. Any other declaration is opaque.
  */
-export const guardVoidMembers = (root: SchemaAST.AST) => {
-  const choices = new WeakSet<SchemaAST.AST>();
-  const cache = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
-  const alternatives = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
-  const visit = (ast: SchemaAST.AST) => visitAlternative(ast, false);
-  const visitAlternative = (
-    ast: SchemaAST.AST,
-    besideObject: boolean,
-  ): SchemaAST.AST => {
-    const known = besideObject ? alternatives : cache;
-    const cached = known.get(ast);
-    if (cached !== undefined) return cached;
-    const result = rewrite(ast, besideObject);
-    known.set(ast, result);
+export const guardVoids = (root: SchemaAST.AST): SchemaAST.AST => {
+  const visit = (ast: SchemaAST.AST): SchemaAST.AST => {
+    const known = guardedVoids.get(ast);
+    if (known !== undefined) return known;
+    const result = rewrite(ast);
+    guardedVoids.set(ast, result);
     return result;
   };
-  const rewrite = (
-    ast: SchemaAST.AST,
-    besideObject: boolean,
-  ): SchemaAST.AST => {
-    // Stay out of opaque declarations and suspensions. Keep all original link transformations.
-    if (ast._tag !== "Objects" && ast._tag !== "Arrays" && ast._tag !== "Union")
+  const rewrite = (ast: SchemaAST.AST): SchemaAST.AST => {
+    if (isPlainVoid(ast)) return guard(ast);
+    if (ast._tag === "Suspend") {
+      // Follow a suspended schema only when it is read, so a recursive one stays finite.
+      let target: SchemaAST.AST | undefined;
+      return new SchemaAST.Suspend(
+        () => (target ??= visit(ast.thunk())),
+        ast.annotations,
+        undefined,
+        ast.encoding,
+        ast.context,
+      );
+    }
+    if (
+      ast._tag !== "Objects" &&
+      ast._tag !== "Arrays" &&
+      ast._tag !== "Union" &&
+      classFields(ast) === undefined
+    )
       return ast;
     const encoding =
       ast.encoding &&
@@ -102,6 +100,21 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
           ? link
           : new SchemaAST.Link(target, link.transformation);
       });
+    if (ast._tag === "Declaration")
+      return encoding === ast.encoding
+        ? ast
+        : new SchemaAST.Declaration(
+            ast.typeParameters.map((parameter) =>
+              parameter === ast.encoding![0].to ? encoding![0].to : parameter,
+            ),
+            ast.run,
+            ast.annotations,
+            ast.checks,
+            encoding,
+            ast.context,
+            ast.encodingChecks,
+            ast.encodingRun,
+          );
     if (ast._tag === "Objects") {
       const properties = mapSame(ast.propertySignatures, (property) => {
         const type = visit(property.type);
@@ -147,33 +160,8 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
             ast.encodingChecks,
           );
     }
-    const protect =
-      (ast.options?.mode ?? "anyOf") === "anyOf" &&
-      (besideObject || ast.types.some(isObjectMember));
-    // An empty struct accepts arbitrary keys but states none. Where it is the only alternative,
-    // keep first-fit reading for objects and the existing defined-cell guard for lists.
-    const listsOnly =
-      protect &&
-      !besideObject &&
-      ast.types.every(
-        (member) =>
-          isPlainVoid(member) ||
-          (isSignaturelessObject(member) &&
-            member.encoding === undefined &&
-            member.checks === undefined),
-      );
-    const members = mapSame(ast.types, (member) => {
-      if (protect && isPlainVoid(member)) {
-        choices.add(ast);
-        return guard(member, listsOnly);
-      }
-      if (protect && member._tag === "Union" && member.encoding === undefined) {
-        const rewritten = visitAlternative(member, true);
-        if (choices.has(member)) choices.add(ast);
-        return rewritten;
-      }
-      return visit(member);
-    });
+    if (ast._tag !== "Union") return ast;
+    const members = mapSame(ast.types, visit);
     return encoding === ast.encoding && members === ast.types
       ? ast
       : new SchemaAST.Union(
@@ -186,5 +174,5 @@ export const guardVoidMembers = (root: SchemaAST.AST) => {
           ast.encodingChecks,
         );
   };
-  return { ast: visit(root), choices };
+  return visit(root);
 };

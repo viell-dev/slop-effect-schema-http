@@ -34,8 +34,7 @@ first member that fits and a field can go with no error.
 
 Schema structure is tested against the configurations above, rather than checked at runtime. The
 [Schema-backed input reference](./schema-input.md) owns current constructor/encoded reading and
-array behavior, including [active preservation/default
-limits](./schema-input.md#active-limits-and-recovery) under #143 and #243. The [group
+array behavior, including its [limits](./schema-input.md#active-limits-and-recovery). The [group
 reference](./schema-groups.md) covers raw defaults and bounded stacked-union recovery. Those pages
 state today's support without assembling it from release history.
 

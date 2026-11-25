@@ -84,34 +84,19 @@ describe("signature-less object candidates under unions", () => {
     }),
   );
 
-  // A class is outside the alternatives whose reading is known, so its union keeps 0.18.0's.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/249
   class EmptyClass extends Schema.Class<EmptyClass>("EmptyClass")({}) {}
 
-  it.effect("currently loses a key only an empty class holds", () =>
+  it.effect("keeps a key only an empty class holds, in either order", () =>
     Effect.gen(function* () {
       for (const schema of [
         Schema.Union([A, EmptyClass]),
         Schema.Union([EmptyClass, A]),
       ])
         expect(yield* bodyOf(post(schema), { body: { a: "x", z: 1 } })).toBe(
-          '{"a":"x"}',
+          '{"a":"x","z":1}',
         );
     }),
-  );
-
-  it.effect.fails(
-    "keeps a key only an empty class holds, in either order",
-    () =>
-      Effect.gen(function* () {
-        for (const schema of [
-          Schema.Union([A, EmptyClass]),
-          Schema.Union([EmptyClass, A]),
-        ])
-          expect(yield* bodyOf(post(schema), { body: { a: "x", z: 1 } })).toBe(
-            '{"a":"x","z":1}',
-          );
-      }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/249
@@ -303,33 +288,29 @@ describe("signature-less object candidates under unions", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "currently loses a key below a stated member beside an open member",
-    () =>
-      Effect.gen(function* () {
-        const nested = { b: { a: "x", z: 1 } };
-        for (const open of [Schema.Unknown, Schema.Any, Schema.ObjectKeyword])
+  it.effect("keeps a key below a stated member beside an open member", () =>
+    Effect.gen(function* () {
+      const nested = { b: { a: "x", z: 1 } };
+      for (const open of [Schema.Unknown, Schema.Any, Schema.ObjectKeyword])
+        for (const schema of [
+          Schema.Union([Schema.Struct({ b: A }), open]),
+          Schema.Union([open, Schema.Struct({ b: A })]),
+          Schema.Union([Schema.Struct({ b: A }), Schema.Union([open, A])]),
+          Schema.Union([Schema.Struct({ b: A }), Schema.suspend(() => open)]),
+        ])
           expect(
-            yield* bodyOf(post(Schema.Union([Schema.Struct({ b: A }), open])), {
+            yield* bodyOf(post(schema as Schema.Codec<unknown>), {
               body: nested,
             }),
-          ).toBe('{"b":{"a":"x"}}');
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect.fails(
-    "keeps a key below a stated member beside an open member",
-    () =>
-      Effect.gen(function* () {
-        const nested = { b: { a: "x", z: 1 } };
-        expect(
-          yield* bodyOf(
-            post(Schema.Union([Schema.Struct({ b: A }), Schema.Unknown])),
-            { body: nested },
-          ),
-        ).toBe('{"b":{"a":"x","z":1}}');
-      }),
+          ).toBe('{"b":{"a":"x","z":1}}');
+      // A member with a check of its own can refuse the value, so it holds nothing for certain.
+      const checked = Schema.Unknown.check(Schema.makeFilter(() => false));
+      expect(
+        yield* bodyOf(post(Schema.Union([Schema.Struct({ b: A }), checked])), {
+          body: nested,
+        }),
+      ).toBe('{"b":{"a":"x"}}');
+    }),
   );
 
   // A suspended member can name a schema defined after the binding, so it is read once a value is.
@@ -685,9 +666,10 @@ describe("a Void member beside a renamed object", () => {
           '{"page_size":"5"}',
         );
         expect([reads, writes]).toEqual([1, 1]);
+        // The union's own check fails, and no Void takes the object in its place.
         expect(
           yield* schemaFailure(request, { body: { page_size: "06" } }),
-        ).toContain('["page_size"]');
+        ).toContain("Expected <filter>");
       }),
   );
 
@@ -2432,7 +2414,7 @@ describe("a caller's field under a union", () => {
 
     // https://github.com/viell-dev/slop-effect-schema-http/issues/250
     it.effect(
-      "currently lets a struct beside an opaque declaration drop a field",
+      "leaves the write of a struct beside an opaque declaration to Effect",
       () =>
         Effect.gen(function* () {
           // No member but `Title` reads keys, so the union is written as Effect writes it.
@@ -2443,23 +2425,6 @@ describe("a caller's field under a union", () => {
           expect(
             yield* bodyOf(post(Schema.Union([Opaque, Title])), { body: note }),
           ).toBe('{"title":"a"}');
-        }),
-    );
-
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
-    it.effect.fails(
-      "refuses with an opaque declaration's error where a struct after it drops a field",
-      () =>
-        Effect.gen(function* () {
-          const Opaque = Schema.declare(
-            (input): input is object =>
-              typeof input === "object" && input !== null,
-          );
-          expect(
-            yield* schemaFailure(post(Schema.Union([Opaque, Title])), {
-              body: note,
-            }),
-          ).toBe("Expected JSON value");
         }),
     );
 
@@ -2700,7 +2665,7 @@ describe("a caller's field under a union", () => {
 
     // https://github.com/viell-dev/slop-effect-schema-http/issues/250
     it.effect(
-      "currently lets a member drop a field of a value that is not plain data",
+      "leaves the write of a value that is not plain data to Effect",
       () =>
         Effect.gen(function* () {
           expect(
@@ -2708,19 +2673,6 @@ describe("a caller's field under a union", () => {
               body: new Dated(),
             } as never),
           ).toBe('{"title":"a"}');
-        }),
-    );
-
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
-    it.effect.fails(
-      "refuses a field a member drops of a value that is not plain data",
-      () =>
-        Effect.gen(function* () {
-          expect(
-            yield* schemaFailure(post(Schema.Union([Note, Title])), {
-              body: new Dated(),
-            } as never),
-          ).toBe('Expected JSON value\n  at ["meta"]');
         }),
     );
 
@@ -2756,7 +2708,7 @@ describe("a caller's field under a union", () => {
 
     // https://github.com/viell-dev/slop-effect-schema-http/issues/250
     it.effect(
-      "currently lets a renamed struct's encoded side drop a field its union writes",
+      "leaves what a renamed struct's encoded side chooses to the schema",
       () =>
         Effect.gen(function* () {
           expect(
@@ -2780,52 +2732,32 @@ describe("a caller's field under a union", () => {
           ).toBe('{"w_d":{}}');
         }),
     );
-
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/250
-    it.effect.fails(
-      "refuses a field a renamed struct's encoded side drops",
-      () =>
-        Effect.gen(function* () {
-          expect(
-            yield* schemaFailure(
-              post(
-                Schema.Struct({ d: Dropping }).pipe(
-                  Schema.encodeKeys({ d: "w_d" }),
-                ),
-              ),
-              { body: dated } as never,
-            ),
-          ).toContain('["d"]["e"]');
-        }),
-    );
   });
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "currently lets middleware on a union write through a member that drops a field",
-    () =>
-      Effect.gen(function* () {
-        const Watched = Schema.Union([
-          Schema.Struct({ title: text, code: text }),
-          Schema.Struct({ title: text }),
-        ]).pipe(Schema.middlewareDecoding((effect) => effect));
-        const Code = text.pipe(
-          Schema.encodeTo(text.check(Schema.isMinLength(2)), {
-            decode: SchemaGetter.passthrough(),
-            encode: SchemaGetter.passthrough(),
-          }),
-        );
-        const Coded = Schema.Union([
-          Schema.Struct({ title: text, code: Code }),
-          Schema.Struct({ title: text }),
-        ]).pipe(Schema.middlewareDecoding((effect) => effect));
-        expect(
-          yield* bodyOf(post(Watched), { body: { title: "a", code: "x" } }),
-        ).toBe('{"title":"a","code":"x"}');
-        expect(
-          yield* bodyOf(post(Coded), { body: { title: "a", code: "x" } }),
-        ).toBe('{"title":"a"}');
-      }),
+  it.effect("leaves what a union behind middleware chooses to the schema", () =>
+    Effect.gen(function* () {
+      const Watched = Schema.Union([
+        Schema.Struct({ title: text, code: text }),
+        Schema.Struct({ title: text }),
+      ]).pipe(Schema.middlewareDecoding((effect) => effect));
+      const Code = text.pipe(
+        Schema.encodeTo(text.check(Schema.isMinLength(2)), {
+          decode: SchemaGetter.passthrough(),
+          encode: SchemaGetter.passthrough(),
+        }),
+      );
+      const Coded = Schema.Union([
+        Schema.Struct({ title: text, code: Code }),
+        Schema.Struct({ title: text }),
+      ]).pipe(Schema.middlewareDecoding((effect) => effect));
+      expect(
+        yield* bodyOf(post(Watched), { body: { title: "a", code: "x" } }),
+      ).toBe('{"title":"a","code":"x"}');
+      expect(
+        yield* bodyOf(post(Coded), { body: { title: "a", code: "x" } }),
+      ).toBe('{"title":"a"}');
+    }),
   );
 
   describe("a field the schema never held is not this refusal", () => {
@@ -3256,12 +3188,10 @@ describe("values at the edge of the known alternatives", () => {
     bodyOf(post(schema), { body: input as never });
 
   it.effect(
-    "keeps 0.18.0's reading where the Void rule does not guard a Void",
+    "keeps a key below a Void beside or inside a suspended member",
     () =>
       Effect.gen(function* () {
         const nested = { p: { a: "x", z: 1 } };
-        // The Void rule reaches no suspension, so a Void beside a suspended member, or inside one, is
-        // not guarded, and the empty struct beside the parent holds nothing below it.
         for (const schema of [
           Schema.Union([
             Schema.Struct({
@@ -3282,10 +3212,9 @@ describe("values at the edge of the known alternatives", () => {
             Empty,
           ]),
         ]) {
-          expect(yield* rendered(schema, nested)).toEqual({ p: { a: "x" } });
-          expect(yield* sent(schema, nested)).toBe('{"p":{"a":"x"}}');
+          expect(yield* rendered(schema, nested)).toEqual(nested);
+          expect(yield* sent(schema, nested)).toBe('{"p":{"a":"x","z":1}}');
         }
-        // Beside a visible member the rule guards it, and the empty struct keeps the key below.
         const guarded = Schema.Union([
           Schema.Struct({ p: Schema.Union([A, Schema.Void]) }),
           Empty,
@@ -3374,33 +3303,19 @@ describe("values at the edge of the known alternatives", () => {
   }) {}
   const Holding = Schema.Union([Schema.Struct({ b: Limited }), Empty]);
 
-  it.effect(
-    "currently loses a key below a class field the empty member holds",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* sent(Holding, { b: { a: "x", z: 1 }, top: 1 })).toBe(
-          '{"b":{"a":"x"},"top":1}',
-        );
-      }),
-  );
-
-  it.effect.fails(
-    "keeps a key below a class field the empty member holds",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* sent(Holding, { b: { a: "x", z: 1 }, top: 1 })).toBe(
-          '{"b":{"a":"x","z":1},"top":1}',
-        );
-      }),
+  it.effect("keeps a key below a class field the empty member holds", () =>
+    Effect.gen(function* () {
+      expect(yield* sent(Holding, { b: { a: "x", z: 1 }, top: 1 })).toBe(
+        '{"b":{"a":"x","z":1},"top":1}',
+      );
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/249
   it.effect(
-    "sends a child below an unguarded Void the empty member holds the parent of",
+    "sends a child below a suspended Void the empty member holds the parent of",
     () =>
       Effect.gen(function* () {
-        // The Void rule reaches no suspension, so the child is normalized as before and loses `z`,
-        // but the empty struct keeps the parent, so the Void no longer erases the child.
         const Suspended = Schema.Union([
           Schema.Struct({
             p: Schema.suspend(() => Schema.Union([A, Schema.Void])),
@@ -3408,7 +3323,7 @@ describe("values at the edge of the known alternatives", () => {
           Empty,
         ]);
         expect(yield* sent(Suspended, { p: { z: 1 }, top: 1 })).toBe(
-          '{"p":{},"top":1}',
+          '{"p":{"z":1},"top":1}',
         );
       }),
   );

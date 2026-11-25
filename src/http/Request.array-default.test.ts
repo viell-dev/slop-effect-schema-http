@@ -590,19 +590,17 @@ describe("nested aliases beside array-shaped union members", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
-  it.effect(
-    "currently keeps the default for a list behind a custom prototype",
-    () =>
-      Effect.gen(function* () {
-        for (const kind of ["path", "body"] as const)
-          expect(
-            yield* prepare(
-              OneOrMany,
-              disguisedList([{ page_size: "many" }]),
-              kind,
-            ),
-          ).toEqual([{ page_size: "25" }]);
-      }),
+  it.effect("reads a list behind a custom prototype as Effect does", () =>
+    Effect.gen(function* () {
+      for (const kind of ["path", "body"] as const)
+        expect(
+          yield* prepare(
+            OneOrMany,
+            disguisedList([{ page_size: "many" }]),
+            kind,
+          ),
+        ).toEqual([{ page_size: "25" }]);
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143

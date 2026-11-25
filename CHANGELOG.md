@@ -139,12 +139,13 @@
   0.18.0 sent `{"a":"x"}`, and `Union([Filter, Schema.Struct({})])` sends `?tag=a` for
   `{ tag: "a" }` instead of the stated member's default `?page_size=25`. When both members keep the
   value, member order still decides: `Union([Schema.Struct({}), Filter])` sends `{ limit: 5 }` as
-  `?limit=5`. This applies where every alternative at the value is a struct, a record, a list or a
-  tuple, guarded Void beside them included; beside a class, including an empty `Schema.Class`, a
-  declaration, an open schema, middleware or any other codec, a value and every value inside it keep
-  0.18.0's reading. A class instance the empty struct keeps reaches a path renderer as the same
-  instance, except that an inherited accessor a stated member names makes it a plain copy, and so
-  does a key set to `undefined` beside fields those members all state
+  `?limit=5`. `Schema.Unknown`, `Schema.Any` and `Schema.Object` keep a key below a stated member in
+  the same way (#143), and an empty `Schema.Class` does for a value that is not a list.
+  `Union([Schema.Struct({ b: A }), Schema.Unknown])` sent `{"b":{"a":"x"}}` for
+  `{ b: { a: "x", z: 1 } }` and now keeps `z`. A value middleware reads keeps 0.18.0's reading. A
+  class instance the empty struct keeps reaches a path renderer as the same instance, except that an
+  inherited accessor a stated member names makes it a plain copy, and so does a key set to
+  `undefined` beside fields those members all state
   ([#264](https://github.com/viell-dev/slop-effect-schema-http/issues/264)). What the empty struct
   keeps goes to the writer as given, and the writers refuse a kept value they would leave out or
   replace, as for any value: a symbol key, `NaN` or a BigInt in a JSON body is `HttpBodyError`, and
@@ -161,14 +162,23 @@
   `[{ page_size: "05" }]` now writes `[{}]`, as the list member alone does, where 0.18.0 refused it.
   A numeric-keyed object beside an array or tuple member is read as its object member alone reads
   it, so beside an empty struct as well, `{ "0": { limit: "x", extra: 1 } }` keeps `extra`, which
-  0.18.0 left out. Like the empty-struct rule, this applies only where every alternative at the
-  value is a struct, a record, a list or a tuple, `encodeKeys` renames and other same-shaped struct
-  codecs included; a value beside a class, a declaration, an open schema, middleware or any other
-  codec, and every value inside one, keeps 0.18.0's reading. So does a value beside a guarded Void
-  where this rule would leave every field the caller supplied unstated:
+  0.18.0 left out. This applies where every alternative at the value is a struct, a record, a list,
+  a tuple or a class that states a field, `encodeKeys` renames and other same-shaped struct codecs
+  included; a value beside an empty class, a declaration, an open schema, middleware or any other
+  codec, and every value inside one, keeps 0.18.0's reading. So does a value beside a Void where
+  this rule would leave every field the caller supplied unstated:
   `Union([A, Schema.Void, Schema.Array(A)])` refuses `{ 0: { a: "ok" } }` as 0.18.0 did, rather than
   sending `null`. A query or header schema that only a cast admits, with a list member that writes
   objects, now refuses with `InvalidRequest` from the field-pair check instead of a `SchemaError`.
+- **Breaking:** built-in `Schema.Void` never takes an object or a list that holds something (#143).
+  A union of any mode now keeps it in a member that can read it: a class, a suspended schema, and an
+  empty struct after a Void among them, and in the field of a `Schema.Class`.
+  `Union([Schema.Void, Schema.Struct({})])` sent `null` for `{ tag: "a" }` and now sends
+  `{"tag":"a"}`, and a one-of union of Void and a struct no longer refuses the struct's own value as
+  ambiguous. Where no member can, as for a Void of its own, in a field under either of its names, in
+  a union of scalars, or a list whose only cell is hidden beside a struct, the request refuses with
+  `SchemaError`, where it sent `null`. An object or list that holds nothing and a scalar read as
+  before.
 - Keep a hidden or inherited list cell when normalization rebuilds the list beside `Schema.Unknown`,
   `Schema.Any` or `Schema.Object`
   ([#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257)). With a non-enumerable

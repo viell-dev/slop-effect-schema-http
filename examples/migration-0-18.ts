@@ -163,11 +163,11 @@ assert.match(
   ),
   /at \["filter"\]\["page_size"\]/,
 );
-// Void beside empty structs alone keeps first fit, as on 0.17.
+// The article retains 0.18's outputs; since 0.19 Void takes no object, in either order.
 const tagged = { tag: "a" };
 for (const [members, expected] of [
   [[Schema.Struct({}), Schema.Void], '{"tag":"a"}'],
-  [[Schema.Void, Schema.Struct({})], "null"],
+  [[Schema.Void, Schema.Struct({})], '{"tag":"a"}'],
 ] as const) {
   const send = Request.post("/tagged").pipe(
     Request.body(Body.jsonSchema(Schema.Union(members))),

@@ -100,7 +100,7 @@ describe("remaining group-field recovery", () => {
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
   it.effect(
-    "currently misses a renamed generated default beside nonempty unrelated input",
+    "infers no names for a renamed generated default beside other input",
     () =>
       Effect.gen(function* () {
         const request = Request.get("/x").pipe(
