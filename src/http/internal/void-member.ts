@@ -7,6 +7,7 @@ import {
   SchemaParser,
 } from "effect";
 import { classFields, hasDefinedFields, hasHiddenContent } from "./excess.js";
+import { extraArrayField } from "./writer-error.js";
 
 const jsonVoid = Schema.toCodecJson(Schema.Void).ast.encoding?.[0];
 
@@ -15,10 +16,16 @@ const isPlainVoid = (ast: SchemaAST.AST): ast is SchemaAST.Void =>
   (ast.encoding === undefined ||
     (ast.encoding.length === 1 && ast.encoding[0] === jsonVoid));
 
-/** Whether a value would be erased as `undefined`: anything but nothing, or an object or list of it. */
+/**
+ * Whether a value would be erased as `undefined`: anything but nothing, or an object or list of it.
+ * A list's named field counts, as it does for every writer, which refuses it rather than drop it.
+ */
 const holdsSomething = (value: unknown): boolean =>
   typeof value === "object" && value !== null
-    ? hasDefinedFields(value) || hasHiddenContent(value)
+    ? hasDefinedFields(value) ||
+      (Array.isArray(value) &&
+        extraArrayField(value, value.length) !== undefined) ||
+      hasHiddenContent(value)
     : value !== undefined && value !== null;
 
 const guard = (member: SchemaAST.Void) => {

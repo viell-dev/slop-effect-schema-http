@@ -481,9 +481,11 @@ describe("request preparation beside Void", () => {
       const hidden = Object.defineProperty([5], 0, { enumerable: false });
       expect(yield* bodyOf(request, { body: hidden })).toBe('["5"]');
       expect(yield* bodyOf(request, { body: ["05"] })).toBe('["5"]');
+      // A named field is content, not a cell, so Void declines the list. The list member then
+      // leaves the field out as a key it does not state.
       expect(
         yield* bodyOf(request, { body: Object.assign([], { extra: true }) }),
-      ).toBe("null");
+      ).toBe("[]");
     }),
   );
 
@@ -1033,6 +1035,55 @@ describe("Void wherever a schema shows it", () => {
             ),
           ).toContain('["v"]');
         }
+    }),
+  );
+
+  it.effect("keeps or refuses a list's named field beside Void", () =>
+    Effect.gen(function* () {
+      const named = () => Object.assign([], { keep: 1 });
+      // An open member holds the field, so the JSON writer refuses it rather than Void erasing it.
+      for (const schema of [
+        Schema.Union([Schema.Void, Schema.Unknown]),
+        Schema.Union([Schema.Void, Schema.Struct({})]),
+      ]) {
+        const error = yield* Effect.flip(
+          Request.compile(post(schema as Schema.Codec<unknown>), {
+            body: named(),
+          }),
+        );
+        expect(error._tag).toBe("HttpBodyError");
+        expect(String(error)).toContain('$["keep"]');
+      }
+      expect(
+        yield* schemaFailure(
+          post(Schema.Struct({ ack: Schema.Void }) as Schema.Codec<unknown>),
+          { body: { ack: named() } },
+        ),
+      ).toContain('["ack"]');
+      expect(
+        yield* schemaFailure(
+          post(Schema.Struct({ ack: Schema.Void }) as Schema.Codec<unknown>),
+          { body: { ack: Object.assign([], { [Symbol("s")]: 1 }) } },
+        ),
+      ).toContain('["ack"]');
+      // An undefined named field holds nothing, and a list member leaves a key it does not state.
+      expect(
+        yield* bodyOf(
+          post(Schema.Struct({ ack: Schema.Void }) as Schema.Codec<unknown>),
+          { body: { ack: Object.assign([], { keep: undefined }) } },
+        ),
+      ).toBe('{"ack":null}');
+      expect(
+        yield* bodyOf(
+          post(
+            Schema.Union([
+              Schema.Void,
+              Schema.Array(Schema.Number),
+            ]) as Schema.Codec<unknown>,
+          ),
+          { body: named() },
+        ),
+      ).toBe("[]");
     }),
   );
 
