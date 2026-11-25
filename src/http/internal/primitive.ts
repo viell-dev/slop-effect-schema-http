@@ -30,23 +30,3 @@ export const stageRefuses = (ast: SchemaAST.AST, cell: Cell): boolean =>
     ? ast._tag === "Arrays"
     : ast._tag === "Objects" &&
       (ast.propertySignatures.length > 0 || ast.indexSignatures.length > 0));
-
-const objectMembers = new WeakMap<SchemaAST.AST, boolean>();
-
-/**
- * Whether a union member can read an object or a list: the members beside which the Void rule
- * guards a Void. A union is one when any of its members is.
- */
-export const isObjectMember = (ast: SchemaAST.AST): boolean => {
-  const cached = objectMembers.get(ast);
-  if (cached !== undefined) return cached;
-  const result =
-    ast._tag === "Objects" ||
-    ast._tag === "Arrays" ||
-    ast._tag === "Any" ||
-    ast._tag === "Unknown" ||
-    ast._tag === "ObjectKeyword" ||
-    (ast._tag === "Union" && ast.types.some(isObjectMember));
-  objectMembers.set(ast, result);
-  return result;
-};

@@ -249,7 +249,7 @@ describe("array key normalization during request preparation", () => {
   );
 
   it.effect(
-    "retains a mixed view's old length-getter boundary during a rewrite",
+    "keeps a list an open member holds without reading its length",
     () =>
       Effect.gen(function* () {
         const cell = Schema.Struct({ value: Schema.Number }).pipe(
@@ -279,10 +279,7 @@ describe("array key normalization during request preparation", () => {
             { values: input, count: "05" },
             "path",
           )) as { readonly values: ReadonlyArray<unknown> };
-          if (stray) {
-            expect(rendered.values.length).toBe(1);
-            expect(rendered.values[0]).toEqual({ VALUE: 5 });
-          } else expect(rendered.values).toBe(input);
+          expect(rendered.values).toBe(input);
           expect(lengthReads).toBe(0);
         }
       }),
@@ -1221,7 +1218,7 @@ describe("members that cannot read the caller's container", () => {
     Schema.catchDecoding(() => Effect.succeedSome({ recovered: true })),
   );
 
-  it.effect("currently sends a recovery's value in place of a valid list", () =>
+  it.effect("sends a recovery's value in place of a list it takes", () =>
     Effect.gen(function* () {
       // The record holds the cell key, so the list member refuses it and the recovery takes the list.
       expect(yield* prepared(Schema.Union([Rows, Recovering]), row())).toEqual(
@@ -1233,14 +1230,6 @@ describe("members that cannot read the caller's container", () => {
     }),
   );
 
-  it.effect.fails("reads a valid list as its list member does", () =>
-    Effect.gen(function* () {
-      expect(yield* prepared(Schema.Union([Rows, Recovering]), row())).toEqual(
-        kept([{ limit: "x" }]),
-      );
-    }),
-  );
-
   // A recovery's value is not checked against the cells it was given.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/243
   const Substituted = Open.pipe(
@@ -1249,22 +1238,15 @@ describe("members that cannot read the caller's container", () => {
     ),
   );
 
-  it.effect("currently sends a cell a recovery puts in a caller's place", () =>
-    Effect.gen(function* () {
-      for (const schema of either(Rows, Substituted))
-        expect(yield* prepared(schema, [{ limit: 5, extra: 1 }])).toEqual(
-          kept({ 0: { limit: "altered", extra: 99 } }),
-        );
-    }),
-  );
-
-  it.effect.fails("refuses a cell a recovery puts in a caller's place", () =>
-    Effect.gen(function* () {
-      for (const schema of either(Rows, Substituted))
-        expect(yield* prepared(schema, [{ limit: 5, extra: 1 }])).toEqual(
-          refused,
-        );
-    }),
+  it.effect(
+    "does not check a recovery's value against the caller's cells",
+    () =>
+      Effect.gen(function* () {
+        for (const schema of either(Rows, Substituted))
+          expect(yield* prepared(schema, [{ limit: 5, extra: 1 }])).toEqual(
+            kept({ 0: { limit: "altered", extra: 99 } }),
+          );
+      }),
   );
 
   it.effect("keeps 0.18.0's reading beside a class", () =>
@@ -1311,56 +1293,58 @@ describe("members that cannot read the caller's container", () => {
     }),
   );
 
-  it.effect(
-    "keeps the earlier reading inside a value an open member can take",
-    () =>
-      Effect.gen(function* () {
-        // The open member can take the whole value, so no value inside it is read by the list rule.
-        const FromUnknown = Schema.Unknown.pipe(
-          Schema.decodeTo(
-            Schema.Unknown,
-            SchemaTransformation.transform({
-              decode: (value) => value,
-              encode: (value) => value,
-            }),
-          ),
-        );
-        const cases = [
-          [Schema.Union([Rows, Open]), row(), row()],
-          [Schema.Union([Plain, Rows]), cell(), { 0: { limit: "x" } }],
-        ] as const;
-        for (const open of [
+  it.effect("keeps what an open member holds inside a value it can take", () =>
+    Effect.gen(function* () {
+      // The open member can take the whole value, so no key inside it is unstated. Only a codec
+      // reads through its own encoded side.
+      const FromUnknown = Schema.Unknown.pipe(
+        Schema.decodeTo(
           Schema.Unknown,
-          Schema.Any,
-          Schema.ObjectKeyword,
-          Schema.suspend(() => Schema.Unknown),
-          FromUnknown,
-        ])
-          for (const [child, given, held] of cases) {
-            const parent = Schema.Struct({ p: child });
-            for (const schema of either(parent, open))
-              expect(yield* prepared(schema, { p: given, top: 1 })).toEqual(
-                kept({ p: held, top: 1 }),
-              );
-            const deeper = Schema.Struct({ q: parent });
-            expect(
-              yield* prepared(Schema.Union([deeper, open]), {
-                q: { p: given },
-              }),
-            ).toEqual(kept({ q: { p: held } }));
-            expect(
-              yield* prepared(Schema.Union([Schema.Array(parent), open]), [
-                { p: given },
-              ]),
-            ).toEqual(kept([{ p: held }]));
-          }
-        // Without the open member the list rule reads the child.
-        expect(
-          yield* prepared(Schema.Struct({ p: Schema.Union([Rows, Open]) }), {
-            p: row(),
+          SchemaTransformation.transform({
+            decode: (value) => value,
+            encode: (value) => value,
           }),
-        ).toEqual(kept({ p: [{ limit: "x" }] }));
-      }),
+        ),
+      );
+      for (const open of [
+        Schema.Unknown,
+        Schema.Any,
+        Schema.ObjectKeyword,
+        Schema.suspend(() => Schema.Unknown),
+        FromUnknown,
+      ])
+        for (const [child, given, held] of [
+          [Schema.Union([Rows, Open]), row(), row()],
+          [
+            Schema.Union([Plain, Rows]),
+            cell(),
+            open === FromUnknown ? { 0: { limit: "x" } } : cell(),
+          ],
+        ] as const) {
+          const parent = Schema.Struct({ p: child });
+          for (const schema of either(parent, open))
+            expect(yield* prepared(schema, { p: given, top: 1 })).toEqual(
+              kept({ p: held, top: 1 }),
+            );
+          const deeper = Schema.Struct({ q: parent });
+          expect(
+            yield* prepared(Schema.Union([deeper, open]), {
+              q: { p: given },
+            }),
+          ).toEqual(kept({ q: { p: held } }));
+          expect(
+            yield* prepared(Schema.Union([Schema.Array(parent), open]), [
+              { p: given },
+            ]),
+          ).toEqual(kept([{ p: held }]));
+        }
+      // Without the open member the list rule reads the child.
+      expect(
+        yield* prepared(Schema.Struct({ p: Schema.Union([Rows, Open]) }), {
+          p: row(),
+        }),
+      ).toEqual(kept({ p: [{ limit: "x" }] }));
+    }),
   );
 
   it.effect(
@@ -1418,7 +1402,11 @@ describe("members that cannot read the caller's container", () => {
         ])
           for (const given of [new Keyed(), new Both(), keyed(), bare])
             for (const message of yield* refusals(schema, given))
-              expect(message).toContain('at ["0"]');
+              expect(message).toMatch(
+                given instanceof Keyed || given instanceof Both
+                  ? /Expected void|at \["0"\]/
+                  : /at \["0"\]/,
+              );
         const inner = Schema.Union([List, Schema.Void]);
         // A field that no member states, the list member included, keeps its refusal. The rule above
         // applies only where a member the container rule set aside states the field; the earlier
@@ -1451,7 +1439,7 @@ describe("members that cannot read the caller's container", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/243
-  describe("a list beside a record inside a value that keeps the earlier reading", () => {
+  describe("a list beside a record inside a class, or beside what may take it", () => {
     const Listed = Schema.Union([Rows, Open]);
     class Page extends Schema.Class<Page>("Page")({ items: Listed }) {}
     class Shelf extends Schema.Class<Shelf>("Shelf")({
@@ -1472,81 +1460,66 @@ describe("members that cannot read the caller's container", () => {
         "below a class parent",
         Page,
         { items: row() },
-        { items: [{ limit: "x" }] },
+        kept({ items: [{ limit: "x" }] }),
       ],
       [
         "in a class in a list",
         Schema.Array(Page),
         [{ items: row() }],
-        [{ items: [{ limit: "x" }] }],
+        kept([{ items: [{ limit: "x" }] }]),
       ],
       [
         "below a parent beside a class",
         Schema.Union([Schema.Struct({ items: Listed }), Titled]),
         { items: row() },
-        { items: [{ limit: "x" }] },
+        kept({ items: [{ limit: "x" }] }),
       ],
       [
         "at a value beside a class",
         Schema.Union([Rows, Open, Titled]),
         row(),
-        [{ limit: "x" }],
+        kept([{ limit: "x" }]),
       ],
       [
         "inside a class grandparent",
         Shelf,
         { page: { items: row() } },
-        { page: { items: [{ limit: "x" }] } },
+        kept({ page: { items: [{ limit: "x" }] } }),
       ],
       [
         "below a parent beside Schema.Date",
         Schema.Union([Schema.Struct({ items: Listed }), Schema.Date]),
         { items: row() },
-        { items: [{ limit: "x" }] },
+        refused,
       ],
       [
         "at a value beside Schema.Date",
         Schema.Union([Rows, Open, Schema.Date]),
         row(),
-        [{ limit: "x" }],
+        refused,
       ],
       [
         "inside middleware whose recovery fails",
         Failing,
         { items: row() },
-        { items: [{ limit: "x" }] },
+        refused,
       ],
     ] as const;
-    for (const [where, schema, given, goal] of groups) {
-      // https://github.com/viell-dev/slop-effect-schema-http/issues/243
+    for (const [where, schema, given, outcome] of groups)
       it.effect(
-        `currently refuses a key the list member leaves out ${where}`,
+        outcome === refused
+          ? `refuses a key the list member leaves out ${where}`
+          : `writes the list member's reading ${where}`,
         () =>
           Effect.gen(function* () {
-            for (const message of yield* refusals(schema, given))
-              expect(message).toContain('[0]["extra"]');
+            expect(yield* prepared(schema, given)).toEqual(outcome);
+            if (outcome === refused)
+              for (const message of yield* refusals(schema, given))
+                expect(message).toContain('[0]["extra"]');
           }),
       );
-      // https://github.com/viell-dev/slop-effect-schema-http/issues/243
-      it.effect.fails(`writes the list member's reading ${where}`, () =>
-        Effect.gen(function* () {
-          expect(yield* prepared(schema, given)).toEqual(kept(goal));
-        }),
-      );
-    }
 
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/243
     it.effect(
-      "currently refuses an index key beside a list member below a class parent",
-      () =>
-        Effect.gen(function* () {
-          for (const message of yield* refusals(Indexed, { p: cell() }))
-            expect(message).toContain('at ["p"]["0"]');
-        }),
-    );
-
-    // https://github.com/viell-dev/slop-effect-schema-http/issues/243
-    it.effect.fails(
       "reads an index-keyed object as its object member below a class parent",
       () =>
         Effect.gen(function* () {
@@ -1684,25 +1657,13 @@ describe("members that cannot read the caller's container", () => {
     Schema.Struct({ items: Rows }),
   ]);
 
-  it.effect("currently cuts the cells an empty class takes beside a list", () =>
+  it.effect("strips the cells an empty class takes beside a list member", () =>
     Effect.gen(function* () {
       expect(yield* prepared(Schema.Union([Bare, Rows]), row())).toEqual(
         kept({ 0: { limit: "x" } }),
       );
       expect(yield* prepared(Parted, { items: row() })).toEqual(
         kept({ items: { 0: { limit: "x" } } }),
-      );
-    }),
-  );
-
-  it.effect.fails("keeps the cells an empty class takes beside a list", () =>
-    Effect.gen(function* () {
-      // Effect's first fit gives the list to the class, which keeps every cell.
-      expect(yield* prepared(Schema.Union([Bare, Rows]), row())).toEqual(
-        kept(cell()),
-      );
-      expect(yield* prepared(Parted, { items: row() })).toEqual(
-        kept({ items: cell() }),
       );
     }),
   );

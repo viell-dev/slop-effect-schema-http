@@ -1,7 +1,7 @@
 import { Equal, Schema, SchemaAST, SchemaIssue } from "effect";
 import { stateOf } from "./object-brand.js";
 import { extraArrayField } from "./writer-error.js";
-import { isObjectMember, stageRefuses } from "./primitive.js";
+import { stageRefuses } from "./primitive.js";
 
 /** Where a key sits in a value, one step for each level. */
 export type Path = ReadonlyArray<PropertyKey>;
@@ -49,9 +49,17 @@ const readsKeys = (ast: Ast): boolean =>
   partsOf(ast).some(readsKeys) ||
   (ast.encoding ?? []).some(({ to }) => readsKeys(to));
 
-/** A union between members that can read an object's keys. */
-const isObjectUnion = (ast: Ast): boolean =>
-  ast._tag === "Union" && ast.types.filter(readsKeys).length > 1;
+/** A Void, or a group of members with one, which Effect lets take any object. */
+const takesAnything = (ast: Ast): boolean =>
+  ast._tag === "Void" ||
+  (ast._tag === "Union" && ast.types.some(takesAnything));
+
+/** A union between members that can read an object's keys, or of one and a Void. */
+const isObjectUnion = (ast: Ast): boolean => {
+  if (ast._tag !== "Union") return false;
+  const reading = ast.types.filter(readsKeys).length;
+  return reading > 1 || (reading === 1 && ast.types.some(takesAnything));
+};
 
 /** A choice of member: a union between objects, or a suspended schema, which may not exist yet. */
 const isMemberChoice = (ast: Ast): boolean =>
@@ -316,18 +324,29 @@ const takesNoObject = (ast: Ast): boolean =>
       transformation._tag === "Transformation" && takesNoObject(to),
   );
 
+/** A class that states fields, which reads what its struct does, and no list. */
+const isStatedClass = (ast: Ast): boolean => {
+  const fields = classFields(ast);
+  return (
+    fields !== undefined &&
+    ast.encoding!.length === 1 &&
+    ast.encoding![0].transformation._tag === "Transformation" &&
+    fieldsOf(fields).length > 0
+  );
+};
+
 const knownNodes = new WeakMap<Ast, boolean>();
 
 /**
  * Whether what this one alternative reads from an object or a list is known from the schema alone:
  * it is {@link isStructural} or it {@link takesNoObject}. A class, a declaration, an open schema,
- * middleware and any other codec are not. Built-in `Schema.Void` is known only where the Void rule
- * guards it, which {@link collect} decides.
+ * middleware and any other codec are not. Built-in `Schema.Void` is, as it never reads an object or a
+ * list that holds something, which {@link collect} decides.
  */
 const isKnown = (ast: Ast): boolean => {
   let known = knownNodes.get(ast);
   if (known === undefined) {
-    known = isStructural(ast) || takesNoObject(ast);
+    known = isStructural(ast) || isStatedClass(ast) || takesNoObject(ast);
     knownNodes.set(ast, known);
   }
   return known;
@@ -343,60 +362,56 @@ const readsContainer = (side: Ast, value: unknown): boolean =>
   !stageRefuses(side, Array.isArray(value) ? "array" : "record");
 
 /**
- * The schemas the Void rule does not reach at a value, as inside a suspension or a declaration, or
- * `"all"` below sides it reaches none of, where it reaches nothing more.
- */
-type Unreached = ReadonlySet<Ast> | "all";
-
-/**
- * Where a value sits: inside a value that keeps the earlier reading, and which of its schemas are
- * unreached.
- */
-interface Within {
-  readonly earlier: boolean;
-  readonly unreached: Unreached;
-}
-
-const atRoot: Within = { earlier: false, unreached: new Set() };
-
-// Shared for every value below an unreached side, so no set is built per key or per value.
-const below: Within = { earlier: false, unreached: "all" };
-
-// Shared for every value inside one that keeps the earlier reading, where nothing is guarded.
-const insideEarlier: Within = { earlier: true, unreached: "all" };
-
-/**
  * The sides a value is read against here, and whether its alternatives are all known, with no
  * middleware reading it and no value around it keeping the earlier reading. Only then do the rules
  * this library adds apply at the value: a side that cannot read the value's container holds none of
  * its keys, wherever in a union or under whichever parent it comes from, and an empty struct holds
  * every key it reads. Anywhere else the value keeps the reading these had before those rules, side
- * for side, and so does every value inside it: an alternative that is not known, such as an open
- * schema, can take the whole value, and middleware can turn a failure anywhere inside into a value
- * of its own.
+ * for side, and so does every value inside it: an alternative that is not known, such as a class,
+ * can take the whole value, and middleware can turn a failure anywhere inside into a value of its
+ * own. An open schema, or an empty struct around the value, still holds every key there.
  */
 interface View {
   readonly sides: ReadonlyArray<Ast>;
   readonly known: boolean;
-  /** Whether an empty struct among the alternatives holds each key here as given, at any depth. */
+  /** Whether middleware reads the value or one around it, and so could replace it. */
+  readonly recovers: boolean;
+  /**
+   * Whether an empty struct or an open schema, among the alternatives or around the value, holds each
+   * key here as given, at any depth.
+   */
   readonly holdsAsGiven: boolean;
-  /** The sides the Void rule does not reach, if any. */
-  readonly unreached: Unreached | undefined;
 }
 
 interface Collected {
   readonly sides: Array<Ast>;
-  unreached: Set<Ast> | "all" | undefined;
   recovers: boolean;
   holds: boolean;
 }
 
 const collected = (): Collected => ({
   sides: [],
-  unreached: undefined,
   recovers: false,
   holds: false,
 });
+
+/**
+ * Whether an alternative keeps every key of a value it reads: an empty struct, an open schema, or an
+ * empty class of an object. A list is not left to a class, which would make an object of it.
+ */
+const holdsEveryKey = (ast: Ast, value: unknown): boolean => {
+  if (ast.encoding === undefined)
+    return (
+      isSignaturelessObject(ast) || (isOpen(ast) && ast.checks === undefined)
+    );
+  const fields = classFields(ast);
+  return (
+    fields !== undefined &&
+    ast.encoding.length === 1 &&
+    isSignaturelessObject(fields) &&
+    !Array.isArray(value)
+  );
+};
 
 /**
  * The schemas a value can be read against here, pushed into `sides`: each member its tag leaves,
@@ -405,77 +420,56 @@ const collected = (): Collected => ({
  * encoding of its own is a codec, so it is judged as one node.
  *
  * A member a tag rules out states nothing, so it adds no side, but it is still an alternative: its
- * middleware runs because the value does not fit it. The Void rule reaches what `guardVoidMembers`
- * visits, which is no suspension and no declaration, and guards a Void in an any-of union there
- * beside an object or list member, or grouped inside such a union. An empty struct holds the keys
- * it reads only as an alternative of its own, not as one end of a codec.
+ * middleware runs because the value does not fit it. An empty struct or an open schema holds the keys
+ * it reads only as an alternative of its own, not as one end of a codec, and an open schema with a
+ * check of its own may refuse the value, so it holds nothing for certain.
  */
 const collect = (
   ast: Ast,
   value: unknown,
   into: Collected,
-  reaches: boolean,
-  guarded = false,
-  besideObject = false,
   end = false,
 ): boolean => {
   let known: boolean;
   if (ast._tag === "Union") {
-    const guards =
-      reaches &&
-      (ast.options?.mode ?? "anyOf") === "anyOf" &&
-      (besideObject || isObjectMember(ast));
     known = true;
     for (const member of ast.types) {
       const target = ruledOut(member, value) ? collected() : into;
-      const grouped =
-        guards && member._tag === "Union" && member.encoding === undefined;
-      known =
-        collect(member, value, target, reaches, guards, grouped, end) && known;
+      known = collect(member, value, target, end) && known;
       if (target.recovers) into.recovers = true;
     }
     if (ast.encoding !== undefined) known = isKnown(ast);
   } else if (ast._tag === "Suspend") {
     known =
-      collect(ast.thunk(), value, into, false, false, false, end) &&
-      ast.encoding === undefined;
+      collect(ast.thunk(), value, into, end) && ast.encoding === undefined;
   } else {
     into.sides.push(ast);
-    if (!reaches && into.unreached !== "all") {
-      into.unreached ??= new Set();
-      into.unreached.add(ast);
-    }
-    known =
-      ast._tag === "Void"
-        ? guarded && ast.encoding === undefined
-        : isKnown(ast);
-    if (!end && ast.encoding === undefined && isSignaturelessObject(ast))
-      into.holds = true;
+    known = ast._tag === "Void" ? ast.encoding === undefined : isKnown(ast);
+    if (!end && holdsEveryKey(ast, value)) into.holds = true;
   }
-  const visited =
-    reaches &&
-    (ast._tag === "Objects" || ast._tag === "Arrays" || ast._tag === "Union");
   for (const { to, transformation } of ast.encoding ?? []) {
     if (transformation._tag === "Middleware") into.recovers = true;
-    collect(to, value, into, visited, false, false, true);
+    collect(to, value, into, true);
   }
   return known;
 };
 
 /** The {@link View} of a value that keeps the earlier reading. */
-const earlierView = ({ sides, unreached }: Collected): View => ({
-  // An empty struct a parent holds a key with is no side of the earlier reading.
-  sides: sides.includes(asGiven)
-    ? sides.filter((side) => side !== asGiven)
-    : sides,
-  known: false,
-  holdsAsGiven: false,
-  unreached,
-});
+const earlierView = ({ sides, holds, recovers }: Collected): View => {
+  // An empty struct a parent holds a key with is no side of the earlier reading, but it still holds
+  // what is below. Where middleware could take a value with a key no other member states, it does not.
+  const held = sides.includes(asGiven);
+  return {
+    sides: held ? sides.filter((side) => side !== asGiven) : sides,
+    known: false,
+    recovers,
+    holdsAsGiven: holds && !recovers,
+  };
+};
 
 /**
  * Whether the container rule leaves a value's fields to the Void: a side it removed states one of
- * the fields the Void rule counts as defined, and no side left states any. Then nothing left holds
+ * the value's defined fields, and no side left states any. Then nothing left holds
  * what the earlier reading kept: normalization strips those fields, or, with no struct or list side
  * left, nothing stands between the value and the Void.
  */
@@ -496,20 +490,18 @@ const leavesToVoid = (
   return held;
 };
 
-/** {@link View} of a value at the place {@link Within} gives. */
+/** The {@link View} of a value inside another, which keeps the earlier reading where that one does. */
 const viewAt = (
   types: ReadonlyArray<Ast>,
   value: unknown,
-  { earlier, unreached }: Within = atRoot,
+  within?: View,
 ): View => {
   const into = collected();
-  if (unreached === "all") into.unreached = "all";
+  if (within?.recovers === true) into.recovers = true;
   let known = isObject(value);
-  for (const type of types)
-    known =
-      collect(type, value, into, unreached !== "all" && !unreached.has(type)) &&
-      known;
-  if (!known || earlier || into.recovers) return earlierView(into);
+  for (const type of types) known = collect(type, value, into) && known;
+  if (!known || within?.known === false || into.recovers)
+    return earlierView(into);
   const sides = into.sides.filter((side) => readsContainer(side, value));
   // Beside a Void, a side the container rule leaves out may be the only one stating the caller's
   // fields. Leaving them all unstated would let the Void take the whole value where the earlier
@@ -528,28 +520,8 @@ const viewAt = (
   return {
     sides,
     known,
+    recovers: false,
     holdsAsGiven: into.holds,
-    unreached: into.unreached,
-  };
-};
-
-/** Where the value under one key sits, for the schemas {@link heldAt} gives for it. */
-const inside = (view: View, key: PropertyKey): Within => {
-  // A value inside one that keeps the earlier reading keeps it too.
-  if (!view.known) return insideEarlier;
-  const { unreached } = view;
-  if (unreached === undefined) return atRoot;
-  // Every side unreached leaves every child schema unreached.
-  if (unreached === "all" || view.sides.every((side) => unreached.has(side)))
-    return below;
-  return {
-    earlier: false,
-    unreached: new Set(
-      typesAt(
-        view.sides.filter((side) => unreached.has(side)),
-        key,
-      ),
-    ),
   };
 };
 
@@ -600,12 +572,14 @@ export const isSignaturelessObject = (ast: Ast): boolean =>
   ast.propertySignatures.length === 0 &&
   ast.indexSignatures.length === 0;
 
+/** A schema that reads any object as it is. */
+const isOpen = ({ _tag }: Ast): boolean =>
+  _tag === "Any" || _tag === "Unknown" || _tag === "ObjectKeyword";
+
 /** Whether these sides read a value without any struct or list to take it apart, as an open schema. */
 const readsOpaquely = (sides: ReadonlyArray<Ast>): boolean =>
-  sides.some(
-    ({ _tag }) =>
-      _tag === "Any" || _tag === "Unknown" || _tag === "ObjectKeyword",
-  ) || !sides.some(({ _tag }) => _tag === "Objects" || _tag === "Arrays");
+  sides.some(isOpen) ||
+  !sides.some(({ _tag }) => _tag === "Objects" || _tag === "Arrays");
 
 /**
  * Whether a value's keys are open here, so none can be called unstated: an open schema reads it, or
@@ -740,7 +714,7 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
   const rewrite = (
     types: ReadonlyArray<Ast>,
     value: unknown,
-    within: Within,
+    within: View | undefined,
     /** Field schemas that also state names here, as their decoded side does below a written name. */
     also: ReadonlyArray<Ast> = [],
   ): unknown => {
@@ -792,7 +766,7 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
       const next = rewrite(
         inner,
         item,
-        inside(view, key),
+        view,
         beyond && isObject(item)
           ? [
               ...typesAt(alsoSides, key),
@@ -866,7 +840,7 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     return output;
   };
   return (types: ReadonlyArray<Ast>, value: unknown): unknown =>
-    rewrite(types, value, atRoot);
+    rewrite(types, value, undefined);
 };
 
 /**
@@ -923,12 +897,11 @@ export const missing = (
   value: unknown,
   output: unknown,
   options: {
-    readonly voidChoices?: WeakSet<Ast> | undefined;
     /** Whether to report only places that are written under the names they are read by. */
     readonly sameNames?: boolean;
   } = {},
   path: Path = [],
-  within: Within = atRoot,
+  within?: View,
 ): ReadonlyArray<Path> => {
   // A value kept as given holds every key in it; reading it again could only run its accessors.
   if (!isObject(given) || given === value) return [];
@@ -938,12 +911,8 @@ export const missing = (
   const decoded = new Set(
     types.flatMap((type) => decodedNames(type, given, view.known)),
   );
-  const voidChoice = types.some((type) => options.voidChoices?.has(type));
   const holdsAsWritten = (key: PropertyKey) =>
     has(output, key) &&
-    // A loose constructor can replace an encoded-only alias with a default after a strict Void
-    // choice fails. Its output under that name does not show that the input was consumed.
-    (!voidChoice || decoded.has(String(key))) &&
     (!isObject(value) ||
       !decoded.has(String(key)) ||
       Equal.equals(at(output, key), given[key]));
@@ -960,7 +929,7 @@ export const missing = (
         at(output, key),
         options,
         here,
-        inside(view, key),
+        view,
       );
     return options.sameNames !== true || types.every(keepsNames) ? [here] : [];
   });

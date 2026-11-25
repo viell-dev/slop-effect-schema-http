@@ -2320,10 +2320,9 @@ describe("a caller's field under a union in a body", () => {
     }),
   );
 
-  // Only input has a caller to lose a field, so a response still reads as Effect reads it. The
-  // choice of member there is outside this fix.
+  // Only input has a caller to lose a field, so a response reads as Effect reads it.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect("currently takes the first member that fits for a response", () =>
+  it.effect("takes the first member that fits for a response", () =>
     Effect.gen(function* () {
       const decoded = yield* Body.jsonSchema(NarrowFirst).decode(
         reply('{"a":"x","b":"y"}'),

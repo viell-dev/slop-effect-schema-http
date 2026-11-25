@@ -139,37 +139,35 @@ describe("request preparation beside Void", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "keeps fields in an empty struct member and retains Void-first selection",
-    () =>
-      Effect.gen(function* () {
-        const Empty = Schema.Struct({});
-        expect(yield* bodyOf(post(Empty), { body: { tag: "a" } })).toBe(
-          '{"tag":"a"}',
-        );
-        const structFirst = Schema.Union([Empty, Schema.Void]);
-        const voidFirst = Schema.Union([Schema.Void, Empty]);
-        expect(yield* outcomes(structFirst, { tag: "a" })).toEqual([
-          '{"tag":"a"}',
-          '{"tag":"a"}',
-        ]);
-        expect(yield* outcomes(voidFirst, { tag: "a" })).toEqual([
-          "undefined",
-          "null",
-        ]);
-        for (const schema of [structFirst, voidFirst]) {
-          expect(yield* outcomes(schema, [1])).toEqual(["[1]", "[1]"]);
-          expect(yield* outcomes(schema, null)).toEqual(["undefined", "null"]);
-        }
-        expect(yield* outcomes(structFirst, {})).toEqual(["{}", "{}"]);
-        expect(yield* outcomes(structFirst, [])).toEqual(["[]", "[]"]);
-        expect(yield* outcomes(voidFirst, {})).toEqual(["undefined", "null"]);
-        expect(yield* outcomes(voidFirst, { tag: undefined })).toEqual([
-          "undefined",
-          "null",
-        ]);
-        expect(yield* outcomes(voidFirst, [])).toEqual(["undefined", "null"]);
-      }),
+  it.effect("keeps fields in an empty struct member, in either order", () =>
+    Effect.gen(function* () {
+      const Empty = Schema.Struct({});
+      expect(yield* bodyOf(post(Empty), { body: { tag: "a" } })).toBe(
+        '{"tag":"a"}',
+      );
+      const structFirst = Schema.Union([Empty, Schema.Void]);
+      const voidFirst = Schema.Union([Schema.Void, Empty]);
+      expect(yield* outcomes(structFirst, { tag: "a" })).toEqual([
+        '{"tag":"a"}',
+        '{"tag":"a"}',
+      ]);
+      expect(yield* outcomes(voidFirst, { tag: "a" })).toEqual([
+        '{"tag":"a"}',
+        '{"tag":"a"}',
+      ]);
+      for (const schema of [structFirst, voidFirst]) {
+        expect(yield* outcomes(schema, [1])).toEqual(["[1]", "[1]"]);
+        expect(yield* outcomes(schema, null)).toEqual(["undefined", "null"]);
+      }
+      expect(yield* outcomes(structFirst, {})).toEqual(["{}", "{}"]);
+      expect(yield* outcomes(structFirst, [])).toEqual(["[]", "[]"]);
+      expect(yield* outcomes(voidFirst, {})).toEqual(["undefined", "null"]);
+      expect(yield* outcomes(voidFirst, { tag: undefined })).toEqual([
+        "undefined",
+        "null",
+      ]);
+      expect(yield* outcomes(voidFirst, [])).toEqual(["undefined", "null"]);
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
@@ -295,7 +293,7 @@ describe("request preparation beside Void", () => {
           yield* schemaFailure(post(schema), {
             body: { page_filter: { page_size: "many" } },
           }),
-        ).toContain('["page_filter"]["page_size"]');
+        ).toContain('["page_filter"]');
       }),
   );
 
@@ -437,23 +435,18 @@ describe("request preparation beside Void", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "names the invalid field when an unrelated Void branch declines",
-    () =>
-      Effect.gen(function* () {
-        const schema = Schema.Struct({
-          extra: Schema.Union([
-            Schema.Void,
-            Schema.Struct({ a: Schema.Number }),
-          ]),
-          filter: Filter,
-        });
-        expect(
-          yield* schemaFailure(post(schema), {
-            body: { extra: { a: "x" }, filter: { page_size: "many" } },
-          } as never),
-        ).toContain('["filter"]["page_size"]');
-      }),
+  it.effect("names the invalid fields where a Void branch declines", () =>
+    Effect.gen(function* () {
+      const schema = Schema.Struct({
+        extra: Schema.Union([Schema.Void, Schema.Struct({ a: Schema.Number })]),
+        filter: Filter,
+      });
+      expect(
+        yield* schemaFailure(post(schema), {
+          body: { extra: { a: "x" }, filter: { page_size: "many" } },
+        } as never),
+      ).toContain('["extra"]["a"]');
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
@@ -514,46 +507,42 @@ describe("request preparation beside Void", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "currently keeps a populated struct constructor default beside Void",
-    () =>
-      Effect.gen(function* () {
-        const schema = Schema.Struct({
-          g: Schema.optionalKey(
-            Schema.Union([
-              Schema.Void,
-              Schema.Struct({ a: Schema.optionalKey(Schema.Number) }),
-            ]),
-          ).pipe(Schema.withConstructorDefault(Effect.succeed({ a: 1 }))),
-        });
-        expect(yield* bodyOf(post(schema), { body: {} })).toBe('{"g":{"a":1}}');
-      }),
+  it.effect("fills a populated struct constructor default beside Void", () =>
+    Effect.gen(function* () {
+      const schema = Schema.Struct({
+        g: Schema.optionalKey(
+          Schema.Union([
+            Schema.Void,
+            Schema.Struct({ a: Schema.optionalKey(Schema.Number) }),
+          ]),
+        ).pipe(Schema.withConstructorDefault(Effect.succeed({ a: 1 }))),
+      });
+      expect(yield* bodyOf(post(schema), { body: {} })).toBe('{"g":{"a":1}}');
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "currently treats undefined-valued fields as absent before first fit",
-    () =>
-      Effect.gen(function* () {
-        const required = post(
-          Schema.Union([
-            Schema.Struct({ inner: Schema.UndefinedOr(Schema.String) }),
-            Schema.Void,
-          ]),
-        );
-        const optional = post(
-          Schema.Union([
-            Schema.Struct({ a: Schema.optionalKey(Schema.Number) }),
-            Schema.Void,
-          ]),
-        );
-        expect(yield* bodyOf(required, { body: { inner: undefined } })).toBe(
-          "null",
-        );
-        expect(
-          yield* bodyOf(optional, { body: { a: undefined } } as never),
-        ).toBe("{}");
-      }),
+  it.effect("treats undefined-valued fields as absent before first fit", () =>
+    Effect.gen(function* () {
+      const required = post(
+        Schema.Union([
+          Schema.Struct({ inner: Schema.UndefinedOr(Schema.String) }),
+          Schema.Void,
+        ]),
+      );
+      const optional = post(
+        Schema.Union([
+          Schema.Struct({ a: Schema.optionalKey(Schema.Number) }),
+          Schema.Void,
+        ]),
+      );
+      expect(yield* bodyOf(required, { body: { inner: undefined } })).toBe(
+        "null",
+      );
+      expect(yield* bodyOf(optional, { body: { a: undefined } } as never)).toBe(
+        "{}",
+      );
+    }),
   );
 
   it.effect(
@@ -745,7 +734,7 @@ const reusedGrouping = (sharing: boolean) => {
 };
 const reusedInput = [{ guarded: [{ page_size: "many" }], n: 2 }];
 
-describe("known Void selection limits", () => {
+describe("Void wherever a schema shows it", () => {
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
   it.effect(
     "refuses an invalid alias where a member union is also used unguarded",
@@ -759,41 +748,34 @@ describe("known Void selection limits", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "currently lets Void take a list beside a oneOf grouping of Void",
-    () =>
-      Effect.gen(function* () {
-        expect(
-          yield* outcomes(
-            Schema.Union([
-              Schema.Array(Filter),
-              Schema.Union(
-                [Schema.Struct({ cursor: Schema.String }), Schema.Void],
-                {
-                  mode: "oneOf",
-                },
-              ),
-            ]),
-            [{ page_size: "many" }],
-          ),
-        ).toEqual(["undefined", "null"]);
-      }),
+  it.effect("refuses a list beside a oneOf grouping of Void", () =>
+    Effect.gen(function* () {
+      const schema = Schema.Union([
+        Schema.Array(Filter),
+        Schema.Union([Schema.Struct({ cursor: Schema.String }), Schema.Void], {
+          mode: "oneOf",
+        }),
+      ]);
+      expect(yield* outcomes(schema, [{ page_size: "many" }])).toEqual([
+        "refused",
+        "refused",
+      ]);
+      expect(yield* outcomes(schema, [{ page_size: "05" }])).toEqual([
+        '[{"page_size":"5"}]',
+        '[{"page_size":"5"}]',
+      ]);
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "currently discards a hidden-cell list beside a struct-only alternative",
-    () =>
-      Effect.gen(function* () {
-        // The struct cannot read a list, and since #237 it cannot take an index-keyed copy of one,
-        // so Void takes the list in either order. The field-loss check does not see the cell.
-        for (const schema of [VoidLast, VoidFirst]) {
-          const list = Object.defineProperty([1], 0, { enumerable: false });
-          expect(yield* bodyOf(post(schema), { body: list } as never)).toBe(
-            "null",
-          );
-        }
-      }),
+  it.effect("refuses a hidden-cell list no member beside Void can read", () =>
+    Effect.gen(function* () {
+      // The struct cannot read a list, and since #237 it cannot take an index-keyed copy of one.
+      for (const schema of [VoidLast, VoidFirst]) {
+        const list = Object.defineProperty([1], 0, { enumerable: false });
+        expect(yield* outcomes(schema, list)).toEqual(["refused", "refused"]);
+      }
+    }),
   );
 
   class FilterClass extends Schema.Class<FilterClass>("FilterClass")({
@@ -802,8 +784,108 @@ describe("known Void selection limits", () => {
   class ParentClass extends Schema.Class<ParentClass>("ParentClass")({
     filter: VoidFirst,
   }) {}
-  const ClassMember = Schema.Union([Schema.Void, FilterClass]);
-  const OneOf = Schema.Union([Schema.Void, Filter], { mode: "oneOf" });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("keeps a class member beside Void, in either order", () =>
+    Effect.gen(function* () {
+      for (const schema of [
+        Schema.Union([Schema.Void, FilterClass]),
+        Schema.Union([FilterClass, Schema.Void]),
+      ]) {
+        expect(yield* bodyOf(post(schema), { body: { limit: 5 } })).toBe(
+          '{"limit":"5"}',
+        );
+        expect(
+          yield* schemaFailure(post(schema), {
+            body: { limit: "many" },
+          } as never),
+        ).toContain('["limit"]');
+        expect(yield* bodyOf(post(schema), { body: undefined })).toBe("null");
+      }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("keeps or refuses beside a Void in a class's field", () =>
+    Effect.gen(function* () {
+      class Acked extends Schema.Class<Acked>("Acked")({ ack: Schema.Void }) {}
+      const Listed = Schema.Struct({ rows: Schema.Array(ParentClass) });
+      for (const filter of [{ limit: 5 }, { page_size: "05" }])
+        for (const [schema, body, sent] of [
+          [ParentClass, { filter }, '{"filter":{"page_size":"5"}}'],
+          [
+            Listed,
+            { rows: [{ filter: {} }, { filter }] },
+            '{"rows":[{"filter":null},{"filter":{"page_size":"5"}}]}',
+          ],
+        ] as const)
+          expect(
+            yield* outcomes(schema as Schema.Codec<unknown, unknown>, body),
+          ).toContain(sent);
+      for (const [schema, body, at] of [
+        [ParentClass, { filter: { page_size: "many" } }, 'at ["filter"]'],
+        [Acked, { ack: { id: 1 } }, 'at ["ack"]'],
+      ] as const)
+        expect(
+          yield* schemaFailure(post(schema as Schema.Codec<unknown>), {
+            body: body as never,
+          }),
+        ).toContain(at);
+      // A class with a Void is still built from nothing, as its own constructor does.
+      class Optional extends Schema.Class<Optional>("Optional")({
+        v: Schema.optionalKey(Schema.Void),
+      }) {}
+      for (const input of [undefined, {}, new Optional({})])
+        expect(yield* outcomes(Optional, input)).toEqual(["{}", "{}"]);
+      for (const body of [
+        { filter: undefined },
+        new ParentClass({ filter: undefined }),
+      ])
+        expect(yield* bodyOf(post(ParentClass), { body })).toBe(
+          '{"filter":null}',
+        );
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("keeps the one member beside Void that fits under oneOf", () =>
+    Effect.gen(function* () {
+      const OneOf = Schema.Union([Schema.Void, Filter], { mode: "oneOf" });
+      for (const body of [{ page_size: "05" }, { limit: 5 }])
+        expect(yield* bodyOf(post(OneOf), { body })).toBe('{"page_size":"5"}');
+      expect(
+        yield* schemaFailure(post(OneOf), { body: { page_size: "many" } }),
+      ).toContain('["page_size"]');
+      const oneOf = { mode: "oneOf" } as const;
+      const Empty = Schema.Struct({});
+      const nested = Schema.Union(
+        [
+          Schema.Union(
+            [Schema.Void, Schema.Union([Empty, Schema.Struct({})])],
+            oneOf,
+          ),
+          Schema.Void,
+        ],
+        oneOf,
+      );
+      expect(yield* outcomes(nested, ["x"])).toEqual(['["x"]', '["x"]']);
+      const ambiguous = Schema.Union(
+        [
+          Schema.Void,
+          Schema.Union(
+            [Schema.Unknown, Schema.Struct({ t: Schema.Literal("A") })],
+            oneOf,
+          ),
+        ],
+        oneOf,
+      );
+      expect(yield* outcomes(ambiguous, { t: "A" })).toEqual([
+        "refused",
+        "refused",
+      ]);
+    }),
+  );
+
   const Discard = Schema.Unknown.pipe(
     Schema.decodeTo(Schema.Undefined, {
       decode: SchemaGetter.transform((_input: unknown) => undefined),
@@ -811,47 +893,6 @@ describe("known Void selection limits", () => {
     }),
   );
   const Custom = Schema.Union([Discard, Filter]);
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "currently loses a class member or a union field inside a class",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* bodyOf(post(ClassMember), { body: { limit: 5 } })).toBe(
-          "null",
-        );
-        expect(
-          yield* bodyOf(post(ParentClass), { body: { filter: { limit: 5 } } }),
-        ).toBe('{"filter":null}');
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect.fails("keeps the visible class member beside Void", () =>
-    Effect.gen(function* () {
-      expect(yield* bodyOf(post(ClassMember), { body: { limit: 5 } })).toBe(
-        '{"limit":"5"}',
-      );
-    }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect.fails("keeps the visible union field in a class", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* bodyOf(post(ParentClass), { body: { filter: { limit: 5 } } }),
-      ).toBe('{"filter":{"page_size":"5"}}');
-    }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect("currently discards an encoded field through oneOf", () =>
-    Effect.gen(function* () {
-      expect(yield* bodyOf(post(OneOf), { body: { page_size: "05" } })).toBe(
-        "null",
-      );
-    }),
-  );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
   it.effect("keeps what a custom transformation would discard", () =>
@@ -866,43 +907,151 @@ describe("known Void selection limits", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "currently discards fields inside opaque or suspended schemas",
-    () =>
-      Effect.gen(function* () {
-        const opaque = Request.get("").pipe(
-          Request.path(Schema.Option(VoidFirst), (value) =>
-            Option.isSome(value) && value.value === undefined
-              ? "/empty"
-              : "/kept",
-          ),
+  it.effect("keeps or refuses fields inside a suspended schema", () =>
+    Effect.gen(function* () {
+      interface Tree {
+        readonly next: Tree | void;
+        readonly limit?: number;
+      }
+      const Tree = Schema.Struct({
+        next: Schema.Union([
+          Schema.Void,
+          Schema.suspend((): Schema.Codec<Tree, unknown> => Tree as never),
+        ]),
+        limit: Schema.optionalKey(Schema.FiniteFromString),
+      }) as unknown as Schema.Codec<Tree, unknown>;
+      expect(
+        yield* bodyOf(post(Schema.suspend((): typeof VoidFirst => VoidFirst)), {
+          body: { limit: 5 },
+        }),
+      ).toBe('{"page_size":"5"}');
+      for (const schema of [
+        Schema.Union([Schema.Void, Schema.suspend(() => Filter)]),
+        Schema.Union([Schema.suspend(() => VoidFirst), Schema.Null]),
+      ]) {
+        expect(yield* bodyOf(post(schema), { body: { limit: 5 } })).toBe(
+          '{"page_size":"5"}',
         );
-        expect(yield* urlOf(opaque, { path: Option.some({ limit: 5 }) })).toBe(
-          "/empty",
-        );
-        const suspended = post(
-          Schema.suspend((): typeof VoidFirst => VoidFirst),
-        );
-        expect(yield* bodyOf(suspended, { body: { limit: 5 } })).toBe("null");
-      }),
+        expect(
+          yield* schemaFailure(post(schema), { body: { page_size: "many" } }),
+        ).toContain('["page_size"]');
+      }
+      const tree = { next: { next: undefined, limit: 2 }, limit: 1 };
+      expect(yield* bodyOf(post(Tree), { body: tree })).toBe(
+        '{"next":{"next":null,"limit":"2"},"limit":"1"}',
+      );
+      expect(
+        yield* schemaFailure(post(Tree), {
+          body: { next: { next: { next: undefined, limit: "many" } } },
+        } as never),
+      ).toContain('["next"]');
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  it.effect(
-    "currently discards fields through an encoded member union or standalone Void",
-    () =>
-      Effect.gen(function* () {
-        const member = Schema.Union([Schema.Void, Schema.Literal("a")]).pipe(
-          Schema.encodeTo(Schema.Literal("a"), {
-            decode: SchemaGetter.transform(() => undefined),
-            encode: SchemaGetter.transform(() => "a" as const),
+  it.effect("reads inside an opaque declaration as Effect does", () =>
+    Effect.gen(function* () {
+      const opaque = Request.get("").pipe(
+        Request.path(Schema.Option(VoidFirst), (value) =>
+          Option.isSome(value) && value.value === undefined
+            ? "/empty"
+            : "/kept",
+        ),
+      );
+      expect(yield* urlOf(opaque, { path: Option.some({ limit: 5 }) })).toBe(
+        "/empty",
+      );
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("keeps an object beside an encoded member that holds Void", () =>
+    Effect.gen(function* () {
+      const member = Schema.Union([Schema.Void, Schema.Literal("a")]).pipe(
+        Schema.encodeTo(Schema.Literal("a"), {
+          decode: SchemaGetter.transform(() => undefined),
+          encode: SchemaGetter.transform(() => "a" as const),
+        }),
+      );
+      expect(
+        yield* bodyOf(post(Schema.Union([member, Filter])), {
+          body: { limit: 5 },
+        }),
+      ).toBe('{"page_size":"5"}');
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("takes no other name or member for a Void's", () =>
+    Effect.gen(function* () {
+      // The output's `a` comes from the input's `b`, so nothing was erased.
+      const swapped = Schema.Struct({
+        a: Schema.Union([Schema.Struct({ x: Schema.Number }), Schema.Void]),
+        b: Schema.Null,
+      }).pipe(Schema.encodeKeys({ a: "b", b: "a" }));
+      expect(
+        yield* bodyOf(post(swapped), { body: { a: { x: 1 }, b: null } }),
+      ).toBe('{"b":{"x":1},"a":null}');
+      // A transformation that discards its input is the schema's own.
+      let rendered: unknown = "nothing";
+      yield* Request.compile(
+        Request.get("").pipe(
+          Request.path(Schema.Union([Discard, Schema.Void]), (value) => {
+            rendered = value;
+            return "/x";
           }),
-        );
-        const request = post(Schema.Union([member, Filter]));
-        expect(yield* bodyOf(request, { body: { limit: 5 } })).toBe('"a"');
+        ),
+        { path: { x: 1 } as never },
+      );
+      expect(rendered).toBeUndefined();
+    }),
+  );
+
+  const RenamedVoid = Schema.Struct({ v: Schema.Void }).pipe(
+    Schema.encodeKeys({ v: "w" }),
+  );
+  class RenamedAck extends Schema.Class<RenamedAck>("RenamedAck")(
+    RenamedVoid as unknown as Schema.Struct<{ readonly v: typeof Schema.Void }>,
+  ) {}
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  it.effect("refuses an object or list no Void can keep, anywhere", () =>
+    Effect.gen(function* () {
+      const held = { limit: 5 };
+      for (const [schema, body, at] of [
+        [Schema.Void, held, "Expected void"],
+        [Schema.Void, [1], "Expected void"],
+        [Schema.Struct({ v: Schema.Void }), { v: held }, 'at ["v"]'],
+        [Schema.Struct({ v: Schema.Void }), { v: [1] }, 'at ["v"]'],
+        [Schema.Tuple([Schema.Void]), [held], "at [0]"],
+        [Schema.Record(Schema.String, Schema.Void), { k: held }, 'at ["k"]'],
+        [
+          Schema.Record(
+            Schema.String,
+            Schema.Union([Schema.Void, Schema.Null]),
+          ),
+          { k: held },
+          'at ["k"]',
+        ],
+        [RenamedVoid, { v: held }, 'at ["v"]'],
+        [RenamedVoid, { w: held }, 'at ["w"]'],
+        [RenamedAck, { w: held }, 'at ["w"]'],
+      ] as const) {
+        expect(yield* outcomes(schema as Schema.Codec<unknown>, body)).toEqual([
+          "refused",
+          "refused",
+        ]);
         expect(
-          yield* bodyOf(post(Schema.Void), { body: { limit: 5 } } as never),
-        ).toBe("null");
-      }),
+          yield* schemaFailure(post(schema as Schema.Codec<unknown>), {
+            body: body as never,
+          }),
+        ).toContain(at);
+      }
+      // What holds nothing, or is no object, reads as Void reads it.
+      for (const body of [undefined, null, {}, [], { a: undefined }, 5, "x"])
+        expect(yield* bodyOf(post(Schema.Void), { body } as never)).toBe(
+          "null",
+        );
+    }),
   );
 });

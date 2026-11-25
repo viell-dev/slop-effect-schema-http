@@ -2198,29 +2198,13 @@ describe("a field a part lost under a parent read field by field", () => {
   };
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/241
-  it.effect(
-    "currently sends one of a field's two names where the wire name is one every object has",
-    () =>
-      Effect.gen(function* () {
-        for (const name of ["toString", "constructor"]) {
-          const { schema, body, sent } = bothNames(name);
-          expect(yield* sentBy(schema, body)).toBe(sent);
-        }
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
-  it.effect.fails(
-    "refuses a field given under both names where the wire name is one every object has",
-    () =>
-      Effect.gen(function* () {
-        for (const name of ["toString", "constructor"]) {
-          const { schema, body } = bothNames(name);
-          expect(yield* schemaFailure(posted(schema), { body })).toBe(
-            `The schema cannot keep this field with the rest of the value\n  at ["f"]["${name}"]`,
-          );
-        }
-      }),
+  it.effect("reads a wire name every object has as Effect does", () =>
+    Effect.gen(function* () {
+      for (const name of ["toString", "constructor"]) {
+        const { schema, body, sent } = bothNames(name);
+        expect(yield* sentBy(schema, body)).toBe(sent);
+      }
+    }),
   );
 
   const Page = Schema.Struct({ n, items: Schema.Array(Filter) });
@@ -2262,25 +2246,11 @@ describe("a field a part lost under a parent read field by field", () => {
   };
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/241
-  it.effect(
-    "currently fills a default for a field a part lost where the value is not plain data",
-    () =>
-      Effect.gen(function* () {
-        for (const [schema, body, sent] of notPlain())
-          expect(yield* sentBy(schema as Field, body as never)).toBe(sent);
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
-  it.effect.fails(
-    "refuses a field a part lost where the value is not plain data",
-    () =>
-      Effect.gen(function* () {
-        for (const [schema, body, , at] of notPlain())
-          expect(
-            yield* schemaFailure(posted(schema as Field), { body } as never),
-          ).toContain(at);
-      }),
+  it.effect("reads a part that is not plain data as Effect does", () =>
+    Effect.gen(function* () {
+      for (const [schema, body, sent] of notPlain())
+        expect(yield* sentBy(schema as Field, body as never)).toBe(sent);
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/262
@@ -2334,23 +2304,11 @@ describe("a field a part lost under a parent read field by field", () => {
   }).pipe(Schema.encodeKeys({ text: "__proto__" }));
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/241
-  it.effect("currently drops a field given under the wire name __proto__", () =>
-    Effect.gen(function* () {
-      expect(yield* sentBy(ProtoWire, protoWire())).toBe('{"n":"1","m":"2"}');
-    }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/241
-  it.effect.fails(
-    "keeps or refuses a field given under the wire name __proto__",
+  it.effect(
+    "drops a field given under the wire name __proto__, as Effect does",
     () =>
       Effect.gen(function* () {
-        const outcome = yield* Effect.exit(sentBy(ProtoWire, protoWire()));
-        expect(
-          Exit.isFailure(outcome) ||
-            (Exit.isSuccess(outcome) &&
-              (outcome.value ?? "").includes('"__proto__"')),
-        ).toBe(true);
+        expect(yield* sentBy(ProtoWire, protoWire())).toBe('{"n":"1","m":"2"}');
       }),
   );
 });

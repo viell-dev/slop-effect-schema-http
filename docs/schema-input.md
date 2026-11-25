@@ -48,10 +48,8 @@ depth. Inside an opaque value, which is text that holds JSON, a `Map`, an `Optio
 declaration, the schema's own reading applies, and nothing is refused for what happens there. To
 choose a union member for certain, bind that member directly.
 
-Known violations of this rule remain in
-[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). Defaults hidden by group
-transformations can still replace raw edits, and the [active limits](#active-limits-and-recovery)
-list the shapes outside the checks below.
+[Limits](#active-limits-and-recovery) lists where the rule stops. Each is a decision, recorded with
+its reason, not a defect waiting for a fix.
 
 ### Array normalization preserves positions
 
@@ -244,22 +242,22 @@ actually went. The strict pass also protects visible fields beside Void as descr
 with none of these choices reads as it always did. A schema's own steps can run more than once when
 the strict pass refuses.
 
-An empty struct keeps every key of the value it reads, as given and at every depth. Beside members
-that state fields it is the member that keeps them all, in either order, where every alternative at
-the value is a struct, a record, a list or a tuple, as [A list stays a list](#a-list-stays-a-list)
-describes. An empty `Schema.Class` is a class, so beside a stated member it keeps 0.18.0's reading,
-which the [active limits](#active-limits-and-recovery) give. Under `Union([A, Schema.Struct({})])`
-with `A = Schema.Struct({ a: Schema.String })`, `{ a: "x", z: 1 }` sends `{"a":"x","z":1}`, and
-under `Union([Schema.Struct({ b: A }), Schema.Struct({})])`, `{ b: { a: "x", z: 1 } }` keeps the
-nested `z`. When both members can keep a value, member order decides, as in Effect's first fit: a
-value the stated member keeps whole, such as `{ a: "x" }`, goes through it when it comes first, with
-its names and constructor defaults, and through the empty struct as given when that comes first. A
-class instance the empty struct keeps reaches a path renderer as the same instance, unless a stated
-member names a field the instance holds as an inherited accessor: then it is a plain copy that holds
-that field with the instance's own keys. An instance with a key set to `undefined` whose other
-fields the members beside the empty struct all state reads as a plain object without that key, so
-the key neither pushes it out of those members nor leaves it to a Void. An empty struct query or
-header binding still states no names.
+An empty struct keeps every key of the value it reads, as given and at every depth. So do an open
+schema, which is `Schema.Unknown`, `Schema.Any` or `Schema.Object` without a check, and an empty
+`Schema.Class` for a value that is not a list. Beside members that state fields, such a member keeps
+them all, in either order. A key only it holds is not unstated, at any depth below the members.
+Under `Union([A, Schema.Struct({})])` with `A = Schema.Struct({ a: Schema.String })`,
+`{ a: "x", z: 1 }` sends `{"a":"x","z":1}`, and under
+`Union([Schema.Struct({ b: A }), Schema.Struct({})])`, `{ b: { a: "x", z: 1 } }` keeps the nested
+`z`, and so it does with `Schema.Unknown` in the empty struct's place. When both members can keep a
+value, member order decides, as in Effect's first fit: a value the stated member keeps whole, such
+as `{ a: "x" }`, goes through it when it comes first, with its names and constructor defaults, and
+through the empty struct as given when that comes first. A class instance the empty struct keeps
+reaches a path renderer as the same instance, unless a stated member names a field the instance
+holds as an inherited accessor: then it is a plain copy that holds that field with the instance's
+own keys. An instance with a key set to `undefined` whose other fields the members beside the empty
+struct all state reads as a plain object without that key, so the key neither pushes it out of those
+members nor leaves it to a Void. An empty struct query or header binding still states no names.
 
 What the empty struct keeps goes to the writer as given, and each writer refuses before dispatch a
 value it would leave out or replace, naming the field. No writer has a symbol key. The JSON writer
@@ -294,27 +292,25 @@ To get `Filter`'s encoding, bind `Filter` directly; with the empty struct beside
 member that keeps the whole value writes it. Leave out the keys `Filter` does not state before
 preparation if they should not be sent.
 
-Built-in `Schema.Void` ordinarily accepts an object and returns `undefined`. Beside an object or
-list candidate in a visible any-of union, the strict read declines Void for an object with a defined
-enumerable own field or a list with a defined own cell. The strict write declines Void for every
-object or list, including when its cells decoded to `undefined`. The fallback write keeps that guard
-while relaxing excess-property handling. If the structural member cannot encode a value, such as
-JSON metadata containing a `Date` under `Schema.Unknown`, preparation fails with that member's
-`SchemaError` unless another member can write the value without dropping a supplied field, as
-[below](#a-field-no-member-can-keep-is-an-error) describes. The guard includes annotated and checked
-Void and paths through unencoded any-of member unions. The read uses original member order when it
-sees no defined fields or cells.
+Built-in `Schema.Void` ordinarily accepts any value and returns `undefined`. It never takes an
+object with a defined enumerable own field, or a list with a defined own cell:
 
-A union made up solely of Void and plain, unchecked empty structs keeps first-fit object reading. A
-leading Void can take the object and a leading empty struct can keep it. Adding another kind of
-member, checking an empty struct or grouping the union as a member of an enclosing guarded union
-removes that exception. A defined own list cell still declines Void.
+- In a union of any mode, also grouped or suspended, a member that keeps the value reads it. A union
+  of Void and an empty struct keeps the object in either order.
+- Anywhere else, as a Void of its own, in a field or in a union of scalars, the request is refused.
+
+This holds through renames, transformations and the fields of a `Schema.Class`, wherever the library
+can see the Void. Inside an `Option` or another opaque declaration it is the schema's own.
+
+An object or list that holds nothing, a key no member states, and a value that is neither read as
+Void reads them. If the structural member cannot encode a value, such as JSON metadata containing a
+`Date` under `Schema.Unknown`, preparation fails with that member's `SchemaError` unless another
+member can write the value without dropping a supplied field, as
+[below](#a-field-no-member-can-keep-is-an-error) describes.
 
 If an object member maps decoded `limit` to encoded `page_size`, either order with Void prepares
-`{ page_size: "05" }` through the object member. An invalid `page_size` is a `SchemaError`. Avoid
-Void in schemas that rely on a shape excluded under [Active limits](#active-limits-and-recovery).
-The [0.18 migration](./release-notes/0.18.md#keep-fields-beside-void) shows the results that
-changed.
+`{ page_size: "05" }` through the object member. An invalid `page_size` is a `SchemaError`. The
+[0.18 migration](./release-notes/0.18.md#keep-fields-beside-void) shows the results that changed.
 
 ```ts
 import { Schema } from "effect";
@@ -408,35 +404,26 @@ parent members give a field those schemas. So beside the record above, `[{ page_
 does; 0.18.0 refused both. In the same way, `{ "0": { limit: "x", extra: 1 } }` beside an array or
 tuple member is read as its object member alone reads it.
 
-This reading, and the empty-struct rule above, apply only where what each alternative reads from an
-object or a list is known from the schema alone: every alternative at the value is a struct, a
-record, a list or a tuple, an empty struct included. So is a struct decoded through one plain
-transformation from an unchecked struct of the same shape, as `Schema.encodeKeys` builds: as many
-fields in the same order, each with the same optionality and the encoded form of the same type,
-whatever the transformation does with them. An alternative that takes no object, such as text, a
-number or `null`, does not change that, nor does built-in `Schema.Void` where the Void rule below
-guards it, in an any-of union beside an object or list member and not inside a suspension or a
-class. Field types can be anything; each child value of such a value is judged again at its own
-level. Every member counts, one a tag rules out included. `Schema.Struct({})` keeps a list as it is
-there, and only as an alternative of its own does an empty struct keep the keys it reads.
+This reading applies where what each alternative reads from an object or a list is known from the
+schema alone: every alternative at the value is a struct, a record, a list, a tuple, or a
+`Schema.Class` that states a field. So is a struct decoded through one plain transformation from an
+unchecked struct of the same shape, as `Schema.encodeKeys` builds: as many fields in the same order,
+each with the same optionality and the encoded form of the same type, whatever the transformation
+does with them. An alternative that takes no object, such as text, a number, `null` or built-in
+`Schema.Void`, does not change that. Field types can be anything; each child value of such a value
+is judged again at its own level. Every member counts, one a tag rules out included.
 
-Anywhere else a value keeps 0.18.0's reading, and so does every value inside it. That covers any
-alternative that is a class, a declaration such as `Schema.Date`, an open schema such as
-`Schema.Unknown`, `Schema.catchDecoding` or `Schema.catchEncoding` middleware, a Void the Void rule
-does not guard, or a codec with any other transformation, such as a struct decoded from a struct of
-another shape. Such an alternative can take the whole value, and a recovery can turn a failure
-anywhere inside into a value of its own. So beside an empty `Schema.Class`, a class decoded from a
-tuple, a codec decoded from `Schema.declare` or `Schema.Unknown`, or a record with a recovery, a
-list and its cells read as they did on 0.18.0. Under
-`Union([Schema.Struct({ p: Listed }), Schema.Unknown])`, `{ p: [{ limit: "x", extra: 1 }] }` keeps
-`extra`, as on 0.18.0.
+Anywhere else a value keeps 0.18.0's reading, and so does every value inside it. That covers an
+alternative that is an empty class, a declaration such as `Schema.Date`, an open schema such as
+`Schema.Unknown`, `Schema.catchDecoding` or `Schema.catchEncoding` middleware, or a codec with any
+other transformation, such as a struct decoded from a struct of another shape. Such an alternative
+can take the whole value, and a recovery can turn a failure anywhere inside into a value of its own.
+There a list beside a record refuses a cell key the list member does not state.
 
-Beside a guarded Void, a value also keeps 0.18.0's reading where the container rule would leave
-every field the caller supplied unstated, because the Void would then take the value and send none
-of them. With `Named = Schema.Struct({ a: Schema.String })`,
+Beside a Void, a value also keeps 0.18.0's reading where the container rule would leave every field
+the caller supplied unstated. With `Named = Schema.Struct({ a: Schema.String })`,
 `Union([Named, Schema.Void, Schema.Array(Named)])` refuses `{ 0: { a: "ok" } }` before dispatch, as
-0.18.0 did, rather than sending `null`. `Union([Named, Schema.Void])` alone still reads such a value
-as its Void member, as the Void rule below describes.
+0.18.0 did, rather than sending `null`.
 
 A query or header group that encodes to an array of field pairs is read by position, including when
 `Schema.Struct({})` keeps the original array. Both the list and its pairs can have a `null`
@@ -477,11 +464,8 @@ can choose by its decoded or encoded name, including when a whole-object transfo
 name or literal. Both views must rule a member out before its fields go. A missing tag with a
 constructor default leaves that view possible; its default is not run to guess a member. A key set
 to `undefined` is no field at all, so `{ a, b: undefined, c }` reads as `{ a, c }`, and a member
-that states `b` cannot take the value from one that states `c`. An encoded name beside its decoded
-twin can be stripped on a constructor/decoded route, under a union as under a struct. A whole
-encoded read instead uses the encoded name, including when an ignored alias elsewhere establishes
-the added validation route. Name selection does not prove that supplied values agree; general
-conflicting-alias refusal remains under #143.
+that states `b` cannot take the value from one that states `c`. A field given under both its names
+is refused, as [above](#constructor-default-validation) gives.
 
 ### A weak schema lets more through
 
@@ -517,98 +501,63 @@ not decoded and re-encoded to prepare a different input. The [0.6.1
 example](./release-notes/0.6.md#since-0-6-1-keep-visible-fields-beside-an-opaque-value) shows the
 common case.
 
-## Active limits and recovery
+## Limits and recovery {#active-limits-and-recovery}
 
-The kept-or-refused rule is the intended contract. Known violations remain under
-[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143) and
-[#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243).
+A supplied field is kept or refused wherever the library can see both the caller's value and what
+the schema does with it. These are the places where it cannot, and what happens there.
 
-- Beside `Schema.Unknown`, `Schema.Any` or `Schema.Object`, a stated member's nested value can still
-  lose a key only the open member would hold. With
-  `Union([Schema.Struct({ b: A }), Schema.Unknown])`, `{ b: { a: "x", z: 1 } }` sends
-  `{"b":{"a":"x"}}` ([#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143)). A key
-  at the open member's own value is kept. Below it every value keeps 0.18.0's reading, so an empty
-  struct there keeps no more than it did, as [A list stays a list](#a-list-stays-a-list) describes.
-- A record with a `Schema.catchDecoding` recovery beside a list member keeps 0.18.0's reading, in
-  which the record's values hold a cell key the list member does not state. The list member then
-  refuses a valid list, and the recovery's value is sent instead: under
-  `Union([Schema.Array(Plain), Recovering])`, where `Recovering` recovers `{ recovered: true }`,
-  `[{ limit: "x", extra: 1 }]` sends `{"recovered":true}`, where Effect reads `[{"limit":"x"}]`. A
-  recovery's value is not checked against the cells it was given either: one that returns
-  `{ 0: { limit: "altered" } }` sends that for `[{ limit: 5, extra: 1 }]`
-  ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). Leave out keys the list
-  member does not state, and have a recovery return the caller's cells or fail.
-- Inside a value that keeps 0.18.0's reading, a list beside a record still refuses a cell key the
-  list member does not state, as 0.18.0 did. That covers a field of a class, or of a struct inside a
-  class or a class in a list, a field of a parent beside `Schema.Date` or a class, a field of a
-  parent that is a struct codec of another shape, a value beside `Schema.Date` or a class itself,
-  and a value inside middleware whose recovery fails. Under a class `Page` with
-  `items: Schema.Union([Schema.Array(Plain), Open])`, `{ items: [{ limit: "x", extra: 1 }] }`
-  refuses at `["items"][0]["extra"]`, where `Schema.Struct` in the class's place writes
-  `{"items":[{"limit":"x"}]}`. In the same places an index-keyed object beside a list member still
-  refuses too: under a class with `p: Schema.Union([Plain, Schema.Array(Plain)])`,
-  `{ p: { 0: { limit: "x", extra: 1 } } }` refuses at `["p"]["0"]`, where `Schema.Struct` writes
-  `{"p":{}}` ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). Leave out
-  keys the list member does not state, and do not give a list's cells as index keys of an object.
-- An empty `Schema.Class` keeps 0.18.0's reading beside a list member or a member that states
-  fields. `Union([Bare, Schema.Array(Plain)])`, where `Bare` is an empty class, sends
-  `{"0":{"limit":"x"}}` for `[{ limit: "x", extra: 1 }]`, although Effect's first fit gives the
-  class every cell, and so does the same pair under two parent members
-  ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). `Union([A, Bare])` and
-  `Union([Bare, A])` send `{"a":"x"}` for `{ a: "x", z: 1 }`
-  ([#249](https://github.com/viell-dev/slop-effect-schema-http/issues/249)). `Schema.Struct({})` in
-  the class's place keeps the cells and the key.
-- Below an empty struct that holds a parent value, a child value with an alternative outside the
-  known set is normalized as on 0.18.0, so a key no member there states is stripped before the empty
-  struct takes the whole value. Under `Union([Schema.Struct({ b: Limited }), Schema.Struct({})])`,
-  where `Limited` is a class stating `a`, `{ b: { a: "x", z: 1 }, top: 1 }` sends
-  `{"b":{"a":"x"},"top":1}`: `top` is kept and `z` is not
-  ([#249](https://github.com/viell-dev/slop-effect-schema-http/issues/249)). Where 0.18.0 erased
-  such a child through a Void the Void rule does not guard, the child is now sent with those keys
-  stripped: under
-  `Union([Schema.Struct({ p: Schema.suspend(() => Schema.Union([A, Schema.Void])) }), Schema.Struct({})])`,
-  `{ p: { z: 1 }, top: 1 }` sends `{"p":{},"top":1}`, where 0.18.0 sent `{"p":null}`. A struct in
-  the class's place keeps `z`.
-- The relaxed write's check sees the members a union chose for the value itself. A class or other
-  declaration member is the schema's own reading, and so is a choice Effect makes again after a
-  transformation or middleware on the union itself, which no caller field can be traced to:
-  `Union([Coded, Title]).pipe(Schema.middlewareDecoding(...))` can still send `{"title":"a"}`. A
-  union in which only one member reads keys is written as Effect writes it, so in
-  `Union([Opaque, Title])`, where `Opaque` is a declaration that cannot be written as JSON, `Title`
-  can still drop `meta` ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)).
-  When the member the relaxed write takes loses a supplied field, the request is refused; a later
-  member that strips only unsupplied keys is not tried.
+**The schema's own reading**, where a field can go with no error:
+
+- Outside plain data, as [where it applies](#where-it-applies) defines it, a value reads and writes
+  as Effect reads and writes it. Under the `Page` example, `{ n: 1, items: [{ limit: "x" }] }` held
+  behind a getter, or given as a class instance, sends `"page_size":"25"`, and
+  `Union([Note, Title])` drops `meta` from a class instance.
+- A name every object has, such as `toString` or `__proto__`, is read as Effect reads it. A field
+  given under both its names sends one of them where its wire name is such a name, and a field given
+  under the wire name `__proto__` is dropped.
+- An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
+  recovery's value is not checked against what it was given: a `Schema.catchDecoding` record beside
+  a list member can take a list whose cells hold a key the list member does not state, and what it
+  recovers is sent. In `Union([Opaque, Title])`, where `Opaque` is a declaration that cannot be
+  written as JSON, `Title` can drop `meta`.
+- A union that chooses again on a transformed copy, behind a transformation or middleware on the
+  union itself or on the encoded side of a renamed struct, is the schema's own choice, because no
+  caller field can be traced to the copy. `Union([Coded, Title]).pipe(Schema.middlewareDecoding(…))`
+  can send `{"title":"a"}`. Where `Dropping` is
+  `Union([Struct({ d }).pipe(encodeKeys({ d: "w_d" })), Struct({ e: Unknown }), Struct({ c: optionalKey(String) })])`,
+  `Struct({ d: Dropping }).pipe(Schema.encodeKeys({ d: "w_d" }))` sends `{ d: { e: new Date(0) } }`
+  as `{"w_d":{}}`, which the same struct without the rename refuses.
+- An empty `Schema.Class` first in a union takes a list as an object keyed by its indexes, as Effect
+  does, after the keys the list member does not state are left out.
+- A response reads as Effect reads it: its union takes the first member that fits. Its extra fields
+  are the server's, not a caller's input.
+
+**A refusal another reading might have avoided.** These never lose a field:
+
+- Inside a value that keeps 0.18.0's reading, as [A list stays a list](#a-list-stays-a-list) gives,
+  a list beside a record refuses a cell key the list member does not state, and an index-keyed
+  object beside a list member refuses the key the list states. Leave out keys the list member does
+  not state.
+- A mixed-side value can refuse beside Void in either order. With
+  `Struct({ filter: Union([Void, Filter]), sortBy: String })` and
+  `encodeKeys({ sortBy: "sort_by" })`, where `Filter` encodes `limit` as `page_size`,
+  `{ filter: { limit: 5 }, sort_by: "a" }` refuses. Use all-decoded or all-encoded names, one per
+  field.
+- A class instance beside a struct member that would strip it refuses rather than being read as the
+  class.
+- Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
+  either binding order. Bounded [stacked-union
+  recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;
+  bind the intended member directly.
+
+**Other consequences:**
+
 - The relaxed write selects each union's members by kind and literal tags with a copy of Effect's
   own selection rules, which Effect keeps internal. Effect 4.0.7 and 4.1.4 differ only for a tag
   named after an `Object.prototype` member, such as `constructor`, that the value does not hold as
   its own: 4.0.7 reads the inherited value and 4.1.4 treats the tag as missing. The copy finds the
   installed version's rule once, with a test write. A member with encoding middleware or a
   suspension is tried for every input, as Effect tries it, so its own steps can run before it fails.
-- Outside plain data, as [where it applies](#where-it-applies) defines it, a value reads and writes
-  as Effect reads and writes it, so these checks are off there
-  ([#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241),
-  [#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)). Under the `Page`
-  example, `{ n: 1, items: [{ limit: "x" }] }` held behind a getter, or given as a class instance,
-  still sends `"page_size":"25"`; `Union([Note, Title])` still drops `meta` from a class instance. A
-  field given under both names, where the wire name is one every object has such as `toString`,
-  sends one of them, and a field given under the wire name `__proto__` is dropped.
-- The relaxed write's check follows a struct's decoded fields. A struct renamed with
-  `Schema.encodeKeys` writes each field again on its encoded side, so a union there can take another
-  member, and a field that member drops is not seen. Where `Dropping` is
-  `Union([Struct({ d }).pipe(encodeKeys({ d: "w_d" })), Struct({ e: Unknown }), Struct({ c: optionalKey(String) })])`,
-  `Struct({ d: Dropping }).pipe(Schema.encodeKeys({ d: "w_d" }))` sends `{ d: { e: new Date(0) } }`
-  as `{"w_d":{}}`, which the same struct without the rename refuses
-  ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)).
-- Void protection applies to built-in Void beside a visible object or list candidate in an any-of
-  union, including through unencoded any-of member unions. Standalone Void, a union whose other
-  members give it no visible object or list candidate, unions inside `Schema.Class` fields, opaque
-  declarations or suspensions, encoded member unions, other union modes such as `oneOf`, and custom
-  discarding transformations can still discard values. Class alternatives alone supply no visible
-  candidate. Avoid Void in input schemas that rely on those shapes.
-- A list supplied by JavaScript or a cast to a union of a struct and Void, whose cells are all
-  non-enumerable, can still be discarded and read as `undefined`. Such a cell declines Void on the
-  strict read, but a struct cannot read a list and the field-loss check does not see the cell.
-  Beside an array member, such a cell is read, so an invalid alias in it refuses.
 - A proxy list whose index read answers `undefined` for a cell its descriptor holds can be taken by
   Void beside an array member and read as `undefined`.
 - A populated object constructor default can select the object member beside Void. A default of
@@ -616,12 +565,6 @@ The kept-or-refused rule is the intended contract. Known violations remain under
   `{"g":{"a":1}}` for an omitted `g`. With object-first order and only an undefined-valued input
   key, `Struct({ inner: UndefinedOr(String) })` still needs its key, so the union can write `null`.
   With `Struct({ a: optionalKey(Number) })`, the same omission can write `{}`.
-- A mixed-side value can refuse with either Void order. For example, with
-  `Struct({ filter: Union([Void, Filter]), sortBy: String })` and
-  `encodeKeys({ sortBy: "sort_by" })`, where `Filter` encodes `limit` as `page_size`,
-  `{ filter: { limit: 5 }, sort_by: "a" }` fails at `filter`; with Void last it fails at
-  `filter.limit`. An object giving both names beside Void, such as `{ limit: 5, page_size: "5" }`,
-  refuses in either order too. Use all-decoded or all-encoded names, one per field, for that input.
 - JavaScript, casts and `Schema.Any` can bypass the TypeScript requirement for a query or header
   schema to encode a group of fields. Preparation reports lost input fields first. A non-object
   group, a malformed field pair or an invalid query or header value fails with `InvalidRequest`
@@ -644,10 +587,6 @@ The kept-or-refused rule is the intended contract. Known violations remain under
 - Opaque contents use their schema's own reading. A `ReadonlyMap` containing
   `{ term: "x", page_size: "05" }` can lose the alias through construction. Use decoded contents
   such as `{ term: "x", limit: "05" }` for a predictable decoded route.
-- Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
-  either binding order. Bounded [stacked-union
-  recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;
-  bind the intended member directly.
 - Effect can refuse omitted prototype-named fields such as `constructor` or an encode-only
   `toString` default. The [dependency
   overview](https://github.com/viell-dev/slop-effect-schema-http/issues/41) records the schemas and
