@@ -67,6 +67,18 @@ const vitestFinding = {
   via: ["picomatch"],
 };
 
+/** What an allowance for that advisory looks like. The advisory itself was withdrawn. */
+const allowed = [
+  {
+    id: "GHSA-fc5q-39xc-vjpf",
+    package: "picomatch",
+    range: "<=4.0.7",
+    reason: "Development tooling only. No patched release exists.",
+    issue: "https://github.com/example/library/issues/1",
+    removal: "Adopt a patched picomatch and remove this allowance.",
+  },
+];
+
 function auditResult(...findings) {
   return {
     status: findings.length ? 1 : 0,
@@ -96,6 +108,7 @@ test("the release audit refuses a production finding even when it is allowed in 
       checkAuditReport(
         auditResult(picomatchFinding, vitestFinding),
         "Production",
+        allowed,
       ),
     /Production dependency audit refused:\nGHSA-fc5q-39xc-vjpf picomatch.*picomatch, vitest.*\nUpdate/,
   );
@@ -115,6 +128,7 @@ test("the release audit refuses an unlisted advisory on an otherwise allowed pac
           vitestFinding,
         ),
         "Full",
+        allowed,
       ),
     /Full dependency audit refused:\nGHSA-xxxx-xxxx-xxxx picomatch.*moderate.*picomatch, vitest.*Update/,
   );
@@ -125,7 +139,7 @@ test("the release audit permits the named dev advisory and all its transitive fi
   const vitest = { ...vitestFinding, via: ["picomatch", "test-runner"] };
   const report = auditResult(picomatchFinding, vitest, cycle);
   assert.match(
-    checkAuditReport(report, "Full"),
+    checkAuditReport(report, "Full", allowed),
     /3 package findings, 1 advisory allowed/,
   );
   assert.throws(
@@ -141,7 +155,7 @@ test("the release audit refuses a stale allowance when its advisory disappears o
   };
   for (const report of [auditResult(), auditResult(changed)])
     assert.throws(
-      () => checkAuditReport(report, "Full"),
+      () => checkAuditReport(report, "Full", allowed),
       /Stale allowance for GHSA-fc5q-39xc-vjpf picomatch.*Adopt any available fix and remove/,
     );
 });
@@ -156,6 +170,7 @@ test("the release audit refuses an allowance once npm reports a compatible fix",
         checkAuditReport(
           auditResult(picomatchFinding, { ...vitestFinding, fixAvailable }),
           "Full",
+          allowed,
         ),
       /GHSA-fc5q-39xc-vjpf picomatch.*compatible fix.*remove this allowance/,
     );
@@ -440,9 +455,7 @@ test("release preparation refuses a tested version the documents no longer state
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.NPM_CALLS, args.join(" ") + "\\n");
 if (args[0] === "audit") {
-  const result = args.includes("--omit=dev")
-    ? ${JSON.stringify(auditResult())}
-    : ${JSON.stringify(auditResult(picomatchFinding, vitestFinding))};
+  const result = ${JSON.stringify(auditResult())};
   process.stdout.write(result.stdout);
   process.exitCode = result.status;
 }
@@ -590,9 +603,18 @@ test("a release correction permits embedded examples but refuses software and pu
       join(root, "examples/migration-0-18.ts"),
       "// Corrected embedded migration\n",
     );
+    const lastMigrationCorrection = commit();
+    assert.doesNotThrow(() =>
+      verifyDocumentationCorrection("0.18.0", lastMigrationCorrection, git),
+    );
+    git(["tag", "0.19.0"]);
+    writeFileSync(
+      join(root, "examples/migration-0-19.ts"),
+      "// Corrected embedded migration\n",
+    );
     const currentMigrationCorrection = commit();
     assert.doesNotThrow(() =>
-      verifyDocumentationCorrection("0.18.0", currentMigrationCorrection, git),
+      verifyDocumentationCorrection("0.19.0", currentMigrationCorrection, git),
     );
     writeFileSync(
       join(root, "examples/release-check.mjs"),
@@ -609,7 +631,7 @@ test("a release correction permits embedded examples but refuses software and pu
       ".github/workflows/pages.yml",
       "examples/guides.mjs",
       "examples/not-embedded.ts",
-      "examples/migration-0-19.ts",
+      "examples/migration-0-20.ts",
       "docs/../package.json",
     ]) {
       assert.throws(

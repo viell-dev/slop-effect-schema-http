@@ -54,16 +54,14 @@ In an existing Node.js 24 or 26 ESM project with Effect `^4.0.7`, add the librar
 npm install viell-effect-schema-http
 ```
 
-`0.18.0` is the current release. The same package is available as a checksummed [GitHub release
-tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.18.0). This is a
+`0.19.0` is the current release. The same package is available as a checksummed [GitHub release
+tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.19.0). This is a
 breaking release. Read [What's in
-0.18](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.18) before updating from
-`0.17`: a request union with a `Schema.Void` member now keeps or refuses a supplied object's fields
-instead of sending `null`, keys under `Schema.Struct({})` are no longer dropped, and preparation no
-longer sends a list as an object keyed by its indexes. An invalid encoded alias beside an encoded
-primitive such as `Schema.FiniteFromString`, or in a one-or-many union of an object and its list,
-now refuses instead of being replaced by a default. Broader default and alias-preservation limits
-remain active.
+0.19](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.19) before updating from
+`0.18`: a value the caller supplies is kept, or the request is refused before dispatch with an error
+naming it. A default no longer replaces a supplied field, `Schema.Void` erases nothing, open union
+members keep the keys they hold, and JSON, form, query and header writers refuse values they would
+leave out or replace.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
@@ -82,9 +80,8 @@ versions and provider boundaries.
   Operation, Policy, Interaction, UrlEncoding and Transport, from basic use to advanced behavior.
 - [Limits and recovery](https://viell-dev.github.io/slop-effect-schema-http/limits): compatibility,
   where the library's promise stops, failure stages and bug reporting.
-- [What's in 0.18](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.18): fields
-  beside `Schema.Void`, lists kept as lists, aliases beside encoded and array-shaped members,
-  migration and remaining limits.
+- [What's in 0.19](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.19): supplied
+  values kept or refused, writers that refuse lossy values, migration and limits.
 - [Release history](https://viell-dev.github.io/slop-effect-schema-http/release-notes/): earlier
   articles and a comparison of the related schema-input repairs.
 - [Versions](https://viell-dev.github.io/slop-effect-schema-http/versions): updates and

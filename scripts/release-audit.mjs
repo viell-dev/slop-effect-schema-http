@@ -2,18 +2,11 @@ import { spawnSync } from "node:child_process";
 import console from "node:console";
 import process from "node:process";
 
-const allowances = [
-  {
-    id: "GHSA-fc5q-39xc-vjpf",
-    package: "picomatch",
-    range: "<=4.0.7",
-    reason:
-      "Development and documentation tooling only. No patched release exists.",
-    issue: "https://github.com/viell-dev/slop-effect-schema-http/issues/41",
-    removal:
-      "Adopt a patched picomatch and remove this allowance as soon as a fix is available.",
-  },
-];
+/**
+ * Advisories in development tooling that may stay, each with `id`, `package`, `range`, `reason`,
+ * `issue` and `removal`. One is refused again once it no longer matches or npm reports a compatible fix.
+ */
+const allowances = [];
 
 const severityLevels = ["info", "low", "moderate", "high", "critical"];
 const level = (severity) => severityLevels.indexOf(severity);

@@ -1,6 +1,6 @@
 # Release history
 
-The current release is [0.18.0](./0.18.md). [Versions](../versions.md) covers installation and
+The current release is [0.19.0](./0.19.md). [Versions](../versions.md) covers installation and
 updates. Use [Schema-backed input](../schema-input.md) and [Schema-backed
 groups](../schema-groups.md) for today's rules and active limits; the articles below explain changes
 between releases.
@@ -13,7 +13,10 @@ release](./0.17.md) extends the 0.16 alternative rule to nested primitive unions
 `Schema.Literals([...])` and `Schema.NullOr(Schema.String)`. The [0.18 release](./0.18.md) extends
 it again, to encoded primitive and array-shaped members. It also extends the union preservation rule
 to `Schema.Void` members, keeps keys under `Schema.Struct({})` in that strict reading, and
-separately stops the field-by-field reading from sending a list as an index-keyed object.
+separately stops the field-by-field reading from sending a list as an index-keyed object. The [0.19
+release](./0.19.md) replaces those proofs: every reading accounts for the values it was given,
+whatever the schema's shape, which finishes the constructor-default repair and the recorded
+preservation gaps.
 
 ## Schema-input hardening
 
@@ -36,22 +39,22 @@ constructor default is another. Static input types and array normalization are s
 | [0.16](./0.16.md) | Validate aliases in the accepted remaining container profiles                    | Primitive alternatives, sparse own cells and exact native own iterators   |
 | [0.17](./0.17.md) | Validate aliases beside Effect's nested primitive alternatives                   | An unencoded union whose members are all primitive alternatives           |
 | [0.18](./0.18.md) | Validate aliases beside encoded primitive and array-shaped members               | Plain-transformation primitive codecs; a union's one list-reading member  |
+| [0.19](./0.19.md) | Keep or refuse every supplied field, and refuse values a writer cannot represent | Plain data the library can see; no schema shape is required               |
 
-Thus 0.9, 0.11–0.14 and 0.16–0.18 extend one constructor-default repair. Versions 0.8 and 0.10
-repair static types without changing runtime selection. Version 0.15 fixes separate normalization
-defects and does not finish the constructor-default work; the 0.18 list change is also a separate
-fix. Some successful results changed and some calls began to refuse, so the articles retain their
-breaking-change migrations.
+Thus 0.9, 0.11–0.14 and 0.16–0.18 extend one constructor-default repair, which 0.19 finishes.
+Versions 0.8 and 0.10 repair static types without changing runtime selection. Version 0.15 fixes
+separate normalization defects and does not finish the constructor-default work; the 0.18 list
+change is also a separate fix. Some successful results changed and some calls began to refuse, so
+the articles retain their breaking-change migrations.
 
 These narrow implementation proofs protect schema priority, effects, opaque boundaries and actual
 caller/output evidence. They did not require a separate software publication for every extension.
 The related work was released in smaller units than its consumer outcome warranted. The 0.16 batch
 groups the accepted remaining container profiles from
-[#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170); excluded default paths stay
-there, with preservation/selection gaps retained in
-[#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). A future batch must name
-accepted cases, completion evidence and retained limits before release preparation; it does not
-promise support for arbitrary schemas.
+[#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170). The 0.19 release closes
+that issue and [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143); what remains
+is listed under [Limits and recovery](../schema-input.md#active-limits-and-recovery) with its
+reasons.
 
 ## Earlier releases
 
