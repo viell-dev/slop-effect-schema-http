@@ -4707,3 +4707,107 @@ The logs and JUnit reports are under `artifacts/list-record-6baefb8-*` and `arti
   does. Before [#235](https://github.com/viell-dev/slop-effect-schema-http/pull/235) the union
   sent `[{"page_size":"25"}]`. Status: tested.
   - `[EXT-51i] ${binding} ${order} refuses an invalid encoded list item alias before dispatch`
+
+## Post-0.18 request preparation and writers (EXT-52 to EXT-56)
+
+The consumer cases in [post-release-wire.ts](./src/clients/post-release-wire.ts) use the
+[schema-input guide](https://github.com/viell-dev/slop-effect-schema-http/blob/d746f37b30b539433ed695102f9637b5e3ba3119/docs/schema-input.md),
+the [body module guide](https://github.com/viell-dev/slop-effect-schema-http/blob/d746f37b30b539433ed695102f9637b5e3ba3119/docs/modules/body.md)
+and the [neutral echo contract](./README.md#the-neutral-echo-probe). They check the same operations
+through Fetch on a real socket in four lanes. A refusal checks the typed error, the diagnostic
+and an empty ledger. Where a diagnostic identifies a field without exposing its value, a
+synthetic marker checks that omission. Each success checks one request, its method, exact target,
+relevant header lines and body bytes. Header assertions preserve the ordering of lines for one
+name. Node and Chromium Fetch can order distinct names differently. Multipart checks the entire
+framing using the boundary observed in the Content-Type line.
+
+The Node baseline used `LIBRARY_REF=7c7c54f` (0.18.0), Effect 4.1.4 and Node 24.22.2 on Linux. It
+selected the 72 new cases and all 10 revised EXT-51f–h cases. The 56 changed outcomes below and all
+10 revised cases fail on 0.18.0. The other 16 cases pass on both revisions. The log and JUnit
+report are under `artifacts/post-0-18-baseline.*`. Tests outside that selection were filtered out.
+The revised sparse-prototype assertion from EXT-45y separately fails on the same baseline,
+while its length and hidden-cell controls pass (`artifacts/post-0-18-prototype-baseline.log`).
+
+At library `d746f37b30b539433ed695102f9637b5e3ba3119` on Linux with Node 24.22.2, npm 11.19.1,
+Effect 4.1.4 and Chromium 158.0.8127.18, all 72 cases pass in every lane. The full runs report
+3,209 ordinary passes in Node, 2,384 in Chromium, 3,222 packed and 75 in the app. The first
+three lanes each also record 14 existing expected failures. No lane has skips or unexpected
+failures. The source, packed and app catalogue gates, the packed declaration check,
+`npm run check` and `npm run lint` pass. The logs are under `artifacts/post-0-18-*.log` and
+the JUnit reports are under `artifacts/junit-*.xml`.
+
+| Entry   | Cases | Failing on 0.18.0                                                             |
+| ------- | ----: | ----------------------------------------------------------------------------- |
+| EXT-52a |     6 | All pair-iterator, one-shot and repeat-list cases                             |
+| EXT-52b |    10 | All malformed and non-callable iterator cases in both groups                  |
+| EXT-52c |     5 | All four non-scalar values                                                    |
+| EXT-53a |     8 | All seven refusal cases                                                       |
+| EXT-53b |     6 | Direct URL-encoded null, URL-encoded undefined list cell and multipart number |
+| EXT-53c |     6 | All three wrong-kind body values                                              |
+| EXT-53d |     4 | All three extra-field refusals                                                |
+| EXT-54a |     9 | List, tuple and record refusals, both names and the decoding-default refusal  |
+| EXT-54b |     7 | All five metadata refusals                                                    |
+| EXT-55a |     2 | Both container-kind cases                                                     |
+| EXT-55b |     6 | All five extra-key cases                                                      |
+| EXT-55c |     2 | Both hidden-cell cases                                                        |
+| EXT-55d |     1 | Header diagnostic pin (0.18.0 dispatches)                                     |
+
+- **EXT-52a** [#252](https://github.com/viell-dev/slop-effect-schema-http/pull/252) and
+  [#242](https://github.com/viell-dev/slop-effect-schema-http/issues/242). Query and headers use
+  positional pairs despite an own iterator, consume a one-shot Map iterator once, and use repeat-list
+  positions despite own mapping methods and iterator. EXT-51g covers a prototype-free pairs list.
+  Status: tested.
+- **EXT-52b** [#236](https://github.com/viell-dev/slop-effect-schema-http/issues/236). A three-cell
+  pair, a non-array iterable entry and a numeric pair fail as `InvalidRequest` with a pair-shape
+  cause. Their diagnostic currently has no field name or position. A defined enumerable
+  non-callable `Symbol.iterator` is itself a refused field under
+  [#260](https://github.com/viell-dev/slop-effect-schema-http/pull/260), and the same property
+  when non-enumerable lets the group write its record. Status: tested.
+- **EXT-52c** [#255](https://github.com/viell-dev/slop-effect-schema-http/issues/255). The query
+  writer refuses an object, function, symbol or nested list at `x-value`. A list of null, boolean,
+  bigint and Date writes exact scalar spellings. Status: tested.
+- **EXT-53a** [#260](https://github.com/viell-dev/slop-effect-schema-http/pull/260) and
+  [#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256). Direct, schema and
+  composed JSON writers refuse non-finite numbers, functions, symbols, Map, an undefined
+  `toJSON` result in a list and symbol-keyed fields. The string-indexed record refuses a
+  dropped symbol with `SchemaError`. The JSON success keeps a `toJSON` result, invalid Date
+  null, a plain object and a class instance. Status: tested.
+- **EXT-53b** Direct and schema-backed URL encoding and schema-backed multipart refuse null,
+  an undefined list cell and a nested number, respectively. Controls write scalars and repeated
+  names, including escaping literal spaces and plus signs, with no entries for empty containers.
+  Status: tested.
+- **EXT-53c** Text, bytes and empty writers refuse wrong-kind values at the root `$`. Their
+  controls write UTF-8, arbitrary octets and a zero-byte body. Status: tested.
+- **EXT-53d** Query and header writers refuse own fields beside repeat-list or pair positions and
+  an enumerable symbol field. An ordinary header record still writes its line. Status: tested.
+- **EXT-54a** [#254](https://github.com/viell-dev/slop-effect-schema-http/pull/254) and
+  [#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241). Fieldwise parents
+  refuse invalid decoded or encoded names in lists, tuples, records and unions. Mixing a
+  decoded-only sibling with an encoded-only one also exercises both names in the same field.
+  A decoding default cannot stand in for an invalid supplied value. Mixed-side, decoded and
+  omitted values still write their exact encodings. Status: tested.
+- **EXT-54b** [#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250). The relaxed
+  writer cannot take the title-only member when the member that declares metadata cannot encode it.
+  It refuses with the first member's error in JSON with Void beside it, in nested JSON, and in
+  query, form and path bindings. Writable metadata and a title-only value still dispatch.
+  Status: tested.
+- **EXT-55a** [#253](https://github.com/viell-dev/slop-effect-schema-http/pull/253) and
+  [#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243). A list nested in a path
+  object reads as the list member reads it, and an index-keyed JSON object ignores fields stated
+  only by an inapplicable tuple. Status: tested.
+- **EXT-55b** [#249](https://github.com/viell-dev/slop-effect-schema-http/issues/249). An empty
+  struct alternative keeps nested JSON keys, extra query and header fields, and decoded field
+  names in path. The stated-first tie still sends its encoded name. The JSON writer refuses
+  a kept infinity. Status: tested.
+- **EXT-55c** [#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257). A path
+  list beside `Unknown` keeps its non-enumerable or inherited first cell when a later cell
+  with an undefined property makes normalization rebuild the list. Status: tested.
+- **EXT-55d** The header writer refuses an object kept by an empty member before dispatch, but
+  its diagnostic currently omits the field that the schema-input guide says the writer names.
+  With `Union([Struct({ a: String }), Struct({})])` bound via `Request.headers`, pass
+  `{ a: "x", "x-value": { note: "fixture" } }`. The result is `InvalidRequest` with the cause
+  `A header line must have a string value`, no mention of `x-value`, and no request.
+  Status: defect.
+- **EXT-56** The production-built [request probe](./src/app/wire.html) runs the 72
+  EXT-52–55 socket cases through the installed package and the same-origin proxy.
+  Lane: app. Status: tested.
