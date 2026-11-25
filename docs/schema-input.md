@@ -371,7 +371,9 @@ it takes the value itself.
 Built-in `Schema.Void` ordinarily accepts any value and returns `undefined`. Here it takes only
 `undefined`, `null`, and an object or list that holds nothing, and a JSON body writes each of them
 as `null`. A scalar, a built-in such as a `Date` or a `Map`, an object with a defined enumerable own
-field and a list with a defined own cell are never its:
+field, and a list with a defined own cell or a defined named field of its own are never its. An
+object field that is not enumerable does not count, because no writer sends one: under
+`Schema.Unknown` alone such an object is written as `{}`.
 
 - In a union of any mode, also grouped or suspended, a member that keeps the value reads it. So
   `Union([Void, String])` sends `"hello"` as given, and a union of Void and an empty struct keeps
@@ -599,8 +601,7 @@ the schema does with it. These are the places where it cannot, and what happens 
   behind a getter, or given as a class instance, sends `"page_size":"25"`, and
   `Union([Note, Title])` drops `meta` from a class instance.
 - A name every object has, such as `toString` or `__proto__`, is read as Effect reads it. A field
-  given under both its names sends one of them where its wire name is such a name, and a field given
-  under the wire name `__proto__` is dropped.
+  given under both its names sends one of them where its wire name is such a name.
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
   recovery's value is not checked against what it was given: a `Schema.catchDecoding` record beside
   a list member can take a list whose cells hold a key the list member does not state, and what it

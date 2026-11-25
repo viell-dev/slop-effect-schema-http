@@ -380,15 +380,15 @@ reports the decoded side's error if all fail. The type of such an input is `Requ
 The type keeps whole constructor and encoded shapes, including nested aliases. Mixing by field is
 one level deep in the type. A helper that accepts `Request.Input` must handle both sides, or declare
 a decoded-only argument explicitly. The [input reference](../schema-input.md) owns the complete
-reading order, preservation rules and where a default can stand in.
+reading order, preservation rules and their limits.
 
 #### What the library promises
 
-Visible caller fields are kept or the request is refused, and [a default never takes a supplied
-field's place](../schema-input.md#constructor-default-validation). Opaque contents retain their
-schema's own reading. See the [active limits and
-recovery](../schema-input.md#active-limits-and-recovery) for the shapes where that does not hold
-yet; use validated decoded input or bind a specific union member when needed.
+On plain data, visible caller fields are kept or the request is refused, and [a default never takes
+a supplied field's place](../schema-input.md#constructor-default-validation). A key the schema does
+not state is left out, and opaque contents retain their schema's own reading. The [active limits and
+recovery](../schema-input.md#active-limits-and-recovery) list what preparation cannot see, with the
+reason; use validated decoded input or bind a specific union member there.
 
 #### When both sides share a type
 

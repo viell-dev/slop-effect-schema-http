@@ -212,7 +212,9 @@ union, it names a field no member can hold with the rest. Beyond unions, it also
   where a string-keyed record or `Schema.ObjectKeyword` would rebuild it from its fields.
 
 At the top of the value, with no field to name, the same refusal reads
-`The schema cannot keep the content of this value`.
+`The schema cannot keep the content of this value`. The message does not yet say which of these
+cases it is, and beside a Void it can also name a valid field next to the one at fault
+([#275](https://github.com/viell-dev/slop-effect-schema-http/issues/275)).
 
 | Message                                                                             | Cause                                                                                                               | What to change                                                                                                                              |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
