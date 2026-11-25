@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "types": ["node"],
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "allowJs": true,
+    "paths": {
+      "viell-effect-schema-http": ["./.library/src/main.ts"],
+      "#lane": ["./src/harness/lane.node.ts"]
+    }
+  },
+  "include": ["src/**/*", "vitest.config.ts"]
+}
