@@ -775,6 +775,19 @@ describe("a reading that keeps everything", () => {
           { f: { u }, c2: { a: "y" } },
         ),
       ).toEqual(written({ f: { u }, c2: { a: "y" } }));
+      // A group that could hold the value only through a member that cannot write it does not take it.
+      expect(
+        (yield* outcomes(
+          Schema.Struct({
+            f: Schema.Union([
+              Schema.Union([Schema.Unknown, A]),
+              Schema.Struct({ a: Schema.String, at: Schema.Date }),
+            ]),
+            c2: Counted,
+          }),
+          { f: { a: "1", at: new Date(0) }, c2: { a: "y" } },
+        ))[0],
+      ).toBe('{"f":{"a":"1","at":"1970-01-01T00:00:00.000Z"},"c2":{"a":"y"}}');
       // A key the struct does not state leaves the value to the open member.
       const [body] = yield* outcomes(
         Schema.Struct({

@@ -20,9 +20,12 @@ export type WriterNotes = Array<WriterNote>;
 const record = Symbol("record union writers");
 // The options of the write around a union's strict attempt, for what that attempt has to write loosely.
 const around = Symbol("options around a strict attempt");
+// Set where a member is tried because it holds the whole value, so no union inside it may drop any.
+const whole = Symbol("write the whole value");
 type RecordingOptions = SchemaAST.ParseOptions & {
   readonly [record]?: WriterNotes;
   readonly [around]?: RecordingOptions;
+  readonly [whole]?: true;
 };
 
 /** Parse options that make a recording writer note each member that wrote a value. */
@@ -135,6 +138,7 @@ const noting = (
       const order = (select ??= candidates(flipped))(input);
       const within = options.onExcessProperty === "error";
       const loose = options[around] ?? options;
+      const wholly: RecordingOptions = { ...loose, [whole]: true };
       const strict: RecordingOptions = within
         ? options
         : { ...options, onExcessProperty: "error", [around]: options };
@@ -176,6 +180,9 @@ const noting = (
           });
         return Effect.succeed(output);
       };
+      const strictly: Array<Attempt> = [];
+      const holding: Array<Attempt> = [];
+      const anyhow: Array<Attempt> = [];
       const attempt = (
         stages: ReadonlyArray<ReadonlyArray<Attempt>>,
         stage = 0,
@@ -191,12 +198,16 @@ const noting = (
         if (!strictly && !open.delete(index)) return next();
         const mark = writers?.length ?? 0;
         return Effect.matchEffect(
-          encoders[index]!()(input, strictly ? strict : loose),
+          encoders[index]!()(
+            input,
+            strictly ? strict : stages[stage] === anyhow ? loose : wholly,
+          ),
           {
             onFailure: (issue) => {
               forget(mark);
               issues.set(index, issue);
-              if (strictly && couldLoosen(issue)) open.add(index);
+              if (stages[stage] !== anyhow && couldLoosen(issue))
+                open.add(index);
               return next();
             },
             onSuccess: (output) => {
@@ -213,9 +224,6 @@ const noting = (
           },
         );
       };
-      const strictly: Array<Attempt> = [];
-      const holding: Array<Attempt> = [];
-      const anyhow: Array<Attempt> = [];
       for (const index of order) {
         const member = original.types[index]!;
         anyhow.push({ index, strictly: false });
@@ -228,7 +236,11 @@ const noting = (
         if (statesEveryKey(member, input))
           (oneOf ? holding : strictly).push({ index, strictly: false });
       }
-      return attempt([strictly, holding, ...(within ? [] : [anyhow])]);
+      return attempt([
+        strictly,
+        holding,
+        ...(within || options[whole] === true ? [] : [anyhow]),
+      ]);
     },
   );
 };
