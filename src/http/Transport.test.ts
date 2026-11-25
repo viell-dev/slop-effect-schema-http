@@ -47,7 +47,7 @@ describe("Transport.entries", () => {
     "throws TypeError for a non-string header value",
     ({ input }) => {
       expect(() => Transport.entries(input as never)).toThrow(
-        new TypeError("A header line must have a string value"),
+        new TypeError('The header field "x-count" must have a string value'),
       );
     },
   );
@@ -128,9 +128,22 @@ describe("Transport.entries", () => {
   ])("throws TypeError for a malformed array entry", ({ input }) => {
     expect(() => Transport.entries(input as never)).toThrow(
       new TypeError(
-        "A field pair must be a two-position array with a string name",
+        "The field pair at $[0] must be a two-position array with a string name",
       ),
     );
+  });
+
+  it("names the position of a malformed entry after others", () => {
+    const pairs = [
+      ["k", "v"],
+      ["x-value", "fixture", "extra"],
+    ];
+    const message =
+      "The field pair at $[1] must be a two-position array with a string name";
+    for (const input of [pairs, new Set(pairs)])
+      expect(() => Transport.entries(input as never)).toThrow(
+        new TypeError(message),
+      );
   });
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/236

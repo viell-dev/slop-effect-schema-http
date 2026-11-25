@@ -238,7 +238,7 @@ describe("UrlEncoding.queryEntries", () => {
     expect(UrlEncoding.queryEntries(input)).toEqual([["flag", null]]);
     expect(() => UrlEncoding.queryEntries([["missing"]] as never)).toThrow(
       new TypeError(
-        "A field pair must be a two-position array with a string name",
+        "The field pair at $[0] must be a two-position array with a string name",
       ),
     );
   });
@@ -268,7 +268,7 @@ describe("UrlEncoding.queryEntries", () => {
   ])("throws TypeError for a malformed array entry", ({ input }) => {
     expect(() => UrlEncoding.queryEntries(input as never)).toThrow(
       new TypeError(
-        "A field pair must be a two-position array with a string name",
+        "The field pair at $[0] must be a two-position array with a string name",
       ),
     );
   });
@@ -315,7 +315,7 @@ describe("UrlEncoding.queryEntries", () => {
     };
     expect(() => UrlEncoding.queryEntries(pairs as never)).toThrow(
       new TypeError(
-        "A field pair must be a two-position array with a string name",
+        "The field pair at $[1] must be a two-position array with a string name",
       ),
     );
     expect(closed).toBe(true);

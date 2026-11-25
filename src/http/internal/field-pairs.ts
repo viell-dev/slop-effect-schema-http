@@ -15,21 +15,18 @@ export type Reading =
   | RecordFields
   | { readonly kind: "pairs"; readonly entries: ReadonlyArray<Pair> };
 
-class MalformedPair extends WriterError {
-  constructor(
-    message = "A field pair must be a two-position array with a string name",
-  ) {
-    super(message);
-  }
-}
+class MalformedPair extends WriterError {}
 
 export const isMalformedPair = (error: WriterError): error is MalformedPair =>
   error instanceof MalformedPair;
 
-const readPair = (pair: unknown): Pair => {
-  if (!Array.isArray(pair) || pair.length !== 2) throw new MalformedPair();
-  const name: unknown = pair[0];
-  if (typeof name !== "string") throw new MalformedPair();
+const readPair = (pair: unknown, index: number): Pair => {
+  const name: unknown =
+    Array.isArray(pair) && pair.length === 2 ? pair[0] : undefined;
+  if (!Array.isArray(pair) || typeof name !== "string")
+    throw new MalformedPair(
+      `The field pair at ${textPath([index])} must be a two-position array with a string name`,
+    );
   const extra = extraArrayField(pair, 2);
   if (extra !== undefined)
     throw new MalformedPair(
@@ -127,7 +124,7 @@ export function read(input: object, mode?: "record"): Reading | undefined {
         `The field pairs list has an extra array field at ${textPath([extra])}`,
       );
     for (let index = 0; index < length; index++)
-      entries.push(readPair(input[index]));
+      entries.push(readPair(input[index], index));
     return { kind: "pairs", entries };
   }
   const iterator: unknown = Reflect.get(input, Symbol.iterator);

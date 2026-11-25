@@ -857,7 +857,7 @@ const misfit = (
 
 const invalidHeaderFields = (cause: TypeError) =>
   new InvalidRequest({
-    message: GroupEncoding.headerErrorMessage(cause),
+    message: cause.message,
     cause,
   });
 

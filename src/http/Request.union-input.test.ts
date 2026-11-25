@@ -167,7 +167,7 @@ describe("signature-less object candidates under unions", () => {
         const headed = Request.get("/x").pipe(Request.headers(schema));
         const failure = yield* refusal(headed, { headers: counted });
         expect(failure.message).toBe(
-          "The header schema must encode string field names and values",
+          'The header field "x-count" must have a string value',
         );
       }
       // JSON has no BigInt; the JSON writer names the field, beside a stated member or alone.

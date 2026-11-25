@@ -128,27 +128,21 @@ export const queryEntries = (reading: Reading): Query => {
   return query;
 };
 
-export class InvalidHeaderValue extends WriterError {
-  constructor() {
-    super("A header line must have a string value");
+export class InvalidHeaderValue extends InvalidGroupField {
+  constructor(name: string) {
+    super(`The header field ${JSON.stringify(name)} must have a string value`);
   }
 }
 
 export const isInvalidHeaderValue = (
   error: WriterError,
-): error is InvalidHeaderValue | InvalidGroupField =>
-  error instanceof InvalidHeaderValue || error instanceof InvalidGroupField;
-
-export const headerErrorMessage = (error: TypeError): string =>
-  error instanceof InvalidGroupField
-    ? error.message
-    : "The header schema must encode string field names and values";
+): error is InvalidGroupField => error instanceof InvalidGroupField;
 
 const headerLine = (
   name: string,
   value: unknown,
 ): readonly [string, string] => {
-  if (typeof value !== "string") throw new InvalidHeaderValue();
+  if (typeof value !== "string") throw new InvalidHeaderValue(name);
   return [name, value];
 };
 

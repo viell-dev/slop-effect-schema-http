@@ -2220,7 +2220,7 @@ describe("group schema output", () => {
           if (result._tag === "Failure") {
             expect(result.failure).toBeInstanceOf(Request.InvalidRequest);
             expect(result.failure.message).toBe(
-              "The header schema must encode string field names and values",
+              'The header field "value" must have a string value',
             );
           }
         }
@@ -2682,7 +2682,7 @@ describe("pairs group output", () => {
         message: "The query schema must encode a field record or field pairs",
         cause: {
           message:
-            "A field pair must be a two-position array with a string name",
+            "The field pair at $[0] must be a two-position array with a string name",
         },
       });
     }),
@@ -2812,7 +2812,7 @@ describe("pairs group output", () => {
         headers: [pair],
       });
       expect(error.message).toBe(
-        "The header schema must encode string field names and values",
+        'The header field "k" must have a string value',
       );
       expect(error).toHaveProperty("cause", expect.any(TypeError));
     }),
