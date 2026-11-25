@@ -4054,12 +4054,16 @@ failures. Arbitrary iterator and private/custom-prototype evidence remains exclu
   Status: tested.
   - `[EXT-45x] ${binding} ${opaque} rejection still permits valid dense array reading and rejects invalid cells`
 - **EXT-45y** An accepting opaque alternative in a mixed view keeps prior success without reading
-  throwing length, hidden-cell or prototype traps. Hidden profiles retain original array identity;
-  the prototype profile contains an enumerable rewriting cell and retains its existing normalized
-  clone. The initial over-broad identity assertion and failed 0.14 observation are preserved before
-  that fixture assertion was corrected under the public enumerable-control rule. Renderers consume
-  only count, avoiding serialization or deep comparison of the throwing proxy. Status: tested.
+  throwing length or hidden-cell traps. Those profiles retain original array identity. The
+  prototype profile contains an enumerable rewriting cell and still clones the array and sends
+  the exact path. Since [#253](https://github.com/viell-dev/slop-effect-schema-http/pull/253), it
+  makes one prototype read where 0.18.0 made none. The check for inherited sparse cells in
+  [#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257) documents that read,
+  and the throwing trap still allows dispatch. The initial over-broad identity assertion and
+  failed 0.14 observation are preserved before that fixture was corrected under the public
+  enumerable-control rule. Renderers consume only count. Status: tested.
   - `[EXT-45y] an accepting opaque alternative avoids ${reflection} reflection through a mixed array view`
+  - `[EXT-45y] a sparse mixed array can probe its prototype once and still dispatch`
 - **EXT-45z** A Declaration backed by an encoded unknown-element array retains ordinary reading
   when a sparse proxy throws on prototype inspection. The declaration's identity mapping has a
   direct public-Schema round-trip and invalid non-array control. The HTTP path consumes only the
@@ -4680,19 +4684,24 @@ The logs and JUnit reports are under `artifacts/list-record-6baefb8-*` and `arti
   - `[EXT-51e] ${group} ${order} refuses a three-cell pair`
   - `[EXT-51e] ${group} ${order} sends valid pairs under their names`
 - **EXT-51f** [#241](https://github.com/viell-dev/slop-effect-schema-http/issues/241): a parent with
-  `n: FiniteFromString` and an `items` list-or-record union still sends
-  `{"n":"1","items":[{"page_size":"25"}]}` for `{ n: 1, items: [{ limit: "x" }] }` in JSON and
-  path, in either union order. Status: limit.
-  - `[EXT-51f] currently ${binding} ${order} replaces an invalid item under a fieldwise parent`
+  `n: FiniteFromString` and an `items` list-or-record union refuses
+  `{ n: 1, items: [{ limit: "x" }] }` at `["items"][0]["limit"]` in JSON and path, in either
+  union order. 0.18.0 sent the constructor default `"25"` in place of the invalid value.
+  [#254](https://github.com/viell-dev/slop-effect-schema-http/pull/254) requires each field's read to
+  account for supplied keys. Status: tested.
+  - `[EXT-51f] ${binding} ${order} refuses an invalid item under a fieldwise parent`
 - **EXT-51g** [#242](https://github.com/viell-dev/slop-effect-schema-http/issues/242): a
-  null-prototype pairs list beside an empty struct is written under its index. The socket sees
-  `/x?0=x-list&0=a` or one Fetch-combined header `0: x-list, a`. The pairs schema alone sends
-  `/x?x-list=a` or `x-list: a`. Status: limit.
-  - `[EXT-51g] currently ${group} writes a null-prototype pairs list under its index beside an empty struct`
+  null-prototype pairs list beside an empty struct sends `/x?x-list=a` or `x-list: a`, as the
+  pairs schema alone does. 0.18.0 sent `/x?0=x-list&0=a` or one Fetch-combined `0: x-list, a`
+  header. [#252](https://github.com/viell-dev/slop-effect-schema-http/pull/252) reads actual
+  arrays by position. Status: tested.
+  - `[EXT-51g] ${group} writes a null-prototype pairs list under its field name beside an empty struct`
 - **EXT-51h** [#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243): a list with
-  `{ limit: "x", extra: 1 }` beside an open record refuses at `[0]["extra"]` in either order.
-  The list alone strips the extra key and sends `[{"limit":"x"}]` in JSON and path. Status: limit.
-  - `[EXT-51h] currently ${binding} ${order} refuses an unstated list item key beside a record`
+  `{ limit: "x", extra: 1 }` beside an open record sends `[{"limit":"x"}]` in JSON and path,
+  in either order. 0.18.0 refused at `[0]["extra"]`.
+  [#253](https://github.com/viell-dev/slop-effect-schema-http/pull/253) rules out the record
+  for a list, so the list member can strip the unstated key. Status: tested.
+  - `[EXT-51h] ${binding} ${order} reads a list with an unstated item key as the list member does`
 - **EXT-51i** A list with `{ page_size: "many" }` beside an open record refuses with
   `Schema.SchemaError` and an empty ledger, in either order in JSON and path, as the list alone
   does. Before [#235](https://github.com/viell-dev/slop-effect-schema-http/pull/235) the union

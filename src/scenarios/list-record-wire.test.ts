@@ -226,7 +226,7 @@ describe("Lists beside records on the wire", () => {
       );
 
       it.live(
-        `[EXT-51f] currently ${binding} ${order} replaces an invalid item under a fieldwise parent`,
+        `[EXT-51f] ${binding} ${order} refuses an invalid item under a fieldwise parent`,
         () =>
           Effect.gen(function* () {
             const backend = yield* start();
@@ -234,32 +234,23 @@ describe("Lists beside records on the wire", () => {
               n: Schema.FiniteFromString,
               items: filtered,
             });
-            yield* send(backend, binding, schema, {
-              n: 1,
-              items: [{ limit: "x" }],
-            });
-            yield* jsonWire(
+            const result = yield* refuse(
               backend,
-              binding,
-              '{"n":"1","items":[{"page_size":"25"}]}',
+              send(backend, binding, schema, { n: 1, items: [{ limit: "x" }] }),
             );
+            expect(
+              result._tag === "Failure" && String(result.failure),
+            ).toContain('["items"][0]["limit"]');
           }),
       );
 
       it.live(
-        `[EXT-51h] currently ${binding} ${order} refuses an unstated list item key beside a record`,
+        `[EXT-51h] ${binding} ${order} reads a list with an unstated item key as the list member does`,
         () =>
           Effect.gen(function* () {
             const backend = yield* start();
             const input = [{ limit: "x", extra: 1 }];
-            const result = yield* refuse(
-              backend,
-              send(backend, binding, listed, input),
-            );
-            expect(
-              result._tag === "Failure" && String(result.failure),
-            ).toContain('[0]["extra"]');
-            yield* send(backend, binding, Plain, input);
+            yield* send(backend, binding, listed, input);
             yield* jsonWire(backend, binding, '[{"limit":"x"}]');
           }),
       );
@@ -327,7 +318,7 @@ describe("Lists beside records on the wire", () => {
     }
 
     it.live(
-      `[EXT-51g] currently ${group} writes a null-prototype pairs list under its index beside an empty struct`,
+      `[EXT-51g] ${group} writes a null-prototype pairs list under its field name beside an empty struct`,
       () =>
         Effect.gen(function* () {
           const input = Object.setPrototypeOf([["x-list", "a"]], null);
@@ -346,15 +337,14 @@ describe("Lists beside records on the wire", () => {
 
           const backend = yield* start();
           yield* sendGroup(backend, group, EmptyOrPairs, input);
-          // Fetch combines the two values in the numeric header into one wire line.
           yield* wire(
             backend,
             "GET",
-            group === "query" ? "/x?0=x-list&0=a" : "/x",
+            group === "query" ? "/x?x-list=a" : "/x",
             undefined,
             [
-              ["0", group === "headers" ? ["x-list, a"] : []],
-              ["x-list", []],
+              ["0", []],
+              ["x-list", group === "headers" ? ["a"] : []],
             ],
           );
         }),

@@ -157,11 +157,14 @@ export interface Protocol {
   /** The body codec of an action's request. It sets the content type. */
   readonly body: <In>(
     action: Framed<In>,
-  ) => Body.Encoder<In, Schema.SchemaError>;
+  ) => Body.Encoder<In, Schema.SchemaError | HttpBody.HttpBodyError>;
   /** An action's request: `POST soap` with the version's framing. Relative to a base URL. */
   readonly request: <In>(
     action: Framed<In>,
-  ) => Request.Request<{ readonly body: In }, Schema.SchemaError>;
+  ) => Request.Request<
+    { readonly body: In },
+    Schema.SchemaError | HttpBody.HttpBodyError
+  >;
   /** The decoder of an action's successful response. */
   readonly decoder: <Out>(
     action: Action<unknown, Out>,
@@ -225,7 +228,9 @@ const makeProtocol = (options: {
   ): Schema.Codec<T, Uint8Array> =>
     ElementFromBytes.pipe(Schema.decodeTo(envelope(payload)));
   const responses = xmlBytes("application/octet-stream", options.mediaType);
-  const body = <In>(framed: Framed<In>): Body.Encoder<In, Schema.SchemaError> =>
+  const body = <In>(
+    framed: Framed<In>,
+  ): Body.Encoder<In, Schema.SchemaError | HttpBody.HttpBodyError> =>
     xmlBytes(options.contentType(framed), options.mediaType).pipe(
       Body.encodeSchema(document(framed.input)),
     );
