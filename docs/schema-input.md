@@ -8,12 +8,12 @@ preservation limits.
 
 ## Choose an input form
 
-| You have                                         | What to supply                              | Important limit                                                                        |
-| ------------------------------------------------ | ------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Application values                               | The schema's constructor input              | A plain object can construct a class; constructor defaults can fill omissions          |
-| A complete wire-shaped value                     | The schema's encoded input                  | Constructor priority still applies; decoding/re-encoding can change spelling           |
-| Fields using different sides                     | A supported one-level mix                   | Nested mixing is not recursively built into the type; some runtime combinations refuse |
-| Conflicting names or an unsupported default path | Validate and map to one decoded shape first | Supplying both aliases is not a general conflict check                                 |
+| You have                                         | What to supply                              | Important limit                                                                |
+| ------------------------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------ |
+| Application values                               | The schema's constructor input              | A plain object can construct a class; constructor defaults can fill omissions  |
+| A complete wire-shaped value                     | The schema's encoded input                  | Constructor priority still applies; decoding/re-encoding can change spelling   |
+| Fields using different sides                     | Decoded names, each value on either side    | A wire name makes the whole object encoded; the items of a list share one side |
+| Conflicting names or an unsupported default path | Validate and map to one decoded shape first | A field given under both its names refuses, even where the two agree           |
 
 For example, a finite-number query can accept a number or its encoded text:
 
@@ -21,9 +21,54 @@ For example, a finite-number query can accept a number or its encoded text:
 
 <<< ../examples/modules/request.ts#two-sides
 
-The [cumulative release history](./release-notes/index.md#schema-input-hardening) distinguishes
-static typing repairs, extensions of constructor-default validation, and separate normalization
-fixes. Current support is defined below; it does not require reconstructing earlier articles.
+## What will be sent
+
+These schemas show the common cases:
+
+<<< ../examples/schema-input.ts#what-is-sent
+
+Each row gives a value, the schema it meets, and what the request carries or which error prepares
+instead. A `SchemaError`, `HttpBodyError` or `Request.InvalidRequest` fails before dispatch.
+[Limits](./limits.md#read-a-refusal-message) explains each message and what to change.
+
+| The caller gives                                                    | Under                                      | Result                                                                                             |
+| ------------------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `{ limit: 5, count: "3" }`: decoded names, values on either side    | `Page`                                     | `{"page_size":"5","count":"3"}`                                                                    |
+| `{ page_size: "5", count: 3 }`: a wire name beside a decoded value  | `Page`                                     | `Missing key at ["limit"]`; the whole object is read as encoded, where `3` is not text             |
+| `{ limit: 5, page_size: "5", count: 3 }`: one field under two names | `Page`                                     | `The schema cannot keep this field with the rest of the value at ["page_size"]`, though they agree |
+| `{ page_size: "many", count: "3" }`: an invalid wire-named value    | `Page`, whose fields are required          | `Missing key at ["limit"]`, the decoded name                                                       |
+|                                                                     | The same field made `optionalKey`          | `The schema cannot keep this field … at ["page_size"]`                                             |
+| `[{ limit: 5 }, { page_size: "6" }]`: list items on different sides | A list of `Page` with `optionalKey` fields | `The schema cannot keep this field … at [1]["page_size"]`                                          |
+| `{ ids: [5, "6"] }`: scalar list items on different sides           | `Ids`                                      | `Expected number at ["ids"][1]`; `["5", "6"]` and `[5, 6]` both work                               |
+| `{ _tag: "Comment", text: "x", due: "d" }`: another variant's field | `Union([Comment, Reschedule])`             | `{"_tag":"Comment","text":"x"}`, with no error                                                     |
+| `{ title: "a", extra: 1 }`: a key the schema does not state         | `Struct({ title: String })`                | `{"title":"a"}`, with no error                                                                     |
+| `{ note: undefined }`                                               | `Schema.optional(String)`                  | JSON `{"note":null}`; a query or header leaves the field out                                       |
+|                                                                     | `Schema.optionalKey(String)`               | `Expected string at ["note"]`                                                                      |
+|                                                                     | `Schema.UndefinedOr(String)`               | JSON `{"note":null}`                                                                               |
+|                                                                     | `Schema.Any`, or `Body.json`               | `{}`                                                                                               |
+| `{ note: NaN }`                                                     | `Schema.Number`                            | JSON `{"note":"NaN"}`; a query `?note=NaN`                                                         |
+|                                                                     | `Schema.Finite`                            | `Expected a finite number at ["note"]`                                                             |
+|                                                                     | `Schema.Any`, or `Body.json`               | `HttpBodyError`: `JSON body at $["note"] must be a finite number`                                  |
+| `{ note: new Map([["a", 1]]) }`                                     | `Schema.Any`, or `Body.json`               | `HttpBodyError`: `JSON body at $["note"] cannot encode Map`                                        |
+|                                                                     | `Schema.Record(String, Unknown)`           | `The schema cannot keep this field … at ["note"]`                                                  |
+|                                                                     | `Schema.Unknown`                           | `Expected JSON value at ["note"]`                                                                  |
+| `{ note: new Point() }`, a class instance with a field `x`          | `Schema.Any`, or a string-keyed record     | `{"note":{"x":1}}`                                                                                 |
+|                                                                     | `Schema.Unknown`                           | `Expected JSON value at ["note"]`                                                                  |
+| `{ note: { x: 1 } }` in a query                                     | `Schema.Any`                               | `InvalidRequest`: `The query field "note" must encode a scalar value or a list of scalar values`   |
+| `{ "x-count": 5 }` in headers                                       | `Schema.Any`                               | `InvalidRequest`: `The header field "x-count" must have a string value`                            |
+| `{ ack: undefined }`, `null`, `{}` or `[]`                          | `Struct({ ack: Schema.Void })`             | `{"ack":null}`                                                                                     |
+| `{ ack: 5 }`, a `Date`, a `Map` or `{ a: 1 }`                       | `Struct({ ack: Schema.Void })`             | `Expected void at ["ack"]`                                                                         |
+| `{ b: 1 }`, whose only key no member states                         | `Union([Void, Struct({ a: String })])`     | `null`: the unstated key is left out, and the empty object is Void's                               |
+
+TypeScript catches some of these first. The `Request.Input` type refuses a wire name beside a
+decoded value and a scalar list on two sides. An object literal written in place also fails the
+excess-property check for a key the schema does not state, but a value passed in a variable can
+compile, as `change` does. The type allows both names of one field and list items on different
+sides, and the request then refuses them.
+
+[A key no member states is left out](#a-key-no-member-states-is-stripped-as-a-struct-strips-it), and
+the [Body guide](./modules/body.md#optional-fields-and-numbers) explains optional fields and
+numbers.
 
 ## Reading either schema side
 
@@ -33,9 +78,16 @@ directions are not always inverses. A decoder can accept more than the encoder w
 `decode(encode(value))` need not equal `value`, and `encode(decode(text))` need not equal `text`. A
 schema may accept `t1530` and `15:30` and always write `15:30:00`.
 
-A schema-backed input takes either side, or a mix by field, and the request always carries what the
-schema writes. That applies to headers, query, path and bodies, and it is the same route a raw
-default takes.
+A schema-backed input takes either side, and the request always carries what the schema writes. That
+applies to headers, query, path and bodies, and it is the same route a raw default takes.
+
+A value takes its names from one side. Under the decoded names, each field's value can be on either
+side, so `{ limit: 5, count: "3" }` works under `Page`, and a nested object can be given on either
+side of its own. Once a renamed field appears under its wire name, the whole object is read as the
+encoded side, and every field, with everything inside it, must then be encoded. The items of a list,
+a tuple or a record share one side too, whether they are objects or scalars: under
+`Schema.Array(NumberFromString)`, `[5, "6"]` refuses at `[1]`, though `[5, 6]` and `["5", "6"]` both
+work.
 
 ```text
 decoded value ----------------------> encode --> wire
@@ -53,18 +105,9 @@ its reason, not a defect waiting for a fix.
 
 ### Array normalization preserves positions
 
-When stripping an inner object's unstated fields requires a new view, keep the array's actual keys
-and length, holes and readable hidden/inherited numeric cells. Metadata is not an additional element
-or looked up as an element type. Symbols stay symbols in lookup and loss diagnostics; noncanonical
-index-looking strings stay metadata. Keep an unchanged value's identity and do not invoke its
-iterator to rebuild it. Ordinary processing can still read getters and inspect prototypes. Discover
-hidden/inherited positions only in structural array views without an open or opaque alternative; a
-union's Array alternative alone does not justify inspecting another alternative's value. An empty
-struct member is no such alternative, so beside one a structural view still discovers them. A
-rebuilt view that does not discover them keeps them where the caller put them: an own cell it does
-not rewrite keeps its descriptor, and an inherited one stays inherited from the same prototype.
-Existing enumerable-child normalization still applies across views and does not select or execute an
-alternative. The [0.15 migration](./release-notes/0.15.md) states the normalization changes.
+When preparation rebuilds a list to leave out its items' unstated fields, the list keeps its
+positions, length and holes, and an unchanged list stays the same value. The [design
+contract](./design.md#a-schema-has-two-sides) gives the precise rules.
 
 ### The decoded side is what the schema's constructor takes
 
@@ -132,12 +175,15 @@ into, as an `Option` is. It has these consequences:
 
 - **A field given under both its names** refuses, even where the two agree. Codecs give no general
   way to tell whether two sides' values agree, so this restricts the input rather than finding a
-  contradiction. Give each field one name.
+  contradiction. The refusal names the wire name, as `{ limit: 5, page_size: "5" }` names
+  `["page_size"]`. Give each field one name.
 - **A decoded name below a name the parent writes**, as `{ w: { limit: 5 } }` where `f: Filter` is
   renamed to `w`, refuses too. Below a renamed field, use the same side as its own name.
 - **A list, a tuple and a record are read as one value**, not item by item, so items on different
   sides refuse: `[{ limit: 5 }, { page_size: "6" }]` names `[1]["page_size"]`. The `Input` type
-  allows that mix. Give every item on one side.
+  allows that mix. An item that would be valid alone is refused too when the others put the list on
+  the other side. The same holds for scalar items: under `Schema.Array(Schema.NumberFromString)`,
+  `[5, "6"]` fails with `Expected number` at `[1]`. Give every item on one side.
 - **A field both sides can hold**, as under a schema from text to text, means what the route that
   read it takes it for. Built by a constructor or read field by field it is decoded, so it is
   encoded again. Decoded as part of the whole it is already encoded.
@@ -146,9 +192,12 @@ into, as an `Option` is. It has these consequences:
   `Schema.catchDecoding` does, is the schema's own reading.
 - **Defaults, checks, decoders and services can run more than once**, because a later route can be
   tried after one that lost a field. Routes that read one field read it once.
-- **A refusal names the innermost fields.** Where one check finds a whole field lost and another
-  finds a field inside it lost, only the inner one is named. Where a list is lost because the
-  decoder failed at one item, only that item is named.
+- **A refusal names every field it cannot keep, at the innermost level.** Where one check finds a
+  whole field lost and another finds a field inside it lost, only the inner one is named. Each item
+  that cannot be kept is named on its own: under `Schema.Array(Filter)`,
+  `[{ limit: 1, page_size: "02" }, { page_size: "25" }]` refuses at `[0]["page_size"]` and at
+  `[1]["page_size"]`, and a record names each entry the same way. A schema's own error, such as
+  `Expected number`, is Effect's, which reports the first failure it meets.
 
 ### Where it applies
 
@@ -200,7 +249,14 @@ decoded side by losing them. Under
 value, and a constructor default would go out in the caller's place. Such a schema is read strictly,
 as a union is below, at any depth, so that value goes through the decoder. The same goes for a
 transformation between objects. A value takes its names from one side, so `{ a, B }`, which mixes
-the names of two renamed fields, is a `SchemaError` that names `B`.
+the names of two renamed fields, is a `SchemaError`. Which field it names depends on the fields:
+
+- With optional fields, the refusal names `B`:
+  `The schema cannot keep this field with the rest of the value at ["B"]`.
+- With required fields, it is `Missing key at ["b"]`, the decoded name the caller did not use. The
+  value fits neither side, so the decoded side's error is reported, and on that side `b` is missing.
+  The same goes for a wire-named value the encoded side refuses, such as `{ page_size: "many" }`
+  under a required `limit`, which reports `Missing key at ["limit"]`.
 
 ```ts
 import { Schema } from "effect";
@@ -228,6 +284,23 @@ own value is not.
 
 ### A union keeps what the caller gave
 
+Under a union whose members state different fields, the member that keeps every field the caller
+gave is used, even where an earlier member also fits:
+
+```ts
+import { Schema } from "effect";
+import { Request } from "viell-effect-schema-http";
+
+const Either = Schema.Union([
+  Schema.Struct({ a: Schema.String }),
+  Schema.Struct({ a: Schema.String, b: Schema.String }),
+]);
+const search = Request.get("https://api.example.test/things").pipe(
+  Request.query(Either),
+);
+// Input: { query: { a: "x", b: "y" } }; URL query: ?a=x&b=y
+```
+
 Effect takes the first member that fits and strips what that member does not state, when it reads a
 value and again when it encodes one. A schema with a choice between objects is therefore read
 strictly, through both steps, so a member that keeps every field wins over an earlier one that would
@@ -238,9 +311,11 @@ accessor on a class, an inherited field and one that is not enumerable are field
 keys first, because a strict read only counts keys. An ordinary class instance that only a struct
 can read reads as a plain object. A strict read that passes has stripped nothing. Anything else is
 read as Effect reads it, and the result is compared with what went in, so what is lost is what
-actually went. The strict pass also protects visible fields beside Void as described below. A schema
-with none of these choices reads as it always did. A schema's own steps can run more than once when
-the strict pass refuses.
+actually went. The strict pass also protects visible fields beside Void, as [Void takes only an
+empty value](#void-takes-only-an-empty-value) describes. A schema with no choice between objects is
+not read strictly. A schema's own steps can run more than once when the strict pass refuses.
+
+### An empty struct or open schema keeps every key
 
 An empty struct keeps every key of the value it reads, as given and at every depth. So do an open
 schema, which is `Schema.Unknown`, `Schema.Any` or `Schema.Object` without a check, and an empty
@@ -259,17 +334,8 @@ own keys. An instance with a key set to `undefined` whose other fields the membe
 struct all state reads as a plain object without that key, so the key neither pushes it out of those
 members nor leaves it to a Void. An empty struct query or header binding still states no names.
 
-What the empty struct keeps goes to the writer as given, and each writer refuses before dispatch a
-value it would leave out or replace, naming the field. No writer has a symbol key. The JSON writer
-refuses `NaN`, a BigInt, a symbol or bytes with `HttpBodyError`, and a query or header writer
-refuses an object or a value that is not text with `InvalidRequest`, as the [JSON
-body](./modules/body.md) and [request groups](./schema-groups.md) describe. The stated member's
-codec writes such values for the wire when it takes the value itself.
-
-0.18.0 kept such keys only where every object candidate was empty, and otherwise left them out,
-sometimes sending the stated member's constructor default in the caller's place. A decoded name
-beside a key only the empty struct holds is now sent as given, because the empty struct takes the
-whole value:
+A decoded name beside a key only the empty struct holds is sent as given, because the empty struct
+takes the whole value, and the stated member's constructor default does not stand in:
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -283,50 +349,49 @@ const Filter = Schema.Struct({
 const search = Request.get("https://api.example.test/things").pipe(
   Request.query(Schema.Union([Filter, Schema.Struct({})])),
 );
-// Input: { query: { tag: "a" } }; 0.18.0: ?page_size=25; now: ?tag=a
-// Input: { query: { limit: 5, tag: "a" } }; 0.18.0: ?page_size=5; now: ?limit=5&tag=a
-// Input: { query: { limit: 5 } }; both: ?page_size=5, but ?limit=5 with the empty struct first
+// Input: { query: { tag: "a" } }; URL query: ?tag=a
+// Input: { query: { limit: 5, tag: "a" } }; URL query: ?limit=5&tag=a
+// Input: { query: { limit: 5 } }; URL query: ?page_size=5, but ?limit=5 with the empty struct first
 ```
 
 To get `Filter`'s encoding, bind `Filter` directly; with the empty struct beside it, the first
 member that keeps the whole value writes it. Leave out the keys `Filter` does not state before
 preparation if they should not be sent.
 
-Built-in `Schema.Void` ordinarily accepts any value and returns `undefined`. Here it takes only
-`undefined`, `null`, and an object or list that holds nothing. A scalar, a built-in such as a `Date`
-or a `Map`, an object with a defined enumerable own field and a list with a defined own cell are
-never its:
+What the empty struct keeps goes to the writer as given, and each writer refuses before dispatch a
+value it would leave out or replace, naming the field. No writer has a symbol key. The [JSON
+writer](./modules/body.md#text-json-and-finite-body-limits) refuses `NaN`, a bigint, a symbol or
+bytes with `HttpBodyError`. With `InvalidRequest`, a query writer refuses an object other than a
+`Date`, a function, a symbol or a nested list, and a header writer refuses a value that is not text
+or a list of text, such as a number. The stated member's codec writes such values for the wire when
+it takes the value itself.
 
-- In a union of any mode, also grouped or suspended, a member that keeps the value reads it. A union
-  of Void and an empty struct keeps the object in either order.
-- Anywhere else, as a Void of its own, in a field or in a union of scalars, the request is refused.
+### Void takes only an empty value
+
+Built-in `Schema.Void` ordinarily accepts any value and returns `undefined`. Here it takes only
+`undefined`, `null`, and an object or list that holds nothing, and a JSON body writes each of them
+as `null`. A scalar, a built-in such as a `Date` or a `Map`, an object with a defined enumerable own
+field and a list with a defined own cell are never its:
+
+- In a union of any mode, also grouped or suspended, a member that keeps the value reads it. So
+  `Union([Void, String])` sends `"hello"` as given, and a union of Void and an empty struct keeps
+  the object in either order.
+- Anywhere else, as a Void of its own, in a field or in a union with no member that keeps the value,
+  the request is refused with `Expected void`. `Union([Void, Struct({ a: String })])` refuses
+  `"hello"` this way.
 
 This holds through renames, transformations and the fields of a `Schema.Class`, wherever the library
 can see the Void. Inside an `Option` or another opaque declaration it is the schema's own.
 
 A key no member states is left out first, as under a struct, so an object with no other key holds
-nothing. If the structural member cannot encode a value, such as JSON metadata containing a `Date`
+nothing. Under `Union([Void, Struct({ a: String })])`, `{ b: 1 }` therefore sends `null`, with no
+error. If the structural member cannot encode a value, such as JSON metadata containing a `Date`
 under `Schema.Unknown`, preparation fails with that member's `SchemaError` unless another member can
 write the value without dropping a supplied field, as
 [below](#a-field-no-member-can-keep-is-an-error) describes.
 
 If an object member maps decoded `limit` to encoded `page_size`, either order with Void prepares
-`{ page_size: "05" }` through the object member. An invalid `page_size` is a `SchemaError`. The
-[0.18 migration](./release-notes/0.18.md#keep-fields-beside-void) shows the results that changed.
-
-```ts
-import { Schema } from "effect";
-import { Request } from "viell-effect-schema-http";
-
-const Either = Schema.Union([
-  Schema.Struct({ a: Schema.String }),
-  Schema.Struct({ a: Schema.String, b: Schema.String }),
-]);
-const search = Request.get("https://api.example.test/things").pipe(
-  Request.query(Either),
-);
-// Input: { query: { a: "x", b: "y" } }; URL query: ?a=x&b=y
-```
+`{ page_size: "05" }` through the object member. An invalid `page_size` is a `SchemaError`.
 
 ### A field no member can keep is an error
 
@@ -334,7 +399,8 @@ Under `Union([Struct({ a }), Struct({ b })])`, `{ a, b }` is a `SchemaError` bef
 the field that would go. The types allow that value, and whichever member took it would lose a field
 the schema states, so the choice cannot be made for the caller. A field a wider member states and
 refuses the value of is the same case. Only a real loss counts: a field another schema in the group
-takes is not lost, as the rule on stacked schemas below says.
+takes is not lost, as the rule on stacked schemas in [Schema-backed
+groups](./schema-groups.md#declarations-and-defaults) says.
 
 Writing keeps the same rule. A value is written strictly first. When the member that read it cannot
 write it, the relaxed write that follows can take a later member. That write notes which member
@@ -344,14 +410,14 @@ every key, and a record keeps the keys its key schema takes. Nothing is decoded 
 The relaxed write selects the members to try by kind of value and literal tags, as the installed
 Effect does, before it runs any of them, so a member Effect rules out runs none of its encoders,
 middleware or checks. Like Effect, it follows each tag field through its encoding before it asks
-whether the tag is required. The check runs where the caller's value is plain data, as the section
-above defines it, and the schema there, a union's members and tags among it, names no field after an
-`Object.prototype` member; elsewhere the value is written as Effect writes it. A nested union that
-fails its own check or one-of rule credits none of its members, and each place a value is written
-from is checked on its own, so one object given to two fields is checked against each field's
-member. When no member can both keep and write the value, the refusal is the error of the first
-member that could not write it, the error that member alone gives. That holds through grouped and
-suspended unions:
+whether the tag is required. The check runs where the caller's value is plain data, as [Where it
+applies](#where-it-applies) defines it, and the schema there, a union's members and tags among it,
+names no field after an `Object.prototype` member; elsewhere the value is written as Effect writes
+it. A nested union that fails its own check or one-of rule credits none of its members, and each
+place a value is written from is checked on its own, so one object given to two fields is checked
+against each field's member. When no member can both keep and write the value, the refusal is the
+error of the first member that could not write it, the error that member alone gives. That holds
+through grouped and suspended unions:
 
 ```ts
 import { Schema } from "effect";
@@ -403,8 +469,8 @@ Field-loss accounting reads the same way. A record or a struct that states a fie
 list's cells, and an array or tuple member holds none of an object's keys, including where different
 parent members give a field those schemas. So beside the record above, `[{ page_size: "05" }]` and
 `[{ limit: "x", extra: 1 }]` write `[{}]` and `[{"limit":"x"}]`, as `Schema.Array(Plain)` alone
-does; 0.18.0 refused both. In the same way, `{ "0": { limit: "x", extra: 1 } }` beside an array or
-tuple member is read as its object member alone reads it.
+does. In the same way, `{ "0": { limit: "x", extra: 1 } }` beside an array or tuple member is read
+as its object member alone reads it.
 
 This reading applies where what each alternative reads from an object or a list is known from the
 schema alone: every alternative at the value is a struct, a record, a list, a tuple, or a
@@ -415,17 +481,21 @@ does with them. An alternative that takes no object, such as text, a number, `nu
 `Schema.Void`, does not change that. Field types can be anything; each child value of such a value
 is judged again at its own level. Every member counts, one a tag rules out included.
 
-Anywhere else a value keeps 0.18.0's reading, and so does every value inside it. That covers an
-alternative that is an empty class, a declaration such as `Schema.Date`, an open schema such as
-`Schema.Unknown`, `Schema.catchDecoding` or `Schema.catchEncoding` middleware, or a codec with any
-other transformation, such as a struct decoded from a struct of another shape. Such an alternative
-can take the whole value, and a recovery can turn a failure anywhere inside into a value of its own.
-There a list beside a record refuses a cell key the list member does not state.
+Anywhere else a value has the **union-wide reading**, and so does every value inside it: a key
+counts as held when any alternative at that place states it, whatever kind of value that alternative
+reads. That covers an alternative that is an empty class, a declaration such as `Schema.Date`, an
+open schema such as `Schema.Unknown`, `Schema.catchDecoding` or `Schema.catchEncoding` middleware,
+or a codec with any other transformation, such as a struct decoded from a struct of another shape.
+Such an alternative can take the whole value, and a recovery can turn a failure anywhere inside into
+a value of its own. There a list beside a record refuses a cell key the list member does not state,
+because the record could hold it: with `Schema.Date` added to `Listed`, `[{ page_size: "05" }]`
+refuses at `[0]["page_size"]`.
 
-Beside a Void, a value also keeps 0.18.0's reading where the container rule would leave every field
-the caller supplied unstated. With `Named = Schema.Struct({ a: Schema.String })`,
-`Union([Named, Schema.Void, Schema.Array(Named)])` refuses `{ 0: { a: "ok" } }` before dispatch, as
-0.18.0 did, rather than sending `null`.
+Beside a Void, a value also has the union-wide reading where the container rule would leave every
+field the caller supplied unstated. With `Named = Schema.Struct({ a: Schema.String })`,
+`Union([Named, Schema.Void, Schema.Array(Named)])` refuses `{ 0: { a: "ok" } }` before dispatch
+rather than sending `null`: the list member can hold a cell `0`, so it is a supplied field that Void
+would lose.
 
 A query or header group that encodes to an array of field pairs is read by position, including when
 `Schema.Struct({})` keeps the original array. Both the list and its pairs can have a `null`
@@ -446,7 +516,8 @@ there keeps or refuses as any other does. A strict read of a whole value does pa
 one, because Effect has no way to stop it at one part. So beside a choice the library can see, a
 wider member inside can still win. A stray key inside fails that read, and what the library can see
 is then read as Effect reads it and compared, so a field a wider member could hold can be refused. A
-direct closed struct can recover some such nested losses through the constructor-only route below.
+direct closed struct can recover some such nested losses through its later routes, as [Recovery
+beside an opaque value](#recovery-beside-an-opaque-value) describes.
 
 ### The reading of Effect is tested, not checked at run time
 
@@ -457,17 +528,31 @@ can fall back to Effect's own reading, so a field can go with no error, and vali
 
 ### A key no member states is stripped, as a struct strips it
 
-That is not a union choosing badly. The types did not allow the key, and a stacked schema's fields
-reach every schema in the group this way. So is a key only a member with another tag states, because
-the tag has already chosen, and a key only a member that cannot read the value's container states,
-such as a record beside a list. A key an empty struct member holds is not unstated, as [A union
-keeps what the caller gave](#a-union-keeps-what-the-caller-gave) describes. A required literal tag
-can choose by its decoded or encoded name, including when a whole-object transformation changes its
-name or literal. Both views must rule a member out before its fields go. A missing tag with a
-constructor default leaves that view possible; its default is not run to guess a member. A key set
-to `undefined` is no field at all, so `{ a, b: undefined, c }` reads as `{ a, c }`, and a member
-that states `b` cannot take the value from one that states `c`. A field given under both its names
-is refused, as [above](#constructor-default-validation) gives.
+A key the schema does not state is left out, with no error. Effect's structs strip such keys, and
+preparation does the same, under a struct alone and under a union. A misspelled key such as
+`{ titel: "a" }` under `Struct({ title: optionalKey(String) })` sends `{}`. TypeScript's
+excess-property check catches such a key in an object literal written in place, but not reliably in
+a value built elsewhere. Validate input of unknown shape against the schema before preparation if an
+unexpected key should be an error.
+
+Under a union, a key only a member with another tag states is unstated too, because the tag has
+already chosen. With `Comment` and `Reschedule` from [What will be sent](#what-will-be-sent),
+`{ _tag: "Comment", text: "x", due: "d" }` sends `{"_tag":"Comment","text":"x"}`: a field of the
+wrong variant is not caught. `Schema.TaggedStruct` makes its tag optional on the input side, because
+its constructor fills it in, so a value without `_tag` goes to the first member that keeps every
+field: `{ text: "x" }` is sent as a `Comment`, and `{ text: "x", due: "d" }` as a `Reschedule`. Pass
+`_tag` to choose the variant.
+
+A stacked schema's fields reach every schema in the group this way. A key only a member that cannot
+read the value's container states, such as a record beside a list, is unstated too. A key an empty
+struct member holds is not unstated, as [An empty struct or open schema keeps every
+key](#an-empty-struct-or-open-schema-keeps-every-key) describes. A required literal tag can choose
+by its decoded or encoded name, including when a whole-object transformation changes its name or
+literal. Both views must rule a member out before its fields go. A missing tag with a constructor
+default leaves that view possible; its default is not run to guess a member. A key set to
+`undefined` is no field at all, so `{ a, b: undefined, c }` reads as `{ a, c }`, and a member that
+states `b` cannot take the value from one that states `c`. A field given under both its names is
+refused, as [above](#constructor-default-validation) gives.
 
 ### A weak schema lets more through
 
@@ -488,10 +573,9 @@ prepared if the schema refuses it.
 
 A helper using `Request.Input` must handle the actual alternatives, including encoded nested names.
 Decoded-only helpers declare their own input shape or supply it through a named mapping; the [0.10
-migration](./release-notes/0.10.md) shows both. This type repair changes neither constructor
-priority nor schema reading. An opaque `Schema.ReadonlyMap` can read encoded inner aliases as
-decoded contents and lose them according to its constructor. Supply decoded contents for a
-predictable decoded route.
+migration](./release-notes/0.10.md) shows both. The type changes neither constructor priority nor
+schema reading. An opaque `Schema.ReadonlyMap` can read encoded inner aliases as decoded contents
+and lose them according to its constructor. Supply decoded contents for a predictable decoded route.
 
 ## Recovery beside an opaque value
 
@@ -536,15 +620,15 @@ the schema does with it. These are the places where it cannot, and what happens 
 
 **A refusal another reading might have avoided.** These never lose a field:
 
-- Inside a value that keeps 0.18.0's reading, as [A list stays a list](#a-list-stays-a-list) gives,
+- Inside a value with the union-wide reading, as [A list stays a list](#a-list-stays-a-list) gives,
   a list beside a record refuses a cell key the list member does not state, and an index-keyed
   object beside a list member refuses the key the list states. Leave out keys the list member does
   not state.
-- A mixed-side value can refuse beside Void in either order. With
-  `Struct({ filter: Union([Void, Filter]), sortBy: String })` and
-  `encodeKeys({ sortBy: "sort_by" })`, where `Filter` encodes `limit` as `page_size`,
-  `{ filter: { limit: 5 }, sort_by: "a" }` refuses. Use all-decoded or all-encoded names, one per
-  field.
+- A wire name on a parent makes everything inside it encoded, so a decoded name below refuses. With
+  `Struct({ filter: Filter, sortBy: String })` and `encodeKeys({ sortBy: "sort_by" })`, where
+  `Filter` encodes `limit` as `page_size`, `{ filter: { limit: 5 }, sort_by: "a" }` refuses, and so
+  it does with `Union([Void, Filter])` in either order in `filter`'s place. Use all-decoded or
+  all-encoded names, one per field.
 - A class instance beside a struct member that would strip it refuses rather than being read as the
   class.
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
@@ -581,11 +665,11 @@ the schema does with it. These are the places where it cannot, and what happens 
   among a class's fields, a link whose encoded end is such a record, and the canonical JSON codec of
   `Schema.ObjectKeyword`, which copies only the string fields of an object and the positions of an
   array, report a `SchemaError`. So does such a record or codec that rebuilds a built-in, such as a
-  `Map` or a `Date`, from its own fields. Not covered, as on 0.18.0: a symbol inside a declaration's
-  type parameter, such as `Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`. A
-  symbol key the schema declares is written as it chooses, and one at a class's root is stripped.
-  See the [Body guide](./modules/body.md#text-json-and-finite-body-limits) for writer rules. An
-  opaque transformation can still choose its own encoded representation.
+  `Map` or a `Date`, from its own fields. Not covered: a symbol inside a declaration's type
+  parameter, such as `Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`. A symbol
+  key the schema declares is written as it chooses, and one at a class's root is stripped. See the
+  [Body guide](./modules/body.md#text-json-and-finite-body-limits) for writer rules. An opaque
+  transformation can still choose its own encoded representation.
 - Opaque contents use their schema's own reading. A `ReadonlyMap` containing
   `{ term: "x", page_size: "05" }` can lose the alias through construction. Use decoded contents
   such as `{ term: "x", limit: "05" }` for a predictable decoded route.
@@ -597,3 +681,6 @@ the schema does with it. These are the places where it cannot, and what happens 
 A safe explicit route validates the external representation with the application's chosen schema,
 maps it to decoded names, then supplies that decoded value through `Request.mapInput` or the
 operation input. The migration examples execute those steps and keep failure cases checked.
+
+The [cumulative release history](./release-notes/index.md#schema-input-hardening) records how these
+rules changed between releases. This page states the current rules without relying on it.

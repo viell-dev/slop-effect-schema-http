@@ -355,22 +355,22 @@ value's shape, and `Schema.String.check` with `Schema.isPattern` does the same f
 ### A schema has two sides
 
 A schema's decoded side is what your application works with, and its encoded side is what goes on
-the wire. A schema-backed input takes either side, or a mix by field, and the request always carries
-what the schema writes:
+the wire. A schema-backed input takes either side, and the request always carries what the schema
+writes. Under the decoded names, each field's value can be on either side:
 
 <<< ../../examples/modules/request.ts#two-sides
 
 This applies to `Request.path`, `Request.query`, `Request.headers`, `Body.jsonSchema` and
 `Body.encodeSchema`. For this schema:
 
-| The caller gives                               | Read as                    | The request carries                |
-| ---------------------------------------------- | -------------------------- | ---------------------------------- |
-| `{ from: date, limit: 5 }`                     | Decoded                    | `from=2026-11-07T12…&limit=5`      |
-| `{ from: "2026-11-07T12:00:00Z", limit: "5" }` | Encoded, and decoded first | The same                           |
-| `{ from: date, limit: "5" }`                   | A mix, field by field      | The same                           |
-| `{ from: date, limit: "05" }`                  | A mix                      | `limit=5`, as the schema writes it |
-| `{ from: date, limit: "many" }`                | Neither                    | `SchemaError`, before dispatch     |
-| `{ from: date, limit: true }`                  | Neither                    | A compile error                    |
+| The caller gives                               | Read as                     | The request carries                |
+| ---------------------------------------------- | --------------------------- | ---------------------------------- |
+| `{ from: date, limit: 5 }`                     | Decoded                     | `from=2026-11-07T12…&limit=5`      |
+| `{ from: "2026-11-07T12:00:00Z", limit: "5" }` | Encoded, and decoded first  | The same                           |
+| `{ from: date, limit: "5" }`                   | Decoded names, values mixed | The same                           |
+| `{ from: date, limit: "05" }`                  | Decoded names, values mixed | `limit=5`, as the schema writes it |
+| `{ from: date, limit: "many" }`                | Neither                     | `SchemaError`, before dispatch     |
+| `{ from: date, limit: true }`                  | Neither                     | A compile error                    |
 
 The decoded side is what the schema's constructor takes. A plain object works for a `Schema.Class`,
 and a field with a constructor default can be left out. Preparation tries the decoded side first,
@@ -399,9 +399,27 @@ encoded text again; whole encoded group reading can change that interpretation.
 
 #### When the two sides state different names
 
-Renamed fields accept complete encoded shapes. Mixing the names of two sides refuses, and so does
-supplying both names of one field. The [input
-reference](../schema-input.md#preservation-and-selection) explains strict reading.
+A value takes its names from one side. Renamed fields accept complete encoded shapes, and under the
+decoded names each value can still be on either side. Once a renamed field appears under its wire
+name, the whole object is read as encoded, so every field, with everything inside it, must then be
+encoded. With `limit` written as `page_size` and both fields from `Schema.FiniteFromString`:
+
+| The caller gives                         | The request carries or fails with                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------- |
+| `{ limit: 5, count: "3" }`               | `{"page_size":"5","count":"3"}`                                                 |
+| `{ page_size: "5", count: "3" }`         | The same                                                                        |
+| `{ page_size: "5", count: 3 }`           | `Missing key at ["limit"]`                                                      |
+| `{ limit: 5, page_size: "5", count: 3 }` | `The schema cannot keep this field with the rest of the value at ["page_size"]` |
+
+Supplying both names of one field refuses, even where the two agree. A value under a wire name that
+the encoded side refuses reports differently by field. With required fields,
+`{ page_size: "many", count: "3" }` fails with `Missing key at ["limit"]`, naming the decoded name
+the caller did not use: the value fits neither side, and the decoded side's error is reported. With
+an optional field, it fails with
+`The schema cannot keep this field with the rest of the value at ["page_size"]`. The items of a list
+share one side as well. The [input reference](../schema-input.md#what-will-be-sent) gives more
+cases, and [Preservation and selection](../schema-input.md#preservation-and-selection) explains
+strict reading.
 
 #### Under a union
 

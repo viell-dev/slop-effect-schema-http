@@ -84,8 +84,10 @@ Compose the returned Effect with Effect's error-handling functions:
 
 <<< ../../examples/modules/operation.ts#failures
 
-Input schema failures happen before dispatch. Transport failures happen during client execution.
-`DecodeError` means a selected body decoder or an unmatched body's drain failed.
+Request preparation failures happen before dispatch: a `SchemaError` when an input schema refuses a
+value, an `HttpBodyError` when a body writer cannot represent one, and `Request.InvalidRequest` for
+a URL, field or group the request cannot be built from. Transport failures happen during client
+execution. `DecodeError` means a selected body decoder or an unmatched body's drain failed.
 `UnexpectedResponse` means no case matched and draining succeeded. [Limits and
 recovery](../limits.md#identify-the-failure-stage) explains what to inspect at each stage. The
 Effect type retains the error union and any services required by schemas or custom decoders.

@@ -228,6 +228,12 @@
   rule](https://viell-dev.github.io/slop-effect-schema-http/schema-input#constructor-default-validation).
 - A refusal names the innermost lost fields, so it no longer names a field beside one inside it
   ([#262](https://github.com/viell-dev/slop-effect-schema-http/issues/262)).
+- Correct what the guides say about mixing sides, non-finite numbers, undefined fields, binary data
+  and refusal messages. A wire name makes the whole object encoded, and list items share one side;
+  `Schema.Number` writes `NaN` as `"NaN"`, so the JSON writer's refusal reaches only values a schema
+  passes on unconverted; and a required renamed field reports a wrong wire-named value as a missing
+  decoded key. The input reference now starts with a table of what each input sends, and Limits
+  explains each refusal message.
 
 ## 0.18.0 — 2026-11-18
 

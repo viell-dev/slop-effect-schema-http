@@ -238,6 +238,19 @@ array of length two with a string name. The binding refuses malformed pairs with
 before dispatch. Direct calls to `Transport.entries` and `UrlEncoding.queryEntries` throw
 `TypeError` for malformed pairs. Repeated value arrays are also expanded by position.
 
+Array normalization preserves positions. When stripping an inner object's unstated fields requires a
+new view, keep the array's actual keys and length, holes and readable hidden/inherited numeric
+cells. Metadata is not an additional element or looked up as an element type. Symbols stay symbols
+in lookup and loss diagnostics; noncanonical index-looking strings stay metadata. Keep an unchanged
+value's identity and do not invoke its iterator to rebuild it. Ordinary processing can still read
+getters and inspect prototypes. Discover hidden/inherited positions only in structural array views
+without an open or opaque alternative; a union's Array alternative alone does not justify inspecting
+another alternative's value. An empty struct member is no such alternative, so beside one a
+structural view still discovers them. A rebuilt view that does not discover them keeps them where
+the caller put them: an own cell it does not rewrite keeps its descriptor, and an inherited one
+stays inherited from the same prototype. Existing enumerable-child normalization still applies
+across views and does not select or execute an alternative.
+
 ### A schema states the shape of its group
 
 Once a schema is bound to query or headers, every declared name must be allowed by some binding. Raw
