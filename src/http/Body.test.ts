@@ -320,6 +320,40 @@ describe("writer protection for open schemas", () => {
       }),
   );
 
+  it.effect("writes a URL-encoded form a schema supplies", () =>
+    Effect.gen(function* () {
+      const Form = Schema.Struct({
+        user: Schema.String,
+        age: Schema.FiniteFromString,
+        tags: Schema.Array(Schema.String),
+        note: Schema.optionalKey(Schema.String),
+        filter: Schema.Struct({ a: Schema.String }),
+      });
+      const form = Body.urlEncoded.pipe(Body.encodeSchema(Form));
+      expectTypeOf(form.encode)
+        .parameter(0)
+        .toEqualTypeOf<Request.Input<typeof Form>>();
+      expect(
+        textOf(
+          yield* form.encode({
+            user: "a b",
+            age: 5,
+            tags: ["x", "y"],
+            filter: { a: "1" },
+          }),
+        ),
+      ).toBe("user=a+b&age=5&tags=x&tags=y&filter%5Ba%5D=1");
+      // The record, pairs and URLSearchParams forms type-check directly as well.
+      for (const value of [
+        { k: "v", n: 1, list: ["a", 1n, true] },
+        [["k", "v"]] as const,
+        new URLSearchParams("k=v"),
+        UrlParams.make([["k", "v"]]),
+      ])
+        expect(textOf(yield* Body.urlEncoded.encode(value))).toMatch(/^k=v/);
+    }),
+  );
+
   it.effect(
     "checks both schema-backed and prepared URL-encoded form fields",
     () =>
