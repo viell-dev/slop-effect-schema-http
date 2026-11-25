@@ -1,4 +1,4 @@
-import { Effect, Pipeable, Schema, Stream } from "effect";
+import { Effect, Pipeable, type Redacted, Schema, Stream } from "effect";
 import {
   HttpBody,
   HttpClientError,
@@ -235,22 +235,53 @@ export const formData: Codec<
   mediaType: "multipart/form-data",
 });
 
+/** A value that one URL-encoded field writes as its text. */
+export type UrlEncodedValue =
+  | string
+  | number
+  | bigint
+  | boolean
+  | Redacted.Redacted<string | number | bigint | boolean>;
+
+/**
+ * Fields that {@link urlEncoded} writes: each a value, a list of values written as repeated names, or
+ * a record of them written under bracket names. A field set to `undefined` writes nothing.
+ */
+export type UrlEncodedRecord = {
+  /** A field under its name. */
+  readonly [name: string]:
+    | UrlEncodedValue
+    | ReadonlyArray<UrlEncodedValue>
+    | UrlEncodedRecord
+    | undefined;
+};
+
+/** What {@link urlEncoded} writes: `UrlParams`, `URLSearchParams`, field pairs or a record of fields. */
+export type UrlEncodedInput =
+  | UrlParams.UrlParams
+  | URLSearchParams
+  | Iterable<readonly [string, UrlEncodedValue]>
+  | UrlEncodedRecord;
+
 /**
  * Read and write form bodies using Effect's `UrlParams.UrlParams`.
  *
  * @remarks
- * Construct values with `UrlParams.fromInput` from `effect/http`. The media type is
+ * Decoding gives `UrlParams`. Encoding takes `UrlParams`, as `UrlParams.fromInput` from
+ * `effect/http` makes them, or what that reads: a record of fields, field pairs or
+ * `URLSearchParams`, so `Body.encodeSchema` can supply a schema's fields. The media type is
  * `application/x-www-form-urlencoded`. Each pair writes its text: a string, a number, a bigint or
- * a boolean, or a redacted one. JavaScript can also pass what `UrlParams.fromInput` reads, such as
- * a plain record, field pairs or `URLSearchParams`, which is read the same way. A value that
- * reading would drop or write as something else, such as `null`, a `Date`, a list inside a list,
- * a symbol field or a list's own field beside its positions, fails with `HttpBodyError` naming its
- * field, and so does a malformed pair.
+ * a boolean, or a redacted one. A value that reading would drop or write as something else, such as
+ * `null`, a `Date`, a list inside a list, a symbol field or a list's own field beside its positions,
+ * fails with `HttpBodyError` naming its field, and so does a malformed pair.
  */
 export const urlEncoded: Codec<
   UrlParams.UrlParams,
   HttpBody.HttpBodyError,
-  HttpClientError.HttpClientError
+  HttpClientError.HttpClientError,
+  never,
+  never,
+  UrlEncodedInput
 > = make({
   encode: FormBody.encodeUrlParams,
   decode: (response) => response.urlParamsBody,

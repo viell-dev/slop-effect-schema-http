@@ -504,7 +504,7 @@ const atPair: PairRefusal = (position, reason, field) =>
  * text and the scalars `UrlParams` writes as text are kept, and a value Effect would drop or write
  * as something else, such as `null`, a `Date` or a list inside a list, is refused.
  */
-export const encodeUrlParams = (input: UrlParams.UrlParams) =>
+export const encodeUrlParams = (input: unknown) =>
   checkedBody(() => {
     const params = new URLSearchParams();
     const rules: Rules<Param> = {

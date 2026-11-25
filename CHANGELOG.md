@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `Body.urlEncoded` takes a record of fields, field pairs and `URLSearchParams` in its type, as it
+  already did at run time, so `Body.urlEncoded.pipe(Body.encodeSchema(schema))` type-checks for a
+  schema whose encoded side is such a record. New types `UrlEncodedInput`, `UrlEncodedRecord` and
+  `UrlEncodedValue` describe it.
 - **Breaking:** read query and header arrays of pairs by position through name collection, declared
   defaults and serialization
   ([#242](https://github.com/viell-dev/slop-effect-schema-http/issues/242)). For example, a

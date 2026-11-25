@@ -47,6 +47,29 @@ assert.equal(countBody._tag, "Uint8Array");
 if (countBody._tag === "Uint8Array")
   assert.equal(new TextDecoder().decode(countBody.body), "42");
 
+// #region url-encoded
+const TokenRequest = Schema.Struct({
+  grantType: Schema.Literal("client_credentials"),
+  scope: Schema.optionalKey(Schema.Array(Schema.String)),
+}).pipe(Schema.encodeKeys({ grantType: "grant_type" }));
+const requestToken = Request.post("https://auth.example.test/token").pipe(
+  Request.body(Body.urlEncoded.pipe(Body.encodeSchema(TokenRequest))),
+);
+// Pass { body: { grantType: "client_credentials", scope: ["read", "write"] } }.
+// The body is grant_type=client_credentials&scope=read&scope=write.
+// #endregion url-encoded
+const token = await Effect.runPromise(
+  Request.compile(requestToken, {
+    body: { grantType: "client_credentials", scope: ["read", "write"] },
+  }),
+);
+assert.equal(token.request.body._tag, "Uint8Array");
+if (token.request.body._tag === "Uint8Array")
+  assert.equal(
+    new TextDecoder().decode(token.request.body.body),
+    "grant_type=client_credentials&scope=read&scope=write",
+  );
+
 // #region map
 const trimmed = (text: string) => text.trim();
 

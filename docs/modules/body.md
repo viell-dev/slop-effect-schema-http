@@ -28,12 +28,12 @@ Use the codec that matches what the service sends or accepts:
 | `Body.text`               | `string`                        | `text/plain`                        |
 | `Body.bytes`              | `Uint8Array`                    | `application/octet-stream`          |
 | `Body.formData`           | Web `FormData`                  | `multipart/form-data`               |
-| `Body.urlEncoded`         | Effect `UrlParams.UrlParams`    | `application/x-www-form-urlencoded` |
+| `Body.urlEncoded`         | Effect `UrlParams`, or a record | `application/x-www-form-urlencoded` |
 | `Body.empty`              | `void`                          | None                                |
 
-For `Body.urlEncoded`, construct values with `UrlParams.fromInput` from `effect/http`. `Body.empty`
-sends no body and discards incoming bytes. It is useful for responses whose body your application
-does not need, such as a successful deletion.
+`Body.urlEncoded` writes `UrlParams` from `effect/http`, a record of fields, field pairs or
+`URLSearchParams`, and reads `UrlParams`. `Body.empty` sends no body and discards incoming bytes. It
+is useful for responses whose body your application does not need, such as a successful deletion.
 
 ## Validate and transform another representation
 
@@ -145,11 +145,16 @@ supply a form entry, it refuses with `HttpBodyError` naming the field. For examp
 schema that encodes it to text, and a `Redacted` value one that reveals its text. A prepared
 `FormData` can go directly to `Body.formData`, including one from another realm or implementation,
 such as the `undici` package used with its own `fetch`. Anything that is not a form fails with
-`HttpBodyError`. `Body.urlEncoded` writes Effect `UrlParams`, whose values are text or redacted
-text. From JavaScript it also writes numbers, bigints and booleans in those pairs as their text, and
-takes what `UrlParams.fromInput` reads, such as a plain record or `URLSearchParams`. A value that
-reading would drop or write as something else, such as `null` or a `Date`, and a malformed pair fail
-with `HttpBodyError` naming the field.
+`HttpBodyError`.
+
+A schema supplies a URL-encoded form the same way, through `Body.encodeSchema`:
+
+<<< ../../examples/modules/body.ts#url-encoded
+
+`Body.urlEncoded` writes text, numbers, bigints and booleans, or redacted ones, as their text. A
+list writes repeated names and a nested record bracket names, as `UrlParams.fromInput` reads them. A
+value that reading would drop or write as something else, such as `null` or a `Date`, and a
+malformed pair fail with `HttpBodyError` naming the field.
 
 `Body.text`, `Body.bytes` and `Body.empty` also fail with `HttpBodyError` when JavaScript or a
 schema such as `Schema.Any` passes them a value that is not a string, not a `Uint8Array`, or any
