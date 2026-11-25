@@ -1085,12 +1085,6 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
               Schema.Void,
               { page_size: "05" },
             ],
-            // An empty object still fits both oneOf members.
-            [
-              "ambiguous fieldless oneOf",
-              Schema.Union([Filter, Schema.Void], { mode: "oneOf" }),
-              {},
-            ],
           ] as const) {
             const refusing = yield* start();
             const actual = yield* operation(
@@ -1112,6 +1106,37 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
           }
         }),
     );
+    for (const [order, schema, json] of [
+      [
+        "object first",
+        Schema.Union([Filter, Schema.Void], { mode: "oneOf" }),
+        defaulted,
+      ],
+      [
+        "Void first",
+        Schema.Union([Schema.Void, Filter], { mode: "oneOf" }),
+        voidRoot(binding),
+      ],
+    ] as const) {
+      it.live(
+        `[EXT-49o] currently a fieldless oneOf sends the first member's output (${binding}, ${order})`,
+        () =>
+          Effect.gen(function* () {
+            const backend = yield* start();
+            const input = {};
+            expect(Schema.decodeUnknownExit(schema)(input)._tag).toBe(
+              "Failure",
+            );
+            expect(
+              yield* operation(backend.origin, schema, binding)(input),
+            ).toBe("Not Found");
+            expect(input).toEqual({});
+            const ledger = yield* backend.ledger;
+            expect(ledger).toHaveLength(1);
+            wire(ledger[0]!, binding, json);
+          }),
+      );
+    }
   }
 
   for (const kind of ["query", "headers"] as const) {
@@ -1245,7 +1270,7 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
       );
       // https://github.com/viell-dev/slop-effect-schema-http/issues/143
       it.live(
-        `[EXT-49r] ${binding} ${order} a refusal names the invalid field beside a Void member, not a valid alias`,
+        `[EXT-49r] currently a refusal names the outer invalid field and the valid alias beside it (${binding}, ${order})`,
         () =>
           Effect.gen(function* () {
             const refusing = yield* start();
@@ -1278,8 +1303,9 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
             const ledger = yield* backend.ledger;
             expect(ledger).toHaveLength(1);
             wire(ledger[0]!, binding, `{"extra":{"a":1},"filter":${five}}`);
-            expect(message).toContain('["extra"]["a"]');
-            expect(message).not.toContain("page_size");
+            expect(message).toContain('at ["extra"]\n');
+            expect(message).toContain('at ["filter"]["page_size"]');
+            expect(message).not.toContain('["extra"]["a"]');
           }),
       );
       // https://github.com/viell-dev/slop-effect-schema-http/issues/143

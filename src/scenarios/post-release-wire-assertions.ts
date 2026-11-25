@@ -28,6 +28,10 @@ export const assertWireCase = (
       .filter(Boolean)
       .join("\n");
     expect(diagnostic).toContain(expected.field);
+    if (expected.message !== undefined) {
+      expect(result.message).toBe(expected.message);
+      expect(result.cause).toBe(expected.field);
+    }
     const omitted =
       typeof expected.omitted === "string"
         ? [expected.omitted]

@@ -1,6 +1,6 @@
 /** Consumer contracts for the neutral echo probe, exercised from source and from the built app. */
 import { Effect, Schema, SchemaIssue, SchemaTransformation } from "effect";
-import { type HttpClient, UrlParams } from "effect/http";
+import type { HttpClient } from "effect/http";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 
 type Send = (
@@ -76,6 +76,7 @@ export type Wire = {
 type Refusal = {
   readonly tag: "HttpBodyError" | "InvalidRequest" | "SchemaError";
   readonly field: string;
+  readonly message?: string;
   readonly omitted?: string | ReadonlyArray<string> | undefined;
 };
 
@@ -99,6 +100,27 @@ const refused = (
   omitted?: Refusal["omitted"],
 ): WireCase => ({ name, send, expected: { tag, field, omitted } });
 
+const malformedPair = (
+  kind: Group,
+  name: string,
+  input: () => unknown,
+  index: number,
+  omitted?: Refusal["omitted"],
+): WireCase => {
+  const label = kind === "headers" ? "header" : "query";
+  const field = `The field pair at $[${index}] must be a two-position array with a string name`;
+  return {
+    name,
+    send: group(kind, Empty, input),
+    expected: {
+      tag: "InvalidRequest",
+      field,
+      message: `The ${label} schema must encode a field record or field pairs: ${field}`,
+      omitted,
+    },
+  };
+};
+
 const get = (target = "/x", headers?: Wire["headers"]): Wire => ({
   method: "GET",
   target,
@@ -117,9 +139,7 @@ const fieldOnWire = (kind: Group, value: string) =>
 
 const Form = Body.formData.pipe(Body.encodeSchema(Schema.fromFormData(Empty)));
 const urlEncoded = <S extends WireSchema>(schema: S) =>
-  Body.encoder((params: URLSearchParams) =>
-    Body.urlEncoded.encode(UrlParams.fromInput(params)),
-  ).pipe(Body.encodeSchema(Schema.fromURLSearchParams(schema)));
+  Body.urlEncoded.pipe(Body.encodeSchema(Schema.fromURLSearchParams(schema)));
 const SearchParams = urlEncoded(Empty);
 const withMixedSibling = <S extends WireSchema>(item: S) =>
   Schema.Struct({ n: Schema.FiniteFromString, item });
@@ -256,18 +276,18 @@ export const wireCases = {
     ),
   ]),
   "52b": groups.flatMap((kind) => [
-    refused(
+    malformedPair(
+      kind,
       `${kind} refuses a three-cell pair at its position`,
-      group(kind, Empty, () => [["x-value", secret, "third"]]),
-      "InvalidRequest",
-      "The field pair at $[0] must be a two-position array with a string name",
+      () => [["x-value", secret, "third"]],
+      0,
       [secret, "x-value"],
     ),
-    refused(
+    malformedPair(
+      kind,
       `${kind} refuses a non-array iterable entry at its position`,
-      group(kind, Empty, () => new Set(["ab"])),
-      "InvalidRequest",
-      "The field pair at $[0] must be a two-position array with a string name",
+      () => new Set(["ab"]),
+      0,
     ),
     refused(
       `${kind} refuses a defined enumerable non-callable iterator`,
@@ -279,11 +299,11 @@ export const wireCases = {
       "Symbol.iterator",
       secret,
     ),
-    refused(
+    malformedPair(
+      kind,
       `${kind} refuses a numeric pair at its position`,
-      group(kind, Empty, () => [1]),
-      "InvalidRequest",
-      "The field pair at $[0] must be a two-position array with a string name",
+      () => [1],
+      0,
     ),
     sent(
       `${kind} reads a record with a non-enumerable non-callable iterator`,
@@ -910,7 +930,7 @@ export const wireCases = {
   ),
   "59": [
     refused(
-      "a class instance beside a struct that would strip it is refused",
+      "currently a class instance beside a struct that would strip it is refused even with a class-valued sibling",
       json(
         Schema.Struct({
           item: Schema.Union([Filter, Counted]),
@@ -925,12 +945,27 @@ export const wireCases = {
       '["item"]["a"]',
     ),
     sent(
-      "known mismatch: loose JSON write must retain the union member in a class field",
-      json(
-        UnionHolder,
-        () => new UnionHolder({ item: new Counted({ a: "item" }) }),
-      ),
-      post('{"item":{"a":"item"}}'),
+      "Effect constructs the holder with the defaulted struct member before preparation",
+      json(UnionHolder, () => {
+        const holder = new UnionHolder({ item: new Counted({ a: "item" }) });
+        if (
+          holder.item instanceof Counted ||
+          holder.item.limit !== 25 ||
+          Object.keys(holder.item).length !== 1
+        ) {
+          throw new Error("Expected the holder constructor to choose Filter");
+        }
+        return holder;
+      }),
+      post('{"item":{"page_size":"25"}}'),
+    ),
+    refused(
+      "currently a struct field refuses a Counted instance beside Filter",
+      json(Schema.Struct({ item: Schema.Union([Filter, Counted]) }), () => ({
+        item: new Counted({ a: "item" }),
+      })),
+      "SchemaError",
+      '["item"]["a"]',
     ),
     sent(
       "a later open member does not take a class value the first member holds",
@@ -1006,11 +1041,11 @@ export const wireCases = {
       '["item"][0]["limit"]',
       ['at ["item"]\n', 'at ["item"][0]\n'],
     ),
-    refused(
+    malformedPair(
+      "query",
       "malformed query pair refuses at the second position",
-      group("query", Empty, () => [["a", "ok"], ["b"]]),
-      "InvalidRequest",
-      "The field pair at $[1] must be",
+      () => [["a", "ok"], ["b"]],
+      1,
     ),
   ],
   "62": [
@@ -1032,6 +1067,31 @@ export const wireCases = {
         a: "x",
       })),
       post('{"a":"x"}'),
+    ),
+    sent(
+      "Void before String leaves a scalar string to String",
+      json(Schema.Union([Schema.Void, Schema.String]), () => "hello"),
+      post('"hello"'),
+    ),
+    refused(
+      "a scalar in a Void field refuses at that field",
+      json(Schema.Struct({ ack: Schema.Void }), () => ({ ack: 5 })),
+      "SchemaError",
+      'Expected void\n  at ["ack"]',
+    ),
+    ...(
+      [
+        ["number", () => 5],
+        ["Date", () => new Date(0)],
+        ["Map", () => new Map()],
+      ] as const
+    ).map(([name, input]) =>
+      refused(
+        `standalone Void refuses a ${name}`,
+        json(Schema.Void, input),
+        "SchemaError",
+        "Expected void",
+      ),
     ),
     refused(
       "a scalar union cannot discard a populated list through Void",

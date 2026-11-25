@@ -1,8 +1,16 @@
-import { it } from "@effect/vitest";
+import { expectTypeOf, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { lane } from "#lane";
+import { Body } from "viell-effect-schema-http";
 import { outcome, wireCases } from "../clients/post-release-wire.js";
 import { assertWireCase } from "./post-release-wire-assertions.js";
+
+it("[EXT-53b] the form encoder accepts records, pairs and URLSearchParams", () => {
+  type Input = Parameters<typeof Body.urlEncoded.encode>[0];
+  expectTypeOf<{ v: string; repeat: readonly number[] }>().toExtend<Input>();
+  expectTypeOf<ReadonlyArray<readonly [string, string]>>().toExtend<Input>();
+  expectTypeOf<URLSearchParams>().toExtend<Input>();
+});
 
 // Keep the catalogue IDs visible to the catalogue's source check.
 const groups = {

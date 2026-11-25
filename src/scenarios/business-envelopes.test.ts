@@ -300,6 +300,9 @@ describe("business API: envelopes", () => {
           if (error._tag !== "DecodeError") return;
           expect(error.metadata.status).toBe(200);
           expect(error.metadata.headers["x-error-code"]).toBe("CREDIT_HOLD");
+          expect(error.message).toBe(
+            "The body of the status 200 response could not be read (HttpClientError); see cause",
+          );
           // The plain rule read the exception text as JSON and failed; nothing fell through.
           expect(isJsonParseFailure(error.cause)).toBe(true);
           expect(yield* backend.ledger).toHaveLength(1);

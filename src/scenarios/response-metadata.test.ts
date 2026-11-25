@@ -174,6 +174,7 @@ describe(`malformed response metadata and decoding boundaries (${lane.name})`, (
             kind: "UnexpectedResponse",
             status: 200,
           });
+          expect(error.message).toBe("No response case matched status 200");
           const listed = Response.when(
             ({ headers }) =>
               (headers["content-type"] ?? "")

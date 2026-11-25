@@ -286,7 +286,9 @@ raw-socket check is in `business-envelopes.node.test.ts`. Round trips for the di
     not-found envelope into the failure channel with `Operation.mapEffect`)
 - **ERR-2** An error code in a response header on a 200 (a load balancer ejects nodes answering
   anything else): a header rule selected before any body byte is read, ranked above the plain 200
-  rule. Status: tested.
+  rule. Since [#273](https://github.com/viell-dev/slop-effect-schema-http/pull/273), the
+  misordered rules also assert that the decode error message gives status 200 and the cause's
+  `HttpClientError` tag. The message was empty on 0.18.0. Status: tested.
   - `[ERR-2] selects the header error rule ahead of the plain 200 rule`
   - `[ERR-2] declared after the plain 200 rule, the header rule is unreachable and the decode
 failure is final`
@@ -417,6 +419,17 @@ in [services/business.md](./services/business.md), whose `/v2/` half is this par
   - `[STAT-9] Retry-After in seconds and as an HTTP-date are both honoured unaided`
   - `[STAT-9] a 429 with an HTTP-date Retry-After is honoured`
   - `[STAT-9] ignoring Retry-After meets the same refusal until the budget runs out`
+
+  The ignore case has a load-sensitive Chromium timing assertion. At `82f9da9` it took
+  1,905 ms against the 900 ms bound with other lanes running, after the expected three arrivals
+  and HTTP 429. It passed in a standalone full run. At `96e5163`, eight standalone
+  repetitions pinned to one logical CPU took 333 ms in total. Eight repetitions competing
+  with the Node lane (16 workers on that same CPU) took 4,686 ms in total and still passed
+  individually. The measured interval includes browser scheduling, Fetch and the ledger's
+  control request. The status and arrival count still show the retry budget was exhausted
+  while the server was rate-limiting. The assertion and its bound are unchanged. See
+  `artifacts/stat-9-one-cpu-standalone.log` and `artifacts/stat-9-concurrent.log`.
+
 - **STAT-11** A gateway that strips PUT and DELETE, with the service refusing raw ones too: a
   reusable transform that rewrites the method to POST and sets an override header, used even for
   rollback. Also listed under the gateway; this business API is the service behind such a gateway.
@@ -2738,7 +2751,9 @@ an `Option`, and `Body.text` is the provider's `response.text`.
   joins them, so `metadata.headers["content-type"]` is `text/plain, application/json`, and only
   `lines` still has two lines, through `Transport.responseHeaderLines`. A selection rule that compares
   the whole value matches neither, and one that tests the media type must say what it does with a
-  list. The body decodes. Status: limit.
+  list. The body decodes. The unmatched response's message gives only status 200 since
+  [#273](https://github.com/viell-dev/slop-effect-schema-http/pull/273); 0.18.0 had an empty
+  message. Status: limit.
   - `[EXT-27a] ${provider}: conflicting Content-Type lines are joined, and only lines still has them apart`
   - `[EXT-27a] ${provider}: a rule that compares the whole value matches neither type, and one that reads the list has to say so`
 - **EXT-27b** One `Content-Type` twice: `same-type-twice`, as EXT-27a, joined into
@@ -2956,9 +2971,12 @@ records where the library says the rule stops.
   limit.
   - `[EXT-30i] limit: fields no member can hold together in text given as text are not refused, and the first member's go out`
   - `[EXT-30i] limit: fields no member can hold together inside Schema.Option are not refused, and the first member's go out`
-- **EXT-30j** The opaque Option boundary should allow the wider visible union to keep its field. At
-  `82f9da9` the request refuses instead and names the Option payload’s `["held"]["value"]["stray"]`. The original assertion remains failing. See the reproduction under
-  [observed mismatches](#observed-mismatches-at-82f9da9). Status: defect.
+- **EXT-30j** A stray key inside `OptionFromNullOr` next to a visible wider union refuses with
+  `SchemaError` at `["held"]["value"]["stray"]` before dispatch. The old assertion named
+  `["filter"]["limit"]`, which 0.18.0 reports in addition to the Option path. There is no
+  dispatch on either version. [#274, item 2](https://github.com/viell-dev/slop-effect-schema-http/issues/274).
+  Status: defect.
+  - `[EXT-30j] currently a stray OptionFromNullOr payload key beside a visible union refuses before dispatch`
 - **EXT-30k** A renamed struct takes its names from one side: `{ a, B }` is refused by name, with
   nothing sent, and each side alone goes out under the wire names. Status: tested.
   - `[EXT-30k] names from two sides of a renamed struct are refused, by name and never by value, and nothing is sent`
@@ -3212,8 +3230,8 @@ The neutral echo probe's [public contract](./README.md#the-neutral-echo-probe) s
 method, target, body bytes, relevant header lines and request counts. Refusals check `SchemaError`,
 field paths, value redaction and an empty ledger. Published `0.6.0` refuses nine intended successful
 calls at `["f"]["b"]`; its eighteen passing controls remain part of the regression evidence.
-EXT-30j uses `OptionFromNullOr`, whose encoded object is visible. Its changed refusal is tracked
-under [observed mismatches](#observed-mismatches-at-82f9da9).
+EXT-30j uses `OptionFromNullOr`, whose encoded object is visible. Its refusal is tracked under
+[#274, item 2](https://github.com/viell-dev/slop-effect-schema-http/issues/274).
 
 - **EXT-35a** A direct `Option` with an extra opaque key does not prevent a visible nested union
   from keeping its wider member. Both a JSON body and a path renderer preserve `f.b`; the opaque
@@ -3252,9 +3270,14 @@ under [observed mismatches](#observed-mismatches-at-82f9da9).
 - **EXT-35i** Text supplied to a JSON-text field remains subject to its schema's own first-member
   choice, within the documented opaque boundary. Status: limit.
   - `[EXT-35i] control: JSON text remains subject to its schema's own member choice`
-- **EXT-35j** A declared symbol remains available to a path renderer. The own prototype-named JSON
-  control now refuses at the ordinary nested field `["f"]["b"]`. The original assertion remains
-  failing. Status: defect.
+- **EXT-35j** A declared symbol remains available to a path renderer. With own declared
+  `__proto__` and `constructor` fields the JSON control refuses before dispatch at `["f"]["b"]`;
+  0.18.0 sent both declared fields beside the wider union. The
+  [input guide](https://github.com/viell-dev/slop-effect-schema-http/blob/96e5163a0162709020dd8379663e21e546e21f8c/docs/schema-input.md#where-it-applies) excludes schema fields and wire names
+  named after `Object.prototype` members at that object. The [limits page](https://github.com/viell-dev/slop-effect-schema-http/blob/96e5163a0162709020dd8379663e21e546e21f8c/docs/limits.md#compatibility-and-scope)
+  points to those input limits. Status: limit.
+  - `[EXT-35j] currently declared prototype-named fields leave the wider JSON union member refused`
+  - `[EXT-35j] recovery keeps a symbol field consumed by a path renderer`
 - **EXT-35k** The original wider member succeeds when its opaque neighbor has no excess key.
   Status: tested.
   - `[EXT-35k] control: the original wider member works when its Option neighbor has no excess`
@@ -3267,9 +3290,11 @@ under [observed mismatches](#observed-mismatches-at-82f9da9).
 - **EXT-35n** The iterable parent now reaches the path renderer with both visible union fields and
   the declared iterator. The renderer checks the iterator identity and sends the exact encoded
   fields. An own data iterator does not by itself hide adjacent fields. Status: tested.
-- **EXT-35o** The null-prototype object omits `toString`, whose constructor default is `"25"`. At
-  `82f9da9` this control refuses at the ordinary nested field `["f"]["b"]`. The original wire
-  assertion remains failing. Status: defect.
+- **EXT-35o** The null-prototype object omits `toString`, whose constructor default is `"25"`.
+  It refuses at `["f"]["b"]` before dispatch; 0.18.0 sent the wider union and the default. The
+  schema still declares an `Object.prototype` field, so the same exclusion as EXT-35j applies
+  even with a null input prototype. Status: limit.
+  - `[EXT-35o] currently a missing toString default on null-prototype input leaves the wider JSON union member refused`
 - **EXT-35p** A sparse array's custom prototype supplies inherited index `0: "original"`.
   A parent check rejects the wider `f` member while that element remains. Recovery must retain
   the refusal rather than copy away the element and dispatch `x: [null]`. The custom prototype
@@ -3287,8 +3312,11 @@ under [observed mismatches](#observed-mismatches-at-82f9da9).
 - **EXT-35s** A caller changes existing `f.a` before evaluating a pending JSON encoding Effect. The
   operation now sends the current `f.a` and retains `f.b` beside the opaque Option. Status: tested.
 - **EXT-35t** A caller replaces an Option before evaluating a pending JSON encoding Effect. A parent
-  check rejects the replacement identity whenever `f.b` survives. The operation now sends both
-  despite the check, so the empty-ledger assertion remains failing. Status: defect.
+  check rejects the replacement identity whenever `f.b` survives. The request sends both `f.b`
+  and the replacement Option. 0.18.0 refused at `["f"]["b"]` with an empty ledger. The
+  [input guide](https://github.com/viell-dev/slop-effect-schema-http/blob/96e5163a0162709020dd8379663e21e546e21f8c/docs/schema-input.md#where-it-applies) requires the value to stay unchanged
+  until preparation ends. Status: limit.
+  - `[EXT-35t] currently replacing an opaque identity before running the pending encoder sends the replacement despite the parent check`
 - **EXT-35u** Deleting and re-adding a nested Record's key while its body encoding Effect is pending
   changes its observable key order. A parent check rejects the current order; recovery must not
   bypass it using the old order. The
@@ -4364,10 +4392,14 @@ remain under `artifacts/void-member-5e8d57e-*`.
   Status: tested.
   - `[EXT-49n] ${binding} ${level.name} ${order} annotated and checked Void members keep valid aliases and refuse invalid ones`
   - `[EXT-49n] ${binding} a Void member yields supplied fields to an open member or a list`
-- **EXT-49o** Both orders beside a class and oneOf now keep the valid populated input. The class
-  field also keeps it on either side. Invalid populated values and standalone Void refuse. The
-  fieldless `oneOf([Filter, Void])` control now sends a default where it formerly refused and
-  remains a failing assertion. Status: defect.
+- **EXT-49o** Both orders beside a class and oneOf keep the valid populated input. The class
+  field also keeps it on either side. Invalid populated values and standalone Void refuse. An
+  ambiguous fieldless `oneOf` given `{}` sends `{"page_size":"25"}` with Filter first, and
+  `null` in JSON or `undefined` as path text with Void first. Effect alone refuses both orders.
+  The library at 0.18.0 refused with Filter first and wrote Void's output with Void first. [#276](https://github.com/viell-dev/slop-effect-schema-http/issues/276).
+  Status: defect.
+  - `[EXT-49o] ${binding} class-backed and oneOf unions keep populated objects beside Void`
+  - `[EXT-49o] currently a fieldless oneOf sends the first member's output (${binding}, ${order})`
 - **EXT-49p** A cast-only Void-first query or header group given invalid `"many"` or `null` is
   refused before dispatch with a `SchemaError` naming `["page_size"]`, before any check that the
   group's encoded value is a field record. At `36a6188` it was `Request.InvalidRequest` (the encoded
@@ -4381,9 +4413,12 @@ remain under `artifacts/void-member-5e8d57e-*`.
   is still Void's, and `[]` is Void's when Void is first and `[]` otherwise. At `36a6188` the
   Void-first union sent Void's output for these objects and lists. Status: tested.
   - `[EXT-49q] ${binding} ${order} Void keeps an object or list whose contents decode to undefined`
-- **EXT-49r** Beside a valid alias the invalid `extra.a` still refuses before dispatch, but the
-  error now names `["extra"]` and the valid `["filter"]["page_size"]`. The original path assertions
-  remain failing. Status: defect.
+- **EXT-49r** Beside a valid alias the invalid `extra.a` still refuses before dispatch. The
+  message names `["extra"]` and the valid `["filter"]["page_size"]`, omitting `["extra"]["a"]`.
+  0.18.0 names both `["extra"]` and `["extra"]["a"]`, in member order, without naming the
+  valid alias. Both orders and both bindings still dispatch the valid control.
+  [#275](https://github.com/viell-dev/slop-effect-schema-http/issues/275). Status: defect.
+  - `[EXT-49r] currently a refusal names the outer invalid field and the valid alias beside it (${binding}, ${order})`
 - **EXT-49s** `Union([Array(Filter), Void])` in either order refuses invalid `"many"` and `null`
   with `Schema.SchemaError` and zero dispatch on the path and in JSON. Valid encoded, decoded and
   omitted aliases send `"5"`, `"5"` and `"25"`. The empty list keeps first-fit: `[]` array-first
@@ -4627,7 +4662,9 @@ the JUnit reports are under `artifacts/junit-*.xml`.
   Status: tested.
 - **EXT-52b** [#236](https://github.com/viell-dev/slop-effect-schema-http/issues/236). A three-cell
   pair, a non-array iterable entry and a numeric pair fail as `InvalidRequest` with a pair-shape
-  cause naming position `$[0]` and omitting the rejected value. A defined enumerable
+  cause naming position `$[0]` and omitting the rejected value. The six malformed-pair cases
+  also require the full cause text in the top-level message as of
+  [#273](https://github.com/viell-dev/slop-effect-schema-http/pull/273). A defined enumerable
   non-callable `Symbol.iterator` is itself a refused field under
   [#260](https://github.com/viell-dev/slop-effect-schema-http/pull/260), and the same property
   when non-enumerable lets the group write its record. Status: tested.
@@ -4643,7 +4680,13 @@ the JUnit reports are under `artifacts/junit-*.xml`.
 - **EXT-53b** Direct and schema-backed URL encoding and schema-backed multipart refuse null,
   an undefined list cell and a nested number, respectively. Controls write scalars and repeated
   names, including escaping literal spaces and plus signs, with no entries for empty containers.
-  Status: tested.
+  The URLSearchParams schema uses `Body.urlEncoded` directly since
+  [#272](https://github.com/viell-dev/slop-effect-schema-http/pull/272), preserving the same wire
+  expectations. The source and packed type checks verify that the encoder accepts records,
+  field pairs and `URLSearchParams`. This type-only test is outside the historical six-case
+  runtime baseline. The direct composition and all three type assertions fail to type-check at
+  the prior pin, `82f9da9`. Status: tested.
+  - `[EXT-53b] the form encoder accepts records, pairs and URLSearchParams`
 - **EXT-53c** Text, bytes and empty writers refuse wrong-kind values at the root `$`. Their
   controls write UTF-8, arbitrary octets and a zero-byte body. Status: tested.
 - **EXT-53d** Query and header writers refuse own fields beside repeat-list or pair positions and
@@ -4680,11 +4723,11 @@ the JUnit reports are under `artifacts/junit-*.xml`.
 ## Kept-or-refused input across readings and writers (EXT-57 to EXT-64)
 
 These consumer cases use the [neutral echo contract](./README.md#the-neutral-echo-probe) and the
-library's public [input guide](https://github.com/viell-dev/slop-effect-schema-http/blob/82f9da983bf18a1a812ee00210b893af74127f88/docs/schema-input.md),
-[group guide](https://github.com/viell-dev/slop-effect-schema-http/blob/82f9da983bf18a1a812ee00210b893af74127f88/docs/schema-groups.md),
-[body guide](https://github.com/viell-dev/slop-effect-schema-http/blob/82f9da983bf18a1a812ee00210b893af74127f88/docs/modules/body.md)
-and [Unreleased change history](https://github.com/viell-dev/slop-effect-schema-http/blob/82f9da983bf18a1a812ee00210b893af74127f88/CHANGELOG.md#unreleased).
-The same 57 new cases execute via Fetch through real sockets in Node, Chromium, packed and
+library's public [input guide](https://github.com/viell-dev/slop-effect-schema-http/blob/96e5163a0162709020dd8379663e21e546e21f8c/docs/schema-input.md),
+[group guide](https://github.com/viell-dev/slop-effect-schema-http/blob/96e5163a0162709020dd8379663e21e546e21f8c/docs/schema-groups.md),
+[body guide](https://github.com/viell-dev/slop-effect-schema-http/blob/96e5163a0162709020dd8379663e21e546e21f8c/docs/modules/body.md)
+and [Unreleased change history](https://github.com/viell-dev/slop-effect-schema-http/blob/96e5163a0162709020dd8379663e21e546e21f8c/CHANGELOG.md#unreleased).
+The same 63 cases execute via Fetch through real sockets in Node, Chromium, packed and
 production-app mode. Successful cases assert the exact target, selected header lines and body
 bytes. Refusals assert the typed error, relevant diagnostic and an empty ledger. The app goes
 through its same-origin proxy and imports the packed package.
@@ -4702,90 +4745,99 @@ through its same-origin proxy and imports the packed package.
 - **EXT-58** Stacked query and header schemas exercise both orders. A sibling writes a supplied
   field when a union member leaves it out and the union writes nothing in its place. A schema that would send a default in
   its place refuses, even when the sibling can keep the input. Status: tested.
-- **EXT-59** The loose writer keeps the class member over a later open member. A class instance
-  beside a struct that would strip it has a documented refusal as a control. A union in a class's
-  field reproduces a silent replacement, detailed below. Status: defect.
+- **EXT-59** Effect constructs the holder's `item` as `{ limit: 25 }` before preparation, and
+  the request sends `{"item":{"page_size":"25"}}`. The constructor check distinguishes this from
+  preparing a struct containing the original `Counted` instance. That struct refuses at
+  `["item"]["a"]` with or without a class-valued sibling, even though the class member can write
+  the value. The loose writer still keeps the class member over a later open member. All four
+  cases agree with 0.18.0. [#274, item 1](https://github.com/viell-dev/slop-effect-schema-http/issues/274).
+  Status: defect.
+  - `[EXT-59] Effect constructs the holder with the defaulted struct member before preparation`
+  - `[EXT-59] currently a struct field refuses a Counted instance beside Filter`
+  - `[EXT-59] currently a class instance beside a struct that would strip it is refused even with a class-valued sibling`
+  - `[EXT-59] a later open member does not take a class value the first member holds`
 - **EXT-60** [#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261). Open JSON
   records and ObjectKeyword refuse Map, Date and URL before rebuilding away their content, at the
   root, in a field or at a list index. Open query and header records refuse Date. A class
   instance with own fields remains writable. Status: tested.
 - **EXT-61** [#262](https://github.com/viell-dev/slop-effect-schema-http/issues/262). A JSON refusal
-  names the innermost lost list field, and a malformed second query pair names `$[1]`.
-  Status: tested.
+  names the innermost lost list field, and a malformed second query pair names `$[1]` in both
+  the cause and the top-level message since
+  [#273](https://github.com/viell-dev/slop-effect-schema-http/pull/273). Status: tested.
 - **EXT-62** [#264](https://github.com/viell-dev/slop-effect-schema-http/issues/264) and
   [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). An undefined-only
   instance next to Void and an empty struct stays an object. Populated input survives Void in a
   suspended class, in a suspended encoded member, and in an empty struct. Standalone Void, Void
-  beside a scalar, and Void under an encoded field name refuse populated input. Unknown, Any,
+  beside a scalar, and Void under an encoded field name refuse populated input. Since
+  [#271](https://github.com/viell-dev/slop-effect-schema-http/pull/271), Void also yields
+  `"hello"` to the String member, refuses `{ ack: 5 }` at `["ack"]` when `ack` is Void, and
+  refuses a number, Date or Map at the root with `Expected void`. Both 0.18.0 and the previous
+  pin sent `{"ack":null}` for the field case and `null` for the other four inputs. Unknown, Any,
   ObjectKeyword and an empty struct each keep additional nested keys in a list beside a class.
   Status: tested.
 - **EXT-63** [#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243). A list
   beside a record uses its list member both inside a class's JSON field and in a path union
   that also has a class alternative. Status: tested.
-- **EXT-64** The [built request probe](./src/app/wire.html) repeats all 57 EXT-57–63 cases.
-  Lane: app. Status: defect.
+- **EXT-64** The [built request probe](./src/app/wire.html) repeats all 63 EXT-57–63 cases,
+  including the EXT-59 refusal pins. Lane: app. Status: tested.
 
 ### Node baseline at published 0.18.0
 
-The baseline ran the 57 new cases against source at `7c7c54f` with Effect 4.1.4 and Node 24.22.2
-on Linux. The 72 earlier probe cases were filtered out. The log and report are under
-`artifacts/019-baseline-node.*`.
+The baseline ran the 63 EXT-57–63 cases against source at `7c7c54f` with Effect 4.1.4 and
+Node 24.22.2 on Linux. The same run also selected the revised older cases and their controls:
+ERR-2, EXT-27a, EXT-30j, EXT-35j/o/t, EXT-49o/r, EXT-52b, EXT-53b and EXT-54b. The log and report
+are under `artifacts/pin-7c7c54f-baseline.*` (38 passed, 70 failed across the whole selection).
+The table counts only EXT-57–63. TypeScript assignability is checked separately.
 
 | Entry     |  Cases |   Pass |   Fail | Failures in 0.18.0                                                                  |
 | --------- | -----: | -----: | -----: | ----------------------------------------------------------------------------------- |
 | EXT-57a   |     14 |      7 |      7 | Both class-sibling pairs, invalid record and suspension aliases, and agreeing names |
 | EXT-57b   |     10 |      5 |      5 | Three JSON decoding-default refusals and both group decoding-default refusals       |
 | EXT-58    |      8 |      8 |      0 | None                                                                                |
-| EXT-59    |      3 |      2 |      1 | The union in a class field sends the same replacement as `82f9da9`                  |
+| EXT-59    |      4 |      4 |      0 | None                                                                                |
 | EXT-60    |      7 |      1 |      6 | All six built-in refusals                                                           |
 | EXT-61    |      2 |      0 |      2 | The JSON path and pair-position refusals                                            |
-| EXT-62    |     11 |      1 |     10 | All but the undefined-only instance control                                         |
+| EXT-62    |     16 |      1 |     15 | All but the undefined-only instance control                                         |
 | EXT-63    |      2 |      0 |      2 | Both class-related list cases                                                       |
-| **Total** | **57** | **24** | **33** |                                                                                     |
+| **Total** | **63** | **26** | **37** |                                                                                     |
 
-### Observed mismatches at 82f9da9
+### Retained mismatches on the 0.19 pin
 
-The cases below preserve their intended assertions. All use Effect 4.1.4.
+The current pins for EXT-30j, EXT-49o/r and EXT-59 are linked from their catalogue entries. They
+distinguish a wrong refusal, order-dependent output, and incorrect diagnostics from losing a
+supplied value. EXT-35j/o/t pin documented input limits. The original assertions at suite commit
+`208ed44` failed in 11 cases on the first Node run at `96e5163`, with the same case titles failing
+as in the historical standalone Node run below. The initial log is
+`artifacts/new-pin-initial-node.log`.
 
-- **EXT-59.** Define a class `Counted` with schema field `a: String` and own member `reads = 1`.
-  Define `Holder` with field `item: Union([Filter, Counted])` and the same own member.
-  `Filter` has optional `limit: FiniteFromString` with constructor default `25`, encoded as
-  `page_size`. POST `new Holder({ item: new Counted({ a: "item" }) })` via `Body.jsonSchema(Holder)`.
-  It sends `{"item":{"page_size":"25"}}` instead of `{"item":{"a":"item"}}`. The supplied
-  class field disappears. Both revisions reproduce this.
-- **EXT-49o.** Bind `Union([Filter, Void], { mode: "oneOf" })` to a JSON body or JSON path segment
-  and pass `{}`. The empty object formerly refused as ambiguous. It now dispatches
-  `{"page_size":"25"}`, although the Unreleased entry describes the guard for populated values and
-  says fieldless ones read as before. Both bindings reproduce it.
-- **EXT-49r.** Bind `Struct({ extra: Union([Void, Struct({ a: Number })]), filter: Filter })`,
-  with either union order, and give `{ extra: { a: "x" }, filter: { page_size: "05" } }`. Nothing
-  dispatches. Instead of naming only `["extra"]["a"]`, the error names `["extra"]` and the valid
-  `["filter"]["page_size"]`. Both bindings reproduce it.
-- **EXT-30j.** Bind a JSON body with `held: OptionFromNullOr(Struct({ owner: String }))` and
-  `filter: Union([Struct({ owner: String }), Struct({ owner: String, limit: String })])`.
-  Give `held: Option.some({ owner: "ada", stray: "x" })` and
-  `filter: { owner: "grace", limit: "y" }`. It refuses at `["held"]["value"]["stray"]` inside
-  the opaque Option. The former refusal was on the visible field.
-- **EXT-35j/o.** Let `f` be a union of `{ a: String }` and `{ a: String, b: String }`, and
-  `o` an `Option` of the narrow schema. Give both fields of `f` and an extra key inside
-  `Option.some`. The ordinary parent keeps `f.b` (EXT-35a). Adding declared own string fields
-  `__proto__` and `constructor` at the root, or using a null-prototype input and declaring an
-  omitted `toString` default, makes the JSON request refuse at `["f"]["b"]`. The guide excludes
-  prototype-named fields from accounting. The refusal names an ordinary nested field, so these
-  checks retain their former success assertions.
-- **EXT-35t.** With the same `f` and `o`, add `x: Option(String)`. The parent check rejects
-  values holding `f.b` together with a particular replacement Option by identity. Make the
-  encoding Effect with a different Option and replace `x` before evaluating it. The operation
-  dispatches both `f.b` and the replacement Option. The caller-input stability requirement limits
-  this case to the pending-Effect mutation shape. The check and no-dispatch expectation remain in
-  place.
+The adjusted assertions were also run at `82f9da9` in Node. All retained mismatch pins pass
+there. The 15 failures in the focused rerun are the five new Void cases (EXT-62), the seven
+malformed-pair messages (EXT-52b and EXT-61) and the three response message checks (ERR-2 and
+EXT-27a across its two Node providers). See `artifacts/pin-82f9da9-focused.*`.
 
-The first full Node run on the old assertions found 145 failures at `82f9da9`. The updated
-entries above record the changed expectations. The 12 dual-name and two watched-iterator goals
-are now ordinary tests. The full logs and reports use `artifacts/019-original-node.*`,
-`artifacts/019-final-*.log` and `artifacts/junit-*.xml`.
+### Full runs at 96e5163
+
+On Linux with Node 24.22.2, npm 11.19.1, TypeScript 6.0.3, Effect 4.1.4 and Chromium
+158.0.8127.18 (Playwright 1.65.0), the suite passed `npm run library`, `npm run check`,
+`npm run lint`, `npm test`, `npm run library:pack`, `npm run packed` and `npm run app`
+in order. That includes `packed:tsc` and all three result-based catalogue gates.
+
+| Lane     |  Pass | Fail | Total |
+| -------- | ----: | ---: | ----: |
+| Node     | 3,291 |    0 | 3,291 |
+| Chromium | 2,466 |    0 | 2,466 |
+| Packed   | 3,304 |    0 | 3,304 |
+| App      |   138 |    0 |   138 |
+
+All lanes ran without skips. Logs and reports are under `artifacts/pin-96e5163-*.log` and
+`artifacts/junit-*.xml`. The source and packed runs use the pinned library code; the release
+workflow supplies its own exact commit through `LIBRARY_REF`.
 
 ### Full runs at 82f9da9
+
+The first full Node run on the earlier assertions found 145 failures. The revised assertions
+at suite commit `208ed44` included 12 dual-name and two watched-iterator cases as ordinary tests.
+See `artifacts/019-original-node.*` and `artifacts/019-final-*.log`.
 
 The full runs used Linux, Node 24.22.2, npm 11.19.1, Effect 4.1.4 and Chromium 158.0.8127.18.
 Every lane passed 56 of the 57 new cases. EXT-59 failed in all four. The other failures in
@@ -4798,10 +4850,6 @@ cases. No full run skipped cases or used expected failures.
 | Chromium | 2,444 |   11 | 2,455 |
 | Packed   | 3,282 |   11 | 3,293 |
 | App      |   131 |    1 |   132 |
-
-The first Chromium run shared the machine with other lanes and also failed STAT-9's elapsed-time
-assertion (1,905 ms against a 900 ms bound), after the expected three requests and HTTP 429.
-The full Chromium rerun passed STAT-9. The threshold is unchanged.
 
 The source and packed declaration checks, static catalogue check, and lint pass. The three
 result-based catalogue gates reject the recorded wire failures.
