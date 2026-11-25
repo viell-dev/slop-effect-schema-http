@@ -1,7 +1,12 @@
 import type { Lines } from "../Transport.js";
 import type { Query } from "../UrlEncoding.js";
 import type { Reading } from "./field-pairs.js";
-import { extraArrayField, textPath, WriterError } from "./writer-error.js";
+import {
+  extraArrayField,
+  isWriterError,
+  textPath,
+  WriterError,
+} from "./writer-error.js";
 
 /** Expand present positions, including inherited positions, as array map would. */
 const forEachValue = (
@@ -161,4 +166,17 @@ export const headerEntries = (reading: Reading): Lines => {
     else lines.push(headerLine(name, value));
   }
   return lines;
+};
+
+/** What a group would write, or nothing where its writer refuses the output itself. */
+export const entriesOf = (
+  group: "query" | "headers",
+  reading: Reading,
+): ReadonlyArray<readonly [string, string | null]> => {
+  try {
+    return group === "query" ? queryEntries(reading) : headerEntries(reading);
+  } catch (error) {
+    if (isWriterError(error)) return [];
+    throw error;
+  }
 };

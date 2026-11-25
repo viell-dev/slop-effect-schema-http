@@ -320,10 +320,16 @@ const plainAlong = (caller: unknown) => {
   };
 };
 
+const samePath = (path: Excess.Path, other: Excess.Path): boolean =>
+  path.length === other.length &&
+  path.every((key, index) => key === other[index]);
+
 /** The parts one reading read, so routes that read the same part read it once. */
 type PartsRead = Map<
   SchemaAST.AST,
   Array<{
+    /** Where the part is, as two parts can hold one value and each runs its schema's own steps. */
+    readonly at: Excess.Path;
     readonly value: unknown;
     readonly given: unknown;
     readonly part: boolean;
@@ -427,6 +433,7 @@ const decodedReading = <S extends Schema.Top>(
     given: unknown,
     parseOptions?: SchemaAST.ParseOptions,
     parts?: PartsRead,
+    at: Excess.Path = [],
   ) {
     const output: Record<PropertyKey, unknown> = { ...input };
     // A field need not be a key, as an accessor on a class is not, so it comes from `input`.
@@ -447,6 +454,7 @@ const decodedReading = <S extends Schema.Top>(
         part: true,
         given: checked ? sliceOf(given, name) : undefined,
         parts,
+        at: [...at, name],
       });
       output[name] = field.value;
       fieldParts[name] = field.value;
@@ -480,6 +488,7 @@ const decodedReading = <S extends Schema.Top>(
     given: unknown,
     parseOptions?: SchemaAST.ParseOptions,
     parts?: PartsRead,
+    at: Excess.Path = [],
   ) =>
     contract.ast._tag === "Union" && contract.ast.types.length > 0
       ? (given === undefined ? Effect.firstSuccessOf : keepingMost)(
@@ -489,13 +498,14 @@ const decodedReading = <S extends Schema.Top>(
               part,
               given,
               parts,
+              at,
             }),
           ),
         )
       : // A copy of a list is an object keyed by its indexes, which a record or struct could take.
         Array.isArray(input)
         ? Effect.fail(failure)
-        : byField(input, given, parseOptions, parts);
+        : byField(input, given, parseOptions, parts, at);
   /** Whether a struct could keep every given name by reading its fields, which have decoded names. */
   const couldKeepByField = (given: unknown) => {
     if (contract.ast._tag === "Union" || !isKeyed(given)) return true;
@@ -555,6 +565,7 @@ const decodedReading = <S extends Schema.Top>(
     given: unknown,
     failure: Schema.SchemaError,
     parts: PartsRead,
+    at: Excess.Path,
     parseOptions?: SchemaAST.ParseOptions,
     constructed = false,
   ): Effect.Effect<Decoded<unknown>, Schema.SchemaError, unknown> =>
@@ -583,7 +594,7 @@ const decodedReading = <S extends Schema.Top>(
               : loosely(decodeGuarded(), stripped);
         const fieldwise =
           isKeyed(input) && !(constructed && !couldKeepByField(given))
-            ? byMember(input, failure, given, parseOptions, parts)
+            ? byMember(input, failure, given, parseOptions, parts, at)
             : Effect.fail(failure);
         // The whole comes before its fields, as it does for Effect, unless a part's decoder would
         // strip what its fields could hold.
@@ -617,11 +628,14 @@ const decodedReading = <S extends Schema.Top>(
       parseOptions = options,
       given,
       parts = new Map(),
+      at = [],
       onConstructed,
     }: {
       readonly parseOptions?: SchemaAST.ParseOptions | undefined;
       /** The parts read so far, where this value is one of them. */
       readonly parts?: PartsRead | undefined;
+      /** Where this value is in the one those parts are of. */
+      readonly at?: Excess.Path;
       /** The normalised input, where what the reading loses is accounted for. */
       readonly given?: unknown;
       /** Told when the value is what the constructor made of the whole input. */
@@ -659,7 +673,7 @@ const decodedReading = <S extends Schema.Top>(
           unknown
         > = Effect.catch(
           Effect.filterOrFail(strictly, (read) => read.lost.length === 0),
-          () => accounted(input, given, noRoute, parts, parseOptions, true),
+          () => accounted(input, given, noRoute, parts, at, parseOptions, true),
         );
         // Give way only to a route that loses less; otherwise keep the constructor's loss.
         return Effect.matchEffect(keeping, {
@@ -680,7 +694,7 @@ const decodedReading = <S extends Schema.Top>(
         Effect.mapError(
           given === undefined
             ? unaccounted(input, parseOptions)
-            : accounted(input, given, failure, parts, parseOptions),
+            : accounted(input, given, failure, parts, at, parseOptions),
           () => failure,
         ),
     }) as Effect.Effect<
@@ -732,9 +746,11 @@ const fromPart = (
     readonly given: unknown;
     /** The parts read so far, for a reading that is accounted for. */
     readonly parts: PartsRead | undefined;
+    /** Where the part is. */
+    readonly at: Excess.Path;
   },
 ): Effect.Effect<Decoded<unknown>, Schema.SchemaError, unknown> => {
-  const { options, part, given, parts } = reading;
+  const { options, part, given, parts, at } = reading;
   const read = decodedReading(Schema.make<Schema.Top>(ast), { options, part });
   if (given === undefined || parts === undefined) return read(value, { given });
   // Routes meet the same part again and again, so it runs its schema's own effects once.
@@ -744,14 +760,15 @@ const fromPart = (
     const before = known.find(
       (entry) =>
         Object.is(entry.value, value) &&
+        samePath(entry.at, at) &&
         Object.is(entry.given, given) &&
         entry.part === part,
     );
     if (before !== undefined) return Effect.fromResult(before.result);
     return Effect.flatMap(
-      Effect.result(read(value, { given, parts })),
+      Effect.result(read(value, { given, parts, at })),
       (result) => {
-        known.push({ value, given, part, result });
+        known.push({ at, value, given, part, result });
         return Effect.fromResult(result);
       },
     );

@@ -423,6 +423,76 @@ describe("a field lost in a stacked group", () => {
     }),
   );
 
+  it.effect("is refused where this schema replaces what a sibling wrote", () =>
+    Effect.gen(function* () {
+      // The sibling writes the caller's `limit` as `page_size`, where this schema has a default.
+      const Word = Schema.Struct({ limit: text }).pipe(
+        Schema.encodeKeys({ limit: "page_size" }),
+      );
+      for (const [sibling, schema] of [
+        [Word, Page],
+        [Schema.Union([Word, Cursor]), Page],
+        [Word, Filter],
+      ] as const)
+        expect(yield* url([sibling, schema], { limit: "x" })).toEqual([
+          'at ["limit"]',
+          // Bound first, its default is replaced by the caller's value instead.
+          "/x?page_size=x",
+        ]);
+      const Defaulted = Schema.Struct({
+        limit: text.pipe(Schema.withDecodingDefaultKey(Effect.succeed("d"))),
+        c: Schema.optionalKey(text),
+      }).pipe(Schema.encodeKeys({ limit: "w" }));
+      const Counted5 = Schema.Struct({
+        limit: Schema.FiniteFromString,
+        c: Schema.optionalKey(text),
+      }).pipe(Schema.encodeKeys({ limit: "w" }));
+      expect(
+        yield* url(
+          [
+            Counted5,
+            Schema.Union([
+              Schema.Struct({ a: Schema.optionalKey(text) }),
+              Defaulted,
+            ]),
+          ],
+          { limit: 5, c: "x" },
+        ),
+      ).toEqual(['at ["limit"]', "/x?w=5&c=x"]);
+      // A name both write alike is not replaced, and a header's name is compared without case.
+      const lines = (sibling: Schema.Top) =>
+        Effect.map(
+          compile(
+            Request.get("/x").pipe(
+              Request.headers(
+                sibling as Schema.Codec<unknown, Record<string, string>>,
+              ),
+              Request.headers(
+                Schema.Union([
+                  Schema.Struct({ "X-Shared": text }),
+                  Schema.Struct({ "X-B": text }),
+                ]),
+              ),
+            ) as Request.Request<unknown>,
+            { headers: { "X-Shared": "s", "X-B": "b" } },
+          ),
+          ({ headerLines }) => headerLines,
+        );
+      expect(
+        yield* lines(Schema.Struct({ "X-Shared": text, "X-B": text })),
+      ).toEqual([
+        ["X-B", "b"],
+        ["X-Shared", "s"],
+      ]);
+      const Other = Schema.Struct({ "X-Shared": text, "X-B": text }).pipe(
+        Schema.encodeKeys({ "X-B": "x-shared", "X-Shared": "x-b" }),
+      );
+      expect(
+        String(yield* Effect.flip(Effect.mapError(lines(Other), String))),
+      ).toContain('["X-B"]');
+    }),
+  );
+
   it.effect("is left to a sibling that takes it, with or without a union", () =>
     Effect.gen(function* () {
       const taking = Schema.Struct({ limit: Schema.optionalKey(text) });
@@ -618,6 +688,102 @@ describe("a reading that keeps everything", () => {
           ),
         ).toEqual(written({ w: sent, c: { a: "y" } }));
       }
+    }),
+  );
+
+  it.effect("goes through the member that holds it in a class's field", () =>
+    Effect.gen(function* () {
+      const b = Schema.Union([
+        Schema.Struct({ a: Schema.optionalKey(Schema.String) }),
+        Schema.Struct({ limit: Schema.String }),
+      ]);
+      class Own extends Schema.Class<Own>("Own")({ b }) {
+        readonly extra = 1;
+      }
+      class Holder extends Schema.Class<Holder>("Holder")({ b }) {}
+      const input = { b: { limit: "x" } };
+      expect(yield* outcomes(Own, input)).toEqual(written(input));
+      expect(
+        yield* outcomes(Schema.Struct({ f: Holder, c: Counted }), {
+          f: input,
+          c: { a: "y" },
+        }),
+      ).toEqual(written({ f: input, c: { a: "y" } }));
+      // Where no member can write the value whole, the field the write drops is refused.
+      class Noted extends Schema.Class<Noted>("Noted")({
+        b: Schema.Union([
+          Schema.Struct({ title: Schema.String, meta: Schema.Unknown }),
+          Schema.Struct({ title: Schema.String }),
+        ]),
+      }) {}
+      const note = { b: { title: "a", meta: new Date(0) } };
+      expect(
+        (yield* outcomes(Schema.Struct({ f: Noted, c: Counted }), {
+          f: note,
+          c: { a: "y" },
+        }))[0],
+      ).toBe('at ["f"]["b"]["meta"]');
+    }),
+  );
+
+  it.effect("is not handed to an open member after one that holds it", () =>
+    Effect.gen(function* () {
+      // The class's own member keeps the struct from writing strictly, though it states every key.
+      const held = Schema.Struct({ k: Counted, c: Schema.FiniteFromString });
+      const open: ReadonlyArray<Schema.Top> = [
+        Schema.Struct({}),
+        Schema.Any,
+        Schema.Unknown,
+        Schema.Record(Schema.String, Schema.Unknown),
+      ];
+      const input = { f: { k: { a: "s" }, c: 5 }, c2: { a: "y" } };
+      const sent = { f: { k: { a: "s" }, c: "5" }, c2: { a: "y" } };
+      for (const member of open)
+        for (const f of [
+          Schema.Union([held, member]),
+          Schema.Union([Schema.Null, Schema.Union([held, member])]),
+        ])
+          expect(
+            yield* outcomes(Schema.Struct({ f, c2: Counted }), input),
+          ).toEqual(written(sent));
+      // A key the struct does not state leaves the value to the open member.
+      const [body] = yield* outcomes(
+        Schema.Struct({
+          f: Schema.Union([
+            Schema.Struct({ c: Schema.FiniteFromString }),
+            Schema.Struct({}),
+          ]),
+          c2: Counted,
+        }),
+        { f: { c: 5, z: 1 }, c2: { a: "y" } },
+      );
+      expect(body).toBe('{"f":{"c":5,"z":1},"c2":{"a":"y"}}');
+    }),
+  );
+
+  it.effect("runs each field's own decoder", () =>
+    Effect.gen(function* () {
+      let ids = 0;
+      const Stamp = Schema.String.pipe(
+        Schema.decodeTo(Schema.Struct({ id: Schema.Number }), {
+          decode: SchemaGetter.transform((_text: string) => ({ id: ++ids })),
+          encode: SchemaGetter.transform(({ id }) => String(id)),
+        }),
+      );
+      const schema = Schema.Struct({
+        n: Schema.FiniteFromString,
+        a: Stamp,
+        b: Stamp,
+        c: Counted,
+      });
+      const [body] = yield* outcomes(schema, {
+        n: 5,
+        a: "x",
+        b: "x",
+        c: { a: "k" },
+      });
+      const { a, b } = JSON.parse(body!) as Record<string, string>;
+      expect(a).not.toBe(b);
     }),
   );
 

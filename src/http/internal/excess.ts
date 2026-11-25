@@ -1021,7 +1021,7 @@ const isIndexed = (ast: Ast): boolean =>
   ast._tag === "Objects" && ast.indexSignatures.length > 0;
 
 /** A class: a declaration whose first encoding link leads to the struct of its fields. */
-const classFields = (ast: Ast): Ast | undefined =>
+export const classFields = (ast: Ast): Ast | undefined =>
   ast._tag === "Declaration" && ast.encoding?.[0]?.to._tag === "Objects"
     ? ast.encoding[0].to
     : undefined;
