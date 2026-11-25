@@ -408,7 +408,7 @@ export const dropped = (
       !isKeyed(held) ||
       !isKeyed(caller) ||
       !isPlainData(caller) ||
-      statesPrototypeName(ast, false)
+      statesPrototypeName(ast)
     )
       return;
     let node: SchemaAST.AST | undefined = ast;

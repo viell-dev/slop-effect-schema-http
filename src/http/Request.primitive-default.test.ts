@@ -1,15 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Effect,
-  Option,
-  Schema,
-  SchemaAST,
-  SchemaIssue,
-  SchemaTransformation,
-} from "effect";
+import { Effect, Option, Schema, SchemaTransformation } from "effect";
 import * as Body from "./Body.js";
-import { encodedInput } from "./internal/encoded-input.js";
-import { nestedEncodedInput } from "./internal/nested-input.js";
 import * as Request from "./Request.js";
 import { refusesConstruction, refusesDecoding } from "../../test/request.js";
 
@@ -288,89 +279,6 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
     );
   }
 
-  it.effect(
-    "does not execute primitive checks during capture or replay constructor defaults",
-    () =>
-      Effect.gen(function* () {
-        let checks = 0;
-        let defaults = 0;
-        const counter = Schema.makeFilter(() => {
-          checks++;
-          return true;
-        });
-        const Counted = Schema.Struct({
-          limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
-            Schema.withConstructorDefault(
-              Effect.sync(() => {
-                defaults++;
-                return 25;
-              }),
-            ),
-          ),
-        }).pipe(Schema.encodeKeys({ limit: "page_size" }));
-        for (const primitive of [
-          Schema.String.check(counter),
-          Schema.FiniteFromString.check(counter),
-        ]) {
-          const schema = Schema.Array(Schema.Union([primitive, Counted]));
-          const input = [{ page_size: "many" }];
-          checks = 0;
-          defaults = 0;
-          expect(
-            nestedEncodedInput(schema.ast)!(input)
-              ?.select([{ page_size: "25" }])
-              ?.matches(),
-          ).toBe(true);
-          expect(checks).toBe(0);
-          expect(defaults).toBe(0);
-          for (const kind of ["path", "body"] as const) {
-            defaults = 0;
-            expect(
-              yield* Effect.flip(prepare(schema, input, kind)),
-            ).toBeInstanceOf(Schema.SchemaError);
-            expect(defaults).toBe(1);
-            expect(checks).toBe(0);
-          }
-        }
-      }),
-  );
-
-  it("does not classify Void, object-encoded or opaque alternatives as transparent", () => {
-    const Count = Schema.Struct({ page_size: Schema.String }).pipe(
-      Schema.decodeTo(
-        Schema.Number,
-        SchemaTransformation.transform({
-          decode: (value) => value.page_size.length,
-          encode: (value) => ({ page_size: "x".repeat(value) }),
-        }),
-      ),
-    );
-    for (const other of [
-      Schema.Void,
-      Schema.Unknown,
-      Schema.Any,
-      Schema.ObjectKeyword,
-      Schema.Record(Schema.String, Schema.Unknown),
-      Schema.Option(Schema.String),
-      Schema.Date,
-      Schema.suspend(() => Schema.String),
-      Count,
-    ]) {
-      const schema = Schema.Union([Filter, other]);
-      expect(encodedInput(schema.ast)).toBeUndefined();
-      expect(nestedEncodedInput(Schema.Array(schema).ast)).toBeUndefined();
-    }
-    expect(
-      nestedEncodedInput(Schema.Array(Schema.fromJsonString(Filter)).ast),
-    ).toBeUndefined();
-    // Plain-transformation primitives and array members cannot read an object cell.
-    for (const other of [Schema.FiniteFromString, Schema.Array(Filter)]) {
-      const schema = Schema.Union([Filter, other]);
-      expect(encodedInput(schema.ast)).toBeDefined();
-      expect(nestedEncodedInput(Schema.Array(schema).ast)).toBeDefined();
-    }
-  });
-
   // Effect's own Literals, NullOr and NullishOr build these nested unions.
   const nestedPrimitives = [
     ["Union(String, Number)", Schema.Union([Schema.String, Schema.Number])],
@@ -462,70 +370,6 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
       }),
   );
 
-  it("keeps a nested union outside the rule unless every member qualifies", () => {
-    for (const other of [
-      Schema.Union([Schema.String, Schema.Void]),
-      Schema.Union([Schema.String, Recovering]),
-      Schema.NullOr(Schema.Unknown),
-      Schema.Union([Schema.String, Schema.suspend(() => Schema.Number)]),
-      ObjectToText,
-    ]) {
-      const schema = Schema.Union([Filter, other]);
-      expect(encodedInput(schema.ast)).toBeUndefined();
-      expect(nestedEncodedInput(Schema.Array(schema).ast)).toBeUndefined();
-    }
-    for (const other of [
-      Schema.Union([Schema.String, Schema.FiniteFromString]),
-      TextToText,
-      Schema.NullOr(TextToText),
-    ]) {
-      const schema = Schema.Union([Filter, other]);
-      expect(encodedInput(schema.ast)).toBeDefined();
-      expect(nestedEncodedInput(Schema.Array(schema).ast)).toBeDefined();
-    }
-    for (const primitive of nestedPrimitives.map(([, schema]) => schema)) {
-      // A union of primitives alone is still no object view at either level.
-      expect(encodedInput(primitive.ast)).toBeUndefined();
-      expect(
-        encodedInput(Schema.Union([primitive, Schema.Null]).ast),
-      ).toBeUndefined();
-      expect(
-        nestedEncodedInput(Schema.Array(Schema.Union([primitive])).ast),
-      ).toBeUndefined();
-    }
-    // A closed empty object is an object alternative, even though it declares no fields.
-    expect(
-      nestedEncodedInput(
-        Schema.Struct({
-          cell: Schema.Union([
-            Schema.Struct({}),
-            Schema.Struct({ filter: Filter }),
-          ]),
-        }).ast,
-      ),
-    ).toBeDefined();
-  });
-
-  it("declines a mutated primitive union cycle and visits shared members once", () => {
-    const loop = new SchemaAST.Union([Schema.String.ast]);
-    Object.assign(loop, { types: [Schema.String.ast, loop] });
-    expect(
-      encodedInput(new SchemaAST.Union([Filter.ast, loop])),
-    ).toBeUndefined();
-    expect(
-      nestedEncodedInput(
-        new SchemaAST.Union([Schema.Struct({ filter: Filter }).ast, loop]),
-      ),
-    ).toBeUndefined();
-    // Forty levels of shared members would take 2^40 visits without the memo.
-    let shared: SchemaAST.AST = Schema.Literal("x").ast;
-    for (let level = 0; level < 40; level++)
-      shared = new SchemaAST.Union([shared, Schema.Null.ast, shared]);
-    expect(
-      encodedInput(new SchemaAST.Union([Filter.ast, shared])),
-    ).toBeDefined();
-  });
-
   it.effect(
     "lets an object-reading encoded union alternative keep the alias it reads",
     () =>
@@ -606,7 +450,6 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
                 [{ page_size: "05" }, "5"],
                 [{ limit: 5 }, "5"],
                 [{}, "25"],
-                [{ limit: 5, page_size: "many" }, "5"],
               ] as const)
                 expect(yield* prepare(schema, wrap(leaf), kind)).toEqual(
                   wrap({ page_size: expected }),
@@ -694,45 +537,6 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
     }),
   );
 
-  it.effect(
-    "keeps a middleware alternative outside the rule and its own reading",
-    () =>
-      Effect.gen(function* () {
-        // Even a middleware that passes its effect through, in any link, stays excluded.
-        for (const other of [
-          Recovering,
-          Schema.String.pipe(
-            Schema.middlewareDecoding((effect) => effect),
-            Schema.decodeTo(
-              Schema.NullOr(Schema.String),
-              SchemaTransformation.transform<string | null, string>({
-                decode: (value) => value,
-                encode: (value) => value ?? "",
-              }),
-            ),
-          ),
-          Schema.FiniteFromString.pipe(
-            Schema.middlewareEncoding((effect) => effect),
-          ),
-        ]) {
-          expect(
-            encodedInput(Schema.Union([Filter, other]).ast),
-          ).toBeUndefined();
-          expect(
-            nestedEncodedInput(Schema.Array(Schema.Union([Filter, other])).ast),
-          ).toBeUndefined();
-        }
-        for (const kind of ["path", "body"] as const)
-          expect(
-            yield* prepare(
-              Schema.Union([Filter, Recovering]),
-              { page_size: "many" },
-              kind,
-            ),
-          ).toBe(0);
-      }),
-  );
-
   // https://github.com/viell-dev/slop-effect-schema-http/issues/170
   it.effect(
     "refuses an invalid alias beside an encoded primitive on a fieldwise root",
@@ -766,146 +570,6 @@ describe("constructor defaults beside transparent primitive alternatives", () =>
               prepare(schema, [{ page_size: "05" }, { limit: 5 }], kind),
             ),
           ).toBeInstanceOf(Schema.SchemaError);
-      }),
-  );
-
-  it.effect(
-    "validates an alias through a nullable closed object encoding view",
-    () =>
-      Effect.gen(function* () {
-        const schema = Schema.NullOr(
-          Schema.Struct({ page_size: Schema.String }),
-        ).pipe(
-          Schema.decodeTo(
-            Schema.Struct({
-              limit: Schema.optionalKey(Schema.Number).pipe(
-                Schema.withConstructorDefault(Effect.succeed(25)),
-              ),
-            }),
-            SchemaTransformation.transformEffect<
-              { readonly limit?: number },
-              { readonly page_size: string } | null
-            >({
-              decode: (value) =>
-                value === null || Number.isNaN(Number(value.page_size))
-                  ? Effect.fail(
-                      new SchemaIssue.InvalidValue({ message: "not a number" }),
-                    )
-                  : Effect.succeed({ limit: Number(value.page_size) }),
-              encode: (value) =>
-                Effect.succeed({ page_size: String(value.limit) }),
-            }),
-          ),
-        );
-        expect(encodedInput(schema.ast)).toBeDefined();
-        for (const kind of ["path", "body"] as const) {
-          expect(
-            yield* Effect.flip(prepare(schema, { page_size: "many" }, kind)),
-          ).toBeInstanceOf(Schema.SchemaError);
-          for (const [input, expected] of [
-            [{ page_size: "05" }, "5"],
-            [{ limit: 5 }, "5"],
-            [{}, "25"],
-          ] as const)
-            expect(yield* prepare(schema, input, kind)).toEqual({
-              page_size: expected,
-            });
-        }
-      }),
-  );
-
-  it.effect(
-    "validates an alias through a closed object encoding view beside nested literals",
-    () =>
-      Effect.gen(function* () {
-        const schema = Schema.Union([
-          Schema.Struct({ page_size: Schema.String }),
-          Schema.Literals(["none"]),
-        ]).pipe(
-          Schema.decodeTo(
-            Schema.Struct({
-              limit: Schema.optionalKey(Schema.Number).pipe(
-                Schema.withConstructorDefault(Effect.succeed(25)),
-              ),
-            }),
-            SchemaTransformation.transformEffect<
-              { readonly limit?: number },
-              { readonly page_size: string } | "none"
-            >({
-              decode: (value) =>
-                value === "none" || Number.isNaN(Number(value.page_size))
-                  ? Effect.fail(
-                      new SchemaIssue.InvalidValue({ message: "not a number" }),
-                    )
-                  : Effect.succeed({ limit: Number(value.page_size) }),
-              encode: (value) =>
-                Effect.succeed({ page_size: String(value.limit) }),
-            }),
-          ),
-        );
-        expect(encodedInput(schema.ast)).toBeDefined();
-        for (const kind of ["path", "body"] as const) {
-          expect(
-            yield* Effect.flip(prepare(schema, { page_size: "many" }, kind)),
-          ).toBeInstanceOf(Schema.SchemaError);
-          for (const [input, expected] of [
-            [{ page_size: "05" }, "5"],
-            [{ limit: 5 }, "5"],
-            [{}, "25"],
-          ] as const)
-            expect(yield* prepare(schema, input, kind)).toEqual({
-              page_size: expected,
-            });
-        }
-      }),
-  );
-
-  it.effect(
-    "keeps a primitive-only union encoding intermediate outside the object proof",
-    () =>
-      Effect.gen(function* () {
-        const schema = Schema.Struct({ page_size: Schema.String }).pipe(
-          Schema.decodeTo(
-            Schema.NullOr(Schema.String),
-            SchemaTransformation.transform<
-              string | null,
-              { readonly page_size: string }
-            >({
-              decode: (value) => value.page_size,
-              encode: (value) => ({ page_size: value ?? "" }),
-            }),
-          ),
-          Schema.decodeTo(
-            Schema.Struct({
-              limit: Schema.optionalKey(Schema.Number).pipe(
-                Schema.withConstructorDefault(Effect.succeed(25)),
-              ),
-            }),
-            SchemaTransformation.transformEffect<
-              { readonly limit?: number },
-              string | null
-            >({
-              decode: (value) =>
-                value === null || Number.isNaN(Number(value))
-                  ? Effect.fail(
-                      new SchemaIssue.InvalidValue({ message: "not a number" }),
-                    )
-                  : Effect.succeed({ limit: Number(value) }),
-              encode: (value) => Effect.succeed(String(value.limit)),
-            }),
-          ),
-        );
-        expect(encodedInput(schema.ast)).toBeUndefined();
-        expect(nestedEncodedInput(Schema.Array(schema).ast)).toBeUndefined();
-        for (const kind of ["path", "body"] as const)
-          for (const [input, expected] of [
-            [{ page_size: "many" }, "25"],
-            [{ page_size: "05" }, "5"],
-            [{}, "25"],
-          ] as const)
-            expect(yield* prepare(schema, input, kind)).toEqual({
-              page_size: expected,
-            });
       }),
   );
 

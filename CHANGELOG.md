@@ -175,6 +175,32 @@
   first cell and a later cell holding a key set to `undefined`,
   `Union([Schema.Array(A), Schema.Unknown])` passed `[null, …]` to a path renderer; the rebuilt list
   now keeps the cell where the caller put it.
+- **Breaking:** account for what every reading loses, so a default never takes the place of a
+  supplied field ([#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170),
+  [#258](https://github.com/viell-dev/slop-effect-schema-http/issues/258),
+  [#259](https://github.com/viell-dev/slop-effect-schema-http/issues/259)). This replaces 0.18.0's
+  proofs, which the shape of a schema had to allow, with one check on the values each route made. It
+  applies at the root as in a field, at any depth, on plain data:
+  - A decoding default no longer stands in for a field the decoder strips. With `Page`, whose
+    `limit` is renamed to `page_size` and has a decoding default of 30, `Schema.Array(Page)` sent
+    `[{"page_size":"30"}]` for `[{ limit: "x" }]`, and `[{"page_size":"30"},{"page_size":"30"}]` for
+    the valid `[{ limit: 5 }, {}]`. Both now refuse, naming `limit`.
+  - A constructor default no longer stands in for an encoded alias beside a class, a recursive or
+    suspended schema, in a record, or beside a member the schema alone cannot tell apart.
+    `Struct({ f: Filter, c: Counted })`, where `Counted` is a `Schema.Class` with a member of its
+    own, sent `25` for `f: { page_size: "05" }` and for `f: { page_size: "many" }`. It now sends `5`
+    and refuses.
+  - A field given under both its names refuses. `{ limit: 5, page_size: "6" }` sent `5`, or `6`
+    beside an encoded-only item, and now refuses naming `page_size`.
+  - A decoded name below a name the parent writes is no longer stripped. With `f` renamed to `w`,
+    `Struct({ f: Filter })` sent `{"w":{"page_size":"25"}}` for `{ w: { limit: 5 } }`, or
+    `{"w":{}}`, and now refuses naming `["w"]["limit"]`.
+  - Input that 0.18.0 refused beside an `Option`, a `Date` or a class can now be kept, because a
+    reading that keeps every visible field is found there too.
+
+  Defaults, checks, decoders and their services can run more than once when a route loses a field.
+  Supply one side's names, one per field, to keep a reading. See [the
+  rule](https://viell-dev.github.io/slop-effect-schema-http/schema-input#constructor-default-validation).
 - A refusal names the innermost lost fields, so it no longer names a field beside one inside it
   ([#262](https://github.com/viell-dev/slop-effect-schema-http/issues/262)).
 

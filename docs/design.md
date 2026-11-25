@@ -122,29 +122,41 @@ omittable groups, and `execute()` remains a compile error.
 
 A schema-backed input accepts constructor input, encoded input or a supported mix by field. The
 request carries what the schema writes. Preparation prioritizes construction, whole decoding and
-then fieldwise recovery; it must not invent a conversion or replay construction just to classify
-input. Fieldwise recovery reads objects; it never rebuilds a list as an object keyed by its indexes.
-Each field it reads accounts for what the caller gave it: a constructor has to keep every supplied
-field, a decoder reads strictly first, and a reading that drops a supplied field keeps that loss. A
-key a decoder or transformation adds is not the caller's. The object's constructor then runs again
-over the fields' results, strictly first, so a union field keeps the member it was read by. A
-default that constructor fills therefore cannot hide a field that a field's reading dropped. The
-[input reference](./schema-input.md) owns the detailed rules, type boundaries and
-constructor-default validation.
+then fieldwise recovery; it must not invent a conversion. Fieldwise recovery reads objects; it never
+rebuilds a list as an object keyed by its indexes.
+
+Every route accounts for what the caller gave, at the root as in a field read on its own, so a
+default never takes a supplied field's place. A constructor has to keep every supplied field, a
+decoder reads strictly first, and field by field each field's reading accounts for its slice while
+the object's constructor, which runs again over the results, strictly first, accounts for the rest.
+A constructor that lost a field gives way to a strict constructor, the decoder or a reading by field
+that loses fewer of those fields. What is still lost is refused, unless another schema of the group
+takes it. A field given under both its names therefore refuses, even where the two agree, because no
+route reads both. A key a decoder or transformation adds is not the caller's. One rule, judged on
+the values each route actually made, replaces proofs from a schema's shape, which left gaps wherever
+a shape could not be told apart. Its costs are that defaults, checks and decoders can run more than
+once, and that a list whose items are on different sides refuses, since a list is read as a whole.
+The [input reference](./schema-input.md#constructor-default-validation) owns the detailed rules and
+type boundaries.
+
+A route's value is used only if it is written strictly, or under a schema with no union between
+objects. A relaxed write chooses union members again, and a drop there is not always visible, so
+anywhere else preparation writes what Effect itself reads and refuses what that loses.
 
 These checks, and the relaxed write's below, run only where preparation can establish what the
-caller gave: on plain data. Plain data is a list, or an object whose prototype is `Object.prototype`
-or `null`, that holds only own data properties, none of them named after an `Object.prototype`
-member, under a schema that states no field and no wire name named after one. A proxy over plain
-data is plain data too, because nothing tells it from its target, so its traps run. A value held
-behind an accessor, a class instance, `Schema.Class` instances among them, and a schema or union tag
-that uses such a name read as Effect reads them: where the facts cannot be established, the value
-keeps its earlier reading.
+caller gave: on plain data, judged place by place. Plain data is a list whose prototype is
+`Array.prototype` or `null`, or an object whose prototype is `Object.prototype` or `null`, that
+holds only own data properties, none of them named after an `Object.prototype` member, under a
+schema that states no field and no wire name named after one there. A proxy over plain data is plain
+data too, because nothing tells it from its target, so its traps run. A value held behind an
+accessor, a class instance, `Schema.Class` instances among them, and a schema or union tag that uses
+such a name read as Effect reads them: where the facts cannot be established, the value keeps its
+earlier reading.
 
 For visible fields the intended rule is kept or refused. Strict reads and actual-consumption
 evidence protect that rule across unions and stacked bindings; opaque values retain their schema's
-reading. Known violations, conflicting aliases and unsupported recovery remain explicit in the
-[active limits](./schema-input.md#active-limits-and-recovery).
+reading. Known violations remain explicit in the [active
+limits](./schema-input.md#active-limits-and-recovery).
 
 Two rules decide how normalization and field-loss accounting read a value, and they apply only where
 what each alternative reads from an object or a list is known from the schema alone. That holds when
@@ -217,24 +229,15 @@ opaque alternatives, class fields, opaque or suspended values, encoded member un
 modes, or custom discard transformations. The [active
 limits](./schema-input.md#active-limits-and-recovery) give the mixed-side example.
 
-The alias proof ignores a Void alternative only where the strict pass guards it, for an object cell
-and for a list beside one array-reading member, including inside a grouped any-of member union. The
-existing alias checks can then refuse input a nested constructor default would otherwise replace. A
-query or header binding reports lost input fields before refusing a non-object group or malformed
-pair with `InvalidRequest`. Header records must contain strings, arrays of strings or omitted
-values. Each encoded group is read once for name collection, declared defaults and writing. Arrays
-of pairs are read by position. Other objects with a callable iterator yield pairs through it, so
-one-shot iterators supply their fields. Each pair must be an array of length two with a string name.
-The binding refuses malformed pairs with `InvalidRequest` before dispatch. Direct calls to
-`Transport.entries` and `UrlEncoding.queryEntries` throw `TypeError` for malformed pairs. Repeated
-value arrays are also expanded by position.
-
-#### A last constructor attempt
-
-A previously refused visible nested field beside an opaque value can use a bounded constructor-only
-recovery. Original input, stable evidence and full parent validation remain required. The [recovery
-reference](./schema-input.md#recovery-beside-an-opaque-value) defines its exclusions and effect
-behavior.
+The decoder a later route reads with keeps the Void guard too, so a Void cannot stand in for a
+reading that keeps the value's fields. A query or header binding reports lost input fields before
+refusing a non-object group or malformed pair with `InvalidRequest`. Header records must contain
+strings, arrays of strings or omitted values. Each encoded group is read once for name collection,
+declared defaults and writing. Arrays of pairs are read by position. Other objects with a callable
+iterator yield pairs through it, so one-shot iterators supply their fields. Each pair must be an
+array of length two with a string name. The binding refuses malformed pairs with `InvalidRequest`
+before dispatch. Direct calls to `Transport.entries` and `UrlEncoding.queryEntries` throw
+`TypeError` for malformed pairs. Repeated value arrays are also expanded by position.
 
 ### A schema states the shape of its group
 

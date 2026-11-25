@@ -149,9 +149,8 @@ Some things are outside the check:
   after the schema to survive under such a name. `transformClient` and a client layer work on the
   prepared request, so the check does not see them.
 - A check is only as strict as its schema. `Schema.NumberFromString` accepts `"two"` as `NaN`.
-- Invalid encoded aliases can still take optional constructor defaults outside the supported
-  [constructor-default validation](./schema-input.md#constructor-default-validation). That reference
-  owns the root, nested, array and recovery boundaries and the decoded-input workaround.
+- [A default never takes a supplied field's place](./schema-input.md#constructor-default-validation)
+  on plain data. That reference owns where the check applies.
 - A group transformation can hide a default's field correspondence. The strictly empty caller-group
   proof above covers some such calls. With any own caller field, a renamed default can still replace
   a later raw edit without refusal; the library does not guess which alias supplied that output.

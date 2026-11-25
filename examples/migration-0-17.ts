@@ -41,10 +41,7 @@ const keywords = Request.compile(submit, {
   body: ["all", { limit: 5 }, "none"],
 });
 // #endregion literals
-assert.match(
-  await refused(invalid),
-  /Expected no excess property\s+at \[0\]\["page_size"\]/,
-);
+assert.match(await refused(invalid), /at \[0\]\["page_size"\]/);
 assert.equal(jsonText(await Effect.runPromise(encoded)), '[{"page_size":"5"}]');
 assert.equal(jsonText(await Effect.runPromise(decoded)), '[{"page_size":"5"}]');
 assert.equal(

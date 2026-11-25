@@ -131,17 +131,10 @@ const bothNames = [{ limit: 1, page_size: "02" }, { page_size: "25" }];
 const typedBothNames: Request.Input<typeof Filters> = bothNames;
 const wholeEncodedChoice = Request.compile(submit, { body: typedBothNames });
 // #endregion dual-names
-assert.equal(
-  jsonText(await Effect.runPromise(wholeEncodedChoice)),
-  '[{"page_size":"2"},{"page_size":"25"}]',
-);
-assert.equal(
-  jsonText(
-    await Effect.runPromise(
-      Request.compile(submit, { body: [{ limit: 1, page_size: "02" }] }),
-    ),
-  ),
-  '[{"page_size":"1"}]',
+// Since 0.19 a field given under both its names refuses.
+await refused(wholeEncodedChoice);
+await refused(
+  Request.compile(submit, { body: [{ limit: 1, page_size: "02" }] }),
 );
 
 // #region decoded-mapping

@@ -49,10 +49,13 @@ const readsKeys = (ast: Ast): boolean =>
   partsOf(ast).some(readsKeys) ||
   (ast.encoding ?? []).some(({ to }) => readsKeys(to));
 
+/** A union between members that can read an object's keys. */
+const isObjectUnion = (ast: Ast): boolean =>
+  ast._tag === "Union" && ast.types.filter(readsKeys).length > 1;
+
 /** A choice of member: a union between objects, or a suspended schema, which may not exist yet. */
 const isMemberChoice = (ast: Ast): boolean =>
-  ast._tag === "Suspend" ||
-  (ast._tag === "Union" && ast.types.filter(readsKeys).length > 1);
+  ast._tag === "Suspend" || isObjectUnion(ast);
 
 /**
  * A choice of side: two ends that do not state the same names, as a renamed field's do, or an
@@ -701,12 +704,45 @@ const readAsArray = (sides: ReadonlyArray<Ast>): boolean =>
   sides.some(({ _tag }) => _tag === "Arrays") &&
   readAsStruct(sides, readsOpaquely(sides));
 
+type Renamed = ReadonlyArray<ReadonlyMap<PropertyKey, Ast>>;
+
+const renamings = new WeakMap<Ast, Renamed>();
+
+/**
+ * The fields a schema reads from names it writes: each name a key rename writes, with the schema of
+ * the field written there. Below such a name a caller can give either side of that field.
+ */
+const renamedFields = (ast: Ast): Renamed => {
+  let renamed = renamings.get(ast);
+  if (renamed === undefined) {
+    renamed =
+      ast._tag === "Union"
+        ? ast.types.flatMap(renamedFields)
+        : ast._tag === "Suspend"
+          ? renamedFields(ast.thunk())
+          : ast._tag === "Objects" && isKeyRename(ast)
+            ? [
+                new Map(
+                  fieldsOf(ast.encoding![0].to).map(({ name }, index) => [
+                    name,
+                    ast.propertySignatures[index]!.type,
+                  ]),
+                ),
+              ]
+            : [];
+    renamings.set(ast, renamed);
+  }
+  return renamed;
+};
+
 /** Bring a value's {@link unlisted} fields out as keys, at any depth, and take out what `drops` says. */
 const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
   const rewrite = (
     types: ReadonlyArray<Ast>,
     value: unknown,
     within: Within,
+    /** Field schemas that also state names here, as their decoded side does below a written name. */
+    also: ReadonlyArray<Ast> = [],
   ): unknown => {
     if (types.length === 0 || !isObject(value)) return value;
     const view = viewAt(types, value, within);
@@ -714,6 +750,12 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     const hidden = unlisted(sides, value);
     const open = leaveKeysOpen(view);
     const keepKeys = open || statesNothing(sides);
+    const alsoSides = also.length === 0 ? [] : viewAt(also, value).sides;
+    const renamed =
+      types.length === 1
+        ? renamedFields(types[0]!)
+        : types.flatMap(renamedFields);
+    const beyond = alsoSides.length > 0 || renamed.length > 0;
     const plain = isPlain(value);
     const asArray = readAsArray(sides);
     const isList = Array.isArray(value);
@@ -737,12 +779,27 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
       if (
         (plain || asStruct) &&
         !isList &&
-        drops(item, keepKeys || inner.length > 0)
+        drops(
+          item,
+          keepKeys ||
+            inner.length > 0 ||
+            (beyond && typesAt(alsoSides, key).length > 0),
+        )
       ) {
         changed = true;
         return [];
       }
-      const next = rewrite(inner, item, inside(view, key));
+      const next = rewrite(
+        inner,
+        item,
+        inside(view, key),
+        beyond && isObject(item)
+          ? [
+              ...typesAt(alsoSides, key),
+              ...renamed.flatMap((fields) => fields.get(key) ?? []),
+            ]
+          : undefined,
+      );
       changed ||= next !== item;
       return [[key, next] as const];
     });
@@ -842,6 +899,14 @@ const has = (value: unknown, key: PropertyKey): boolean =>
 const at = (value: unknown, key: PropertyKey): unknown =>
   isObject(value) ? value[key] : undefined;
 
+/** Whether a value keeps its names through a schema, as one with no encoding of its own does. */
+const keepsNames = (ast: Ast): boolean =>
+  ast.encoding === undefined
+    ? ast._tag === "Union"
+      ? ast.types.every(keepsNames)
+      : ast._tag !== "Suspend" || keepsNames(ast.thunk())
+    : takesNoObject(ast);
+
 /** Whether a value's keys mean something here: it is plain, or a struct here reads it. */
 const comparable = (sides: ReadonlyArray<Ast>, value: object): boolean =>
   isPlain(value) || sides.some(({ _tag }) => _tag === "Objects");
@@ -857,8 +922,12 @@ export const missing = (
   given: unknown,
   value: unknown,
   output: unknown,
+  options: {
+    readonly voidChoices?: WeakSet<Ast> | undefined;
+    /** Whether to report only places that are written under the names they are read by. */
+    readonly sameNames?: boolean;
+  } = {},
   path: Path = [],
-  voidChoices?: WeakSet<Ast>,
   within: Within = atRoot,
 ): ReadonlyArray<Path> => {
   // A value kept as given holds every key in it; reading it again could only run its accessors.
@@ -869,7 +938,7 @@ export const missing = (
   const decoded = new Set(
     types.flatMap((type) => decodedNames(type, given, view.known)),
   );
-  const voidChoice = types.some((type) => voidChoices?.has(type));
+  const voidChoice = types.some((type) => options.voidChoices?.has(type));
   const holdsAsWritten = (key: PropertyKey) =>
     has(output, key) &&
     // A loose constructor can replace an encoded-only alias with a default after a strict Void
@@ -883,17 +952,17 @@ export const missing = (
       ...path,
       Array.isArray(given) ? (arrayIndex(key) ?? key) : key,
     ];
-    return given[key] === undefined || has(value, key) || holdsAsWritten(key)
-      ? missing(
-          heldAt(view, key),
-          given[key],
-          at(value, key),
-          at(output, key),
-          here,
-          voidChoices,
-          inside(view, key),
-        )
-      : [here];
+    if (given[key] === undefined || has(value, key) || holdsAsWritten(key))
+      return missing(
+        heldAt(view, key),
+        given[key],
+        at(value, key),
+        at(output, key),
+        options,
+        here,
+        inside(view, key),
+      );
+    return options.sameNames !== true || types.every(keepsNames) ? [here] : [];
   });
 };
 
@@ -1174,6 +1243,28 @@ export const refusal = (
 
 /** Whether a schema holds a choice of member, which only a stacked schema can settle for it. */
 export const choosesMember = holding(isMemberChoice);
+
+const resolvedChoices = new WeakMap<Ast, boolean>();
+
+/** {@link choosesMember} once a value is at hand, when what a suspension stands for can be read. */
+export const choosesMemberResolved = (root: Ast): boolean => {
+  let chooses = resolvedChoices.get(root);
+  if (chooses === undefined) {
+    const seen = new Set<Ast>();
+    const visit = (ast: Ast): boolean => {
+      if (seen.has(ast)) return false;
+      seen.add(ast);
+      return (
+        isObjectUnion(ast) ||
+        (ast._tag === "Suspend" && visit(ast.thunk())) ||
+        partsOf(ast).some(visit) ||
+        (ast.encoding ?? []).some(({ to }) => visit(to))
+      );
+    };
+    resolvedChoices.set(root, (chooses = visit(root)));
+  }
+  return chooses;
+};
 
 /**
  * Whether a schema holds a choice that can cost a field, of member or of side, anywhere it can be

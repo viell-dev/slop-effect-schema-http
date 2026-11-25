@@ -1698,10 +1698,29 @@ describe("a caller's field under a union", () => {
               body: { a: { x: "1" }, b: { x: "2" } },
             }),
           ).toContain('["b"]');
-          expect(
-            yield* bodyOf(request, { body: { a: { x: "1" }, b: { x: "1" } } }),
-          ).toBe('{"b":{"x":"1"}}');
         }),
+    );
+
+    it.effect("is refused beside its encoded twin, as under a struct", () =>
+      Effect.gen(function* () {
+        const Renamed = Schema.Struct({ a: text }).pipe(
+          Schema.encodeKeys({ a: "A" }),
+        );
+        const Choice = Schema.Union([Renamed, Schema.Struct({ b: text })]);
+        for (const schema of [Renamed, Choice])
+          for (const A of ["1", "2"])
+            expect(
+              yield* schemaFailure(queried(schema), { query: { a: "1", A } }),
+            ).toContain('["A"]');
+        const InBody = post(
+          Schema.Struct({ f: NarrowFirst }).pipe(Schema.encodeKeys({ f: "F" })),
+        );
+        expect(
+          yield* schemaFailure(InBody, {
+            body: { f: { a: "1" }, F: { a: "2" } },
+          }),
+        ).toContain('["F"]');
+      }),
     );
 
     it.effect("is refused where only the encoded side shows the member", () =>
@@ -2898,33 +2917,6 @@ describe("a caller's field under a union", () => {
           yield* urlOf(queried(Either), { query: { a: undefined, c: "z" } }),
         ).toBe("/x?c=z");
       }),
-    );
-
-    it.effect(
-      "reading a decoded name beside its encoded twin, as a struct does",
-      () =>
-        Effect.gen(function* () {
-          const Renamed = Schema.Struct({ a: text }).pipe(
-            Schema.encodeKeys({ a: "A" }),
-          );
-          const Choice = Schema.Union([Renamed, Schema.Struct({ b: text })]);
-          for (const query of [
-            { a: "1", A: "2" },
-            { a: "1", A: "1" },
-          ]) {
-            expect(yield* urlOf(queried(Renamed), { query })).toBe("/x?A=1");
-            expect(yield* urlOf(queried(Choice), { query })).toBe("/x?A=1");
-          }
-          const InBody = Schema.Struct({ f: NarrowFirst }).pipe(
-            Schema.encodeKeys({ f: "F" }),
-          );
-          const body = { f: { a: "1" }, F: { a: "2" } };
-          const compiled = yield* compile(
-            Request.post("/x").pipe(Request.body(Body.jsonSchema(InBody))),
-            { body },
-          );
-          expect(bodyText(compiled.request)).toBe('{"F":{"a":"1"}}');
-        }),
     );
 
     it.effect("reading a tag on the side it is written on", () =>

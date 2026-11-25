@@ -1,19 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Cause,
-  Context,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  Option,
-  Schema,
-  SchemaGetter,
-  SchemaIssue,
-} from "effect";
+import { Effect, Option, Schema } from "effect";
 import * as Body from "./Body.js";
 import * as Inputs from "./internal/input.js";
-import { snapshotter } from "./internal/snapshot.js";
 import * as Request from "./Request.js";
 
 const A = Schema.Struct({ a: Schema.String });
@@ -36,7 +24,7 @@ const json = <S extends Schema.Top>(schema: S, value: Inputs.Input<S>) =>
   });
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-describe("constructor-only recovery beside opaque fields", () => {
+describe("visible unions beside opaque fields", () => {
   it.effect("keeps the visible wider member through Body.jsonSchema", () =>
     Effect.gen(function* () {
       expect(yield* json(Core, input())).toEqual({
@@ -63,31 +51,19 @@ describe("constructor-only recovery beside opaque fields", () => {
     }),
   );
 
-  it.effect(
-    "retains refusal when a pending encoding gains a visible field",
-    () =>
-      Effect.gen(function* () {
-        const value = {
-          f: { a: "x" } as { a: string; b?: string },
-          o: input().o,
-        };
-        const pending = Body.jsonSchema(Core).encode(value);
-        value.f.b = "y";
-        const result = yield* Effect.result(pending);
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure")
-          expect(String(result.failure)).toContain('["f"]["b"]');
-      }),
-  );
-
-  it.effect("retains current field values when pending input changes", () =>
+  it.effect("keeps a field the value gains before its encoding runs", () =>
     Effect.gen(function* () {
-      const value = input();
-      const pending = Inputs.reader(Core, Schema.encodeEffect(Core))(value);
-      value.f.a = "changed";
-      const result = yield* pending;
-      expect(result.lost).toEqual([["f", "b"]]);
-      expect(result.output.f.a).toBe("changed");
+      const value = {
+        f: { a: "x" } as { a: string; b?: string },
+        o: input().o,
+      };
+      const pending = Body.jsonSchema(Core).encode(value);
+      value.f.b = "y";
+      const body = yield* pending;
+      if (body._tag !== "Uint8Array") throw new Error("expected a JSON body");
+      expect(JSON.parse(new TextDecoder().decode(body.body))).toMatchObject({
+        f: { a: "x", b: "y" },
+      });
     }),
   );
 
@@ -186,29 +162,6 @@ describe("constructor-only recovery beside opaque fields", () => {
     }),
   );
 
-  it.effect(
-    "keeps a null prototype while constructing omitted prototype-named defaults",
-    () =>
-      Effect.gen(function* () {
-        const schema = Schema.Struct({
-          ...Core.fields,
-          toString: Schema.optionalKey(Schema.Unknown).pipe(
-            Schema.withConstructorDefault(Effect.succeed("25")),
-          ),
-        });
-        const value = Object.assign(Object.create(null), input());
-        const result = yield* Inputs.reader(
-          schema,
-          Schema.encodeEffect(schema),
-        )(value);
-        expect(result.lost).toEqual([]);
-        expect(result.output.f).toEqual({ a: "x", b: "y" });
-        expect(
-          Object.getOwnPropertyDescriptor(result.output, "toString")?.value,
-        ).toBe("25");
-      }),
-  );
-
   it.effect("preserves the already successful renamed-sibling control", () =>
     Effect.gen(function* () {
       const renamed = Schema.Struct({
@@ -287,261 +240,66 @@ describe("constructor-only recovery beside opaque fields", () => {
     }),
   );
 
-  it.effect(
-    "copies full input rather than projecting unstated root or nested fields",
-    () =>
-      Effect.gen(function* () {
-        for (const value of [
-          { ...input(), unknown: "root" },
-          { ...input(), f: { ...input().f, unknown: "nested" } },
-        ]) {
-          const result = yield* Inputs.reader(
-            Core,
-            Schema.encodeEffect(Core),
-          )(value);
-          expect(result.lost).toEqual([["f", "b"]]);
-          expect(result.output.f).toEqual({ a: "x" });
-        }
-        const impossible = Schema.Struct({
-          f: Schema.Union([A, Schema.Struct({ b: Schema.String })]),
-          o: Schema.Option(A),
-        });
+  it.effect("leaves out only what no member states", () =>
+    Effect.gen(function* () {
+      for (const value of [
+        { ...input(), unknown: "root" },
+        { ...input(), f: { ...input().f, unknown: "nested" } },
+      ]) {
         const result = yield* Inputs.reader(
-          impossible,
-          Schema.encodeEffect(impossible),
-        )(input());
-        expect(result.lost).toEqual([["f", "b"]]);
-        const failure = yield* Effect.flip(
-          Inputs.refuseLost(impossible, result.lost, new Set(["f", "b"])),
-        );
-        expect(failure.message).toContain('["f"]["b"]');
-      }),
-  );
-
-  for (const name of [
-    "__proto__",
-    "constructor",
-    "toString",
-    Symbol("field"),
-  ]) {
-    it.effect(`writes ${String(name)} safely as an own field`, () =>
-      Effect.gen(function* () {
-        const schema = Schema.Struct({ ...Core.fields, [name]: Schema.String });
-        const value = { ...input(), [name]: "kept" };
-        const result = yield* Inputs.reader(
-          schema,
-          Schema.encodeEffect(schema),
+          Core,
+          Schema.encodeEffect(Core),
         )(value);
         expect(result.lost).toEqual([]);
-        expect(
-          Object.getOwnPropertyDescriptor(result.output, name)?.value,
-        ).toBe("kept");
         expect(result.output.f).toEqual({ a: "x", b: "y" });
-        expect(Object.getPrototypeOf(result.output)).toBe(Object.prototype);
-      }),
-    );
-  }
-
-  it.effect(
-    "retains the original loss when a candidate writer still drops a field",
-    () =>
-      Effect.gen(function* () {
-        const originalInput = input();
-        let writes = 0;
-        const read = Inputs.reader(Core, (value, options) =>
-          Effect.map(Schema.encodeEffect(Core)(value, options), (output) => {
-            writes++;
-            if (writes === 2) {
-              // A callback mutates the caller's value while also producing a lossy candidate.
-              Reflect.deleteProperty(originalInput.f, "b");
-              Reflect.deleteProperty(value.f, "b");
-              return { ...output, f: { a: "x" } };
-            }
-            return output;
-          }),
-        );
-        const result = yield* read(originalInput);
-        expect(writes).toBe(2);
-        expect(originalInput.f).toEqual({ a: "x" });
-        expect(result.lost).toEqual([["f", "b"]]);
-        expect(result.output.f).toEqual({ a: "x" });
-      }),
-  );
-
-  it.effect(
-    "keeps pre-callback full input when a callback deletes an unknown root field",
-    () =>
-      Effect.gen(function* () {
-        const originalInput = { ...input(), unknown: "root" };
-        let writes = 0;
-        const read = Inputs.reader(Core, (value, options) =>
-          Effect.map(Schema.encodeEffect(Core)(value, options), (output) => {
-            writes++;
-            Reflect.deleteProperty(originalInput, "unknown");
-            return output;
-          }),
-        );
-        const result = yield* read(originalInput);
-        expect(writes).toBe(1);
-        expect(result.lost).toEqual([["f", "b"]]);
-      }),
-  );
-
-  it.effect(
-    "retains typed candidate failures while propagating defects and interruption",
-    () =>
-      Effect.gen(function* () {
-        const boom = new Error("candidate defect");
-        for (const mode of ["typed", "defect", "interrupt"] as const) {
-          const read = Inputs.reader(Core, (value, options) => {
-            if ("b" in value.f) {
-              if (mode === "defect") return Effect.die(boom);
-              if (mode === "interrupt") return Effect.interrupt;
-              return Effect.fail(
-                new Schema.SchemaError(
-                  new SchemaIssue.InvalidValue({
-                    message: "candidate refused",
-                  }),
-                ),
-              );
-            }
-            return Schema.encodeEffect(Core)(value, options);
-          });
-          const result = yield* Effect.exit(read(input()));
-          if (mode === "typed") {
-            expect(result).toMatchObject({
-              _tag: "Success",
-              value: { lost: [["f", "b"]] },
-            });
-          } else {
-            expect(Exit.isFailure(result)).toBe(true);
-            if (Exit.isFailure(result)) {
-              if (mode === "defect")
-                expect(Cause.squash(result.cause)).toBe(boom);
-              else expect(Cause.hasInterrupts(result.cause)).toBe(true);
-            }
-          }
-        }
-      }),
-  );
-
-  it.effect(
-    "keeps schema services and failures isolated under concurrent use",
-    () =>
-      Effect.gen(function* () {
-        class Tenant extends Context.Service<Tenant, string>()(
-          "opaque/Tenant",
-        ) {}
-        const schema = Schema.Struct({
-          ...Core.fields,
-          d: Schema.String.pipe(
-            Schema.decodeTo(Schema.String, {
-              decode: SchemaGetter.passthrough(),
-              encode: SchemaGetter.transformEffect(() =>
-                Effect.gen(function* () {
-                  const tenant = yield* Tenant;
-                  yield* Effect.promise(() => Promise.resolve());
-                  return tenant;
-                }),
-              ),
-            }),
-            Schema.withConstructorDefault(Effect.succeed("d")),
-          ),
-        });
-        const read = Inputs.reader(schema, (value, options) =>
-          Effect.gen(function* () {
-            const tenant = yield* Tenant;
-            if (tenant === "bad" && "b" in value.f)
-              return yield* Effect.fail(
-                new Schema.SchemaError(
-                  new SchemaIssue.InvalidValue({ message: "tenant refused" }),
-                ),
-              );
-            return yield* Schema.encodeEffect(schema)(value, options);
-          }),
-        );
-        const results = yield* Effect.all(
-          ["one", "bad", "two"].map((tenant) =>
-            read(input()).pipe(Effect.provideService(Tenant, tenant)),
-          ),
-          { concurrency: "unbounded" },
-        );
-        expect(results.map(({ output }) => output.d)).toEqual([
-          "one",
-          "bad",
-          "two",
-        ]);
-        expect(results.map(({ lost }) => lost)).toEqual([[], [["f", "b"]], []]);
-      }),
-  );
-
-  it.effect("interrupts an in-progress constructor recovery", () =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const released = yield* Deferred.make<void>();
-      let recovering = false;
-      const schema = Schema.Struct({
-        ...Core.fields,
-        d: Schema.String.pipe(
-          Schema.withConstructorDefault(
-            Effect.suspend(() =>
-              recovering
-                ? Effect.ensuring(
-                    Effect.andThen(
-                      Deferred.succeed(started, undefined),
-                      Effect.never,
-                    ),
-                    Deferred.succeed(released, undefined),
-                  )
-                : Effect.succeed("d"),
-            ),
-          ),
-        ),
+      }
+      const impossible = Schema.Struct({
+        f: Schema.Union([A, Schema.Struct({ b: Schema.String })]),
+        o: Schema.Option(A),
       });
-      const read = Inputs.reader(schema, (value, options) =>
-        Effect.tap(Schema.encodeEffect(schema)(value, options), () =>
-          Effect.sync(() => {
-            recovering = true;
-          }),
-        ),
+      const result = yield* Inputs.reader(
+        impossible,
+        Schema.encodeEffect(impossible),
+      )(input());
+      expect(result.lost).toEqual([["f", "b"]]);
+      const failure = yield* Effect.flip(
+        Inputs.refuseLost(impossible, result.lost, new Set(["f", "b"])),
       );
-      const fiber = yield* read(input()).pipe(Effect.forkChild);
-      yield* Deferred.await(started);
-      yield* Fiber.interrupt(fiber);
-      const result = yield* Fiber.await(fiber);
-      yield* Deferred.await(released);
-      expect(Exit.isFailure(result)).toBe(true);
-      if (Exit.isFailure(result))
-        expect(Cause.hasInterrupts(result.cause)).toBe(true);
+      expect(failure.message).toContain('["f"]["b"]');
     }),
   );
 
-  it.effect(
-    "keeps evidence independent of mutations by candidate constructors",
-    () =>
-      Effect.gen(function* () {
-        let recovering = false;
-        const schema = Schema.Struct({
-          ...Core.fields,
-          x: Schema.Struct({ keep: Schema.optionalKey(Schema.String) }).check(
-            Schema.makeFilter((value) => {
-              if (recovering) Reflect.deleteProperty(value, "keep");
-              return true;
-            }),
-          ),
-        });
-        const read = Inputs.reader(schema, (value, options) =>
-          Effect.tap(Schema.encodeEffect(schema)(value, options), () =>
-            Effect.sync(() => {
-              recovering = true;
-            }),
-          ),
-        );
-        const result = yield* read({ ...input(), x: { keep: "y" } });
-        expect(result.lost).toEqual([["f", "b"]]);
-        expect(result.output.x).toEqual({ keep: "y" });
-      }),
+  it.effect("keeps a symbol field beside the opaque value", () =>
+    Effect.gen(function* () {
+      const name = Symbol("field");
+      const schema = Schema.Struct({ ...Core.fields, [name]: Schema.String });
+      const result = yield* Inputs.reader(
+        schema,
+        Schema.encodeEffect(schema),
+      )({ ...input(), [name]: "kept" });
+      expect(result.lost).toEqual([]);
+      expect(result.output[name]).toBe("kept");
+      expect(result.output.f).toEqual({ a: "x", b: "y" });
+    }),
   );
+
+  // Effect 4.0.7 and 4.1.4 read such names differently, so a schema that states one is read as
+  // Effect reads it, and what that loses is refused.
+  for (const name of ["__proto__", "constructor", "toString"])
+    it.effect(`refuses the narrower member beside a field named ${name}`, () =>
+      Effect.gen(function* () {
+        const schema = Schema.Struct({ ...Core.fields, [name]: Schema.String });
+        const value = Object.defineProperty(input(), name, {
+          value: "kept",
+          enumerable: true,
+        });
+        const { lost } = yield* Inputs.reader(
+          schema,
+          Schema.encodeEffect(schema),
+        )(value as never);
+        expect(lost).toContainEqual(["f", "b"]);
+      }),
+    );
 
   it.effect(
     "does not split shared references to bypass the parent's check",
@@ -569,7 +327,7 @@ describe("constructor-only recovery beside opaque fields", () => {
       }),
   );
 
-  it.effect("retains the refusal for repeated visible references", () =>
+  it.effect("keeps every field of repeated visible references", () =>
     Effect.gen(function* () {
       const schema = Schema.Struct({
         rows: Schema.Array(F),
@@ -583,10 +341,8 @@ describe("constructor-only recovery beside opaque fields", () => {
         rows: [shared, shared],
         o: input().o,
       });
-      expect(result.lost).toEqual([
-        ["rows", 0, "b"],
-        ["rows", 1, "b"],
-      ]);
+      expect(result.lost).toEqual([]);
+      expect(result.output.rows).toEqual([shared, shared]);
     }),
   );
 
@@ -638,59 +394,6 @@ describe("constructor-only recovery beside opaque fields", () => {
       }),
   );
 
-  it("declines inherited sparse indices without evaluating their getters", () => {
-    const schema = Schema.Struct({
-      ...Core.fields,
-      x: Schema.Array(Schema.UndefinedOr(Schema.String)),
-    });
-    const capture = snapshotter([schema.ast]);
-    expect(capture({ ...input(), x: [undefined] })).toBeDefined();
-    let gets = 0;
-    const prototype: object = Object.create(Array.prototype);
-    Object.defineProperty(prototype, "0", {
-      get: () => {
-        gets++;
-        return "original";
-      },
-    });
-    const custom = sparseStrings();
-    Object.setPrototypeOf(custom, prototype);
-    expect(capture({ ...input(), x: custom })).toBeUndefined();
-    expect(gets).toBe(0);
-    for (const polluted of [Array.prototype, Object.prototype]) {
-      const previous = Object.getOwnPropertyDescriptor(polluted, "0");
-      let captured: unknown;
-      try {
-        Object.defineProperty(polluted, "0", {
-          value: "original",
-          configurable: true,
-          writable: true,
-        });
-        captured = capture({ ...input(), x: sparseStrings() });
-      } finally {
-        if (previous === undefined) Reflect.deleteProperty(polluted, "0");
-        else Object.defineProperty(polluted, "0", previous);
-      }
-      expect(captured).toBeUndefined();
-    }
-  });
-
-  it("captures sparse array evidence without visiting every missing element", () => {
-    const schema = Schema.Struct({
-      ...Core.fields,
-      x: Schema.Array(Schema.UndefinedOr(Schema.String)),
-    });
-    const x: (string | undefined)[] = [];
-    x.length = 1_000_000_000;
-    const original = { ...input(), x };
-    const captured = snapshotter([schema.ast])(original);
-    expect(captured).toBeDefined();
-    const value = captured!.value as { readonly x: ReadonlyArray<unknown> };
-    expect(value.x.length).toBe(x.length);
-    expect(Object.hasOwn(value.x, "0")).toBe(false);
-    expect(captured!.matches(original)).toBe(true);
-  });
-
   for (const [name, opaque] of [
     ["Unknown", Schema.Unknown],
     ["Any", Schema.Any],
@@ -729,38 +432,40 @@ describe("constructor-only recovery beside opaque fields", () => {
     );
   }
 
-  it.effect("excludes transformed, union, open and iterable parents", () =>
-    Effect.gen(function* () {
-      const schemas = [
-        Core.pipe(Schema.encodeKeys({ f: "f" })),
-        Schema.Union([Core, Schema.Struct({ unrelated: Schema.String })]),
-        Schema.StructWithRest(Core, [
-          Schema.Record(Schema.String, Schema.Unknown),
-        ]),
-        Schema.Struct({
-          ...Core.fields,
-          [Symbol.iterator]: Schema.optionalKey(Schema.Unknown),
-        }),
-      ];
-      for (const schema of schemas) {
+  it.effect(
+    "keeps the wider member under transformed, union and iterable parents",
+    () =>
+      Effect.gen(function* () {
+        const schemas = [
+          Core.pipe(Schema.encodeKeys({ f: "f" })),
+          Schema.Union([Core, Schema.Struct({ unrelated: Schema.String })]),
+          Schema.StructWithRest(Core, [
+            Schema.Record(Schema.String, Schema.Unknown),
+          ]),
+          Schema.Struct({
+            ...Core.fields,
+            [Symbol.iterator]: Schema.optionalKey(Schema.Unknown),
+          }),
+        ];
+        for (const schema of schemas) {
+          const result = yield* Inputs.reader(
+            schema,
+            Schema.encodeEffect(schema),
+          )(input());
+          expect(result.lost).toEqual([]);
+        }
+        const iterable = {
+          ...input(),
+          [Symbol.iterator]() {
+            throw new Error("must not iterate recovery input");
+          },
+        };
         const result = yield* Inputs.reader(
-          schema,
-          Schema.encodeEffect(schema),
-        )(input());
-        expect(result.lost).toEqual([["f", "b"]]);
-      }
-      const iterable = {
-        ...input(),
-        [Symbol.iterator]() {
-          throw new Error("must not iterate recovery input");
-        },
-      };
-      const result = yield* Inputs.reader(
-        Core,
-        Schema.encodeEffect(Core),
-      )(iterable);
-      expect(result.lost).toEqual([["f", "b"]]);
-    }),
+          Core,
+          Schema.encodeEffect(Core),
+        )(iterable);
+        expect(result.lost).toEqual([]);
+      }),
   );
 
   it.effect(

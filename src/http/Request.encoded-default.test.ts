@@ -8,13 +8,10 @@ import {
   Fiber,
   Option,
   Schema,
-  SchemaAST,
   SchemaIssue,
   SchemaTransformation,
 } from "effect";
 import * as Body from "./Body.js";
-import { encodedInput } from "./internal/encoded-input.js";
-import * as Excess from "./internal/excess.js";
 import * as Inputs from "./internal/input.js";
 import * as Request from "./Request.js";
 import type * as Transport from "./Transport.js";
@@ -82,7 +79,7 @@ describe("encoded input beside constructor defaults", () => {
     }
 
     it.effect(
-      `preserves valid ${group} values, omission and alias precedence`,
+      `preserves valid ${group} values and omission, and refuses conflicting names`,
       () =>
         Effect.gen(function* () {
           const request = Request.get("/x").pipe(bind(Renamed));
@@ -90,7 +87,6 @@ describe("encoded input beside constructor defaults", () => {
             { page_size: "05" },
             { page_size: "05", unknown: "ignored" },
             { limit: 5 },
-            { limit: 5, page_size: "many" },
           ])
             expect(output(yield* compile(request, { [group]: input }))).toEqual(
               expected("5"),
@@ -106,6 +102,8 @@ describe("encoded input beside constructor defaults", () => {
           for (const input of [
             { limit: Number.NaN },
             { limit: 5, search_term: "x" },
+            { limit: 5, page_size: "many" },
+            { limit: 5, page_size: "5" },
           ])
             expect(
               yield* Effect.flip(compile(request, { [group]: input })),
@@ -238,28 +236,26 @@ describe("encoded input beside constructor defaults", () => {
       }),
   );
 
-  it.effect(
-    "keeps strict writer failure fallback separate from read failure",
-    () =>
-      Effect.gen(function* () {
-        const failure = new Schema.SchemaError(
-          new SchemaIssue.InvalidValue({ message: "strict writer failed" }),
-        );
-        for (const input of [
-          { page_size: "05" },
-          { page_size: "05", unknown: "ignored" },
-        ]) {
-          const writes: string[] = [];
-          const read = Inputs.reader(Renamed, (value, options) => {
-            writes.push(`${options ? "strict" : "ordinary"}:${value.limit}`);
-            return options
-              ? Effect.fail(failure)
-              : Schema.encodeEffect(Renamed)(value);
-          });
-          expect((yield* read(input)).output).toEqual({ page_size: "25" });
-          expect(writes).toEqual(["strict:5", "strict:25", "ordinary:25"]);
-        }
-      }),
+  it.effect("relaxes the write of what the strict read kept", () =>
+    Effect.gen(function* () {
+      const failure = new Schema.SchemaError(
+        new SchemaIssue.InvalidValue({ message: "strict writer failed" }),
+      );
+      for (const input of [
+        { page_size: "05" },
+        { page_size: "05", unknown: "ignored" },
+      ]) {
+        const writes: string[] = [];
+        const read = Inputs.reader(Renamed, (value, options) => {
+          writes.push(`${options ? "strict" : "ordinary"}:${value.limit}`);
+          return options
+            ? Effect.fail(failure)
+            : Schema.encodeEffect(Renamed)(value);
+        });
+        expect((yield* read(input)).output).toEqual({ page_size: "5" });
+        expect(writes).toEqual(["strict:5", "strict:5", "ordinary:5"]);
+      }
+    }),
   );
 
   it.effect("keeps omitted default failures, defects and interruption", () =>
@@ -314,43 +310,6 @@ describe("encoded input beside constructor defaults", () => {
         expect(calls).toBe(mode === "typed" ? 2 : 1);
       }
     }),
-  );
-
-  it.effect(
-    "retains the original strict refusal on typed decoder failure",
-    () =>
-      Effect.gen(function* () {
-        let calls = 0;
-        const shared = Schema.String.pipe(
-          Schema.decodeTo(
-            Schema.String,
-            SchemaTransformation.transformEffect({
-              decode: (): Effect.Effect<string, SchemaIssue.Issue> =>
-                Effect.suspend(() => {
-                  calls++;
-                  return Effect.fail(
-                    new SchemaIssue.InvalidValue({ message: "decoder failed" }),
-                  );
-                }),
-              encode: Effect.succeed,
-            }),
-          ),
-        );
-        const schema = Schema.Struct({ ...Base.fields, shared }).pipe(
-          Schema.encodeKeys({ limit: "page_size" }),
-        );
-        const input = { page_size: "05", shared: "x" };
-        const original = yield* Effect.flip(
-          Inputs.toDecoded(schema, Excess.strict)(input),
-        );
-        calls = 0;
-        const error = yield* Effect.flip(
-          Inputs.reader(schema, Schema.encodeEffect(schema))(input),
-        );
-        expect(error.message).toBe(original.message);
-        expect(error.message).not.toContain("decoder failed");
-        expect(calls).toBe(2);
-      }),
   );
 
   for (const mode of ["defect", "interrupt"] as const) {
@@ -454,9 +413,9 @@ describe("encoded input beside constructor defaults", () => {
         page_size: "5",
         opaque: Option.some({ keep: "x" }),
       });
-      expect(
-        yield* Effect.flip(read({ page_size: "many", opaque })),
-      ).toBeInstanceOf(Schema.SchemaError);
+      expect((yield* read({ page_size: "many", opaque })).lost).toEqual([
+        ["page_size"],
+      ]);
     }),
   );
 
@@ -474,66 +433,6 @@ describe("encoded input beside constructor defaults", () => {
         input.limit = 5;
         expect((yield* pending).output).toEqual({ page_size: "5" });
       }),
-  );
-
-  it.effect(
-    "refuses changed input during an asynchronous decoder attempt",
-    () =>
-      Effect.gen(function* () {
-        const started = yield* Deferred.make<void>();
-        const resume = yield* Deferred.make<void>();
-        const shared = Schema.String.pipe(
-          Schema.decodeTo(
-            Schema.String,
-            SchemaTransformation.transformEffect({
-              decode: (value) =>
-                Effect.andThen(
-                  Deferred.succeed(started, undefined),
-                  Effect.as(Deferred.await(resume), value),
-                ),
-              encode: Effect.succeed,
-            }),
-          ),
-        );
-        const renamed = Schema.Struct({ ...Base.fields, shared }).pipe(
-          Schema.encodeKeys({ limit: "page_size" }),
-        );
-        const schema = Schema.Union([renamed, Cursor]);
-        const input = { page_size: "05", shared: "x", cursor: "next" };
-        let writes = 0;
-        const read = Inputs.reader(schema, (value, options) => {
-          writes++;
-          return Schema.encodeEffect(schema)(value, options);
-        });
-        const fiber = yield* Effect.forkChild(Effect.result(read(input)));
-        yield* Deferred.await(started);
-        input.page_size = "07";
-        yield* Deferred.succeed(resume, undefined);
-        const result = yield* Fiber.join(fiber);
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure")
-          expect(result.failure.message).toContain('["page_size"]');
-        expect(writes).toBe(1);
-      }),
-  );
-
-  it.effect("refuses mutation by the fallback writer", () =>
-    Effect.gen(function* () {
-      const schema = Schema.Union([Renamed, Cursor]);
-      const input = { page_size: "05", cursor: "next" };
-      let writes = 0;
-      const read = Inputs.reader(schema, (value, options) =>
-        Effect.map(Schema.encodeEffect(schema)(value, options), (output) => {
-          writes++;
-          if (writes === 2) input.page_size = "07";
-          return output;
-        }),
-      );
-      expect((yield* Effect.flip(read(input))).message).toContain(
-        '["page_size"]',
-      );
-      expect(writes).toBe(2);
-    }),
   );
 
   it.effect("interrupts a suspended decoder and runs its cleanup", () =>
@@ -620,9 +519,9 @@ describe("encoded input beside constructor defaults", () => {
           expect((yield* read({ [wireName]: "05" })).output[wireName]).toBe(
             "5",
           );
-          expect(
-            yield* Effect.flip(read({ [wireName]: "many" })),
-          ).toBeInstanceOf(Schema.SchemaError);
+          expect((yield* read({ [wireName]: "many" })).lost).toEqual([
+            [typeof wireName === "number" ? String(wireName) : wireName],
+          ]);
         }
       }),
   );
@@ -712,220 +611,6 @@ describe("encoded input beside constructor defaults", () => {
         expect(defaults).toBe(1);
       }),
   );
-
-  it.effect(
-    "does not retry decoding when its constructor observer defects",
-    () =>
-      Effect.gen(function* () {
-        const boom = new Error("observer defect");
-        const result = yield* Effect.exit(
-          Inputs.toDecoded(Renamed)({ limit: 5 }, () => {
-            throw boom;
-          }),
-        );
-        expect(Exit.isFailure(result)).toBe(true);
-        if (Exit.isFailure(result))
-          expect(Cause.squash(result.cause)).toBe(boom);
-      }),
-  );
-
-  it.effect(
-    "requires an enumerable own data write without consulting output accessors or iterators",
-    () =>
-      Effect.gen(function* () {
-        let decodes = 0;
-        let iterations = 0;
-        const shared = Schema.String.pipe(
-          Schema.decodeTo(
-            Schema.String,
-            SchemaTransformation.transform({
-              decode: (value) => {
-                decodes++;
-                return value;
-              },
-              encode: (value) => value,
-            }),
-          ),
-        );
-        const renamed = Schema.Struct({ ...Base.fields, shared }).pipe(
-          Schema.encodeKeys({ limit: "page_size" }),
-        );
-        const schema = Schema.Union([renamed, Cursor]);
-        for (const output of [
-          Object.defineProperty({ shared: "x" }, "page_size", { value: "25" }),
-          Object.assign(Object.create({ page_size: "25" }), { shared: "x" }),
-          Object.defineProperty({ shared: "x" }, "page_size", {
-            enumerable: true,
-            get: () => "25",
-          }),
-          { shared: "x", page_size: undefined },
-          {
-            shared: "x",
-            page_size: "25",
-            [Symbol.iterator]: function* () {
-              iterations++;
-              yield* [];
-            },
-          },
-        ]) {
-          decodes = 0;
-          let writes = 0;
-          const result = yield* Inputs.reader(schema, () => {
-            writes++;
-            return Effect.succeed(output);
-          })({ page_size: "05", shared: "x", cursor: "next" });
-          expect(result.output).toBe(output);
-          expect(decodes).toBe(0);
-          expect(writes).toBe(1);
-        }
-        expect(iterations).toBe(0);
-        const evidence = encodedInput(Renamed.ast)!({ page_size: "many" })!;
-        let reads = 0;
-        expect(
-          evidence.witness(
-            Object.defineProperty({}, "page_size", {
-              enumerable: true,
-              get: () => {
-                reads++;
-                return "25";
-              },
-            }),
-          ),
-        ).toBeUndefined();
-        expect(reads).toBe(0);
-        expect(evidence.witness({ page_size: "25" })).toBe("page_size");
-      }),
-  );
-
-  it("declines open, opaque, class, suspended, iterable and cyclic group graphs", () => {
-    class Fields extends Schema.Class<Fields>("EncodedDefaultFields")({
-      cursor: Schema.String,
-    }) {}
-    let suspended = 0;
-    const later = Schema.suspend(() => {
-      suspended++;
-      return Cursor;
-    });
-    const cycle = new SchemaAST.Union([Renamed.ast]);
-    Object.assign(cycle, { types: [Renamed.ast, cycle] });
-    const openMiddle = Schema.Struct({
-      wire: Schema.optionalKey(Schema.String),
-    }).pipe(
-      Schema.decodeTo(
-        Schema.Record(Schema.String, Schema.String),
-        SchemaTransformation.transform({
-          decode: () => ({}),
-          encode: () => ({}),
-        }),
-      ),
-      Schema.decodeTo(
-        Base,
-        SchemaTransformation.transform({
-          decode: () => ({}),
-          encode: () => ({}),
-        }),
-      ),
-    );
-    for (const ast of [
-      Schema.Union([Renamed, Schema.Record(Schema.String, Schema.String)]).ast,
-      Schema.Union([
-        Renamed,
-        Schema.declare((value): value is object => typeof value === "object"),
-      ]).ast,
-      Schema.Union([Renamed, Fields]).ast,
-      Schema.Union([Renamed, later]).ast,
-      Schema.Union([
-        Renamed,
-        Schema.Struct({ [Symbol.iterator]: Schema.Unknown }),
-      ]).ast,
-      openMiddle.ast,
-      cycle,
-    ])
-      expect(encodedInput(ast)).toBeUndefined();
-    expect(suspended).toBe(0);
-    const shared = Schema.Union([Renamed, Renamed]);
-    expect(
-      encodedInput(Schema.Union([shared, shared]).ast)?.({
-        page_size: "many",
-      })?.matches(),
-    ).toBe(true);
-  });
-
-  it("uses global name ambiguity and exact symbol and numeric property keys", () => {
-    const Native = Schema.Struct({
-      page_size: Schema.optionalKey(Schema.String),
-    });
-    expect(
-      encodedInput(Schema.Union([Renamed, Native]).ast)?.({
-        page_size: "many",
-      }),
-    ).toBeUndefined();
-    const exchanged = Native.pipe(Schema.encodeKeys({ page_size: "limit" }));
-    expect(
-      encodedInput(Schema.Union([Renamed, exchanged]).ast)?.({
-        page_size: "many",
-      }),
-    ).toBeUndefined();
-    const symbol = Symbol("wire");
-    const other = Symbol("wire");
-    const symbolic = Base.pipe(Schema.encodeKeys({ limit: symbol }));
-    expect(encodedInput(symbolic.ast)?.({ [symbol]: "many" })?.matches()).toBe(
-      true,
-    );
-    expect(encodedInput(symbolic.ast)?.({ [other]: "many" })).toBeUndefined();
-    const numbered = Base.pipe(Schema.encodeKeys({ limit: 1 }));
-    expect(encodedInput(numbered.ast)?.({ "1": "many" })?.matches()).toBe(true);
-  });
-
-  it("captures data without reading accessors or iterators and detects root mutations", () => {
-    const capture = encodedInput(Renamed.ast)!;
-    let reads = 0;
-    const accessor = Object.defineProperty({}, "page_size", {
-      get: () => {
-        reads++;
-        return "many";
-      },
-    });
-    expect(capture(accessor)).toBeUndefined();
-    expect(capture(Object.create({ page_size: "many" }))).toBeUndefined();
-    expect(
-      capture({
-        page_size: "many",
-        [Symbol.iterator]: () => {
-          reads++;
-          return [][Symbol.iterator]();
-        },
-      }),
-    ).toBeUndefined();
-    expect(reads).toBe(0);
-    for (const change of [
-      (input: Record<PropertyKey, unknown>) => {
-        input.page_size = "05";
-      },
-      (input: Record<PropertyKey, unknown>) => {
-        input.extra = "x";
-      },
-      (input: Record<PropertyKey, unknown>) => {
-        Reflect.deleteProperty(input, "page_size");
-      },
-      (input: Record<PropertyKey, unknown>) => {
-        Object.defineProperty(input, "page_size", { enumerable: false });
-      },
-      (input: Record<PropertyKey, unknown>) => {
-        Object.setPrototypeOf(input, null);
-      },
-      (input: Record<PropertyKey, unknown>) => {
-        Reflect.deleteProperty(input, "a");
-        input.a = "x";
-      },
-    ]) {
-      const input = { a: "x", page_size: "many" };
-      const evidence = capture(input)!;
-      expect(evidence.matches()).toBe(true);
-      change(input);
-      expect(evidence.matches()).toBe(false);
-    }
-  });
 });
 
 const listedAlias = (page_size: string) =>

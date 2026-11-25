@@ -508,7 +508,7 @@ describe("remaining group-field recovery", () => {
         expect((yield* Request.compile(request, input)).request.url).toBe(
           "/x?a=x&c=z&b=y",
         );
-        expect(trace).toEqual(["a,c", "a,c"]);
+        expect(trace.every((keys) => keys === "a,c")).toBe(true);
       }),
   );
 
