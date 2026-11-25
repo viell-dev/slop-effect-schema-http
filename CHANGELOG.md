@@ -6,10 +6,10 @@
   already did at run time, so `Body.urlEncoded.pipe(Body.encodeSchema(schema))` type-checks for a
   schema whose encoded side is such a record. New types `UrlEncodedInput`, `UrlEncodedRecord` and
   `UrlEncodedValue` describe it.
-- `Response.UnexpectedResponse` and `Response.DecodeError` have messages: the status, and for a
-  decoding failure the kind of its cause, so an uncaught failure no longer prints only its tag.
-  Neither repeats a header or the body. A query or header refusal for an output that is not a field
-  record or pairs adds what is wrong with it, such as the position of a malformed pair.
+- `Response.UnexpectedResponse` and `Response.DecodeError` have messages that give the status, so an
+  uncaught failure no longer prints only its tag. Neither repeats a header, the body or anything
+  from the cause. A query or header refusal for an output that is not a field record or pairs adds
+  what is wrong with it, such as the position of a malformed pair.
 - **Breaking:** read query and header arrays of pairs by position through name collection, declared
   defaults and serialization
   ([#242](https://github.com/viell-dev/slop-effect-schema-http/issues/242)). For example, a
@@ -186,7 +186,9 @@
   value as ambiguous. Where no member can, as for a Void of its own, in a field under either of its
   names, in a union of scalars, or a list whose only cell is hidden beside a struct, the request
   refuses with `SchemaError`, where it sent `null`. A scalar or a built-in is not its either:
-  `Union([Schema.Void, Schema.String])` sent `null` for `"hello"` and now sends it.
+  `Union([Schema.Void, Schema.String])` sent `null` for `"hello"` and now sends it. Nor is a list
+  with a defined named field of its own: beside `Schema.Unknown`, the JSON writer then refuses that
+  field with `HttpBodyError`.
 - Keep a hidden or inherited list cell when normalization rebuilds the list beside `Schema.Unknown`,
   `Schema.Any` or `Schema.Object`
   ([#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257)). With a non-enumerable

@@ -47,21 +47,17 @@ export class UnexpectedResponse extends Data.TaggedError("UnexpectedResponse")<{
  *
  * @remarks
  * `cause` retains the underlying typed error; it may contain schema input or response content.
- * The message gives only the status and the cause's kind, so logging it repeats none of that.
+ * The message gives only the status, so logging it repeats none of that. It reads nothing from
+ * `cause`, which a custom decoder chooses.
  * Selection does not fall through to a different case after this failure.
  */
 export class DecodeError<out E> extends Data.TaggedError("DecodeError")<{
   readonly metadata: Metadata;
   readonly cause: E;
 }> {
-  /** What happened, with the response's status and the cause's kind. */
+  /** What happened, with the response's status. */
   override get message(): string {
-    const cause: unknown = this.cause;
-    const kind =
-      typeof cause === "object" && cause !== null && "_tag" in cause
-        ? String(cause._tag)
-        : undefined;
-    return `The body of the status ${this.metadata.status} response could not be read${kind === undefined ? "" : ` (${kind})`}; see cause`;
+    return `The body of the status ${this.metadata.status} response could not be read; see cause`;
   }
 }
 

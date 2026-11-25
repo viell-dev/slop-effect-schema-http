@@ -229,13 +229,34 @@ describe("Response.decode", () => {
       if (error._tag !== "DecodeError") return;
       expect(error.metadata.status).toBe(200);
       expect(Schema.isSchemaError(error.cause)).toBe(true);
-      // The message names the kind of failure, and leaves the body's content to the cause.
+      // The message gives the status, and leaves the body's content to the cause.
       expect(error.message).toBe(
-        "The body of the status 200 response could not be read (SchemaError); see cause",
+        "The body of the status 200 response could not be read; see cause",
       );
       expect(error.message).not.toContain('"1"');
     }),
   );
+
+  it("reads nothing from a decoder's own cause for the message", () => {
+    // A custom decoder chooses its cause, so a tag could carry its input, and a getter could throw.
+    const metadata = metadataOf(new globalThis.Response(null, { status: 502 }));
+    const tagged = new Response.DecodeError({
+      metadata,
+      cause: { _tag: "SYNTHETIC_BODY_TEXT" },
+    });
+    const throwing = new Response.DecodeError({
+      metadata,
+      cause: {
+        get _tag(): string {
+          throw new Error("read");
+        },
+      },
+    });
+    expect(tagged.message).toBe(
+      "The body of the status 502 response could not be read; see cause",
+    );
+    expect(throwing.message).toBe(tagged.message);
+  });
 
   it.effect("never falls through to a later case after a decode failure", () =>
     Effect.gen(function* () {
