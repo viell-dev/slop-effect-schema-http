@@ -495,6 +495,19 @@ describe("a field lost in a stacked group", () => {
 
   it.effect("is left to a sibling that takes it, with or without a union", () =>
     Effect.gen(function* () {
+      // An earlier raw value under a name this schema writes is a default, not a sibling's field.
+      const raw = Request.get("/x").pipe(
+        Request.setQuery("a", "raw"),
+        Request.query(Schema.Struct({ b: text })),
+        Request.query(
+          Schema.Union([
+            Schema.Struct({ a: text }),
+            Schema.Struct({ b: text }),
+          ]),
+        ),
+      );
+      const { request } = yield* compile(raw, { query: { a: "x", b: "y" } });
+      expect(request.url).toBe("/x?b=y&a=x");
       const taking = Schema.Struct({ limit: Schema.optionalKey(text) });
       for (const sibling of [taking, Schema.Union([taking, Cursor])])
         expect(
@@ -746,6 +759,22 @@ describe("a reading that keeps everything", () => {
           expect(
             yield* outcomes(Schema.Struct({ f, c2: Counted }), input),
           ).toEqual(written(sent));
+      // Nor does a nested union drop a field so that the member around it can write strictly.
+      const A = Schema.Struct({ a: Schema.String });
+      const AB = Schema.Struct({ a: Schema.String, b: Schema.String });
+      const u = { a: "1", b: "2" };
+      expect(
+        yield* outcomes(
+          Schema.Struct({
+            f: Schema.Union([
+              Schema.Struct({ u: Schema.Union([A, Schema.Null]) }),
+              Schema.Struct({ u: AB }),
+            ]),
+            c2: Counted,
+          }),
+          { f: { u }, c2: { a: "y" } },
+        ),
+      ).toEqual(written({ f: { u }, c2: { a: "y" } }));
       // A key the struct does not state leaves the value to the open member.
       const [body] = yield* outcomes(
         Schema.Struct({
@@ -774,12 +803,14 @@ describe("a reading that keeps everything", () => {
         n: Schema.FiniteFromString,
         a: Stamp,
         b: Stamp,
+        f: Filter,
         c: Counted,
       });
       const [body] = yield* outcomes(schema, {
         n: 5,
         a: "x",
         b: "x",
+        f: { page_size: "05" },
         c: { a: "k" },
       });
       const { a, b } = JSON.parse(body!) as Record<string, string>;
