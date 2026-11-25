@@ -1,6 +1,9 @@
 # Change history
 
-## Unreleased
+## 0.19.0 — 2026-11-26
+
+[What's in 0.19](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.19) gives each
+breaking change with its migration.
 
 - `Body.urlEncoded` takes a record of fields, field pairs and `URLSearchParams` in its type, as it
   already did at run time, so `Body.urlEncoded.pipe(Body.encodeSchema(schema))` type-checks for a
@@ -183,12 +186,12 @@
   suspended schema, and an empty struct after a Void among them, and in the field of a
   `Schema.Class`. `Union([Schema.Void, Schema.Struct({})])` sent `null` for `{ tag: "a" }` and now
   sends `{"tag":"a"}`, and a one-of union of Void and a struct no longer refuses the struct's own
-  value as ambiguous. Where no member can, as for a Void of its own, in a field under either of its
-  names, in a union of scalars, or a list whose only cell is hidden beside a struct, the request
-  refuses with `SchemaError`, where it sent `null`. A scalar or a built-in is not its either:
-  `Union([Schema.Void, Schema.String])` sent `null` for `"hello"` and now sends it. Nor is a list
-  with a defined named field of its own: beside `Schema.Unknown`, the JSON writer then refuses that
-  field with `HttpBodyError`.
+  value as ambiguous with the struct first, or sends `null` for it with Void first. Where no member
+  can, as for a Void of its own, in a field under either of its names, in a union of scalars, or a
+  list whose only cell is hidden beside a struct, the request refuses with `SchemaError`, where it
+  sent `null`. A scalar or a built-in is not its either: `Union([Schema.Void, Schema.String])` sent
+  `null` for `"hello"` and now sends it. Nor is a list with a defined named field of its own: beside
+  `Schema.Unknown`, the JSON writer then refuses that field with `HttpBodyError`.
 - Keep a hidden or inherited list cell when normalization rebuilds the list beside `Schema.Unknown`,
   `Schema.Any` or `Schema.Object`
   ([#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257)). With a non-enumerable
