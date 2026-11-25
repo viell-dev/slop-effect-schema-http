@@ -916,6 +916,25 @@ const prepareGroup = <
       FieldPairs.isMalformedPair,
       invalidOutput,
     );
+  const writtenBefore = (draft: Draft) =>
+    group === "headers"
+      ? draft.headerLines
+      : draft.request.urlParams.params.map(
+          (param) => [param[0], queryValue(draft, param)] as const,
+        );
+  const takenElsewhere = (
+    draft: Draft,
+    token: object,
+    output?: Shapes.Output,
+  ) =>
+    Shapes.takenElsewhere(
+      shape,
+      draft[takenKey],
+      token,
+      output === undefined ? [] : GroupEncoding.entriesOf(group, output),
+      writtenBefore(draft),
+      fold,
+    );
   return {
     shape,
     // Delegate directly so extraction adds no Effect boundary between the original steps.
@@ -945,7 +964,7 @@ const prepareGroup = <
                 Inputs.refuseLost(
                   contract,
                   lostFromInput,
-                  Shapes.takenElsewhere(prepared[takenKey], undefined, fold),
+                  takenElsewhere(prepared, token),
                   unwritten,
                 ),
                 Effect.fail(error),
@@ -986,7 +1005,7 @@ const prepareGroup = <
         yield* Inputs.refuseLost(
           contract,
           lostFromInput,
-          Shapes.takenElsewhere(prepared[takenKey], snapshot, fold),
+          takenElsewhere(prepared, token, snapshot),
           unwritten,
         );
       }

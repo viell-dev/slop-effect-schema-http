@@ -1,5 +1,6 @@
 import { Effect, Schema, SchemaAST, SchemaIssue, SchemaParser } from "effect";
 import { candidates } from "./candidates.js";
+import { classFields } from "./excess.js";
 import { isPlainData, statesPrototypeName } from "./plain.js";
 
 /** A union a write went through, the member that wrote the value, and the first that could not. */
@@ -29,6 +30,30 @@ export const recordingInto = (
   options?: SchemaAST.ParseOptions,
 ): RecordingOptions => ({ ...options, [record]: writers });
 
+/** A union member to try, strictly or as the write's options say. */
+interface Attempt {
+  readonly index: number;
+  readonly strictly: boolean;
+}
+
+/** Whether a strict write's failure leaves room for a loose one, which would strip keys it names. */
+const couldLoosen = (issue: SchemaIssue.Issue): boolean => {
+  switch (issue._tag) {
+    case "UnexpectedKey":
+      return true;
+    case "Pointer":
+    case "Encoding":
+    case "Filter":
+      return couldLoosen(issue.issue);
+    case "Composite":
+      return issue.issues.every(couldLoosen);
+    case "AnyOf":
+      return issue.issues.some(couldLoosen);
+    default:
+      return false;
+  }
+};
+
 /** A guarded Void declines an object or list. That says nothing about the value it was given. */
 export const declinedByVoid = (issue: SchemaIssue.Issue): boolean =>
   issue._tag === "InvalidType" && issue.ast._tag === "Void";
@@ -54,16 +79,17 @@ const parser = (
 };
 
 /**
- * A union that writes strictly where a member can, or else as Effect's union does, and notes which
- * member wrote each value.
+ * A union that writes through a member that holds the whole value where one can, or else as Effect's
+ * union does, and notes which member wrote each value.
  *
  * @remarks
  * The members to try are pre-selected as Effect selects them, so a member Effect would skip never
- * runs. Each is tried in order: strictly, so a member that writes the whole value comes before one
- * that strips it, and then as the write's options say. A failed attempt forgets what was noted inside
- * it, so only the members of the write that succeeded remain. An any-of union keeps its first
- * success; a one-of union fails if two members write. The union's checks, encoding and context stay
- * with it.
+ * runs. Each in turn writes the value strictly or, where it states every key the value holds, as the
+ * write's options say: what a strict write then refuses is the member's own, as a key its encoder
+ * hands on or a field a class instance holds beside those it states. Only where no member can are
+ * they tried as Effect tries them. A failed attempt forgets what was noted inside it, so only the
+ * members of the write that succeeded remain. An any-of union keeps its first success; a one-of union
+ * fails if two members write. The union's checks, encoding and context stay with it.
  */
 const noting = (
   original: SchemaAST.Union,
@@ -106,100 +132,102 @@ const noting = (
     () => (input, _self, options: RecordingOptions) => {
       const writers = options[record];
       const order = (select ??= candidates(flipped))(input);
-      const trying = (
-        parseOptions: RecordingOptions,
+      const within = options.onExcessProperty === "error";
+      const loose = options[around] ?? options;
+      const strict: RecordingOptions = within
+        ? options
+        : { ...options, onExcessProperty: "error", [around]: options };
+      const forget = (mark: number) => {
+        if (writers !== undefined) writers.length = mark;
+      };
+      const start = writers?.length ?? 0;
+      /** What each member's last attempt failed with. */
+      const issues = new Map<number, SchemaIssue.Issue>();
+      /** The members a looser attempt could still write through. */
+      const open = new Set<number>();
+      const successes: Array<SchemaAST.AST> = [];
+      let written:
+        { readonly output: unknown; readonly index: number } | undefined;
+      const finish = (): Effect.Effect<unknown, SchemaIssue.Issue> => {
+        if (written === undefined)
+          return Effect.fail(
+            new SchemaIssue.AnyOf(
+              asParsed,
+              order.flatMap((index) => issues.get(index) ?? []),
+              input,
+              options,
+            ),
+          );
+        const { index, output } = written;
+        if (
+          writers !== undefined &&
+          typeof input === "object" &&
+          input !== null
+        )
+          writers.push({
+            value: input,
+            union: original,
+            member: original.types[index]!,
+            before: order
+              .slice(0, order.indexOf(index))
+              .flatMap((earlier) => issues.get(earlier) ?? [])
+              .find((issue) => !declinedByVoid(issue)),
+          });
+        return Effect.succeed(output);
+      };
+      const attempt = (
+        stages: ReadonlyArray<ReadonlyArray<Attempt>>,
+        stage = 0,
+        position = 0,
       ): Effect.Effect<unknown, SchemaIssue.Issue> => {
-        const start = writers?.length ?? 0;
-        const forget = (mark: number) => {
-          if (writers !== undefined) writers.length = mark;
-        };
-        const issues: Array<SchemaIssue.Issue> = [];
-        let before: SchemaIssue.Issue | undefined;
-        let written:
-          { readonly output: unknown; readonly index: number } | undefined;
-        const successes: Array<SchemaAST.AST> = [];
-        const attempt = (
-          position: number,
-        ): Effect.Effect<unknown, SchemaIssue.Issue> => {
-          if (position === order.length) {
-            if (written === undefined)
-              return Effect.fail(
-                new SchemaIssue.AnyOf(asParsed, issues, input, parseOptions),
-              );
-            if (
-              writers !== undefined &&
-              typeof input === "object" &&
-              input !== null
-            )
-              writers.push({
-                value: input,
-                union: original,
-                member: original.types[written.index]!,
-                before,
-              });
-            return Effect.succeed(written.output);
-          }
-          const index = order[position]!;
-          const { _tag } = original.types[index]!;
-          // A Void writes any value strictly, so it may only follow the members that keep one.
-          if (
-            _tag === "Void" &&
-            parseOptions.onExcessProperty === "error" &&
-            isKeyed(input)
-          )
-            return attempt(position + 1);
-          // A class can hold own fields beside those it states, which only it knows how to write.
-          const memberOptions =
-            _tag === "Declaration"
-              ? (parseOptions[around] ?? parseOptions)
-              : parseOptions;
-          const mark = writers?.length ?? 0;
-          return Effect.matchEffect(encoders[index]!()(input, memberOptions), {
+        const attempts = stages[stage];
+        if (attempts === undefined) return finish();
+        const current = attempts[position];
+        if (current === undefined)
+          return written === undefined ? attempt(stages, stage + 1) : finish();
+        const { index, strictly } = current;
+        const next = () => attempt(stages, stage, position + 1);
+        if (!strictly && !open.delete(index)) return next();
+        const mark = writers?.length ?? 0;
+        return Effect.matchEffect(
+          encoders[index]!()(input, strictly ? strict : loose),
+          {
             onFailure: (issue) => {
               forget(mark);
-              issues.push(issue);
-              if (
-                written === undefined &&
-                before === undefined &&
-                !declinedByVoid(issue)
-              )
-                before = issue;
-              return attempt(position + 1);
+              issues.set(index, issue);
+              if (strictly && couldLoosen(issue)) open.add(index);
+              return next();
             },
             onSuccess: (output) => {
-              if (!oneOf) {
-                written = { output, index };
-                return attempt(order.length);
-              }
               successes.push(flipped[index]!);
               if (written !== undefined) {
                 forget(start);
                 return Effect.fail(
-                  new SchemaIssue.OneOf(
-                    asParsed,
-                    successes,
-                    input,
-                    parseOptions,
-                  ),
+                  new SchemaIssue.OneOf(asParsed, successes, input, options),
                 );
               }
               written = { output, index };
-              return attempt(position + 1);
+              return oneOf ? next() : finish();
             },
-          });
-        };
-        return attempt(0);
+          },
+        );
       };
-      return options.onExcessProperty === "error"
-        ? trying(options)
-        : Effect.catch(
-            trying({
-              ...options,
-              onExcessProperty: "error",
-              [around]: options,
-            }),
-            () => trying(options),
-          );
+      const strictly: Array<Attempt> = [];
+      const holding: Array<Attempt> = [];
+      const anyhow: Array<Attempt> = [];
+      for (const index of order) {
+        const member = original.types[index]!;
+        anyhow.push({ index, strictly: false });
+        // A Void writes any value strictly, so it may only follow the members that keep one.
+        if (member._tag === "Void" && isKeyed(input)) {
+          open.add(index);
+          continue;
+        }
+        strictly.push({ index, strictly: true });
+        if (statesEveryKey(member, input))
+          (oneOf ? holding : strictly).push({ index, strictly: false });
+      }
+      return attempt([strictly, holding, ...(within ? [] : [anyhow])]);
     },
   );
 };
@@ -220,7 +248,7 @@ function mapSame<A>(items: readonly A[], map: (item: A) => A): readonly A[] {
  * @remarks
  * Each union pre-selects and orders its members by the installed Effect's rules, so it writes what
  * the plain writer writes and runs the same member code. It follows a suspended schema when it is
- * written and stays out of declarations, as the Void guard does. A transformation or middleware on a
+ * written, and a class into the struct it writes, and stays out of other declarations. A transformation or middleware on a
  * union itself makes Effect choose again on a transformed copy, which no caller field can be traced
  * to; that choice is noted against the copy and so remains the schema's own.
  */
@@ -245,7 +273,12 @@ export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
         ast.context,
       );
     }
-    if (ast._tag !== "Objects" && ast._tag !== "Arrays" && ast._tag !== "Union")
+    if (
+      ast._tag !== "Objects" &&
+      ast._tag !== "Arrays" &&
+      ast._tag !== "Union" &&
+      classFields(ast) === undefined
+    )
       return ast;
     const encoding =
       ast.encoding &&
@@ -255,6 +288,19 @@ export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
           ? link
           : new SchemaAST.Link(target, link.transformation);
       });
+    if (ast._tag === "Declaration")
+      return encoding === ast.encoding
+        ? ast
+        : new SchemaAST.Declaration(
+            ast.typeParameters,
+            ast.run,
+            ast.annotations,
+            ast.checks,
+            encoding,
+            ast.context,
+            ast.encodingChecks,
+            ast.encodingRun,
+          );
     if (ast._tag === "Objects") {
       const properties = mapSame(ast.propertySignatures, (property) => {
         const type = visit(property.type);
@@ -300,7 +346,9 @@ export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
             ast.encodingChecks,
           );
     }
-    return noting(ast, ast.types.map(visit), encoding);
+    return ast._tag === "Union"
+      ? noting(ast, ast.types.map(visit), encoding)
+      : ast;
   };
   return visit(root);
 };
@@ -384,6 +432,44 @@ const writtenWith = (
   return types.length > 0 ? types : undefined;
 };
 
+/** The schema of an item. Positions after a rest element read from its trailing elements. */
+const itemType = (
+  ast: SchemaAST.Arrays,
+  index: number,
+  length: number,
+): SchemaAST.AST | undefined => {
+  if (index < ast.elements.length) return ast.elements[index];
+  // The trailing elements are counted from the end.
+  const tail = Math.max(
+    ast.elements.length,
+    length - Math.max(0, ast.rest.length - 1),
+  );
+  return index >= tail ? ast.rest[index - tail + 1] : ast.rest[0];
+};
+
+/** Whether a schema states every key a value holds, at each place whose structure it shows. */
+const statesEveryKey = (ast: SchemaAST.AST, value: unknown): boolean => {
+  if (!isKeyed(value)) return true;
+  if (ast._tag === "Suspend") return statesEveryKey(ast.thunk(), value);
+  if (ast._tag === "Union")
+    return ast.types.some((member) => statesEveryKey(member, value));
+  if (ast._tag === "Objects")
+    return Reflect.ownKeys(value).every(
+      (key) =>
+        !Object.prototype.propertyIsEnumerable.call(value, key) ||
+        value[key] === undefined ||
+        writtenWith(ast, key)?.every((type) =>
+          statesEveryKey(type, value[key]),
+        ) === true,
+    );
+  if (ast._tag === "Arrays" && Array.isArray(value))
+    return value.every((item, index) => {
+      const type = itemType(ast, index, value.length);
+      return type === undefined || statesEveryKey(type, item);
+    });
+  return true;
+};
+
 /** A supplied field a write dropped, and the union whose chosen member dropped it. */
 export interface Dropped {
   readonly path: ReadonlyArray<PropertyKey>;
@@ -461,6 +547,8 @@ export const dropped = (
       chosen = { path, before: entry.before };
       node = entry.member;
     }
+    // A class writes the fields it holds through the struct it states them in.
+    node = (node && classFields(node)) ?? node;
     if (node?._tag === "Objects") {
       for (const key of Reflect.ownKeys(supplied)) {
         if (
@@ -492,18 +580,8 @@ export const dropped = (
       Array.isArray(supplied) &&
       Array.isArray(held)
     ) {
-      // Positions after a rest element read from its trailing elements, counted from the end.
-      const tail = Math.max(
-        node.elements.length,
-        held.length - Math.max(0, node.rest.length - 1),
-      );
       for (let index = 0; index < supplied.length; index++) {
-        const type =
-          index < node.elements.length
-            ? node.elements[index]
-            : index >= tail
-              ? node.rest[index - tail + 1]
-              : node.rest[0];
+        const type = itemType(node, index, held.length);
         if (type !== undefined && Object.hasOwn(supplied, index))
           visit(
             type,

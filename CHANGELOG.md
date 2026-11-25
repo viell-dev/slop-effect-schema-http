@@ -197,11 +197,10 @@
     `{"w":{}}`, and now refuses naming `["w"]["limit"]`.
   - Input that 0.18.0 refused beside an `Option`, a `Date` or a class can now be kept, because a
     reading that keeps every visible field is found there too. A write that cannot be strict now
-    writes each union strictly where a member can, so the value goes through the member that holds
-    it. `Struct({ f: Union([Page, Counted]), c: Counted })` sent `{"f":{}}` for a `Counted`
-    instance.
+    writes each union, in a class's fields too, through its first member that holds the whole value.
+    `Struct({ f: Union([Page, Counted]), c: Counted })` sent `{"f":{}}` for a `Counted` instance.
   - In a stacked group, a field another schema takes is still left to it, but not where this schema
-    would write that name itself.
+    would send something in its place, under that name or under one the other wrote.
 
   Defaults, checks, decoders and their services can run more than once when a route loses a field.
   Keep the value unchanged until preparation ends, which nothing detects any more. Supply one side's

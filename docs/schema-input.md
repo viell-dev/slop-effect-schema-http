@@ -95,7 +95,8 @@ default can then fill the field that was not read. So each route accounts for wh
 A route that keeps everything is used. A constructor that lost a field runs again strictly, which
 takes a union's first member that keeps everything, and otherwise gives way to a route that loses
 fewer of the fields it lost. What is still lost is a `SchemaError` naming the field, unless another
-schema in the group takes it and this one writes nothing under its name.
+schema in the group takes it and this one sends nothing in its place: neither under the field's
+name, nor under a name where it replaces what the other wrote.
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -146,7 +147,7 @@ into, as an `Option` is. It has these consequences:
   never counted as lost. A value that middleware or a transformation puts in the caller's place, as
   `Schema.catchDecoding` does, is the schema's own reading.
 - **Defaults, checks, decoders and services can run more than once**, because a later route can be
-  tried after one that lost a field. Routes that read the same part read it once.
+  tried after one that lost a field. Routes that read one field read it once.
 - **A refusal names the innermost fields.** Where one check finds a whole field lost and another
   finds a field inside it lost, only the inner one is named. Where a list is lost because the
   decoder failed at one item, only that item is named.
@@ -172,10 +173,11 @@ Preparation reads it as it runs and does not detect a change, so what it account
 writes could then differ.
 
 A value that cannot be written strictly, as where a class instance holds a member of its own, is
-written loosely. Each union in it is still written strictly by its first member that can, so a value
-keeps the member that holds it. Only where no member can is it written as Effect writes it, and a
-field that drops is refused. Where that write fails too, preparation writes what the fields' own
-readings give and refuses what they lose.
+written loosely. Each union in it, in a class's fields too, is still written by its first member
+that holds the whole value: strictly, or loosely where that member states every key the value holds,
+so a class instance's own fields do not push a value out of it. Only where no member can is the
+union written as Effect writes it, and a field that drops is refused. Where that write fails too,
+preparation writes what the fields' own readings give and refuses what they lose.
 
 ## Preservation and selection
 
@@ -337,21 +339,21 @@ refuses the value of is the same case. Only a real loss counts: a field another 
 takes is not lost, as the rule on stacked schemas below says.
 
 Writing keeps the same rule. A value is written strictly first. When the member that read it cannot
-write it, the relaxed write that follows tries each union's members strictly and then loosely, so it
-can take a later member. That write notes which member wrote each value, and a struct member reads
-only the names it states, so a supplied field it does not state is lost, whatever else it writes
-under that name. A struct that states no field keeps every key, and a record keeps the keys its key
-schema takes. Nothing is decoded from what was sent. The relaxed write selects the members to try by
-kind of value and literal tags, as the installed Effect does, before it runs any of them, so a
-member Effect rules out runs none of its encoders, middleware or checks. Like Effect, it follows
-each tag field through its encoding before it asks whether the tag is required. The check runs where
-the caller's value is plain data, as the section above defines it, and the schema there, a union's
-members and tags among it, names no field after an `Object.prototype` member; elsewhere the value is
-written as Effect writes it. A nested union that fails its own check or one-of rule credits none of
-its members, and each place a value is written from is checked on its own, so one object given to
-two fields is checked against each field's member. When no member can both keep and write the value,
-the refusal is the error of the first member that could not write it, the error that member alone
-gives. That holds through grouped and suspended unions:
+write it, the relaxed write that follows can take a later member. That write notes which member
+wrote each value, and a struct member reads only the names it states, so a supplied field it does
+not state is lost, whatever else it writes under that name. A struct that states no field keeps
+every key, and a record keeps the keys its key schema takes. Nothing is decoded from what was sent.
+The relaxed write selects the members to try by kind of value and literal tags, as the installed
+Effect does, before it runs any of them, so a member Effect rules out runs none of its encoders,
+middleware or checks. Like Effect, it follows each tag field through its encoding before it asks
+whether the tag is required. The check runs where the caller's value is plain data, as the section
+above defines it, and the schema there, a union's members and tags among it, names no field after an
+`Object.prototype` member; elsewhere the value is written as Effect writes it. A nested union that
+fails its own check or one-of rule credits none of its members, and each place a value is written
+from is checked on its own, so one object given to two fields is checked against each field's
+member. When no member can both keep and write the value, the refusal is the error of the first
+member that could not write it, the error that member alone gives. That holds through grouped and
+suspended unions:
 
 ```ts
 import { Schema } from "effect";

@@ -131,7 +131,7 @@ decoder reads strictly first, and field by field each field's reading accounts f
 the object's constructor, which runs again over the results, strictly first, accounts for the rest.
 A constructor that lost a field gives way to a strict constructor, the decoder or a reading by field
 that loses fewer of those fields. What is still lost is refused, unless another schema of the group
-takes it and this schema writes nothing under its name. A field given under both its names therefore
+takes it and this schema sends nothing in its place. A field given under both its names therefore
 refuses, even where the two agree: no route reads both, and codecs give no trustworthy equality
 between sides, so this restricts the input rather than finding a contradiction. A key a decoder or
 transformation adds is not the caller's. One rule, judged on the values each route actually made,
@@ -143,9 +143,12 @@ to keep the value unchanged until preparation ends. The [input
 reference](./schema-input.md#constructor-default-validation) owns the detailed rules and type
 boundaries.
 
-A value that cannot be written strictly is written loosely, but each union in it strictly where a
-member can, so the write keeps the member that holds the value. A class member is written as it
-writes itself, since only it knows the own fields it holds beside those it states.
+A value that cannot be written strictly is written loosely, but each union in it, in a class's
+fields too, by its first member that holds the whole value. A member holds it where it writes it
+strictly, or where it states every key the value holds and only its own parts keep the write from
+being strict, as a class instance's own fields or an encoder that hands on a key do. An open member
+is tried in its place in the order, so it does not take a value an earlier member holds. Only where
+no member can is the union written as Effect writes it.
 
 These checks, and the relaxed write's below, run only where preparation can establish what the
 caller gave: on plain data, judged place by place. Plain data is a list whose prototype is

@@ -1,4 +1,4 @@
-import { Effect, Schema, SchemaAST } from "effect";
+import { Effect, Equal, Schema, SchemaAST } from "effect";
 import * as Excess from "./excess.js";
 import * as FieldPairs from "./field-pairs.js";
 import type { Fold } from "./fields.js";
@@ -252,19 +252,45 @@ export const others = (
         ...taken.settled,
       ]);
 
+/** Text a group writes under each name. */
+type Entries = ReadonlyArray<readonly [string, string | null]>;
+
 /**
- * Whether another schema took a field this one lost. A name this schema writes itself is not one:
- * what it wrote there is not what the caller gave, and both would be sent.
+ * Whether another schema took a field this one lost. It did not where this schema would send
+ * something in its place: under the field's own name, or under a name the others took, where an
+ * earlier schema wrote what this one replaces. One with no choice of member settles every name it
+ * states, so it replaces what it does not write too.
  */
 export const takenElsewhere = (
+  shape: Shape,
   taken: Taken | undefined,
-  own: Output | undefined,
+  token: object,
+  own: Entries,
+  before: Entries,
   fold: Fold,
-) => {
-  const names = own && written(own, fold);
-  return (name: PropertyKey): boolean =>
-    taken?.fields.has(name) === true &&
-    !(typeof name === "string" && names?.has(fold(name)) === true);
+): ((name: PropertyKey) => boolean) => {
+  const others = new Set(
+    taken?.certificates === undefined
+      ? taken?.fields
+      : Array.from(taken.certificates).flatMap(([by, fields]) =>
+          by === token ? [] : [...fields],
+        ),
+  );
+  const under = (entries: Entries, name: string) =>
+    entries.flatMap(([at, text]) => (fold(at) === name ? [text] : []));
+  const written = new Set(own.map(([name]) => fold(name)));
+  const replaces = [...others].some((taken) => {
+    const name = typeof taken === "string" ? fold(taken) : undefined;
+    if (name === undefined) return false;
+    if (!written.has(name) && (shape.chooses || !shape.names.has(name)))
+      return false;
+    const earlier = under(before, name);
+    return earlier.length > 0 && !Equal.equals(earlier, under(own, name));
+  });
+  return (name) =>
+    !replaces &&
+    others.has(name) &&
+    !(typeof name === "string" && written.has(fold(name)));
 };
 
 /** The record once a schema has added what it took. */
