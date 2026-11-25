@@ -48,3 +48,34 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /
+    target-branch: warded-test
+    schedule:
+      interval: monthly
+    labels: ["Type: Maintenance"]
+    groups:
+      npm:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /host
+    target-branch: warded-test
+    schedule:
+      interval: monthly
+    labels: ["Type: Maintenance"]
+    groups:
+      cargo:
+        patterns: ["*"]
+    ignore:
+      # The router and server commits under test, moved deliberately with the suite (#278).
+      - dependency-name: warded
+      - dependency-name: warded-server
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: warded-test
+    schedule:
+      interval: monthly
+    labels: ["Type: Maintenance"]
+    groups:
+      actions:
+        patterns: ["*"]
