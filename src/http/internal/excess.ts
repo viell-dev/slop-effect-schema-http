@@ -116,7 +116,7 @@ const isPlain = (value: unknown): value is Record<PropertyKey, unknown> => {
  * from them loses. A typed array and a boxed string hold theirs at enumerable positions. An instance
  * with no fields that writes itself with `toJSON`, as a `URL` does, holds all of it elsewhere.
  */
-const hasHiddenContent = (value: object): boolean => {
+export const hasHiddenContent = (value: object): boolean => {
   if (isPlain(value)) return false;
   const state = stateOf(value, Reflect.ownKeys(value).length === 0);
   if (state !== undefined)
@@ -742,8 +742,12 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
       !plain && view.holdsAsGiven ? keys.map((key) => value[key]) : undefined;
     const asStruct =
       !plain &&
-      // A record could hold any field, so what this copy would leave out has to stay in sight.
-      !(sides.some(isIndexed) && hasHiddenContent(value)) &&
+      // A record could hold any field and a Void takes what holds none, so what this copy would leave
+      // out has to stay in sight.
+      !(
+        sides.some((side) => isIndexed(side) || side._tag === "Void") &&
+        hasHiddenContent(value)
+      ) &&
       (readAsStruct(sides, open) ||
         (items !== undefined && meansStated(view, value, keys, items)));
     let changed = asStruct || hidden.length > 0;

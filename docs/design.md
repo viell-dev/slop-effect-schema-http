@@ -210,14 +210,14 @@ decides. What such a member keeps goes to the writer as given, and the writers r
 dispatch a value they would leave out or replace, such as a symbol key, or `NaN`, which JSON would
 write as `null`.
 
-Built-in `Schema.Void` never takes an object with a defined enumerable own field or a list with a
-defined own cell. Every Void the library can see declines it as it is parsed, on every reading, and
-declines every object or list as it is written, so a member that keeps the value reads and writes
-it, and where there is none the schema refuses it. The Void is replaced in the schema rather than
-found by comparing what went in with what came out, because neither equal names nor an `undefined`
-result shows which member made it. A class's fields are included: Effect builds a class from fields
-its struct has read, without reading them again. One rule for every Void replaces a guard that
-reached only some unions, and the analysis that had to know which.
+Built-in `Schema.Void` takes only `undefined`, `null`, and an object or list that holds nothing.
+Every Void the library can see declines any other value as it is parsed, on every reading, and as it
+is written, so a member that keeps the value reads and writes it, and where there is none the schema
+refuses it. The Void is replaced in the schema rather than found by comparing what went in with what
+came out, because neither equal names nor an `undefined` result shows which member made it. A
+class's fields are included: Effect builds a class from fields its struct has read, without reading
+them again. One rule for every Void replaces a guard that reached only some unions, and the analysis
+that had to know which.
 
 The write's fallback relaxes excess checking and keeps the guard. It can take a later member, so it
 notes which member wrote each value, and a struct member that does not state a supplied field it was

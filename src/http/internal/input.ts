@@ -489,8 +489,9 @@ const decodedReading = <S extends Schema.Top>(
             }),
           ),
         )
-      : // A copy of a list is an object keyed by its indexes, which a record or struct could take.
-        Array.isArray(input)
+      : // A copy of a list is an object keyed by its indexes, which a record or struct could take, and
+        // one of a built-in holds none of its content, so a Void could take it.
+        Array.isArray(input) || contract.ast._tag === "Void"
         ? Effect.fail(failure)
         : byField(input, given, parseOptions, parts, at);
   /** Whether a struct could keep every given name by reading its fields, which have decoded names. */
