@@ -646,8 +646,8 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   const decoded = toDecoded(contract);
   const ast = contract.ast;
   // The same positions, compared on the way in and on the way out of the schema.
-  const readLoss = Excess.symbolLoss(ast, false);
-  const writeLoss = Excess.symbolLoss(ast, canonicalJson);
+  const readLoss = Excess.rebuildLoss(ast, false);
+  const writeLoss = Excess.rebuildLoss(ast, canonicalJson);
   const losses = (input: unknown, value: unknown, output: unknown) =>
     Excess.uniquePaths([
       ...(readLoss?.(input, value) ?? []),
@@ -1151,8 +1151,8 @@ export const encoder = <S extends Schema.Top, A, R>(
   if (
     guarded.ast === contract.ast &&
     !Excess.choosing(contract.ast) &&
-    Excess.symbolLoss(contract.ast, false) === undefined &&
-    Excess.symbolLoss(contract.ast, canonicalJson) === undefined
+    Excess.rebuildLoss(contract.ast, false) === undefined &&
+    Excess.rebuildLoss(contract.ast, canonicalJson) === undefined
   ) {
     const decoded = toDecoded(contract);
     const write = Schema.encodeEffect(codec);

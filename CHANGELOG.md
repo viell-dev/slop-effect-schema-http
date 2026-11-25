@@ -46,6 +46,12 @@
   On Node 26, whose native JSON is much faster, it takes about six to eight times as long: 10,000
   rows take 0.9 ms on 0.18.0 and 5.75 ms here. Many empty objects or arrays cost more, as the cost
   table in [#260](https://github.com/viell-dev/slop-effect-schema-http/pull/260) records.
+- **Breaking:** refuse a built-in that an open schema rebuilds from its own fields
+  ([#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261)). For example, a `Map` or
+  a `Date` as the body of `Schema.Record(Schema.String, Schema.Unknown)` or `Schema.ObjectKeyword`
+  wrote `{}`. It now fails with `SchemaError`, as does an instance with no fields of its own that
+  writes itself with `toJSON`, such as a `URL`. Typed arrays, boxed strings and class instances with
+  fields are written as before. Records in query and header groups refuse the same values.
 - **Breaking:** form writers refuse values they would silently skip, with `HttpBodyError` naming the
   field ([#256](https://github.com/viell-dev/slop-effect-schema-http/issues/256)). For example,
   multipart no longer sends only `extra=keep` for `{ v: 1, extra: "keep" }` through an open

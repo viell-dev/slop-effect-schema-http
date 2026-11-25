@@ -264,12 +264,11 @@ fields, and so does a link whose encoded end is such a record, as when a record 
 A symbol key the schema declares is the schema's to write, under whatever name it chooses, and one
 at a class's root is stripped, as a struct strips any key it does not state. `Schema.toCodecJson` of
 `Schema.ObjectKeyword` copies only the string fields of an object and the positions of an array.
-Those fail with `SchemaError`. An empty struct passes the symbol through, and the writer refuses it
-with `HttpBodyError`. Both name the symbol. Not covered:
-[#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261), a built-in that an open
-schema rebuilds before any writer sees it, such as a `Date` that `Schema.ObjectKeyword` turns into
-`{}`. Also not covered, as on 0.18.0: a symbol inside a declaration's type parameter, such as
-`Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`, which the declaration's own
+Both also rebuild a built-in, such as a `Map`, a `Date` or a `URL`, from its own fields, and lose
+the content it holds elsewhere. All of these fail with `SchemaError`. An empty struct passes the
+symbol or the built-in through, and the writer refuses what it cannot write with `HttpBodyError`.
+Both name the field. Not covered, as on 0.18.0: a symbol inside a declaration's type parameter, such
+as `Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`, which the declaration's own
 codec reads and drops.
 
 `Body.jsonSchema` first encodes through the schema's canonical JSON codec (`Schema.toCodecJson`). It

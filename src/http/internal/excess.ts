@@ -100,6 +100,24 @@ const isPlain = (value: unknown): value is Record<PropertyKey, unknown> => {
   return prototype === Object.prototype || prototype === null;
 };
 
+/**
+ * Whether an object holds content outside its own fields, as a `Map` does, which an object rebuilt
+ * from them loses. A typed array and a boxed string hold theirs at enumerable positions. An instance
+ * with no fields that writes itself with `toJSON`, as a `URL` does, holds all of it elsewhere.
+ */
+const hasHiddenContent = (value: object): boolean => {
+  if (isPlain(value)) return false;
+  const state = stateOf(value, Reflect.ownKeys(value).length === 0);
+  if (state !== undefined)
+    return (
+      state !== "String" && (state === "DataView" || !ArrayBuffer.isView(value))
+    );
+  return (
+    Object.keys(value).length === 0 &&
+    typeof (value as { readonly toJSON?: unknown }).toJSON === "function"
+  );
+};
+
 /** An actual array position, rather than a property whose spelling merely converts to a number. */
 const arrayIndex = (key: PropertyKey): number | undefined => {
   if (typeof key === "symbol") return undefined;
@@ -708,6 +726,8 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
       !plain && view.holdsAsGiven ? keys.map((key) => value[key]) : undefined;
     const asStruct =
       !plain &&
+      // A record could hold any field, so what this copy would leave out has to stay in sight.
+      !(sides.some(isIndexed) && hasHiddenContent(value)) &&
       (readAsStruct(sides, open) ||
         (items !== undefined && meansStated(view, value, keys, items)));
     let changed = asStruct || hidden.length > 0;
@@ -878,7 +898,7 @@ export const missing = (
 };
 
 /** Compares what went into a schema step at a position with what came out there. */
-type SymbolCheck = (
+type RebuildCheck = (
   supplied: unknown,
   result: unknown,
   path: PropertyKey[],
@@ -906,9 +926,16 @@ function ownLostSymbols(
       lost.push([...path, key]);
 }
 
+/** Whether an object was rebuilt from another's own fields and lost the content outside them. */
+const lostHiddenContent = (supplied: object, result: object): boolean =>
+  hasHiddenContent(supplied) &&
+  isPlain(result) &&
+  !Array.isArray(result) &&
+  Reflect.ownKeys(result).every((key) => Object.hasOwn(supplied, key));
+
 /** Descend one position, keeping the shared path stack balanced. */
 const within = (
-  check: SymbolCheck,
+  check: RebuildCheck,
   supplied: unknown,
   result: unknown,
   path: PropertyKey[],
@@ -947,13 +974,14 @@ export const uniquePaths = (paths: ReadonlyArray<Path>): ReadonlyArray<Path> =>
 
 type Comparison = (supplied: unknown, result: unknown) => ReadonlyArray<Path>;
 
-const symbolChecks = {
+const rebuildChecks = {
   schema: new WeakMap<Ast, Comparison | null>(),
   json: new WeakMap<Ast, Comparison | null>(),
 };
 
 /**
- * Where Effect itself drops a supplied symbol field, before any writer can see it.
+ * Where Effect itself rebuilds an object from its string fields and drops what they do not hold,
+ * before any writer can see it: a symbol field, and the content of a built-in such as a `Map`.
  *
  * @remarks
  * The comparison runs twice, at the same positions: from the caller's value to the decoded value,
@@ -963,28 +991,27 @@ const symbolChecks = {
  * fields declare is the schema's to write, under whatever name it chooses. A class is read through
  * its fields; a symbol at its root is a key no field states, which a class strips as a struct
  * does. For JSON, the canonical codec of `Schema.ObjectKeyword` also copies only the top-level
- * string fields of an object and the positions of an array. Everywhere else a symbol field reaches
- * the writer, which refuses it there. Not covered: built-ins that an open schema rebuilds, such as
- * a `Date` read by `Schema.ObjectKeyword` (#261), and values inside a declaration's type
- * parameters, such as a record in an `Option`, which the declaration's own codec reads.
+ * string fields of an object and the positions of an array. Everywhere else a symbol field or a
+ * built-in reaches the writer, which refuses it there. Not covered: values inside a declaration's
+ * type parameters, such as a record in an `Option`, which the declaration's own codec reads.
  *
  * The comparison is compiled once per schema and visits only the positions where such a node can
  * be, with one shared path that is copied only for a loss, so an array of rows checks each row
  * without rediscovering its schema or allocating a path. A suspended schema is read on first use.
  */
-export function symbolLoss(ast: Ast, json: boolean): Comparison | undefined {
-  const memo = symbolChecks[json ? "json" : "schema"];
+export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
+  const memo = rebuildChecks[json ? "json" : "schema"];
   const known = memo.get(ast);
   if (known !== undefined) return known ?? undefined;
-  const cache = new Map<Ast, SymbolCheck | undefined>();
-  const build = (node: Ast): SymbolCheck | undefined => {
+  const cache = new Map<Ast, RebuildCheck | undefined>();
+  const build = (node: Ast): RebuildCheck | undefined => {
     if (cache.has(node)) return cache.get(node);
     const check = make(node);
     cache.set(node, check);
     return check;
   };
   /** Symbols compared at this very position, where the node rebuilds the object. */
-  const here = (node: Ast): SymbolCheck | undefined => {
+  const here = (node: Ast): RebuildCheck | undefined => {
     const end = encodedEnd(node);
     if (isIndexed(node) || (end !== node && isIndexed(end))) {
       const declared = new Set(
@@ -998,8 +1025,10 @@ export function symbolLoss(ast: Ast, json: boolean): Comparison | undefined {
           isObject(supplied) &&
           isObject(result) &&
           !Array.isArray(supplied)
-        )
-          ownLostSymbols(supplied, result, path, lost, declared);
+        ) {
+          if (lostHiddenContent(supplied, result)) lost.push([...path]);
+          else ownLostSymbols(supplied, result, path, lost, declared);
+        }
       };
     }
     if (!json || node._tag !== "ObjectKeyword" || node.encoding !== undefined)
@@ -1007,14 +1036,17 @@ export function symbolLoss(ast: Ast, json: boolean): Comparison | undefined {
     return (supplied, result, path, lost) => {
       if (supplied === result || !isObject(supplied) || !isObject(result))
         return;
-      if (!Array.isArray(supplied))
-        return ownLostSymbols(supplied, result, path, lost);
+      if (!Array.isArray(supplied)) {
+        if (lostHiddenContent(supplied, result)) lost.push([...path]);
+        else ownLostSymbols(supplied, result, path, lost);
+        return;
+      }
       const extra = extraArrayField(supplied, supplied.length);
       if (extra !== undefined && !Object.hasOwn(result, extra))
         lost.push([...path, extra]);
     };
   };
-  const inner = (node: Ast): SymbolCheck | undefined => {
+  const inner = (node: Ast): RebuildCheck | undefined => {
     switch (node._tag) {
       case "Declaration": {
         const fields = classFields(node);
@@ -1086,7 +1118,7 @@ export function symbolLoss(ast: Ast, json: boolean): Comparison | undefined {
       }
       case "Suspend": {
         // Building a request must not force the thunk, whose target may be assigned later.
-        let target: SymbolCheck | undefined | null = null;
+        let target: RebuildCheck | undefined | null = null;
         return (supplied, result, path, lost) => {
           if (target === null) target = build(node.thunk());
           target?.(supplied, result, path, lost);
@@ -1096,7 +1128,7 @@ export function symbolLoss(ast: Ast, json: boolean): Comparison | undefined {
         return undefined;
     }
   };
-  const make = (node: Ast): SymbolCheck | undefined => {
+  const make = (node: Ast): RebuildCheck | undefined => {
     const first = here(node);
     const second = inner(node);
     if (first === undefined || second === undefined) return first ?? second;
@@ -1121,6 +1153,13 @@ const notHeld = new SchemaIssue.InvalidValue({
   message: "The schema cannot keep this field with the rest of the value",
 });
 
+const valueNotHeld = new SchemaIssue.InvalidValue({
+  message: "The schema cannot keep the content of this value",
+});
+
+const notHeldAt = (path: Path) =>
+  path.length === 0 ? valueNotHeld : new SchemaIssue.Pointer(path, notHeld);
+
 /** A refusal that names the fields and, like any other schema failure here, leaves out values. */
 export const refusal = (
   ast: Ast,
@@ -1128,8 +1167,8 @@ export const refusal = (
 ): Schema.SchemaError =>
   new Schema.SchemaError(
     new SchemaIssue.Composite(ast, [
-      new SchemaIssue.Pointer(first, notHeld),
-      ...others.map((path) => new SchemaIssue.Pointer(path, notHeld)),
+      notHeldAt(first),
+      ...others.map(notHeldAt),
     ]),
   );
 

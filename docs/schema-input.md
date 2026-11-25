@@ -763,14 +763,12 @@ a guarantee that preparation refuses safely.
   string-indexed record that loses a supplied symbol, on either side of the schema, including one
   among a class's fields, a link whose encoded end is such a record, and the canonical JSON codec of
   `Schema.ObjectKeyword`, which copies only the string fields of an object and the positions of an
-  array, report a `SchemaError`. Not covered:
-  [#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261), a built-in that an open
-  schema rebuilds before the writer, such as a `Date` read by `Schema.ObjectKeyword`. Also not
-  covered, as on 0.18.0: a symbol inside a declaration's type parameter, such as
-  `Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`. A symbol key the schema
-  declares is written as it chooses, and one at a class's root is stripped. See the [Body
-  guide](./modules/body.md#text-json-and-finite-body-limits) for writer rules. An opaque
-  transformation can still choose its own encoded representation.
+  array, report a `SchemaError`. So does such a record or codec that rebuilds a built-in, such as a
+  `Map` or a `Date`, from its own fields. Not covered, as on 0.18.0: a symbol inside a declaration's
+  type parameter, such as `Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`. A
+  symbol key the schema declares is written as it chooses, and one at a class's root is stripped.
+  See the [Body guide](./modules/body.md#text-json-and-finite-body-limits) for writer rules. An
+  opaque transformation can still choose its own encoded representation.
 - Once an encoded-only alias enables whole decoding of a list, a decoded-only item beside it can
   lose its decoded name and refuse. This applies to every covered container, array-shaped unions
   included.
