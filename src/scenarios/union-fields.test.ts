@@ -513,16 +513,16 @@ describe(`a union's fields at the wire (${lane.name})`, () => {
       }),
   );
 
-  it.live(
-    "[EXT-30l] limit: one field under both of its names under different values keeps the decoded name's, with no error",
-    () =>
-      Effect.gen(function* () {
-        const [entry] = yield* sent(
-          (origin) => at(origin).pipe(Request.query(Renamed)),
-          { query: { a: "1", b: "2", A: "lost" } as never },
-        );
-        expect(entry!.target).toBe("/x?A=1&B=2");
-      }),
+  it.live("[EXT-30l] a query field supplied under both names refuses", () =>
+    Effect.gen(function* () {
+      const { error, ledger } = yield* refused(
+        (origin) => at(origin).pipe(Request.query(Renamed)),
+        { query: { a: "1", b: "2", A: "lost" } as never },
+      );
+      expect(error._tag).toBe("SchemaError");
+      expect(error.message).toContain('["A"]');
+      expect(ledger).toEqual([]);
+    }),
   );
 
   it.live(

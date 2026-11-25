@@ -293,23 +293,10 @@ const EncodedArray = Filters.pipe(
 class CursorClass extends Schema.Class<CursorClass>("WireCursor")({
   cursor: Schema.String,
 }) {}
-const arrayLimits = [
-  {
-    name: "empty struct",
-    schema: Schema.Struct({}),
-    json: '[{"page_size":"many"}]',
-  },
-  {
-    name: "second array reader",
-    schema: Schema.Array(Schema.String),
-    json: '[{"page_size":"25"}]',
-  },
-  { name: "cursor class", schema: CursorClass, json: '[{"page_size":"25"}]' },
-  {
-    name: "Option declaration",
-    schema: Schema.Option(Schema.String),
-    json: '[{"page_size":"25"}]',
-  },
+const arrayAlternatives = [
+  { name: "second array reader", schema: Schema.Array(Schema.String) },
+  { name: "cursor class", schema: CursorClass },
+  { name: "Option declaration", schema: Schema.Option(Schema.String) },
 ] as const;
 
 const objectEvidence = [
@@ -537,22 +524,19 @@ describe(`encoded primitive and array alternatives (${lane.name})`, () => {
             ]),
         );
         it.live(
-          `[EXT-50f] currently ${binding} ${name} ${order} reads the encoded name beside an encoded-only item`,
+          `[EXT-50f] ${binding} ${name} ${order} refuses both names with or without a neighbor`,
           () =>
-            checkWire(schema, binding, [
-              [[{ limit: 1, page_size: "02" }], '[{"page_size":"1"}]'],
-              [
-                [{ limit: 1, page_size: "02" }, { page_size: "25" }],
-                '[{"page_size":"2"},{"page_size":"25"}]',
-              ],
+            checkRefusal(schema, binding, [
+              [{ limit: 1, page_size: "02" }],
+              [{ limit: 1, page_size: "02" }, { page_size: "25" }],
             ]),
         );
       }
 
       it.live(
-        `[EXT-50g] currently ${binding} ${order} a middleware-encoded primitive permits substitution`,
+        `[EXT-50g] ${binding} ${order} a middleware-encoded primitive beside a filter refuses an invalid alias`,
         () =>
-          checkWire(
+          checkRefusal(
             union(
               Filter,
               Schema.FiniteFromString.pipe(
@@ -561,23 +545,30 @@ describe(`encoded primitive and array alternatives (${lane.name})`, () => {
               order,
             ),
             binding,
-            [[{ page_size: "many" }, '{"page_size":"25"}']],
+            [{ page_size: "many" }],
           ),
       );
-      for (const { name, schema, json } of arrayLimits) {
+      for (const { name, schema } of arrayAlternatives) {
         it.live(
-          `[EXT-50g] currently ${binding} ${order} ${name} beside a list permits dispatch`,
+          `[EXT-50g] ${binding} ${order} ${name} beside a list refuses an invalid alias`,
           () =>
-            checkWire(union(Filters, schema, order), binding, [
-              [[{ page_size: "many" }], json],
+            checkRefusal(union(Filters, schema, order), binding, [
+              [{ page_size: "many" }],
             ]),
         );
       }
       it.live(
-        `[EXT-50g] currently ${binding} ${order} an encoded array member permits substitution`,
+        `[EXT-50g] ${binding} ${order} an empty struct keeps the list verbatim`,
         () =>
-          checkWire(union(EncodedArray, Cursor, order), binding, [
-            [[{ page_size: "many" }], '[{"page_size":"25"}]'],
+          checkWire(union(Filters, Schema.Struct({}), order), binding, [
+            [[{ page_size: "many" }], '[{"page_size":"many"}]'],
+          ]),
+      );
+      it.live(
+        `[EXT-50g] ${binding} ${order} an encoded array member refuses an invalid alias`,
+        () =>
+          checkRefusal(union(EncodedArray, Cursor, order), binding, [
+            [{ page_size: "many" }],
           ]),
       );
     }
@@ -691,11 +682,8 @@ describe(`encoded primitive and array alternatives (${lane.name})`, () => {
 
     const input = [{ guarded: [{ page_size: "many" }], n: 2 }];
     it.live(
-      `[EXT-50m] currently ${binding} a reused member union beside Void lets the default replace an invalid alias`,
-      () =>
-        checkWire(guardedList(true), binding, [
-          [input, '[{"guarded":[{"page_size":"25"}],"n":"2"}]'],
-        ]),
+      `[EXT-50m] ${binding} a reused member union beside Void refuses an invalid alias`,
+      () => checkRefusal(guardedList(true), binding, [input]),
     );
     it.live(
       `[EXT-50n] ${binding} separate member unions refuse the same invalid alias`,

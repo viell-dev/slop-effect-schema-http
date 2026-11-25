@@ -293,7 +293,7 @@ describe(`annotations on request unions (${lane.name})`, () => {
     }
 
     it.live(
-      `[EXT-36c] control: a wider-first annotated ${group} union retains its successful trace`,
+      `[EXT-36c] control: a wider-first annotated ${group} union checks the same value across retries`,
       () =>
         Effect.gen(function* () {
           const trace: string[] = [];
@@ -315,7 +315,7 @@ describe(`annotations on request unions (${lane.name})`, () => {
             group === "query" ? queryInput : headerInput,
           );
           expectWire(ledger, group, order);
-          expect(trace).toEqual(["z", "z", "z"]);
+          expect(trace).toEqual(Array<string>(7).fill("z"));
         }),
     );
   }

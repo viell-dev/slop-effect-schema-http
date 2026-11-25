@@ -144,21 +144,20 @@ describe(`parent union defaults (${lane.name})`, () => {
             ),
             response,
           );
-          for (const filter of [
-            { page_size: "05" },
-            { limit: 5 },
-            {},
-            { limit: 5, page_size: "many" },
-          ]) {
+          for (const filter of [{ page_size: "05" }, { limit: 5 }, {}]) {
             expect(
               yield* operation
                 .execute({ body: { filter } })
                 .pipe(Effect.provide(lane.fetchClient)),
             ).toBe("Not Found");
           }
+          const dual = yield* operation
+            .execute({ body: { filter: { limit: 5, page_size: "many" } } })
+            .pipe(Effect.provide(lane.fetchClient), result);
+          expect(dual).toMatchObject({ error: { _tag: "SchemaError" } });
           const ledger = yield* backend.ledger;
-          expect(ledger).toHaveLength(4);
-          for (const [index, value] of ["5", "5", "25", "5"].entries())
+          expect(ledger).toHaveLength(3);
+          for (const [index, value] of ["5", "5", "25"].entries())
             wire(ledger[index]!, "/x", `{"filter":{"page_size":"${value}"}}`);
         }),
     );
@@ -239,7 +238,7 @@ describe(`parent union defaults (${lane.name})`, () => {
       }),
   );
   it.live(
-    "[EXT-43f] currently distinct filter declarations retain the ambiguous default overwrite",
+    "[EXT-43f] distinct filter declarations refuse the invalid alias",
     () =>
       Effect.gen(function* () {
         const backend = yield* start();
@@ -263,11 +262,9 @@ describe(`parent union defaults (${lane.name})`, () => {
         expect(
           yield* operation
             .execute({ body: { filter: { page_size: "many" } } })
-            .pipe(Effect.provide(lane.fetchClient)),
-        ).toBe("Not Found");
-        const ledger = yield* backend.ledger;
-        expect(ledger).toHaveLength(1);
-        wire(ledger[0]!, "/x", '{"filter":{"page_size":"25"}}');
+            .pipe(Effect.provide(lane.fetchClient), result),
+        ).toMatchObject({ error: { _tag: "SchemaError" } });
+        expect(yield* backend.ledger).toEqual([]);
       }),
   );
   it.live(
@@ -319,7 +316,7 @@ describe(`parent union defaults (${lane.name})`, () => {
             })
             .pipe(Effect.provide(lane.fetchClient)),
         ).toBe("Not Found");
-        expect(reads).toEqual(["06", "06", "06", "06", "06", "06"]);
+        expect(reads).toEqual(Array<string>(7).fill("06"));
         const ledger = yield* backend.ledger;
         expect(ledger).toHaveLength(1);
         wire(
@@ -330,7 +327,7 @@ describe(`parent union defaults (${lane.name})`, () => {
       }),
   );
   it.live(
-    "[EXT-43h] whole parent decoding refuses valid mixed aliases and reads shared text on its encoded side",
+    "[EXT-43h] mixed aliases beside an Option dispatch and shared text follows the selected reading",
     () =>
       Effect.gen(function* () {
         const backend = yield* start();
@@ -376,52 +373,53 @@ describe(`parent union defaults (${lane.name})`, () => {
         const ledger = yield* backend.ledger;
         expect({ mixed, encoded, decoded, count: ledger.length }).toMatchObject(
           {
-            mixed: { error: { _tag: "SchemaError" } },
+            mixed: { value: "Not Found" },
             encoded: { value: "Not Found" },
             decoded: { value: "Not Found" },
-            count: 2,
+            count: 3,
           },
         );
         wire(
           ledger[0]!,
           "/x",
-          '{"filter":{"page_size":"25"},"count":"3","shared":"eA==","neighbor":{"_tag":"Some","value":{"keep":"ok"}}}',
+          '{"filter":{"page_size":"25"},"count":"3","shared":"ZUE9PQ==","neighbor":{"_tag":"Some","value":{"keep":"ok"}}}',
         );
         wire(
           ledger[1]!,
+          "/x",
+          '{"filter":{"page_size":"25"},"count":"3","shared":"eA==","neighbor":{"_tag":"Some","value":{"keep":"ok"}}}',
+        );
+        wire(
+          ledger[2]!,
           "/x",
           '{"filter":{"page_size":"25"},"count":"3","shared":"ZUE9PQ==","neighbor":{"_tag":"Some","value":{"keep":"ok"}}}',
         );
       }),
   );
-  it.live(
-    "[EXT-43i] currently a suspended parent retains its unsupported overwrite",
-    () =>
-      Effect.gen(function* () {
-        const backend = yield* start();
-        let evaluations = 0;
-        const schema = Schema.Struct({
-          page: Schema.suspend(() => {
-            evaluations++;
-            return Parent;
-          }),
-        });
-        const operation = Operation.make(
-          Request.post(`${backend.origin}/x`).pipe(
-            Request.body(Body.jsonSchema(schema)),
-          ),
-          response,
-        );
-        expect(
-          yield* operation
-            .execute({ body: { page: { filter: { page_size: "many" } } } })
-            .pipe(Effect.provide(lane.fetchClient)),
-        ).toBe("Not Found");
-        expect(evaluations).toBeGreaterThan(0);
-        const ledger = yield* backend.ledger;
-        expect(ledger).toHaveLength(1);
-        wire(ledger[0]!, "/x", '{"page":{"filter":{"page_size":"25"}}}');
-      }),
+  it.live("[EXT-43i] a suspended parent refuses the invalid alias", () =>
+    Effect.gen(function* () {
+      const backend = yield* start();
+      let evaluations = 0;
+      const schema = Schema.Struct({
+        page: Schema.suspend(() => {
+          evaluations++;
+          return Parent;
+        }),
+      });
+      const operation = Operation.make(
+        Request.post(`${backend.origin}/x`).pipe(
+          Request.body(Body.jsonSchema(schema)),
+        ),
+        response,
+      );
+      expect(
+        yield* operation
+          .execute({ body: { page: { filter: { page_size: "many" } } } })
+          .pipe(Effect.provide(lane.fetchClient), result),
+      ).toMatchObject({ error: { _tag: "SchemaError" } });
+      expect(evaluations).toBeGreaterThan(0);
+      expect(yield* backend.ledger).toEqual([]);
+    }),
   );
   it.live(
     "[EXT-43j] equal symbol descriptions retain distinct parent field identities",
@@ -560,7 +558,7 @@ describe(`parent union defaults (${lane.name})`, () => {
       }),
   );
   it.live(
-    "[EXT-43m] currently normalized numeric and string declarations retain their unproved overwrite",
+    "[EXT-43m] normalized numeric and string declarations refuse invalid aliases",
     () =>
       Effect.gen(function* () {
         const backend = yield* start();
@@ -608,7 +606,6 @@ describe(`parent union defaults (${lane.name})`, () => {
           ),
           response,
         );
-        // Direct/wrapped forms newly expose the defect; the union retains its old default.
         // https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6733524389
         type FilterInput = { limit?: number; wire?: string };
         const routes = [
@@ -654,13 +651,12 @@ describe(`parent union defaults (${lane.name})`, () => {
             bad,
             targets: ledger.map((entry) => entry.target),
           });
-          if (ledger.length === 1) wire(ledger[0]!, "/x/limit/25");
         }
-        expect(observations).toEqual(
+        expect(observations).toMatchObject(
           routes.map((route) => ({
             route: route.name,
-            bad: { value: "Not Found" },
-            targets: ["/x/limit/25"],
+            bad: { error: { _tag: "SchemaError" } },
+            targets: [],
           })),
         );
       }),

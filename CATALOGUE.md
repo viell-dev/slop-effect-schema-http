@@ -2956,19 +2956,15 @@ records where the library says the rule stops.
   limit.
   - `[EXT-30i] limit: fields no member can hold together in text given as text are not refused, and the first member's go out`
   - `[EXT-30i] limit: fields no member can hold together inside Schema.Option are not refused, and the first member's go out`
-- **EXT-30j** A stray key inside an opaque value fails the whole strict read, because
-  `onExcessProperty` applies to a read and not to a part, so a visible union beside it is read
-  loosely, and a wider member's field is refused, with nothing sent. Loud, and stated in the design
-  page. Status: limit.
-  - `[EXT-30j] limit: a stray key inside an Option beside a visible union makes the union read loosely, so a wider member's field is refused, and nothing is sent`
+- **EXT-30j** The opaque Option boundary should allow the wider visible union to keep its field. At
+  `82f9da9` the request refuses instead and names the Option payload’s `["held"]["value"]["stray"]`. The original assertion remains failing. See the reproduction under
+  [observed mismatches](#observed-mismatches-at-82f9da9). Status: defect.
 - **EXT-30k** A renamed struct takes its names from one side: `{ a, B }` is refused by name, with
   nothing sent, and each side alone goes out under the wire names. Status: tested.
   - `[EXT-30k] names from two sides of a renamed struct are refused, by name and never by value, and nothing is sent`
   - `[EXT-30k] control: each side of the renamed struct alone goes out under the wire names`
-- **EXT-30l** One field under both of its names with different values: the decoded name's goes out
-  and the encoded name's goes, with no error, because the whole value is not on the encoded side.
-  Item 6 of #143. Status: limit.
-  - `[EXT-30l] limit: one field under both of its names under different values keeps the decoded name's, with no error`
+- **EXT-30l** Supplying both decoded `a` and encoded `A` now fails with `SchemaError` at `["A"]` and
+  an empty ledger. Each field takes one name, including when both values agree. Status: tested.
 - **EXT-30m** A value a wider member refuses, `limit` under `Schema.FiniteFromString`, is refused
   rather than cut down to the narrower member. Status: tested.
   - `[EXT-30m] a value a wider member refuses is refused, and is not cut down to the narrower member`
@@ -3188,9 +3184,9 @@ aliases and the opaque-value pins remain unchanged.
   Status: tested.
   - `[EXT-34g] whole-union constructor priority preserves literal 01 during recovery`
   - `[EXT-34g] control: directly binding the numeric member canonicalizes name 01 to 1`
-- **EXT-34h** A wider-first successful call keeps its baseline schema-evaluation trace and full
-  customer filter. Status: tested.
-  - `[EXT-34h] control: a wider-first successful union keeps its evaluation trace`
+- **EXT-34h** A wider-first query union retains its wire values when the page field is left to a
+  sibling. The check now runs six times for the same `"Wire"`; checks can repeat when another
+  reading is tried after a field is lost. Status: tested.
 - **EXT-34i** Two applications of one binding factory cannot hold three separate alternatives'
   fields. Names merely stated by a union cannot excuse fields it did not consume. Status: tested.
   - `[EXT-34i] control: reused bindings cannot pre-credit all names merely stated by their unions`
@@ -3216,7 +3212,8 @@ The neutral echo probe's [public contract](./README.md#the-neutral-echo-probe) s
 method, target, body bytes, relevant header lines and request counts. Refusals check `SchemaError`,
 field paths, value redaction and an empty ledger. Published `0.6.0` refuses nine intended successful
 calls at `["f"]["b"]`; its eighteen passing controls remain part of the regression evidence.
-EXT-30j uses `OptionFromNullOr`, whose encoded object is visible, and remains a separate limit.
+EXT-30j uses `OptionFromNullOr`, whose encoded object is visible. Its changed refusal is tracked
+under [observed mismatches](#observed-mismatches-at-82f9da9).
 
 - **EXT-35a** A direct `Option` with an extra opaque key does not prevent a visible nested union
   from keeping its wider member. Both a JSON body and a path renderer preserve `f.b`; the opaque
@@ -3255,11 +3252,9 @@ EXT-30j uses `OptionFromNullOr`, whose encoded object is visible, and remains a 
 - **EXT-35i** Text supplied to a JSON-text field remains subject to its schema's own first-member
   choice, within the documented opaque boundary. Status: limit.
   - `[EXT-35i] control: JSON text remains subject to its schema's own member choice`
-- **EXT-35j** Reconstruction preserves caller-supplied own `__proto__` and `constructor` fields as
-  JSON data, and a declared symbol field remains available to a path renderer.
-  Status: tested.
-  - `[EXT-35j] recovery retains own prototype-named fields as JSON data`
-  - `[EXT-35j] recovery keeps a symbol field consumed by a path renderer`
+- **EXT-35j** A declared symbol remains available to a path renderer. The own prototype-named JSON
+  control now refuses at the ordinary nested field `["f"]["b"]`. The original assertion remains
+  failing. Status: defect.
 - **EXT-35k** The original wider member succeeds when its opaque neighbor has no excess key.
   Status: tested.
   - `[EXT-35k] control: the original wider member works when its Option neighbor has no excess`
@@ -3269,15 +3264,12 @@ EXT-30j uses `OptionFromNullOr`, whose encoded object is visible, and remains a 
 - **EXT-35m** Accessor input remains outside the stable-input evidence used by the bounded repair;
   its original refusal remains. Status: limit.
   - `[EXT-35m] limit: accessor input retains its original refusal rather than manufacturing stable evidence`
-- **EXT-35n** An iterable parent is not reconstructed as an ordinary record. Its original visible
-  loss still refuses dispatch before the renderer runs. Status: limit.
-  - `[EXT-35n] limit: an iterable parent is not reconstructed as an ordinary record`
-- **EXT-35o** A null-prototype caller object omits `toString`, whose constructor default is `"25"`.
-  Recovery must preserve both visible union fields and write that default, without manufacturing
-  an inherited native method or mutating the caller. This independently covers the
-  [pre-publication candidate defect](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6725476571).
-  Status: tested.
-  - `[EXT-35o] null-prototype recovery keeps a missing toString field's constructor default`
+- **EXT-35n** The iterable parent now reaches the path renderer with both visible union fields and
+  the declared iterator. The renderer checks the iterator identity and sends the exact encoded
+  fields. An own data iterator does not by itself hide adjacent fields. Status: tested.
+- **EXT-35o** The null-prototype object omits `toString`, whose constructor default is `"25"`. At
+  `82f9da9` this control refuses at the ordinary nested field `["f"]["b"]`. The original wire
+  assertion remains failing. Status: defect.
 - **EXT-35p** A sparse array's custom prototype supplies inherited index `0: "original"`.
   A parent check rejects the wider `f` member while that element remains. Recovery must retain
   the refusal rather than copy away the element and dispatch `x: [null]`. The custom prototype
@@ -3289,20 +3281,14 @@ EXT-30j uses `OptionFromNullOr`, whose encoded object is visible, and remains a 
   wider member while `x` retains that object's identity. Recovery must retain the refusal rather
   than clone `x` and bypass the check. Status: tested.
   - `[EXT-35q] an empty Struct's external identity cannot be copied away to bypass a parent check`
-- **EXT-35r** A caller adds visible `f.b` after creating a JSON encoding Effect but before running
-  it. A custom `Body.encoder` returns that pending Effect through `Request.body`. Recovery must
-  retain the refusal rather than send the older narrow value. This and EXT-35s/t cover the
-  [pending-input regression](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6726041080).
-  Status: tested.
-  - `[EXT-35r] a visible field added after creating a pending body cannot disappear during recovery`
-- **EXT-35s** Changing existing `f.a` while its body encoding Effect is pending must not recover
-  the earlier value. A typed refusal and empty socket ledger preserve the current input rather
-  than dispatch stale bytes. Status: tested.
-  - `[EXT-35s] a visible value changed after creating a pending body cannot recover its old value`
-- **EXT-35t** Replacing a direct opaque `Option` while its body encoding Effect is pending must
-  not let recovery test an older identity against the parent's check. The original refusal remains,
-  with no request sent. Status: tested.
-  - `[EXT-35t] an opaque identity replaced after creating a pending body cannot bypass a parent check`
+- **EXT-35r** A caller adds visible `f.b` before evaluating a pending JSON encoding Effect. The
+  operation now sends both `f` fields beside the opaque Option, using the current input. Status:
+  tested.
+- **EXT-35s** A caller changes existing `f.a` before evaluating a pending JSON encoding Effect. The
+  operation now sends the current `f.a` and retains `f.b` beside the opaque Option. Status: tested.
+- **EXT-35t** A caller replaces an Option before evaluating a pending JSON encoding Effect. A parent
+  check rejects the replacement identity whenever `f.b` survives. The operation now sends both
+  despite the check, so the empty-ledger assertion remains failing. Status: defect.
 - **EXT-35u** Deleting and re-adding a nested Record's key while its body encoding Effect is pending
   changes its observable key order. A parent check rejects the current order; recovery must not
   bypass it using the old order. The
@@ -3348,9 +3334,9 @@ checks do not establish other peers, platforms or human use.
 - **EXT-36b** Bare unions already preserve all fields for both query and headers, with the union
   before or after its sibling. These keep the existing successful wire behavior. Status: tested.
   - `[EXT-36b] control: a bare ${group} union already keeps every field with ${order}`
-- **EXT-36c** Wider-first annotated calls already succeed in both groups. Their exact three-check
-  trace and complete wire output remain unchanged. Status: tested.
-  - `[EXT-36c] control: a wider-first annotated ${group} union retains its successful trace`
+- **EXT-36c** The wider-first annotated query and header calls retain exact wire values. They now
+  check the same `"z"` seven times when preparation retries after losing a sibling field. Status:
+  tested.
 - **EXT-36d** An identifier and unfamiliar consumer metadata do not disable recovery. The original
   schema retains the custom metadata object's identity before and after execution. Status: tested.
   - `[EXT-36d] identifier and unfamiliar metadata do not prevent query recovery`
@@ -3647,13 +3633,10 @@ corresponding terminal output write. They do not assert general recursive fieldw
 - **EXT-42b** The same terminal shapes and own-data profiles refuse before JSON-body dispatch.
   Status: tested.
   - `[EXT-42b] ${shape} nested JSON aliases refuse invalid values in stable own-data inputs`
-- **EXT-42c** Encoded and decoded path controls retain `5`, omission retains `25`, and supplying
-  the decoded name still wins beside its encoded twin. The unchanged text sibling escapes a slash.
-  Status: tested.
-  - `[EXT-42c] control: ${shape} nested path input retains encoded, decoded and omitted values`
-- **EXT-42d** JSON-body controls retain the same values, exact field names, JSON content type,
-  body bytes and request count. Status: tested.
-  - `[EXT-42d] control: ${shape} nested JSON input retains encoded, decoded and omitted values`
+- **EXT-42c** Encoded and decoded path controls send `5`; omission sends `25`. The same field
+  under both names now refuses and adds no ledger entry. Status: tested.
+- **EXT-42d** JSON controls retain exact single-side bytes and the omitted default. Both names now
+  refuse and add no ledger entry. Status: tested.
 - **EXT-42e** Several finite explicit object fields lead to the invalid terminal path alias.
   Frozen ancestors and explicit null remain covered. Status: tested.
   - `[EXT-42e] transparent object ancestors retain the nested path refusal`
@@ -3671,28 +3654,19 @@ corresponding terminal output write. They do not assert general recursive fieldw
   - `[EXT-42i] control: absent optional and defaulted outer path fields invent no caller witness`
 - **EXT-42j** The same outer-omission cases retain their distinct JSON outputs. Status: tested.
   - `[EXT-42j] control: absent optional and defaulted outer JSON fields invent no caller witness`
-- **EXT-42k** Root fieldwise preparation genuinely decodes nested `page_size: "05"` and
-  `gate: "03"` beside mixed outer numbers and an opaque Option with a stray field. The path keeps
-  `5` and `3`; shared Base64 text retains its prior decoded-string interpretation and writes
-  `YUdrPQ==`. The actual baseline callback order stays exact. Status: tested.
-  - `[EXT-42k] control: actual fieldwise nested decoding retains path meaning and callback order`
-- **EXT-42l** The same counterexample preserves JSON bytes, normalized Option output and the
-  same baseline callback sequence. It cannot authorize the new constructor-only proof.
-  Status: tested.
-  - `[EXT-42l] control: actual fieldwise nested decoding retains JSON meaning and callback order`
-- **EXT-42m** A constructor callback replaces an ancestor, changes its descriptor or prototype,
-  or changes the terminal alias. These unstable inputs retain their original `25` output and
-  callback sequence; the new proof adds no decoding attempt. Status: tested.
-  - `[EXT-42m] control: ${mutation} changes during construction cannot authorize new nested decoding`
-- **EXT-42n** Replacing an ancestor while a constructor default is awaiting a Deferred retains
-  the baseline route and exact callbacks. Synchronization uses no sleep. Status: tested.
-  - `[EXT-42n] control: an ancestor replaced while a default waits retains the baseline route`
-- **EXT-42o** An actual field encoder replaces the left caller object and writes its field, while
-  a deliberately one-way right encoder omits its still-stable field. The original right-field loss
-  remains a `SchemaError` with no dispatch and the exact baseline callback sequence: separate
-  stable and written candidates cannot authorize another whole decoder. The right codec's reverse
-  explicitly fails. Status: tested.
-  - `[EXT-42o] control: stale written left and stable unwritten right are not one witness`
+- **EXT-42k** Fieldwise preparation sends the same path bytes, including the alias and the shared
+  decoded text. The callback trace records retries after field loss. Status: tested.
+- **EXT-42l** The JSON counterpart keeps the same bytes and records the same revised callback trace
+  as EXT-42k. Status: tested.
+- **EXT-42m** Callbacks that change an ancestor identity or prototype now leave the invalid alias
+  refused. Changing its text to `"05"` now sends `"5"`. The descriptor mutation still sends the
+  default. The guide requires callers to keep input unchanged through preparation. Status: tested.
+- **EXT-42n** Replacing an ancestor while the asynchronous default is pending still leaves an
+  invalid alias, which now refuses. Deferreds retain the original synchronization and the ledger
+  stays empty. Status: tested.
+- **EXT-42o** A field encoder replaces the left caller object while the other field omits its
+  output. The request still refuses. The trace now includes further reads and defaults, as the guide
+  permits for retries. Status: tested.
 - **EXT-42p** A finite closed parent union refuses an invalid nested alias before dispatch.
   Published 0.12 baseline overwrote it with `25`; retained Node/Chromium reports reproduce that
   defect before this assertion changed. Status: tested.
@@ -3719,32 +3693,23 @@ on that baseline. These checks do not establish general parent ownership or fiel
 - **EXT-43b** The same independent matrix checks JSON-body refusal and empty ledgers.
   Status: tested.
   - `[EXT-43b] ${name} parent union refuses invalid stable JSON aliases`
-- **EXT-43c** Encoded, decoded, omitted and decoded-name-priority inputs retain canonical JSON
-  bytes, headers, method, target and exact request counts. Status: tested.
-  - `[EXT-43c] ${name} preserves encoded decoded default and alternate inputs`
+- **EXT-43c** Parent unions retain exact encoded, decoded and omitted bytes. The dual-name input now
+  refuses without adding a request. Status: tested.
 - **EXT-43d** Parent unions at two deeper positions retain the invalid-alias refusal.
   Status: tested.
   - `[EXT-43d] nested parent unions refuse invalid aliases without dispatch`
 - **EXT-43e** Cursor, deeper alternate and complete encoded inputs keep exact path escaping,
   JSON bytes, headers and counts. Missing filter declarations invent no ownership. Status: tested.
   - `[EXT-43e] parent cursor and deeper other branches preserve wire bytes`
-- **EXT-43f** Distinct finite/default filter declarations still overwrite invalid text with 25.
-  This is a current #170 defect pin, not an intended guarantee; revisit with a broader proof.
-  Status: defect.
-  - `[EXT-43f] currently distinct filter declarations retain the ambiguous default overwrite`
-- **EXT-43g** Required inner gate forces genuine nested decoding during member fieldwise
-  preparation beside mixed outer fields and an opaque Option. The alias keeps 8 while shared
-  Base64 text keeps its prior decoded-text meaning; callbacks and full wire bytes are checked.
-  Status: tested.
-  - `[EXT-43g] member fieldwise consumption keeps callback and shared text interpretation`
-- **EXT-43h** Whole parent decoding newly refuses a valid alias beside decoded numeric input
-  and reads shared Base64 text on its encoded side. Complete decoded inputs retain prior meaning.
-  This intentional migration consequence is asserted independently of invalid-alias checks.
-  Status: tested.
-  - `[EXT-43h] whole parent decoding refuses valid mixed aliases and reads shared text on its encoded side`
-- **EXT-43i** A suspended parent retains the current invalid-alias overwrite. This is an
-  unsupported #170 defect pin, not a schema guarantee. Status: defect.
-  - `[EXT-43i] currently a suspended parent retains its unsupported overwrite`
+- **EXT-43f** Distinct finite/default declarations beside the filter cannot substitute the default
+  for invalid encoded text. Status: tested.
+- **EXT-43g** The inner gate forces a fieldwise reading. The wire meaning stays intact and the
+  observed callback count increases from six to seven with the retry. Status: tested.
+- **EXT-43h** Mixed aliases beside the opaque Option now keep every visible value. The mixed and
+  decoded controls encode the shared string as decoded input, while the complete encoded control
+  retains its encoded text. Status: tested.
+- **EXT-43i** A suspended parent now refuses the invalid encoded alias without sending the default.
+  The suspension still evaluates. Status: tested.
 - **EXT-43j** Distinct symbols with the same description declare different parent fields.
   Invalid nested aliases refuse without dispatch; a valid alias and the other symbol's member
   retain canonical and slash-escaped paths. Status: tested.
@@ -3757,18 +3722,9 @@ on that baseline. These checks do not establish general parent ownership or fiel
   alias path. The renderer reads only declared encoded output; the caller graph is neither cloned
   nor serialized, and its cycle and object identities remain intact. Status: tested.
   - `[EXT-43l] unknown cyclic nested extras neither hide invalid aliases nor prevent valid paths`
-- **EXT-43m** Ordinary `StructWithRest` declares numeric `1` and string `"1"` with different
-  field schemas. The combined test covers that member directly, under `Struct({ page: member })`,
-  and in a parent union. Each route first checks encoded/decoded/default controls and exact path,
-  headers, empty body and counts. Published 0.12 refuses bad `wire: "many"` in direct/wrapped forms;
-  candidate `1fe92e4` newly sends generated `25`. The parent union already substituted `25` on 0.12.
-  This is a newly exposed kept-or-refused defect under #170, not unchanged or intended behavior.
-  The [public disposition](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6733524389)
-  accepts excluding ambiguous declarations from the proof and retains broader correspondence work.
-  The public path API avoids Effect JSON-codec conversion's rejection of numeric AST field names.
-  Baseline and candidate reports are retained as `artifacts/parent-union-p2-direct-*`.
-  Status: defect.
-  - `[EXT-43m] currently normalized numeric and string declarations retain their unproved overwrite`
+- **EXT-43m** The union, direct and wrapped numeric/string-keyed `StructWithRest` forms now refuse
+  the invalid alias. Complete encoded, decoded and omitted controls retain their exact path bytes.
+  Status: tested.
 
 ## Stable dense array and tuple constructor defaults (EXT-44)
 
@@ -3787,12 +3743,9 @@ Covered invalid text/null requires `SchemaError` and no additional dispatch. Thi
 extension does not establish general per-element recovery, array-shaped union ancestry,
 transformed-group ownership, or unsupported member/final-fieldwise repairs.
 
-- **EXT-44a** Root, last index, double and wrapped arrays; forward/reversed object unions;
-  terminal element unions; fixed, prefix, homogeneous-rest and post-rest tuples with zero/two
-  rest positions; and an optional tuple position retain complete encoded/decoded, inner default
-  and decoded-name-priority controls on path and JSON. Multi-element fixtures choose complete-side
-  companion values explicitly. Status: tested.
-  - `[EXT-44a] ${fixture.name} controls preserve encoded decoded default and priority bytes`
+- **EXT-44a** The 13 list profiles keep exact encoded, decoded and omitted controls in both
+  bindings. The dual-name input now refuses rather than sending the decoded name’s value. Status:
+  tested.
 - **EXT-44b** Every EXT-44a shape first dispatches a complete encoded control through the same
   operation, then refuses text/null in ordinary, null-prototype, frozen, nonenumerable-position and
   nonenumerable-alias own-data profiles without further dispatch. Failure evidence includes the
@@ -3805,11 +3758,9 @@ transformed-group ownership, or unsupported member/final-fieldwise repairs.
   constructor default, and an encoded companion forcing ordinary whole decoding leaves another
   omitted limit absent. These routes have distinct existing bytes. Status: tested.
   - `[EXT-44d] omitted optional positions and whole encoded omission retain distinct meanings`
-- **EXT-44e** Accessor, inherited-index, subclass and custom-iterator arrays retain their current
-  invalid-alias default overwrite on path and JSON. The custom iterator is never invoked; accessor
-  reads belong to existing schema execution. These are unsupported defect pins, not intended
-  guarantees. Status: defect.
-  - `[EXT-44e] currently ${shape} arrays retain their unsupported default overwrite`
+- **EXT-44e** The plain array with a custom own data iterator now refuses an invalid alias.
+  Accessor, inherited-cell and subclass inputs keep the historical default-overwrite pins. None
+  invokes an own iterator. Status: defect.
 - **EXT-44f** A sparse array with optional elements refuses an invalid alias in its stable own
   cell without dispatch, retaining the caller's hole and lack of own index zero. The original
   default-overwrite pin remains in baseline reports before the EXT-47 combined repair.
@@ -3820,22 +3771,18 @@ transformed-group ownership, or unsupported member/final-fieldwise repairs.
   cursor alternative still sends exact path and JSON bytes. See EXT-50 for the union matrix.
   Status: tested.
   - `[EXT-44g] an array-shaped union refuses an invalid alias and preserves cursor bytes`
-- **EXT-44h** A tail constructor default appends a position or swaps earlier booleans. The length
-  change retains the existing schema/loss refusal without dispatch; the order change retains the
-  pre-existing default output. Each performs exactly one default callback. Status: tested.
-  - `[EXT-44h] ${mutation} changes during a tail default retain their original constructor route`
+- **EXT-44h** A tail default mutates list length or swaps earlier booleans. Both mutations now leave
+  an invalid alias refused. The input guide requires stable input during preparation. Status:
+  tested.
 - **EXT-44i** Unknown cyclic terminal extras neither prevent a valid path nor hide a covered
   invalid alias. Caller references and the cycle remain intact; rendering sees only the schema's
   encoded result. Status: tested.
   - `[EXT-44i] unknown cyclic extras preserve caller identity and cannot hide covered aliases`
-- **EXT-44j** Required inner gates force real member-fieldwise decoding of an array beside mixed
-  common fields and an opaque Option. Aliases retain 8/2, shared Base64 text retains its decoded
-  meaning, and the existing callback sequence and normalized JSON remain exact. Status: tested.
-  - `[EXT-44j] actual member fieldwise array consumption preserves shared decoded text`
-- **EXT-44k** Added whole-group validation can refuse an otherwise valid default-valued alias
-  beside decoded numeric input. Complete decoded values and a named mapping validated by Schema
-  retain prior text meaning; invalid mapping input refuses before dispatch. Status: tested.
-  - `[EXT-44k] whole array decoding refuses valid mixed input while complete sides and named mapping retain meaning`
+- **EXT-44j** The fieldwise array’s exact wire values survive; one additional read is traced across
+  retries. Status: tested.
+- **EXT-44k** The mixed alias beside a decoded scalar and an opaque Option now dispatches, keeping
+  the array and treating shared text as decoded. The explicit mapping and all-decoded controls keep
+  the same bytes. Status: tested.
 - **EXT-44l** Actual whole construction performs its default once before validation selects shared
   Base64 text's encoded-side meaning. Complete decoded input retains double encoding. Status: tested.
   - `[EXT-44l] whole array decoding selects encoded shared text after its actual constructor`
@@ -3844,34 +3791,12 @@ transformed-group ownership, or unsupported member/final-fieldwise repairs.
   runtime probe. Whole-side array input types already exclude this particular mixed literal.
   Status: tested.
   - `[EXT-44m] mixed array members refuse instead of replacing valid encoded text`
-- **EXT-44n** A nonempty identity group transformation between explicitly decoded array schemas
-  retains its current invalid-alias default overwrite. This is an unsupported defect pin, not
-  permission to infer correspondence through the transformation. Status: defect.
-  - `[EXT-44n] currently transformed array groups retain their unsupported overwrite`
-- **EXT-44o** The [public dual-name reproduction](https://github.com/viell-dev/slop-effect-schema-http/issues/143#issuecomment-6735302019)
-  uses a nonliteral array input that typechecks without a cast:
-  `[{ limit: 1, page_size: "02" }, { page_size: "25" }]`. Published 0.13 sends 1/25 on both path and
-  JSON; the added whole encoded read sends 2/25. Five controls retain their exact bytes first:
-  complete encoded/decoded input, one dual-name member, and a dual-name member with a decoded or
-  omitted/default sibling. Each operation dispatches six requests with exact method, target,
-  relevant headers and body bytes. This migration pin records a changed choice within #143's open
-  conflicting-alias limit; it does not establish conflict refusal, equality, or a solved gap.
-  Paired reports remain under `artifacts/array-default-{013,ccca2c1}-p2-*`. Status: limit.
-  - `[EXT-44o] currently ${binding} whole array decoding changes a typed neighboring dual-name choice`
-- **EXT-44p** An own enumerable `Symbol.iterator`, created by assigning the normal Array iterator,
-  produced the [#189 normalization defect](https://github.com/viell-dev/slop-effect-schema-http/issues/189)
-  on published 0.13/0.14: evaluation-time `Die(TypeError)`, zero calls and no dispatch. Those exact
-  baselines remain in `artifacts/array-default-*-p2-*` and `artifacts/array-key-014-existing-*`.
-  Following the [public disposition](https://github.com/viell-dev/slop-effect-schema-http/issues/189#issuecomment-6737041284),
-  the unreleased key repair exposes the existing unsupported #170 default 25 for invalid text;
-  the original valid encoded/decoded controls each write 5. Native/watched iterator and path/JSON
-  cases retain all three old inputs and zero calls. The later EXT-47 combined repair splits the
-  iterator profiles: exact native own data refuses the invalid alias and sends the two valid
-  controls; the watched wrapper still sends all three requests, including its unsupported default.
-  Unchanged candidate reports preserve the exact first pin failures before that conversion.
-  Status: defect.
-  - `[EXT-44p] ${binding} exact native own iterator refuses invalid aliases and retains valid controls`
-  - `[EXT-44p] currently ${binding} watched own iterator retains its unsupported default and valid controls`
+- **EXT-44n** An identity group transformation between list schemas keeps valid input and refuses an
+  invalid encoded alias before a default can replace it. Status: tested.
+- **EXT-44o** Typed whole-array input with both names now refuses with or without adjacent decoded,
+  omitted or encoded cells. Complete-side lists continue to dispatch. Status: tested.
+- **EXT-44p** Exact native and watched own data iterators both refuse invalid aliases and keep valid
+  controls. Iterator callbacks are never invoked. Status: tested.
 
 ## Array keys and normalization layout (EXT-45)
 
@@ -3953,10 +3878,8 @@ failures. Arbitrary iterator and private/custom-prototype evidence remains exclu
   and invalid text/null aliases refuse with `SchemaError` and no dispatch. Published 0.14 produces a
   TypeError defect; this adds no custom-iterator or sparse constructor proof. Status: tested.
   - `[EXT-45h] ${binding} covered invalid aliases with non-iterator symbol metadata refuse without dispatch`
-- **EXT-45i** A hidden custom iterator retains the separately unsupported #170 invalid-alias
-  default 25 with zero calls. Its descriptor and caller data remain intact. This current limit is
-  separate from valid enumerable-iterator goals and original EXT-44p pins. Status: defect.
-  - `[EXT-45i] currently ${binding} hidden iterators retain their unsupported default meaning`
+- **EXT-45i** A hidden own data iterator no longer permits replacement by the default. Both bindings
+  refuse the invalid cell and the iterator call count remains zero. Status: tested.
 - **EXT-45j** The 0.15 layout correction sent null/25 both with and without inner stray. Published
   0.14 refused the inner-stray call after faulty compaction; that exact report is retained. The
   [public #170 disposition](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6736960353)
@@ -3984,24 +3907,10 @@ failures. Arbitrary iterator and private/custom-prototype evidence remains exclu
   ownership and both cell identities. This validates ordinary schema reading, not inherited-array
   constructor-default evidence. Status: tested.
   - `[EXT-45n] ${binding} valid inherited numeric cells remain readable with and without rewriting`
-- **EXT-45o** Native/watched enumerable iterators on arrays, fixed tuples and post-rest tuples
-  retain text/null cases with and without inner stray data. Exact native data now refuses all four
-  inputs without dispatch; arbitrary watched wrappers retain four unsupported default-25 requests.
-  Both profiles check zero iterator calls and unchanged caller descriptors.
-  The [public finding](https://github.com/viell-dev/slop-effect-schema-http/issues/170#issuecomment-6737040870)
-  records the earlier TypeError-to-default change; EXT-45p keeps the corresponding checks separate.
-  Status: defect.
-  - `[EXT-45o] ${binding} ${position.name} native iterator invalid aliases refuse without dispatch`
-  - `[EXT-45o] currently ${binding} ${position.name} watched iterator invalid aliases expose unsupported defaults`
-- **EXT-45p** The exact native enumerable-iterator fixtures of EXT-45o now require ordinary typed
-  refusal without dispatch. Watched arbitrary wrappers remain separate expected-failure #170
-  goals: their current output is still generated 25. Each profile retains all twelve original
-  inputs per binding; no selected case is skipped. Earlier plain failures and the first unchanged
-  candidate run remain in reports. This does not establish arbitrary-iterator evidence or release
-  qualification.
-  Status: defect.
-  - `[EXT-45p] ${binding} invalid enumerable native iterator aliases refuse before dispatch`
-  - `[EXT-45p] goal ${binding} invalid enumerable watched iterator aliases are kept or refused`
+- **EXT-45o** Native and watched own data iterators now both refuse invalid aliases on arrays and
+  fixed or post-rest tuples. No iterator is invoked. Status: tested.
+- **EXT-45p** The former watched-wrapper expected failures are ordinary refusals, alongside the
+  native controls, with no dispatch or iterator calls. Status: tested.
 - **EXT-45q** The exact sparse own-cell invalid aliases of EXT-45j, with and without inner
   rewriting, now refuse without dispatch under the combined constructor repair. Original
   `[null,25]` requests and plain baseline failures remain in reports. Caller holes, descriptors
@@ -4041,11 +3950,9 @@ failures. Arbitrary iterator and private/custom-prototype evidence remains exclu
   Published 0.14 retains those ten observations, while 8a loses the field and identities.
   Status: tested.
   - `[EXT-45v] ${name} keeps ${profile} opaque array cells and extras before reading another alternative`
-- **EXT-45w** The same five mixed views already normalize enumerable cells on published 0.14.
-  Their normalized clones omit the extra and retain encoded VALUE 5. Exact identities, caller
-  preservation and wire bytes pin that existing interpretation, rather than promising a general
-  opaque bypass. Status: tested.
-  - `[EXT-45w] control ${name} enumerable mixed cells retain their existing normalized interpretation`
+- **EXT-45w** Unknown, Any and ObjectKeyword keep the original enumerable array and cell, including
+  its additional key, even when the rejecting array appears first. The opaque declaration’s reading
+  stays the same. Status: tested.
 - **EXT-45x** Rejecting checked-Unknown and Declaration alternatives do not prevent subsequent
   visible-array reading. Complete encoded/decoded dense cells with inner extras and audit metadata
   succeed; invalid numeric cells refuse with `SchemaError` and no extra dispatch. Predicate calls
@@ -4053,17 +3960,9 @@ failures. Arbitrary iterator and private/custom-prototype evidence remains exclu
   correction. Unknown/closed cases cover path and JSON; the Declaration uses the path API directly.
   Status: tested.
   - `[EXT-45x] ${binding} ${opaque} rejection still permits valid dense array reading and rejects invalid cells`
-- **EXT-45y** An accepting opaque alternative in a mixed view keeps prior success without reading
-  throwing length or hidden-cell traps. Those profiles retain original array identity. The
-  prototype profile contains an enumerable rewriting cell and still clones the array and sends
-  the exact path. Since [#253](https://github.com/viell-dev/slop-effect-schema-http/pull/253), it
-  makes one prototype read where 0.18.0 made none. The check for inherited sparse cells in
-  [#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257) documents that read,
-  and the throwing trap still allows dispatch. The initial over-broad identity assertion and
-  failed 0.14 observation are preserved before that fixture was corrected under the public
-  enumerable-control rule. Renderers consume only count. Status: tested.
-  - `[EXT-45y] an accepting opaque alternative avoids ${reflection} reflection through a mixed array view`
-  - `[EXT-45y] a sparse mixed array can probe its prototype once and still dispatch`
+- **EXT-45y** The open member keeps the original list in all three proxy profiles. Since the sparse
+  list no longer needs copying solely to discard its extra key, nothing calls its throwing prototype
+  trap. Status: tested.
 - **EXT-45z** A Declaration backed by an encoded unknown-element array retains ordinary reading
   when a sparse proxy throws on prototype inspection. The declaration's identity mapping has a
   direct public-Schema round-trip and invalid non-array control. The HTTP path consumes only the
@@ -4076,11 +3975,8 @@ failures. Arbitrary iterator and private/custom-prototype evidence remains exclu
 These are additional physical-wire controls from the same public mixed-view follow-up. They do not
 establish broader opaque/array correspondence or a constructor-default proof.
 
-- **EXT-46a** A mixed opaque array with an enumerable child must retain prior success without a
-  new length-getter read, both without and with an actual child rewrite. Original versus normalized
-  identity remains true/false respectively; the backing array/cell stay intact. The count-only path
-  avoids serializing the opaque value. Status: tested.
-  - `[EXT-46a] mixed opaque enumerable rewriting avoids adding a length getter read`
+- **EXT-46a** The open member keeps the original list and its fields in both profiles. The length
+  getter still runs zero times. Status: tested.
 - **EXT-46b** A structural optional-cell array proxy reports readable length three while its native
   own length descriptor remains one. A child rewrite must preserve the readable three positions,
   encoding VALUE 5 followed by two nulls on path and JSON, rather than 0.14's compacted one cell.
@@ -4168,11 +4064,9 @@ their stated original source; the pull request records fresh CI against the upda
   alternatives keep their own bytes. Explicit undefined object values render absent on the path;
   the JSON codec's existing representation is null. Status: tested.
   - `[EXT-47j] ${binding} scalar null absent and empty alternatives retain their own bytes`
-- **EXT-47k** Wrapper, entries, bound-native, accessor and subclass iterator profiles retain the
-  unsupported invalid-alias default route. The wrapper call count and iterator getter count stay
-  exactly zero, and descriptors remain unchanged. No iterable is consumed for evidence.
-  Status: defect.
-  - `[EXT-47k] currently ${binding} ${shape} iterator profiles remain excluded without iteration`
+- **EXT-47k** Wrapper, entries and bound own data iterators now refuse the invalid alias. The
+  accessor and subclass remain default-overwrite pins outside plain data. Every iterator/getter call
+  count stays zero. Status: defect.
 - **EXT-47l** A Void-first alternative under a field refuses the invalid encoded
   `{ page_size: "many" }` with `SchemaError` and an empty ledger, because Void would discard the
   supplied field. A fieldless `{}` filter is still Void's, which writes undefined (absent in path
@@ -4248,23 +4142,15 @@ The source, packed and app catalogue gates, source checks/lint and strict packed
 Full logs and copied JUnit reports use `artifacts/constructor-conflict-9eea031-*`; earlier evidence
 remains intact. The app run is general installed-package compatibility evidence.
 
-- **EXT-48a** Optional and nullable element arrays retain both complete-side controls and the
-  dual-name item's `1` versus neighboring-encoded-input `2` interpretation. Each binding receives
-  exactly six requests with full wire assertions and unchanged caller data. Status: limit.
-  - `[EXT-48a] currently ${binding} ${fixture.name} changes a dual-name item only beside an encoded-only neighbor`
-- **EXT-48b** An exact enumerable own native Array iterator retains the same six current outputs.
-  Its function reference and descriptor flags remain unchanged; no wrapper substitutes for native
-  data. Status: limit.
-  - `[EXT-48b] currently ${binding} exact native own iterator changes a dual-name item only beside an encoded-only neighbor`
-- **EXT-48c** Ordinary, hidden-own-cell and null-prototype sparse optional arrays preserve the
-  actual null padding, length, cell identities and descriptors across all six controls. The
-  conflicting first cell changes from `1` to `2` only beside the encoded-only neighbor.
-  Status: limit.
-  - `[EXT-48c] currently ${binding} ${fixture.name} changes a dual-name item only beside an encoded-only neighbor`
-- **EXT-48d** Distinct expected-failure #143 goals retain the intended contradictory-alias
-  refusal for all six layouts and both bindings. Each checks all four conflicting inputs and
-  requires an empty ledger. Current success remains independently pinned above. Status: defect.
-  - `[EXT-48d] goal ${binding} ${fixture.name} contradictory aliases refuse before dispatch`
+- **EXT-48a** Both complete single-side controls retain exact bytes and unchanged caller data for
+  optional and nullable element arrays. The dual-name inputs moved to the ordinary EXT-48d refusals.
+  Status: tested.
+- **EXT-48b** Complete single-side lists keep their output and the exact native own iterator
+  descriptor. EXT-48d covers both-name refusal. Status: tested.
+- **EXT-48c** Ordinary, hidden-own-cell and prototype-free sparse lists keep the complete-side
+  values and real hole. EXT-48d covers both-name refusal. Status: tested.
+- **EXT-48d** All twelve previously expected-failure cases now require ordinary `SchemaError` and no
+  dispatch for all four dual-name inputs, with unchanged layouts and descriptors. Status: tested.
 
 ## Nested primitive alternatives (EXT-49)
 
@@ -4478,15 +4364,10 @@ remain under `artifacts/void-member-5e8d57e-*`.
   Status: tested.
   - `[EXT-49n] ${binding} ${level.name} ${order} annotated and checked Void members keep valid aliases and refuse invalid ones`
   - `[EXT-49n] ${binding} a Void member yields supplied fields to an open member or a list`
-- **EXT-49o** The schemas the guide leaves to Effect's own selection keep it at `36a6188`, on the
-  path and in JSON. `Union([Void, FilterClass])` sends Void's output for `{ limit: 5 }`.
-  `Union([FilterClass, Void])` sends `{"limit":"5"}` for it, but Void's output for the invalid
-  `{ limit: "many" }`. A `Schema.Class` parent holding `Union([Void, Filter])` sends
-  `{"filter":null}` (path `{}`) for decoded and encoded filters. `oneOf` unions send Void's output
-  for valid and invalid aliases in either order, and refuse `{}` with the object first because both
-  members fit. A standalone `Void` sends its output. The supplied fields are dropped without a
-  refusal; the library records these as limits under #143. Status: limit.
-  - `[EXT-49o] currently ${binding} class-backed, oneOf and standalone Void schemas keep Void's own selection`
+- **EXT-49o** Both orders beside a class and oneOf now keep the valid populated input. The class
+  field also keeps it on either side. Invalid populated values and standalone Void refuse. The
+  fieldless `oneOf([Filter, Void])` control now sends a default where it formerly refused and
+  remains a failing assertion. Status: defect.
 - **EXT-49p** A cast-only Void-first query or header group given invalid `"many"` or `null` is
   refused before dispatch with a `SchemaError` naming `["page_size"]`, before any check that the
   group's encoded value is a field record. At `36a6188` it was `Request.InvalidRequest` (the encoded
@@ -4500,12 +4381,9 @@ remain under `artifacts/void-member-5e8d57e-*`.
   is still Void's, and `[]` is Void's when Void is first and `[]` otherwise. At `36a6188` the
   Void-first union sent Void's output for these objects and lists. Status: tested.
   - `[EXT-49q] ${binding} ${order} Void keeps an object or list whose contents decode to undefined`
-- **EXT-49r** With `extra: Union([Void, Struct({ a: Number })])` beside a plain `filter: Filter`,
-  `{ extra: { a: "x" }, filter: { page_size: "05" } }` is refused before dispatch with a
-  `SchemaError` at `["extra"]["a"]`, and the message does not mention the valid `page_size`, in
-  both orders and bindings; `{ extra: { a: 1 } }` beside the same filter sends both. At `36a6188`
-  the refusal named `["filter"]["page_size"]`. Status: tested.
-  - `[EXT-49r] ${binding} ${order} a refusal names the invalid field beside a Void member, not a valid alias`
+- **EXT-49r** Beside a valid alias the invalid `extra.a` still refuses before dispatch, but the
+  error now names `["extra"]` and the valid `["filter"]["page_size"]`. The original path assertions
+  remain failing. Status: defect.
 - **EXT-49s** `Union([Array(Filter), Void])` in either order refuses invalid `"many"` and `null`
   with `Schema.SchemaError` and zero dispatch on the path and in JSON. Valid encoded, decoded and
   omitted aliases send `"5"`, `"5"` and `"25"`. The empty list keeps first-fit: `[]` array-first
@@ -4597,18 +4475,11 @@ remain under `artifacts/alternative-shapes-ba36766-*`.
   one encoded-only item and one decoded-only item, whichever comes first. The ledger stays empty.
   Status: tested.
   - `[EXT-50e] ${binding} ${name} ${order} refuses mixed-side items before dispatch`
-- **EXT-50f** The same lists send `"1"` for a lone conflicting item
-  `{ limit: 1, page_size: "02" }`. Beside an encoded-only item it sends `"2"`. General
-  conflict refusal remains under [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143).
-  Status: limit.
-  - `[EXT-50f] currently ${binding} ${name} ${order} reads the encoded name beside an encoded-only item`
-- **EXT-50g** Current exclusions still dispatch the invalid alias through the ordinary read. A
-  pass-through encoding middleware, second array reader, encoded array member, class and Option
-  each leave the default `"25"` on the wire. An empty struct beside the list can read it directly.
-  Status: limit.
-  - `[EXT-50g] currently ${binding} ${order} a middleware-encoded primitive permits substitution`
-  - `[EXT-50g] currently ${binding} ${order} ${name} beside a list permits dispatch`
-  - `[EXT-50g] currently ${binding} ${order} an encoded array member permits substitution`
+- **EXT-50f** The lone dual-name list item and the same item beside an encoded-only neighbor both
+  refuse before dispatch. EXT-50e still checks mixed-side lists. Status: tested.
+- **EXT-50g** A pass-through middleware alternative, second list reader, class, Option and encoded
+  list member no longer let the default replace an invalid alias. The empty-struct alternative keeps
+  the alias verbatim because it can write the entire list. Status: tested.
 - **EXT-50h** Direct `Filter`, a singleton union and either order with `Cursor` refuse a
   null-prototype list with an own `page_size` named property, for both `"many"` and `"05"`. The
   aliases refuse with an empty ledger on path, JSON, query and headers. This restores the result
@@ -4629,11 +4500,8 @@ remain under `artifacts/alternative-shapes-ba36766-*`.
   and sends `[{"page_size":"5"}]` for a hidden `"05"` alias. Both member orders preserve the
   caller's descriptor and list length. Status: tested.
   - `[EXT-50l] ${binding} ${order} a list beside Void refuses a hidden invalid alias and sends a hidden valid alias`
-- **EXT-50m** Reusing the same member union of a cursor text codec and Void under both an any-of
-  and a one-of field lets the guarded list cell send the default `"25"` for `"many"`.
-  [#170](https://github.com/viell-dev/slop-effect-schema-http/issues/170) tracks the limit.
-  Status: limit.
-  - `[EXT-50m] currently ${binding} a reused member union beside Void lets the default replace an invalid alias`
+- **EXT-50m** Reusing the same union under anyOf and oneOf no longer permits default substitution.
+  The invalid alias refuses as it does with separate instances in EXT-50n. Status: tested.
 - **EXT-50n** Separate instances of that member union refuse the same invalid alias before
   dispatch. Status: tested.
   - `[EXT-50n] ${binding} separate member unions refuse the same invalid alias`
@@ -4759,7 +4627,7 @@ the JUnit reports are under `artifacts/junit-*.xml`.
   Status: tested.
 - **EXT-52b** [#236](https://github.com/viell-dev/slop-effect-schema-http/issues/236). A three-cell
   pair, a non-array iterable entry and a numeric pair fail as `InvalidRequest` with a pair-shape
-  cause. Their diagnostic currently has no field name or position. A defined enumerable
+  cause naming position `$[0]` and omitting the rejected value. A defined enumerable
   non-callable `Symbol.iterator` is itself a refused field under
   [#260](https://github.com/viell-dev/slop-effect-schema-http/pull/260), and the same property
   when non-enumerable lets the group write its record. Status: tested.
@@ -4802,12 +4670,142 @@ the JUnit reports are under `artifacts/junit-*.xml`.
 - **EXT-55c** [#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257). A path
   list beside `Unknown` keeps its non-enumerable or inherited first cell when a later cell
   with an undefined property makes normalization rebuild the list. Status: tested.
-- **EXT-55d** The header writer refuses an object kept by an empty member before dispatch, but
-  its diagnostic currently omits the field that the schema-input guide says the writer names.
-  With `Union([Struct({ a: String }), Struct({})])` bound via `Request.headers`, pass
-  `{ a: "x", "x-value": { note: "fixture" } }`. The result is `InvalidRequest` with the cause
-  `A header line must have a string value`, no mention of `x-value`, and no request.
-  Status: defect.
+- **EXT-55d** The header writer refuses a preserved object and reports
+  `The header field "x-value" must have a string value`. The diagnostic omits the synthetic value
+  and the ledger stays empty. Status: tested.
 - **EXT-56** The production-built [request probe](./src/app/wire.html) runs the 72
   EXT-52–55 socket cases through the installed package and the same-origin proxy.
   Lane: app. Status: tested.
+
+## Kept-or-refused input across readings and writers (EXT-57 to EXT-64)
+
+These consumer cases use the [neutral echo contract](./README.md#the-neutral-echo-probe) and the
+library's public [input guide](https://github.com/viell-dev/slop-effect-schema-http/blob/82f9da983bf18a1a812ee00210b893af74127f88/docs/schema-input.md),
+[group guide](https://github.com/viell-dev/slop-effect-schema-http/blob/82f9da983bf18a1a812ee00210b893af74127f88/docs/schema-groups.md),
+[body guide](https://github.com/viell-dev/slop-effect-schema-http/blob/82f9da983bf18a1a812ee00210b893af74127f88/docs/modules/body.md)
+and [Unreleased change history](https://github.com/viell-dev/slop-effect-schema-http/blob/82f9da983bf18a1a812ee00210b893af74127f88/CHANGELOG.md#unreleased).
+The same 57 new cases execute via Fetch through real sockets in Node, Chromium, packed and
+production-app mode. Successful cases assert the exact target, selected header lines and body
+bytes. Refusals assert the typed error, relevant diagnostic and an empty ledger. The app goes
+through its same-origin proxy and imports the packed package.
+
+- **EXT-57a** [#258](https://github.com/viell-dev/slop-effect-schema-http/issues/258). JSON checks a
+  renamed constructor default in the root beside a class with an own member, in a field beside
+  that class, in a record, a suspension, a list and a union. A valid encoded alias sends `"5"`,
+  an invalid one refuses, and the root omission sends `"25"`. Even agreeing aliases refuse.
+  Status: tested.
+- **EXT-57b** [#259](https://github.com/viell-dev/slop-effect-schema-http/issues/259). The decoding
+  default cannot replace an invalid decoded root or list field, or a valid decoded list item
+  beside an omitted item. A complete decoded list sends `"5"`. Query and headers keep a valid
+  alias, refuse an invalid alias and refuse an invalid decoded name with a decoding default.
+  Status: tested.
+- **EXT-58** Stacked query and header schemas exercise both orders. A sibling writes a supplied
+  field when a union member leaves it out and the union writes nothing in its place. A schema that would send a default in
+  its place refuses, even when the sibling can keep the input. Status: tested.
+- **EXT-59** The loose writer keeps the class member over a later open member. A class instance
+  beside a struct that would strip it has a documented refusal as a control. A union in a class's
+  field reproduces a silent replacement, detailed below. Status: defect.
+- **EXT-60** [#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261). Open JSON
+  records and ObjectKeyword refuse Map, Date and URL before rebuilding away their content, at the
+  root, in a field or at a list index. Open query and header records refuse Date. A class
+  instance with own fields remains writable. Status: tested.
+- **EXT-61** [#262](https://github.com/viell-dev/slop-effect-schema-http/issues/262). A JSON refusal
+  names the innermost lost list field, and a malformed second query pair names `$[1]`.
+  Status: tested.
+- **EXT-62** [#264](https://github.com/viell-dev/slop-effect-schema-http/issues/264) and
+  [#143](https://github.com/viell-dev/slop-effect-schema-http/issues/143). An undefined-only
+  instance next to Void and an empty struct stays an object. Populated input survives Void in a
+  suspended class, in a suspended encoded member, and in an empty struct. Standalone Void, Void
+  beside a scalar, and Void under an encoded field name refuse populated input. Unknown, Any,
+  ObjectKeyword and an empty struct each keep additional nested keys in a list beside a class.
+  Status: tested.
+- **EXT-63** [#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243). A list
+  beside a record uses its list member both inside a class's JSON field and in a path union
+  that also has a class alternative. Status: tested.
+- **EXT-64** The [built request probe](./src/app/wire.html) repeats all 57 EXT-57–63 cases.
+  Lane: app. Status: defect.
+
+### Node baseline at published 0.18.0
+
+The baseline ran the 57 new cases against source at `7c7c54f` with Effect 4.1.4 and Node 24.22.2
+on Linux. The 72 earlier probe cases were filtered out. The log and report are under
+`artifacts/019-baseline-node.*`.
+
+| Entry     |  Cases |   Pass |   Fail | Failures in 0.18.0                                                                  |
+| --------- | -----: | -----: | -----: | ----------------------------------------------------------------------------------- |
+| EXT-57a   |     14 |      7 |      7 | Both class-sibling pairs, invalid record and suspension aliases, and agreeing names |
+| EXT-57b   |     10 |      5 |      5 | Three JSON decoding-default refusals and both group decoding-default refusals       |
+| EXT-58    |      8 |      8 |      0 | None                                                                                |
+| EXT-59    |      3 |      2 |      1 | The union in a class field sends the same replacement as `82f9da9`                  |
+| EXT-60    |      7 |      1 |      6 | All six built-in refusals                                                           |
+| EXT-61    |      2 |      0 |      2 | The JSON path and pair-position refusals                                            |
+| EXT-62    |     11 |      1 |     10 | All but the undefined-only instance control                                         |
+| EXT-63    |      2 |      0 |      2 | Both class-related list cases                                                       |
+| **Total** | **57** | **24** | **33** |                                                                                     |
+
+### Observed mismatches at 82f9da9
+
+The cases below preserve their intended assertions. All use Effect 4.1.4.
+
+- **EXT-59.** Define a class `Counted` with schema field `a: String` and own member `reads = 1`.
+  Define `Holder` with field `item: Union([Filter, Counted])` and the same own member.
+  `Filter` has optional `limit: FiniteFromString` with constructor default `25`, encoded as
+  `page_size`. POST `new Holder({ item: new Counted({ a: "item" }) })` via `Body.jsonSchema(Holder)`.
+  It sends `{"item":{"page_size":"25"}}` instead of `{"item":{"a":"item"}}`. The supplied
+  class field disappears. Both revisions reproduce this.
+- **EXT-49o.** Bind `Union([Filter, Void], { mode: "oneOf" })` to a JSON body or JSON path segment
+  and pass `{}`. The empty object formerly refused as ambiguous. It now dispatches
+  `{"page_size":"25"}`, although the Unreleased entry describes the guard for populated values and
+  says fieldless ones read as before. Both bindings reproduce it.
+- **EXT-49r.** Bind `Struct({ extra: Union([Void, Struct({ a: Number })]), filter: Filter })`,
+  with either union order, and give `{ extra: { a: "x" }, filter: { page_size: "05" } }`. Nothing
+  dispatches. Instead of naming only `["extra"]["a"]`, the error names `["extra"]` and the valid
+  `["filter"]["page_size"]`. Both bindings reproduce it.
+- **EXT-30j.** Bind a JSON body with `held: OptionFromNullOr(Struct({ owner: String }))` and
+  `filter: Union([Struct({ owner: String }), Struct({ owner: String, limit: String })])`.
+  Give `held: Option.some({ owner: "ada", stray: "x" })` and
+  `filter: { owner: "grace", limit: "y" }`. It refuses at `["held"]["value"]["stray"]` inside
+  the opaque Option. The former refusal was on the visible field.
+- **EXT-35j/o.** Let `f` be a union of `{ a: String }` and `{ a: String, b: String }`, and
+  `o` an `Option` of the narrow schema. Give both fields of `f` and an extra key inside
+  `Option.some`. The ordinary parent keeps `f.b` (EXT-35a). Adding declared own string fields
+  `__proto__` and `constructor` at the root, or using a null-prototype input and declaring an
+  omitted `toString` default, makes the JSON request refuse at `["f"]["b"]`. The guide excludes
+  prototype-named fields from accounting. The refusal names an ordinary nested field, so these
+  checks retain their former success assertions.
+- **EXT-35t.** With the same `f` and `o`, add `x: Option(String)`. The parent check rejects
+  values holding `f.b` together with a particular replacement Option by identity. Make the
+  encoding Effect with a different Option and replace `x` before evaluating it. The operation
+  dispatches both `f.b` and the replacement Option. The caller-input stability requirement limits
+  this case to the pending-Effect mutation shape. The check and no-dispatch expectation remain in
+  place.
+
+The first full Node run on the old assertions found 145 failures at `82f9da9`. The updated
+entries above record the changed expectations. The 12 dual-name and two watched-iterator goals
+are now ordinary tests. The full logs and reports use `artifacts/019-original-node.*`,
+`artifacts/019-final-*.log` and `artifacts/junit-*.xml`.
+
+### Full runs at 82f9da9
+
+The full runs used Linux, Node 24.22.2, npm 11.19.1, Effect 4.1.4 and Chromium 158.0.8127.18.
+Every lane passed 56 of the 57 new cases. EXT-59 failed in all four. The other failures in
+the source and packed lanes are EXT-30j, EXT-35j/o/t, both EXT-49o cases and all four EXT-49r
+cases. No full run skipped cases or used expected failures.
+
+| Lane     |  Pass | Fail | Total |
+| -------- | ----: | ---: | ----: |
+| Node     | 3,269 |   11 | 3,280 |
+| Chromium | 2,444 |   11 | 2,455 |
+| Packed   | 3,282 |   11 | 3,293 |
+| App      |   131 |    1 |   132 |
+
+The first Chromium run shared the machine with other lanes and also failed STAT-9's elapsed-time
+assertion (1,905 ms against a 900 ms bound), after the expected three requests and HTTP 429.
+The full Chromium rerun passed STAT-9. The threshold is unchanged.
+
+The source and packed declaration checks, static catalogue check, and lint pass. The three
+result-based catalogue gates reject the recorded wire failures.
+
+The cases cover the listed schema forms and Fetch dispatch. Other Effect peers, browser engines,
+host platforms and exhaustive combinations of codecs, containers and union modes are outside this
+run.

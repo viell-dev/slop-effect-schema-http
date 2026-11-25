@@ -161,7 +161,6 @@ const leafControls = [
   [{ page_size: "05" }, '{"page_size":"5"}'],
   [{ limit: 5 }, '{"page_size":"5"}'],
   [{}, '{"page_size":"25"}'],
-  [{ limit: 5, page_size: "many" }, '{"page_size":"5"}'],
 ] as const;
 
 const inputTypes = () => {
@@ -183,7 +182,7 @@ describe(`array constructor defaults (${lane.name})`, () => {
   for (const fixture of fixtures) {
     const { schema } = fixture;
     it.live(
-      `[EXT-44a] ${fixture.name} controls preserve encoded decoded default and priority bytes`,
+      `[EXT-44a] ${fixture.name} controls preserve encoded decoded and default bytes`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
@@ -223,7 +222,21 @@ describe(`array constructor defaults (${lane.name})`, () => {
             wire(ledger[ledger.length - 2]!, pathFor(expected));
             wire(ledger[ledger.length - 1]!, "/x", expected);
           }
-          expect(yield* backend.ledger).toHaveLength(8);
+          const dual = fixture.input({
+            limit: 5,
+            page_size: "many",
+          }) as Request.Input<typeof schema>;
+          for (const execute of [
+            path.execute({ path: dual }),
+            body.execute({ body: dual }),
+          ]) {
+            expect(
+              yield* execute.pipe(Effect.provide(lane.fetchClient), result),
+            ).toMatchObject({
+              error: { _tag: "SchemaError" },
+            });
+          }
+          expect(yield* backend.ledger).toHaveLength(6);
         }),
     );
     for (const binding of ["path", "JSON"] as const) {
@@ -424,7 +437,9 @@ describe(`array constructor defaults (${lane.name})`, () => {
     "custom iterator",
   ] as const) {
     it.live(
-      `[EXT-44e] currently ${shape} arrays retain their unsupported default overwrite`,
+      shape === "custom iterator"
+        ? "[EXT-44e] a plain array with an own data iterator refuses the invalid alias"
+        : `[EXT-44e] currently ${shape} arrays retain their unsupported default overwrite`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
@@ -475,20 +490,28 @@ describe(`array constructor defaults (${lane.name})`, () => {
             ),
             response,
           );
-          expect(
-            yield* path
-              .execute({ path: input })
-              .pipe(Effect.provide(lane.fetchClient)),
-          ).toBe("Not Found");
-          expect(
-            yield* body
-              .execute({ body: input })
-              .pipe(Effect.provide(lane.fetchClient)),
-          ).toBe("Not Found");
-          const ledger = yield* backend.ledger;
-          expect(ledger).toHaveLength(2);
-          wire(ledger[0]!, pathFor('[{"page_size":"25"}]'));
-          wire(ledger[1]!, "/x", '[{"page_size":"25"}]');
+          const executions = [
+            path.execute({ path: input }),
+            body.execute({ body: input }),
+          ];
+          if (shape === "custom iterator") {
+            for (const execute of executions)
+              expect(
+                yield* execute.pipe(Effect.provide(lane.fetchClient), result),
+              ).toMatchObject({
+                error: { _tag: "SchemaError" },
+              });
+            expect(yield* backend.ledger).toEqual([]);
+          } else {
+            for (const execute of executions)
+              expect(
+                yield* execute.pipe(Effect.provide(lane.fetchClient)),
+              ).toBe("Not Found");
+            const ledger = yield* backend.ledger;
+            expect(ledger).toHaveLength(2);
+            wire(ledger[0]!, pathFor('[{"page_size":"25"}]'));
+            wire(ledger[1]!, "/x", '[{"page_size":"25"}]');
+          }
           if (shape === "accessor") expect(reads).toBeGreaterThan(0);
           // No new evidence collector is permitted to execute this iterator. Baseline schemas
           // consume indices; neither operation invokes this deliberately different iterator.
@@ -591,7 +614,7 @@ describe(`array constructor defaults (${lane.name})`, () => {
 
   for (const mutation of ["length", "order"] as const) {
     it.live(
-      `[EXT-44h] ${mutation} changes during a tail default retain their original constructor route`,
+      `[EXT-44h] ${mutation} changes during a tail default refuse before dispatch`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
@@ -628,16 +651,8 @@ describe(`array constructor defaults (${lane.name})`, () => {
             .pipe(Effect.provide(lane.fetchClient), result);
           expect(trace).toEqual(["default"]);
           const ledger = yield* backend.ledger;
-          if (mutation === "length") {
-            // The existing loss check already refuses the new caller position. Preserve that
-            // refusal independently of the added constructor-only evidence.
-            expect(actual).toMatchObject({ error: { _tag: "SchemaError" } });
-            expect(ledger).toEqual([]);
-          } else {
-            expect(actual).toEqual({ value: "Not Found" });
-            expect(ledger).toHaveLength(1);
-            wire(ledger[0]!, "/x", '[false,true,{"page_size":"25"}]');
-          }
+          expect(actual).toMatchObject({ error: { _tag: "SchemaError" } });
+          expect(ledger).toEqual([]);
           expect(input.length).toBe(mutation === "length" ? 4 : 3);
           expect(input[0]).toBe(mutation !== "length");
         }),
@@ -737,7 +752,7 @@ describe(`array constructor defaults (${lane.name})`, () => {
             })
             .pipe(Effect.provide(lane.fetchClient)),
         ).toBe("Not Found");
-        expect(reads).toEqual(["06", "06", "06", "06", "06", "06"]);
+        expect(reads).toEqual(Array<string>(7).fill("06"));
         const ledger = yield* backend.ledger;
         expect(ledger).toHaveLength(1);
         wire(
@@ -749,7 +764,7 @@ describe(`array constructor defaults (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-44k] whole array decoding refuses valid mixed input while complete sides and named mapping retain meaning",
+    "[EXT-44k] mixed input beside an Option and explicitly mapped inputs keep their wire meaning",
     () =>
       Effect.gen(function* () {
         const backend = yield* start();
@@ -825,9 +840,10 @@ describe(`array constructor defaults (${lane.name})`, () => {
           })
           .pipe(Effect.provide(lane.fetchClient), result);
         expect({ mixed, count: (yield* backend.ledger).length }).toMatchObject({
-          mixed: { error: { _tag: "SchemaError" } },
-          count: 2,
+          mixed: { value: "Not Found" },
+          count: 3,
         });
+        wire((yield* backend.ledger)[2]!, "/x", decodedJson);
       }),
   );
 
@@ -929,52 +945,49 @@ describe(`array constructor defaults (${lane.name})`, () => {
       }),
   );
 
-  it.live(
-    "[EXT-44n] currently transformed array groups retain their unsupported overwrite",
-    () =>
-      Effect.gen(function* () {
-        const backend = yield* start();
-        const DecodedFilters = Schema.Array(
-          Schema.Struct({
-            limit: Schema.optionalKey(Schema.Number).pipe(
-              Schema.withConstructorDefault(Effect.succeed(25)),
-            ),
-          }),
-        );
-        const schema = Filters.pipe(
-          Schema.decodeTo(DecodedFilters, {
-            decode: SchemaGetter.transform((value) => value),
-            encode: SchemaGetter.transform((value) => value),
-          }),
-        );
-        const operation = Operation.make(
-          Request.post(`${backend.origin}/x`).pipe(
-            Request.body(Body.jsonSchema(schema)),
+  it.live("[EXT-44n] a transformed array group refuses an invalid alias", () =>
+    Effect.gen(function* () {
+      const backend = yield* start();
+      const DecodedFilters = Schema.Array(
+        Schema.Struct({
+          limit: Schema.optionalKey(Schema.Number).pipe(
+            Schema.withConstructorDefault(Effect.succeed(25)),
           ),
-          response,
-        );
-        for (const input of [[{ page_size: "05" }], [{ limit: 5 }]])
-          expect(
-            yield* operation
-              .execute({ body: input })
-              .pipe(Effect.provide(lane.fetchClient)),
-          ).toBe("Not Found");
+        }),
+      );
+      const schema = Filters.pipe(
+        Schema.decodeTo(DecodedFilters, {
+          decode: SchemaGetter.transform((value) => value),
+          encode: SchemaGetter.transform((value) => value),
+        }),
+      );
+      const operation = Operation.make(
+        Request.post(`${backend.origin}/x`).pipe(
+          Request.body(Body.jsonSchema(schema)),
+        ),
+        response,
+      );
+      for (const input of [[{ page_size: "05" }], [{ limit: 5 }]])
         expect(
           yield* operation
-            .execute({ body: [{ page_size: "many" }] })
+            .execute({ body: input })
             .pipe(Effect.provide(lane.fetchClient)),
         ).toBe("Not Found");
-        const ledger = yield* backend.ledger;
-        expect(ledger).toHaveLength(3);
-        wire(ledger[0]!, "/x", '[{"page_size":"5"}]');
-        wire(ledger[1]!, "/x", '[{"page_size":"5"}]');
-        wire(ledger[2]!, "/x", '[{"page_size":"25"}]');
-      }),
+      expect(
+        yield* operation
+          .execute({ body: [{ page_size: "many" }] })
+          .pipe(Effect.provide(lane.fetchClient), result),
+      ).toMatchObject({ error: { _tag: "SchemaError" } });
+      const ledger = yield* backend.ledger;
+      expect(ledger).toHaveLength(2);
+      wire(ledger[0]!, "/x", '[{"page_size":"5"}]');
+      wire(ledger[1]!, "/x", '[{"page_size":"5"}]');
+    }),
   );
 
   for (const binding of ["path", "JSON"] as const) {
     it.live(
-      `[EXT-44o] currently ${binding} whole array decoding changes a typed neighboring dual-name choice`,
+      `[EXT-44o] ${binding} typed whole-array input with both names refuses regardless of its neighbors`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
@@ -1002,18 +1015,6 @@ describe(`array constructor defaults (${lane.name})`, () => {
               input: [{ limit: 1 }, { limit: 25 }],
               json: '[{"page_size":"1"},{"page_size":"25"}]',
             },
-            {
-              input: [{ limit: 1, page_size: "02" }],
-              json: '[{"page_size":"1"}]',
-            },
-            {
-              input: [{ limit: 1, page_size: "02" }, { limit: 25 }],
-              json: '[{"page_size":"1"},{"page_size":"25"}]',
-            },
-            {
-              input: [{ limit: 1, page_size: "02" }, {}],
-              json: '[{"page_size":"1"},{"page_size":"25"}]',
-            },
           ];
           for (const { input, json } of examples) {
             expect(
@@ -1030,25 +1031,24 @@ describe(`array constructor defaults (${lane.name})`, () => {
               binding === "path" ? undefined : json,
             );
           }
-          // Public #143 reproduction: this nonliteral input typechecks without a cast. A
-          // second encoded-only alias can select whole encoded reading of the first member.
-          // This changed conflict choice is a known limit, not a conflict-refusal repair.
-          const input = [{ limit: 1, page_size: "02" }, { page_size: "25" }];
-          expect(
-            yield* (
+          // These nonliteral public inputs still type-check without a cast.
+          for (const input of [
+            [{ limit: 1, page_size: "02" }],
+            [{ limit: 1, page_size: "02" }, { limit: 25 }],
+            [{ limit: 1, page_size: "02" }, {}],
+            [{ limit: 1, page_size: "02" }, { page_size: "25" }],
+          ]) {
+            const execute =
               binding === "path"
                 ? path.execute({ path: input })
-                : body.execute({ body: input })
-            ).pipe(Effect.provide(lane.fetchClient)),
-          ).toBe("Not Found");
-          const ledger = yield* backend.ledger;
-          expect(ledger).toHaveLength(6);
-          const json = '[{"page_size":"2"},{"page_size":"25"}]';
-          wire(
-            ledger[5]!,
-            binding === "path" ? pathFor(json) : "/x",
-            binding === "path" ? undefined : json,
-          );
+                : body.execute({ body: input });
+            expect(
+              yield* execute.pipe(Effect.provide(lane.fetchClient), result),
+            ).toMatchObject({
+              error: { _tag: "SchemaError" },
+            });
+          }
+          expect(yield* backend.ledger).toHaveLength(2);
         }),
     );
 
@@ -1056,7 +1056,7 @@ describe(`array constructor defaults (${lane.name})`, () => {
       it.live(
         iterator === "normal"
           ? `[EXT-44p] ${binding} exact native own iterator refuses invalid aliases and retains valid controls`
-          : `[EXT-44p] currently ${binding} watched own iterator retains its unsupported default and valid controls`,
+          : `[EXT-44p] ${binding} watched own iterator refuses invalid aliases and retains valid controls`,
         () =>
           Effect.gen(function* () {
             const backend = yield* start();
@@ -1105,13 +1105,11 @@ describe(`array constructor defaults (${lane.name})`, () => {
                 phase = "effect evaluation";
                 return effect;
               }).pipe(Effect.provide(lane.fetchClient), Effect.exit);
-              // Exact native data now supplies bounded constructor evidence. The watched
-              // wrapper remains excluded, with its original default and zero invocations.
-              // Earlier TypeError and exposed-default reports remain separate evidence.
+              // The positional read never invokes either own iterator.
               expect(phase).toBe("effect evaluation");
               expect(calls).toBe(0);
               const ledger = yield* backend.ledger;
-              if (iterator === "normal" && invalid) {
+              if (invalid) {
                 expect(Exit.isFailure(exit)).toBe(true);
                 if (Exit.isFailure(exit))
                   expect(exit.cause.reasons).toMatchObject([

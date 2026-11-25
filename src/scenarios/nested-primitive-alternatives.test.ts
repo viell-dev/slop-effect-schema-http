@@ -1018,62 +1018,46 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
 
     // https://github.com/viell-dev/slop-effect-schema-http/issues/143
     it.live(
-      `[EXT-49o] currently ${binding} class-backed, oneOf and standalone Void schemas keep Void's own selection`,
+      `[EXT-49o] ${binding} class-backed and oneOf unions keep populated objects beside Void`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
           const cases: ReadonlyArray<readonly [WireSchema, unknown, string]> = [
-            // A class alternative after Void: Void takes the fields.
             [
               Schema.Union([Schema.Void, FilterClass]),
               { limit: 5 },
-              voidRoot(binding),
+              '{"limit":"5"}',
             ],
-            // A class alternative before Void keeps valid fields, but Void takes an invalid one.
             [
               Schema.Union([FilterClass, Schema.Void]),
               { limit: 5 },
               '{"limit":"5"}',
             ],
             [
-              Schema.Union([FilterClass, Schema.Void]),
-              { limit: "many" },
-              voidRoot(binding),
-            ],
-            // A class parent holding a Void-first field.
-            [
               VoidFirstParent,
               { filter: { limit: 5 } },
-              binding === "path" ? "{}" : '{"filter":null}',
+              '{"filter":{"page_size":"5"}}',
             ],
             [
               VoidFirstParent,
               { filter: { page_size: "05" } },
-              binding === "path" ? "{}" : '{"filter":null}',
+              '{"filter":{"page_size":"5"}}',
             ],
-            // oneOf unions keep Effect's own selection in either order.
             [
               Schema.Union([Schema.Void, Filter], { mode: "oneOf" }),
               { page_size: "05" },
-              voidRoot(binding),
-            ],
-            [
-              Schema.Union([Schema.Void, Filter], { mode: "oneOf" }),
-              { page_size: "many" },
-              voidRoot(binding),
+              five,
             ],
             [
               Schema.Union([Filter, Schema.Void], { mode: "oneOf" }),
               { page_size: "05" },
-              voidRoot(binding),
+              five,
             ],
             [
               Schema.Union([Filter, Schema.Void], { mode: "oneOf" }),
               { limit: 5 },
-              voidRoot(binding),
+              five,
             ],
-            // A standalone Void has no other member to keep the fields.
-            [Schema.Void, { page_size: "05" }, voidRoot(binding)],
           ];
           for (const [schema, input, json] of cases) {
             const before = structuredClone(input);
@@ -1085,17 +1069,47 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
             wire(ledger[ledger.length - 1]!, binding, json);
           }
           expect(yield* backend.ledger).toHaveLength(cases.length);
-          // A fieldless value fits both oneOf members after the object, so Effect refuses it.
-          const refusing = yield* start();
-          yield* refusesBeforeDispatch(
-            refusing,
-            operation(
-              refusing.origin,
+          for (const [name, schema, input] of [
+            [
+              "class invalid alias",
+              Schema.Union([FilterClass, Schema.Void]),
+              { limit: "many" },
+            ],
+            [
+              "oneOf invalid alias",
+              Schema.Union([Schema.Void, Filter], { mode: "oneOf" }),
+              { page_size: "many" },
+            ],
+            [
+              "standalone Void with an object",
+              Schema.Void,
+              { page_size: "05" },
+            ],
+            // An empty object still fits both oneOf members.
+            [
+              "ambiguous fieldless oneOf",
               Schema.Union([Filter, Schema.Void], { mode: "oneOf" }),
+              {},
+            ],
+          ] as const) {
+            const refusing = yield* start();
+            const actual = yield* operation(
+              refusing.origin,
+              schema,
               binding,
-            ),
-            [{}],
-          );
+            )(input).pipe(outcome);
+            const ledger = yield* refusing.ledger;
+            expect(
+              {
+                error: "error" in actual && Schema.isSchemaError(actual.error),
+                requests: ledger.map(({ target, body }) => ({
+                  target,
+                  body: new TextDecoder().decode(body),
+                })),
+              },
+              name,
+            ).toEqual({ error: true, requests: [] });
+          }
         }),
     );
   }
@@ -1253,8 +1267,6 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
               "error" in actual && Schema.isSchemaError(actual.error),
             ).toBe(true);
             const message = String((actual as { error: unknown }).error);
-            expect(message).toContain('["extra"]["a"]');
-            expect(message).not.toContain("page_size");
             const backend = yield* start();
             expect(
               yield* operation(
@@ -1266,6 +1278,8 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
             const ledger = yield* backend.ledger;
             expect(ledger).toHaveLength(1);
             wire(ledger[0]!, binding, `{"extra":{"a":1},"filter":${five}}`);
+            expect(message).toContain('["extra"]["a"]');
+            expect(message).not.toContain("page_size");
           }),
       );
       // https://github.com/viell-dev/slop-effect-schema-http/issues/143

@@ -16,8 +16,9 @@ afterAll(async () => {
 });
 
 for (const [id, rows] of Object.entries(wireCases)) {
+  const appId = Number.parseInt(id, 10) < 57 ? "[EXT-56]" : "[EXT-64]";
   for (const [index, row] of rows.entries()) {
-    it.live(`[EXT-56] [EXT-${id}] ${row.name}`, () =>
+    it.live(`${appId} [EXT-${id}] ${row.name}`, () =>
       Effect.gen(function* () {
         const backend = yield* lane.backend("echo", undefined, {
           listener: "socket",

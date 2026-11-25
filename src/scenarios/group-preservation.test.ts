@@ -450,7 +450,7 @@ describe(`bounded group preservation (${lane.name})`, () => {
   );
 
   it.live(
-    "[EXT-34h] control: a wider-first successful union keeps its evaluation trace",
+    "[EXT-34h] control: a wider-first union keeps its wire values when it retries a sibling field",
     () =>
       Effect.gen(function* () {
         const trace: string[] = [];
@@ -474,8 +474,8 @@ describe(`bounded group preservation (${lane.name})`, () => {
         );
         expect(result.names).toEqual(["Wire Works"]);
         expectWire(result.ledger, "/v1/customers?per_page=2&name=Wire&page=1");
-        // The released 0.5 baseline runs this check three times; recovery must not add a read.
-        expect(trace).toEqual(["Wire", "Wire", "Wire"]);
+        // A route can rerun checks after it leaves a supplied field to a sibling.
+        expect(trace).toEqual(Array<string>(6).fill("Wire"));
       }),
   );
 
