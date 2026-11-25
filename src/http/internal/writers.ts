@@ -2,6 +2,7 @@ import { Effect, Schema, SchemaAST, SchemaIssue, SchemaParser } from "effect";
 import { candidates } from "./candidates.js";
 import { classFields } from "./excess.js";
 import { isPlainData, statesPrototypeName } from "./plain.js";
+import { stageRefuses } from "./primitive.js";
 
 /** A union a write went through, the member that wrote the value, and the first that could not. */
 export interface WriterNote {
@@ -453,6 +454,9 @@ const statesEveryKey = (ast: SchemaAST.AST, value: unknown): boolean => {
   if (ast._tag === "Suspend") return statesEveryKey(ast.thunk(), value);
   if (ast._tag === "Union")
     return ast.types.some((member) => statesEveryKey(member, value));
+  // Text, or a list where the value is an object, takes no such value at all.
+  if (stageRefuses(ast, Array.isArray(value) ? "array" : "record"))
+    return false;
   if (ast._tag === "Objects")
     return Reflect.ownKeys(value).every(
       (key) =>
