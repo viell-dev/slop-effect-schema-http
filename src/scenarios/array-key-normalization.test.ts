@@ -1652,7 +1652,9 @@ describe(`array key normalization (${lane.name})`, () => {
 
   for (const reflection of ["length", "hidden cell", "prototype"] as const) {
     it.live(
-      `[EXT-45y] an accepting opaque alternative avoids ${reflection} reflection through a mixed array view`,
+      reflection === "prototype"
+        ? "[EXT-45y] a sparse mixed array can probe its prototype once and still dispatch"
+        : `[EXT-45y] an accepting opaque alternative avoids ${reflection} reflection through a mixed array view`,
       () =>
         Effect.gen(function* () {
           const backend = yield* start();
@@ -1707,8 +1709,9 @@ describe(`array key normalization (${lane.name})`, () => {
           expect(target.length).toBe(reflection === "prototype" ? 2 : 1);
           expect(target[reflection === "prototype" ? 1 : 0]).toBe(cell);
           expect(cell.additional).toBe("retain");
-          // The prototype fixture has an enumerable rewriting cell: its existing normalized
-          // clone is intentional. Hidden cells in the other two profiles retain the opaque value.
+          // The sparse profile rebuilds the list when its enumerable cell changes, so it
+          // checks the prototype once for inherited positions (#257). The throwing trap still
+          // allows dispatch. The other profiles keep the original opaque value.
           expectOutcomes({
             outcome,
             identities,
@@ -1717,7 +1720,7 @@ describe(`array key normalization (${lane.name})`, () => {
           }).toMatchObject({
             outcome: { kind: "success", value: "Not Found" },
             identities: [reflection !== "prototype"],
-            forbiddenReads: 0,
+            forbiddenReads: reflection === "prototype" ? 1 : 0,
             requests: [{}],
           });
           expect(ledger).toHaveLength(1);
