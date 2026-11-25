@@ -47,6 +47,12 @@ export default defineConfig({
   publicDir: false,
   // The app reads its configuration from the page's URL, never from `.env` files.
   envDir: false,
-  build: { outDir: at("./.app"), emptyOutDir: true },
+  build: {
+    outDir: at("./.app"),
+    emptyOutDir: true,
+    rolldownOptions: {
+      input: [at("./src/app/index.html"), at("./src/app/wire.html")],
+    },
+  },
   plugins: [packedLibrary()],
 });
