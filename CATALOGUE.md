@@ -287,8 +287,10 @@ raw-socket check is in `business-envelopes.node.test.ts`. Round trips for the di
 - **ERR-2** An error code in a response header on a 200 (a load balancer ejects nodes answering
   anything else): a header rule selected before any body byte is read, ranked above the plain 200
   rule. Since [#273](https://github.com/viell-dev/slop-effect-schema-http/pull/273), the
-  misordered rules also assert that the decode error message gives status 200 and the cause's
-  `HttpClientError` tag. The message was empty on 0.18.0. Status: tested.
+  misordered rules also assert that the decode error message gives status 200. Since
+  [#279](https://github.com/viell-dev/slop-effect-schema-http/pull/279) it reads nothing from the
+  cause, so it no longer names the `HttpClientError` tag. The message was empty on 0.18.0.
+  Status: tested.
   - `[ERR-2] selects the header error rule ahead of the plain 200 rule`
   - `[ERR-2] declared after the plain 200 rule, the header rule is unreachable and the decode
 failure is final`
@@ -4814,6 +4816,14 @@ The adjusted assertions were also run at `82f9da9` in Node. All retained mismatc
 there. The 15 failures in the focused rerun are the five new Void cases (EXT-62), the seven
 malformed-pair messages (EXT-52b and EXT-61) and the three response message checks (ERR-2 and
 EXT-27a across its two Node providers). See `artifacts/pin-82f9da9-focused.*`.
+
+### Node run at 38bdc38
+
+[#279](https://github.com/viell-dev/slop-effect-schema-http/pull/279) changed two outcomes after
+`96e5163`: Void declines a list with a defined named field of its own, and
+`Response.DecodeError` gives a status-only message. On the same platform, the Node lane at library
+`38bdc38` found the ERR-2 message assertion stale and nothing else. With it updated, the pin moves
+to `38bdc38`. This pull request's own checks run every lane at that pin.
 
 ### Full runs at 96e5163
 
