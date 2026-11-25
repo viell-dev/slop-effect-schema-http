@@ -14,7 +14,8 @@
   must have length two and a string name. Iterable groups must also yield arrays of that form.
   `UrlEncoding.queryEntries` and `Transport.entries` now throw `TypeError` on `[["k", "v", "x"]]`
   and `["ab"]`. The query helper also refuses `[["k"]]` and `[[1, "v"]]`. Malformed iterator
-  protocol results follow the same error rules. Bindings report invalid field values as
+  protocol results follow the same error rules. A refusal names the pair's position, and one of a
+  header value that is not text names its field. Bindings report invalid field values as
   `InvalidRequest` with their validation cause. Caller exceptions during schema field writing
   propagate as defects.
 - **Breaking:** refuse unsupported encoded query values before dispatch
