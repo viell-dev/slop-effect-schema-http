@@ -20,6 +20,7 @@ import "./migration-0-17.ts";
 import "./migration-0-18.ts";
 import "./opaque-neighbor.ts";
 import "./union-annotations.ts";
+import "./schema-input.ts";
 import console from "node:console";
 
 console.log(

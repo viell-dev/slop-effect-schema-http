@@ -70,6 +70,56 @@ if (token.request.body._tag === "Uint8Array")
     "grant_type=client_credentials&scope=read&scope=write",
   );
 
+// #region free-form
+const Note = Schema.Struct({ title: Schema.String, meta: Schema.Any });
+const createNote = Request.post("https://api.example.test/notes").pipe(
+  Request.body(Body.jsonSchema(Note)),
+);
+// { title: "a", meta: { at: new Date(0) } } sends
+// {"title":"a","meta":{"at":"1970-01-01T00:00:00.000Z"}}.
+// { title: "a", meta: { tags: new Set(["x"]) } } fails before dispatch with
+// HttpBodyError: JSON body at $["meta"]["tags"] cannot encode Set
+// #endregion free-form
+const note = await Effect.runPromise(
+  Request.compile(createNote, {
+    body: { title: "a", meta: { at: new Date(0) } },
+  }),
+);
+assert.equal(note.request.body._tag, "Uint8Array");
+if (note.request.body._tag === "Uint8Array")
+  assert.equal(
+    new TextDecoder().decode(note.request.body.body),
+    '{"title":"a","meta":{"at":"1970-01-01T00:00:00.000Z"}}',
+  );
+const refusedNote = await Effect.runPromise(
+  Effect.flip(
+    Request.compile(createNote, {
+      body: { title: "a", meta: { tags: new Set(["x"]) } },
+    }),
+  ),
+);
+assert.equal(refusedNote._tag, "HttpBodyError");
+assert.equal(
+  refusedNote.message,
+  'JSON body at $["meta"]["tags"] cannot encode Set',
+);
+const UnknownNote = Schema.Struct({
+  title: Schema.String,
+  meta: Schema.Unknown,
+});
+const strictNote = await Effect.runPromise(
+  Effect.flip(
+    Request.compile(
+      Request.post("https://api.example.test/notes").pipe(
+        Request.body(Body.jsonSchema(UnknownNote)),
+      ),
+      { body: { title: "a", meta: { at: new Date(0) } } },
+    ),
+  ),
+);
+assert.equal(strictNote._tag, "SchemaError");
+assert.equal(strictNote.message, 'Expected JSON value\n  at ["meta"]');
+
 // #region map
 const trimmed = (text: string) => text.trim();
 
