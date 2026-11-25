@@ -180,11 +180,13 @@ A schema's codec converts first: `Schema.Number` writes `NaN` as the text `"NaN"
 accepts, as [Optional fields and numbers](#optional-fields-and-numbers) shows.
 
 Plain objects, class instances and `Schema.Class` values write their fields, and values such as
-`Option`, `Chunk` and `DateTime` write what their `toJSON` returns. An invalid `Date` writes `null`,
-which is its own `toJSON` result. The writer leaves out an object field whose value is `undefined`,
-so under `Body.json` or a `Schema.Any` field `{ a: undefined }` becomes `{}`; a schema field can
-write `null` before the writer sees it. It encodes top-level `undefined` as an empty outgoing body.
-Exceptions thrown by getters, proxies and `toJSON` are defects.
+`Option`, `Chunk` and `DateTime` write what their `toJSON` returns. So does a `Redacted`, whose
+`toJSON` returns `"<redacted>"` rather than its value. Under `Body.jsonSchema`, a `Schema.Redacted`
+field writes the value itself. An invalid `Date` writes `null`, which is its own `toJSON` result.
+The writer leaves out an object field whose value is `undefined`, so under `Body.json` or a
+`Schema.Any` field `{ a: undefined }` becomes `{}`; a schema field can write `null` before the
+writer sees it. It encodes top-level `undefined` as an empty outgoing body. Exceptions thrown by
+getters, proxies and `toJSON` are defects.
 
 An open schema that rebuilds an object from its own fields, as `Schema.ObjectKeyword` and a
 string-indexed record do, refuses with `SchemaError` instead a built-in whose content is not in its
