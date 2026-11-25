@@ -6,7 +6,7 @@ import {
   SchemaIssue,
   SchemaParser,
 } from "effect";
-import { classFields, hasDefinedFields } from "./excess.js";
+import { classFields, hasDefinedFields, hasHiddenContent } from "./excess.js";
 
 const jsonVoid = Schema.toCodecJson(Schema.Void).ast.encoding?.[0];
 
@@ -14,6 +14,12 @@ const isPlainVoid = (ast: SchemaAST.AST): ast is SchemaAST.Void =>
   ast._tag === "Void" &&
   (ast.encoding === undefined ||
     (ast.encoding.length === 1 && ast.encoding[0] === jsonVoid));
+
+/** Whether a value would be erased as `undefined`: anything but nothing, or an object or list of it. */
+const holdsSomething = (value: unknown): boolean =>
+  typeof value === "object" && value !== null
+    ? hasDefinedFields(value) || hasHiddenContent(value)
+    : value !== undefined && value !== null;
 
 const guard = (member: SchemaAST.Void) => {
   // Declaration.flip swaps checks to the opposite side. Delegate to the original type parser
@@ -26,7 +32,7 @@ const guard = (member: SchemaAST.Void) => {
   return new SchemaAST.Declaration(
     [],
     () => (input, _self, options) =>
-      hasDefinedFields(input)
+      holdsSomething(input)
         ? Effect.fail(new SchemaIssue.InvalidType(member, input, options))
         : parse(input, options),
     { expected: "void", ...member.annotations },
@@ -35,7 +41,7 @@ const guard = (member: SchemaAST.Void) => {
     member.context,
     undefined,
     () => (input, _self, options) =>
-      Predicate.isObjectOrArray(input)
+      Predicate.isObjectOrArray(input) || holdsSomething(input)
         ? Effect.fail(new SchemaIssue.InvalidType(member, input, options))
         : parse(input, options),
   );
@@ -54,8 +60,8 @@ function mapSame<A>(items: readonly A[], map: (item: A) => A): readonly A[] {
 const guardedVoids = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
 
 /**
- * A schema whose every visible Void declines what it would erase: an object or a list that holds
- * something. Nothing else changes: in a union another member can then keep the value, and anywhere
+ * A schema whose every visible Void declines what it would erase: any value but `undefined`, `null`
+ * and an object or a list that holds nothing. Nothing else changes: in a union another member can then keep the value, and anywhere
  * else the parser refuses it where it is. Void's ordinary behavior, missing and JSON null included,
  * stays with its context and encoding links.
  *

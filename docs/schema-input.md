@@ -292,8 +292,10 @@ To get `Filter`'s encoding, bind `Filter` directly; with the empty struct beside
 member that keeps the whole value writes it. Leave out the keys `Filter` does not state before
 preparation if they should not be sent.
 
-Built-in `Schema.Void` ordinarily accepts any value and returns `undefined`. It never takes an
-object with a defined enumerable own field, or a list with a defined own cell:
+Built-in `Schema.Void` ordinarily accepts any value and returns `undefined`. Here it takes only
+`undefined`, `null`, and an object or list that holds nothing. A scalar, a built-in such as a `Date`
+or a `Map`, an object with a defined enumerable own field and a list with a defined own cell are
+never its:
 
 - In a union of any mode, also grouped or suspended, a member that keeps the value reads it. A union
   of Void and an empty struct keeps the object in either order.
@@ -302,10 +304,10 @@ object with a defined enumerable own field, or a list with a defined own cell:
 This holds through renames, transformations and the fields of a `Schema.Class`, wherever the library
 can see the Void. Inside an `Option` or another opaque declaration it is the schema's own.
 
-An object or list that holds nothing, a key no member states, and a value that is neither read as
-Void reads them. If the structural member cannot encode a value, such as JSON metadata containing a
-`Date` under `Schema.Unknown`, preparation fails with that member's `SchemaError` unless another
-member can write the value without dropping a supplied field, as
+A key no member states is left out first, as under a struct, so an object with no other key holds
+nothing. If the structural member cannot encode a value, such as JSON metadata containing a `Date`
+under `Schema.Unknown`, preparation fails with that member's `SchemaError` unless another member can
+write the value without dropping a supplied field, as
 [below](#a-field-no-member-can-keep-is-an-error) describes.
 
 If an object member maps decoded `limit` to encoded `page_size`, either order with Void prepares

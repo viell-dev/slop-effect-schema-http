@@ -981,6 +981,61 @@ describe("Void wherever a schema shows it", () => {
     }),
   );
 
+  it.effect("keeps or refuses a scalar or a built-in beside Void", () =>
+    Effect.gen(function* () {
+      const text = Schema.Union([Schema.Void, Schema.String]);
+      const finite = Schema.Union([Schema.Void, Schema.FiniteFromString]);
+      for (const [schema, value, sent] of [
+        [text, "hello", '"hello"'],
+        [text, "", '""'],
+        [finite, "05", '"5"'],
+        [finite, 5, '"5"'],
+        [Schema.Union([Schema.Void, Schema.Boolean]), false, "false"],
+        [
+          Schema.Union([Filter, Schema.Void]),
+          { page_size: "05" },
+          '{"page_size":"5"}',
+        ],
+      ] as const) {
+        expect(
+          yield* outcomes(schema as Schema.Codec<unknown, unknown>, value),
+        ).toEqual([sent, sent]);
+        expect(
+          yield* bodyOf(
+            post(Schema.Struct({ v: schema }) as Schema.Codec<unknown>),
+            { body: { v: value } },
+          ),
+        ).toBe(`{"v":${sent}}`);
+      }
+      for (const value of [
+        5,
+        0,
+        "hello",
+        false,
+        1n,
+        new Date(0),
+        new Map([["a", 1]]),
+        new Set([1]),
+        /x/u,
+      ])
+        for (const schema of [
+          Schema.Void,
+          Schema.Union([Schema.Void, Schema.Null]),
+          Schema.Union([Schema.Void, Schema.Struct({ a: Schema.String })]),
+        ]) {
+          expect(
+            yield* outcomes(schema as Schema.Codec<unknown, unknown>, value),
+          ).toEqual(["refused", "refused"]);
+          expect(
+            yield* schemaFailure(
+              post(Schema.Struct({ v: schema }) as Schema.Codec<unknown>),
+              { body: { v: value } },
+            ),
+          ).toContain('["v"]');
+        }
+    }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
   it.effect("takes no other name or member for a Void's", () =>
     Effect.gen(function* () {
@@ -1047,8 +1102,8 @@ describe("Void wherever a schema shows it", () => {
           }),
         ).toContain(at);
       }
-      // What holds nothing, or is no object, reads as Void reads it.
-      for (const body of [undefined, null, {}, [], { a: undefined }, 5, "x"])
+      // What holds nothing reads as Void reads it.
+      for (const body of [undefined, null, {}, [], { a: undefined }])
         expect(yield* bodyOf(post(Schema.Void), { body } as never)).toBe(
           "null",
         );

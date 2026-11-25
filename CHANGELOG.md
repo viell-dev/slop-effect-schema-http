@@ -170,15 +170,15 @@
   `Union([A, Schema.Void, Schema.Array(A)])` refuses `{ 0: { a: "ok" } }` as 0.18.0 did, rather than
   sending `null`. A query or header schema that only a cast admits, with a list member that writes
   objects, now refuses with `InvalidRequest` from the field-pair check instead of a `SchemaError`.
-- **Breaking:** built-in `Schema.Void` never takes an object or a list that holds something (#143).
-  A union of any mode now keeps it in a member that can read it: a class, a suspended schema, and an
-  empty struct after a Void among them, and in the field of a `Schema.Class`.
-  `Union([Schema.Void, Schema.Struct({})])` sent `null` for `{ tag: "a" }` and now sends
-  `{"tag":"a"}`, and a one-of union of Void and a struct no longer refuses the struct's own value as
-  ambiguous. Where no member can, as for a Void of its own, in a field under either of its names, in
-  a union of scalars, or a list whose only cell is hidden beside a struct, the request refuses with
-  `SchemaError`, where it sent `null`. An object or list that holds nothing and a scalar read as
-  before.
+- **Breaking:** built-in `Schema.Void` takes only `undefined`, `null`, and an object or list that
+  holds nothing (#143). A union of any mode now keeps it in a member that can read it: a class, a
+  suspended schema, and an empty struct after a Void among them, and in the field of a
+  `Schema.Class`. `Union([Schema.Void, Schema.Struct({})])` sent `null` for `{ tag: "a" }` and now
+  sends `{"tag":"a"}`, and a one-of union of Void and a struct no longer refuses the struct's own
+  value as ambiguous. Where no member can, as for a Void of its own, in a field under either of its
+  names, in a union of scalars, or a list whose only cell is hidden beside a struct, the request
+  refuses with `SchemaError`, where it sent `null`. A scalar or a built-in is not its either:
+  `Union([Schema.Void, Schema.String])` sent `null` for `"hello"` and now sends it.
 - Keep a hidden or inherited list cell when normalization rebuilds the list beside `Schema.Unknown`,
   `Schema.Any` or `Schema.Object`
   ([#257](https://github.com/viell-dev/slop-effect-schema-http/issues/257)). With a non-enumerable
