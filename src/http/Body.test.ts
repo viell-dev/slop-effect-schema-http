@@ -1,6 +1,7 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, expectTypeOf, it, vi } from "@effect/vitest";
 import {
+  Cause,
   Chunk,
   DateTime,
   Effect,
@@ -771,6 +772,132 @@ describe("writers keep or refuse what they cannot write", () => {
       );
     }),
   );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/261
+  describe("a built-in an open schema would rebuild as an empty object", () => {
+    class Sealed {
+      readonly #value = 1;
+      toJSON() {
+        return this.#value;
+      }
+    }
+    const record = Schema.Record(Schema.String, Schema.Unknown);
+    const rest = Schema.StructWithRest(
+      Schema.Struct({ q: Schema.optionalKey(Schema.String) }),
+      [record],
+    );
+    const open = [
+      Schema.ObjectKeyword,
+      record,
+      rest,
+      Schema.suspend(() => record),
+      Schema.Union([Schema.Struct({ q: Schema.String }), record]),
+      Schema.Union([record, Schema.Struct({ q: Schema.String })]),
+    ];
+    const hidden = () => [
+      new Date(0),
+      new Map([["a", 1]]),
+      new Set([1]),
+      /x/u,
+      new Error("x"),
+      Object.assign(new Error("x"), { code: 1 }),
+      new DataView(new ArrayBuffer(1)),
+      new URLSearchParams("a=b"),
+      new URL("https://x.test"),
+      // oxlint-disable-next-line no-new-wrappers -- A box holds its primitive outside its fields.
+      Object(5),
+      Promise.resolve(1),
+      new Sealed(),
+    ];
+
+    it.effect("is refused where it is, through Body.jsonSchema", () =>
+      Effect.gen(function* () {
+        for (const schema of open)
+          for (const value of hidden()) {
+            for (const [wrapped, body, at] of [
+              [schema, value, ""],
+              [Schema.Struct({ v: schema }), { v: value }, 'at ["v"]'],
+              [Schema.Array(schema), [value], "at [0]"],
+            ] as const) {
+              const error = yield* Effect.flip(
+                Body.jsonSchema(wrapped).encode(body as never),
+              );
+              expect(error).toBeInstanceOf(Schema.SchemaError);
+              expect(error.message).toBe(
+                at === ""
+                  ? "The schema cannot keep the content of this value"
+                  : `The schema cannot keep this field with the rest of the value\n  ${at}`,
+              );
+            }
+          }
+      }),
+    );
+
+    it.effect("is refused through a composed encoder and a group", () =>
+      Effect.gen(function* () {
+        for (const value of hidden()) {
+          expect(
+            yield* Effect.flip(
+              Body.json.pipe(Body.encodeSchema(record)).encode(value as never),
+            ),
+          ).toBeInstanceOf(Schema.SchemaError);
+          const query = Request.get("/x").pipe(
+            Request.query(Schema.Record(Schema.String, Schema.String)),
+          );
+          expect(
+            yield* Effect.flip(
+              Request.compile(query, { query: value as never }),
+            ),
+          ).toBeInstanceOf(Schema.SchemaError);
+        }
+      }),
+    );
+
+    it.effect("is kept where its content is in its fields", () =>
+      Effect.gen(function* () {
+        class Point {
+          readonly x = 1;
+        }
+        for (const schema of open)
+          for (const [value, text] of [
+            [new Point(), '{"x":1}'],
+            [new Uint8Array([1, 2]), '{"0":1,"1":2}'],
+            [Object("ab"), '{"0":"a","1":"b"}'],
+            [{}, "{}"],
+            [Object.create(null), "{}"],
+          ] as const)
+            expect(
+              textOf(yield* Body.jsonSchema(schema).encode(value as never)),
+            ).toBe(text);
+      }),
+    );
+
+    it.effect("is kept beside a member that reads its content", () =>
+      Effect.gen(function* () {
+        const entries = Schema.ReadonlyMap(Schema.String, Schema.Number);
+        for (const schema of [
+          Schema.Union([entries, record]),
+          Schema.Union([record, entries]),
+        ]) {
+          const exit = yield* Effect.exit(
+            Body.jsonSchema(schema).encode(new Map([["a", 1]]) as never),
+          );
+          // Where the record comes first Effect chooses it, so the content is refused, not dropped.
+          if (Exit.isSuccess(exit))
+            expect(textOf(exit.value)).toBe('[["a",1]]');
+          else
+            expect(Cause.squash(exit.cause)).toBeInstanceOf(Schema.SchemaError);
+        }
+        expect(
+          textOf(
+            yield* Body.jsonSchema(Schema.Union([entries, record])).encode(
+              new Map([["a", 1]]),
+            ),
+          ),
+        ).toBe('[["a",1]]');
+      }),
+    );
+  });
 
   it.effect("adds no depth limit of its own and types the engine's", () =>
     Effect.gen(function* () {
