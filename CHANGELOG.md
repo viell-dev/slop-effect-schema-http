@@ -111,11 +111,11 @@
   is not counted as the caller's. A union field takes its first member reading that keeps
   everything, and the parent is built strictly first, so it keeps that member. Under
   `Union([Filter, Word])`, where `Word` reads `page_size` as text, `{ page_size: "05" }` beside a
-  sibling that only the relaxed write can send now writes `5`, and `"many"` refuses there; 0.18.0
-  wrote `25` for both. These checks apply where a field's value is plain data: a list, or an object
-  of no class, holding only own data properties, none named after an `Object.prototype` member,
-  under a schema that names no such field or wire name. A value held behind an accessor, a class
-  instance, and a schema that uses such a name read as before.
+  sibling that only the relaxed write can send now writes `5`, and `"many"` is sent as the word it
+  is; 0.18.0 wrote `25` for both. These checks apply where a field's value is plain data: a list, or
+  an object of no class, holding only own data properties, none named after an `Object.prototype`
+  member, under a schema that names no such field or wire name. A value held behind an accessor, a
+  class instance, and a schema that uses such a name read as before.
 - **Breaking:** stop the write fallback from taking a later union member that drops a supplied field
   ([#250](https://github.com/viell-dev/slop-effect-schema-http/issues/250)). With
   `Note = Schema.Struct({ title: Schema.String, meta: Schema.Unknown })` and
@@ -196,10 +196,16 @@
     `Struct({ f: Filter })` sent `{"w":{"page_size":"25"}}` for `{ w: { limit: 5 } }`, or
     `{"w":{}}`, and now refuses naming `["w"]["limit"]`.
   - Input that 0.18.0 refused beside an `Option`, a `Date` or a class can now be kept, because a
-    reading that keeps every visible field is found there too.
+    reading that keeps every visible field is found there too. A write that cannot be strict now
+    writes each union strictly where a member can, so the value goes through the member that holds
+    it. `Struct({ f: Union([Page, Counted]), c: Counted })` sent `{"f":{}}` for a `Counted`
+    instance.
+  - In a stacked group, a field another schema takes is still left to it, but not where this schema
+    would write that name itself.
 
   Defaults, checks, decoders and their services can run more than once when a route loses a field.
-  Supply one side's names, one per field, to keep a reading. See [the
+  Keep the value unchanged until preparation ends, which nothing detects any more. Supply one side's
+  names, one per field, to keep a reading. See [the
   rule](https://viell-dev.github.io/slop-effect-schema-http/schema-input#constructor-default-validation).
 - A refusal names the innermost lost fields, so it no longer names a field beside one inside it
   ([#262](https://github.com/viell-dev/slop-effect-schema-http/issues/262)).

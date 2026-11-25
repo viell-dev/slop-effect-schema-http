@@ -131,17 +131,21 @@ decoder reads strictly first, and field by field each field's reading accounts f
 the object's constructor, which runs again over the results, strictly first, accounts for the rest.
 A constructor that lost a field gives way to a strict constructor, the decoder or a reading by field
 that loses fewer of those fields. What is still lost is refused, unless another schema of the group
-takes it. A field given under both its names therefore refuses, even where the two agree, because no
-route reads both. A key a decoder or transformation adds is not the caller's. One rule, judged on
-the values each route actually made, replaces proofs from a schema's shape, which left gaps wherever
-a shape could not be told apart. Its costs are that defaults, checks and decoders can run more than
-once, and that a list whose items are on different sides refuses, since a list is read as a whole.
-The [input reference](./schema-input.md#constructor-default-validation) owns the detailed rules and
-type boundaries.
+takes it and this schema writes nothing under its name. A field given under both its names therefore
+refuses, even where the two agree: no route reads both, and codecs give no trustworthy equality
+between sides, so this restricts the input rather than finding a contradiction. A key a decoder or
+transformation adds is not the caller's. One rule, judged on the values each route actually made,
+replaces proofs from a schema's shape, which left gaps wherever a shape could not be told apart.
+What a decoder strips still comes from its strict failure, because its value does not show it. The
+costs are that defaults, checks and decoders can run more than once, that a list, tuple or record
+whose items are on different sides refuses, since each is read as a whole, and that the caller has
+to keep the value unchanged until preparation ends. The [input
+reference](./schema-input.md#constructor-default-validation) owns the detailed rules and type
+boundaries.
 
-A route's value is used only if it is written strictly, or under a schema with no union between
-objects. A relaxed write chooses union members again, and a drop there is not always visible, so
-anywhere else preparation writes what Effect itself reads and refuses what that loses.
+A value that cannot be written strictly is written loosely, but each union in it strictly where a
+member can, so the write keeps the member that holds the value. A class member is written as it
+writes itself, since only it knows the own fields it holds beside those it states.
 
 These checks, and the relaxed write's below, run only where preparation can establish what the
 caller gave: on plain data, judged place by place. Plain data is a list whose prototype is
