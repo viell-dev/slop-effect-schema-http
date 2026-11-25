@@ -6,6 +6,10 @@
   already did at run time, so `Body.urlEncoded.pipe(Body.encodeSchema(schema))` type-checks for a
   schema whose encoded side is such a record. New types `UrlEncodedInput`, `UrlEncodedRecord` and
   `UrlEncodedValue` describe it.
+- `Response.UnexpectedResponse` and `Response.DecodeError` have messages: the status, and for a
+  decoding failure the kind of its cause, so an uncaught failure no longer prints only its tag.
+  Neither repeats a header or the body. A query or header refusal for an output that is not a field
+  record or pairs adds what is wrong with it, such as the position of a malformed pair.
 - **Breaking:** read query and header arrays of pairs by position through name collection, declared
   defaults and serialization
   ([#242](https://github.com/viell-dev/slop-effect-schema-http/issues/242)). For example, a

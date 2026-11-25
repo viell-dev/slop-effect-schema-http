@@ -188,6 +188,8 @@ describe("Response.decode", () => {
       expect(error._tag).toBe("UnexpectedResponse");
       expect(error.metadata.status).toBe(503);
       expect(error.metadata.headers["retry-after"]).toBe("5");
+      expect(error.message).toBe("No response case matched status 503");
+      expect(String(error)).not.toContain("maintenance");
       expect(probe.finished()).toBe(true);
     }),
   );
@@ -227,6 +229,11 @@ describe("Response.decode", () => {
       if (error._tag !== "DecodeError") return;
       expect(error.metadata.status).toBe(200);
       expect(Schema.isSchemaError(error.cause)).toBe(true);
+      // The message names the kind of failure, and leaves the body's content to the cause.
+      expect(error.message).toBe(
+        "The body of the status 200 response could not be read (SchemaError); see cause",
+      );
+      expect(error.message).not.toContain('"1"');
     }),
   );
 

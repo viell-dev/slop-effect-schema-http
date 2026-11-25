@@ -30,23 +30,40 @@ export interface Metadata {
  * No response case matched, and the unmatched body was successfully drained.
  *
  * @remarks
- * Contains metadata only. A failed drain produces {@link DecodeError} instead.
+ * Contains metadata only. A failed drain produces {@link DecodeError} instead. Its message gives the
+ * status, never a header or the body.
  */
 export class UnexpectedResponse extends Data.TaggedError("UnexpectedResponse")<{
   readonly metadata: Metadata;
-}> {}
+}> {
+  /** What happened, with the response's status. */
+  override get message(): string {
+    return `No response case matched status ${this.metadata.status}`;
+  }
+}
 
 /**
  * A selected body decoder failed, or draining an unmatched body failed.
  *
  * @remarks
  * `cause` retains the underlying typed error; it may contain schema input or response content.
+ * The message gives only the status and the cause's kind, so logging it repeats none of that.
  * Selection does not fall through to a different case after this failure.
  */
 export class DecodeError<out E> extends Data.TaggedError("DecodeError")<{
   readonly metadata: Metadata;
   readonly cause: E;
-}> {}
+}> {
+  /** What happened, with the response's status and the cause's kind. */
+  override get message(): string {
+    const cause: unknown = this.cause;
+    const kind =
+      typeof cause === "object" && cause !== null && "_tag" in cause
+        ? String(cause._tag)
+        : undefined;
+    return `The body of the status ${this.metadata.status} response could not be read${kind === undefined ? "" : ` (${kind})`}; see cause`;
+  }
+}
 
 /**
  * An ordered contract that chooses a body decoder from response metadata.

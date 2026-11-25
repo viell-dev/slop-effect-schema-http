@@ -907,7 +907,7 @@ const prepareGroup = <
   const label = group === "headers" ? "header" : "query";
   const invalidOutput = (cause?: TypeError) =>
     new InvalidRequest({
-      message: `The ${label} schema must encode a field record or field pairs`,
+      message: `The ${label} schema must encode a field record or field pairs${cause === undefined ? "" : `: ${cause.message}`}`,
       ...(cause === undefined ? {} : { cause }),
     });
   const takeSnapshot = (source: object) =>

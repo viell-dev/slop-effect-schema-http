@@ -2335,10 +2335,10 @@ describe("pairs group output", () => {
           );
           for (const error of [compileError, operationError]) {
             expect(error).toBeInstanceOf(Request.InvalidRequest);
-            expect(error.message).toBe(
-              `The ${label} schema must encode a field record or field pairs`,
-            );
             expect(error).toHaveProperty("cause", expect.any(TypeError));
+            expect(error.message).toBe(
+              `The ${label} schema must encode a field record or field pairs: ${(error as { readonly cause: TypeError }).cause.message}`,
+            );
           }
         }
         expect(server.exchanges).toEqual([]);
@@ -2535,10 +2535,10 @@ describe("pairs group output", () => {
             { headers: output },
           );
           expect(query.message).toBe(
-            "The query schema must encode a field record or field pairs",
+            `The query schema must encode a field record or field pairs: ${reason}`,
           );
           expect(headers.message).toBe(
-            "The header schema must encode a field record or field pairs",
+            `The header schema must encode a field record or field pairs: ${reason}`,
           );
           expect(query.cause).toMatchObject({ message: reason });
           expect(headers.cause).toMatchObject({ message: reason });
@@ -2679,7 +2679,8 @@ describe("pairs group output", () => {
           { query },
         ),
       ).toMatchObject({
-        message: "The query schema must encode a field record or field pairs",
+        message:
+          "The query schema must encode a field record or field pairs: The field pair at $[0] must be a two-position array with a string name",
         cause: {
           message:
             "The field pair at $[0] must be a two-position array with a string name",
