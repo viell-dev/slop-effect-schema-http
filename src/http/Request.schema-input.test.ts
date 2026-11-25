@@ -2327,6 +2327,49 @@ describe("a field a part lost under a parent read field by field", () => {
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/262
+  it.effect("names the innermost fields a refusal covers", () =>
+    Effect.gen(function* () {
+      // The relaxed write drops the list that the field's own reading already lost items of.
+      const schema = Schema.Struct({
+        n,
+        c: Schema.Union([
+          Schema.Struct({ b: Schema.Array(Filter), meta: Schema.Unknown }),
+          Schema.Struct({ x: Schema.optionalKey(Schema.String) }),
+        ]),
+      });
+      const items = [{ page_size: "many" }, { page_size: "x" }];
+      const message = yield* schemaFailure(posted(schema), {
+        body: { n: 1, c: { b: items, meta: 1n } },
+      } as never);
+      expect(message.match(/at .*/g)).toEqual([
+        'at ["c"]["b"][0]["page_size"]',
+        'at ["c"]["b"][1]["page_size"]',
+        'at ["c"]["meta"]',
+      ]);
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/262
+  it.effect("checks a part a proxy holds as its target", () =>
+    Effect.gen(function* () {
+      const schema = Schema.Struct({ n, f: Filter });
+      const proxied = (f: object) => ({ body: { n: 1, f: new Proxy(f, {}) } });
+      expect(yield* sentBy(schema, proxied({ limit: 5 }).body as never)).toBe(
+        '{"n":"1","f":{"page_size":"5"}}',
+      );
+      for (const f of [
+        { limit: "x" },
+        Object.freeze({ limit: "x" }),
+        Object.assign({ limit: "x" }, { [Symbol("s")]: undefined }),
+      ])
+        for (const body of [{ n: 1, f }, proxied(f).body])
+          expect(
+            yield* schemaFailure(posted(schema), { body } as never),
+          ).toContain('["f"]["limit"]');
+    }),
+  );
+
   /** A field written under the wire name `__proto__`. */
   const ProtoWire = Schema.Struct({
     n,

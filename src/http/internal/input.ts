@@ -268,6 +268,7 @@ const decodedReading = <S extends Schema.Top>(
     }
     // The constructor runs again over each part's result. Strictly, a union there keeps the member
     // the part was read by instead of taking an earlier one that strips it; loosely, as Effect would.
+    // A part that was not checked does not turn that off for the others.
     const value = yield* isKeyed(given)
       ? Effect.catch(
           make(
@@ -491,6 +492,8 @@ const pathSet = (paths: Iterable<Excess.Path> = []) => {
   };
   const set = {
     has: (path: Excess.Path) => nodeFor(path, false)?.end === true,
+    /** Whether a path leads to a longer one in the set. */
+    leadsOn: (path: Excess.Path) => (nodeFor(path, false)?.next.size ?? 0) > 0,
     /** Add a path, and say whether it was new. */
     add: (path: Excess.Path) => {
       const node = nodeFor(path, true)!;
@@ -1102,7 +1105,8 @@ export const reorderedReaders = <S extends Schema.Top>(contract: S) => {
 
 /**
  * Refuse the fields a schema would lose, unless another schema in the group took them. Only a field
- * of the group itself can be taken, so one further down a value stays lost.
+ * of the group itself can be taken, so one further down a value stays lost. A refusal names the
+ * innermost fields, so it never names a field beside one inside it.
  *
  * Where only the write lost them, the refusal is the failure of the member that could not write
  * them, as that member alone would refuse.
@@ -1113,11 +1117,10 @@ export const refuseLost = (
   taken?: ReadonlySet<PropertyKey>,
   unwritten?: Written<unknown>["unwritten"],
 ): Effect.Effect<void, Schema.SchemaError> => {
-  const [first, ...others] = lost.filter(
+  const remaining = lost.filter(
     (path) => path.length > 1 || taken?.has(path[0]!) !== true,
   );
-  if (first === undefined) return Effect.void;
-  const remaining = [first, ...others] as const;
+  if (remaining.length === 0) return Effect.void;
   // The member's failure stands in only if it names every field still uncovered; a field another
   // stacked schema took may be the one it names.
   const explains = (failure: Schema.SchemaError, written: Excess.Path[]) => {
@@ -1127,11 +1130,15 @@ export const refuseLost = (
       (path) => writes.has(path) && named.some((other) => onPath(other, path)),
     );
   };
-  return Effect.fail(
-    unwritten !== undefined && explains(unwritten.failure, [...unwritten.lost])
-      ? unwritten.failure
-      : Excess.refusal(contract.ast, remaining),
-  );
+  if (
+    unwritten !== undefined &&
+    explains(unwritten.failure, [...unwritten.lost])
+  )
+    return Effect.fail(unwritten.failure);
+  // Separate checks can report a field and one inside it. Naming the inner one says both.
+  const named = pathSet(remaining);
+  const [first, ...others] = remaining.filter((path) => !named.leadsOn(path));
+  return Effect.fail(Excess.refusal(contract.ast, [first!, ...others]));
 };
 
 /** Bring a value to the schema's decoded side and write it, with nothing else to hold what it loses. */

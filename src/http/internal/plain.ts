@@ -6,7 +6,9 @@ import type { SchemaAST } from "effect";
  *
  * @remarks
  * Plain data is a list, or an object whose prototype is `Object.prototype` or `null`, holding only
- * own data properties, none named after an `Object.prototype` member. A value held behind an
+ * own data properties, none named after an `Object.prototype` member. Symbol keys, keys that are not
+ * enumerable, frozen objects and a list's own named properties are all plain data, and so is a proxy
+ * over any of these. A value held behind an
  * accessor, a class instance, and a name every object has are facts that Effect 4.0.7 and 4.1.4 read
  * differently, and that preparation would otherwise have to guess.
  */
@@ -45,7 +47,10 @@ const isPlainHere = (value: object): boolean => {
 export const isPlainData = (value: unknown): boolean =>
   !isObject(value) || isPlainHere(value);
 
-/** Whether a value is plain data at every depth. Reading it runs no accessor. */
+/**
+ * Whether a value is plain data at every depth. Reading it then runs no accessor. A proxy cannot be
+ * told from its target, so one over plain data is plain data too, and its traps run.
+ */
 export const isPlainDataThroughout = (value: unknown): boolean => {
   const seen = new Set<object>();
   const visit = (item: unknown): boolean => {

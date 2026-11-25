@@ -287,12 +287,20 @@ the names its schema states. A value held behind an accessor, a class instance, 
 and 4.1.4 read those names differently, so preparation does not guess what the caller gave there.
 [Active limits](#active-limits-and-recovery) lists what that leaves.
 
+Own data properties include symbol keys, keys that are not enumerable, a list's own named properties
+and the fields of a frozen or sealed object. A proxy over plain data cannot be told from its target,
+so it is plain data too, and its traps run whenever preparation reads it.
+
 A union field read field by field takes its first member reading that keeps everything, ahead of an
 earlier one that loses a field. The object's constructor then runs again over the fields' results,
 strictly first, so each union field keeps the member it was read by. Loosely, it could take an
 earlier member that strips the value and fill that member's default instead. Only if the strict pass
-fails does it run as Effect runs it. The write can still take another member, as [Active
-limits](#active-limits-and-recovery) describes.
+fails does it run as Effect runs it. The strict pass runs wherever the object itself is plain data,
+so it can also keep a union member beside a field whose own value is not and was not checked. The
+write can still take another member, as [Active limits](#active-limits-and-recovery) describes.
+
+A refusal names the innermost fields. Where one check finds a whole field lost and another finds a
+field inside it lost, only the inner one is named.
 
 ### A union keeps what the caller gave
 
@@ -322,8 +330,10 @@ value the stated member keeps whole, such as `{ a: "x" }`, goes through it when 
 its names and constructor defaults, and through the empty struct as given when that comes first. A
 class instance the empty struct keeps reaches a path renderer as the same instance, unless a stated
 member names a field the instance holds as an inherited accessor: then it is a plain copy that holds
-that field with the instance's own keys. An empty struct query or header binding still states no
-names.
+that field with the instance's own keys. An instance with a key set to `undefined` whose other
+fields the members beside the empty struct all state reads as a plain object without that key, so
+the key neither pushes it out of those members nor leaves it to a Void. An empty struct query or
+header binding still states no names.
 
 What the empty struct keeps goes to the writer as given, and each writer refuses before dispatch a
 value it would leave out or replace, naming the field. No writer has a symbol key. The JSON writer
@@ -636,13 +646,6 @@ a guarantee that preparation refuses safely.
   `{ p: { 0: { limit: "x", extra: 1 } } }` refuses at `["p"]["0"]`, where `Schema.Struct` writes
   `{"p":{}}` ([#243](https://github.com/viell-dev/slop-effect-schema-http/issues/243)). Leave out
   keys the list member does not state, and do not give a list's cells as index keys of an object.
-- Beside a guarded Void and an empty struct, a class instance whose only own key is an index set to
-  `undefined` is taken by the Void. Under
-  `Union([Schema.Struct({ a: Schema.optionalKey(Schema.String) }), Schema.Void, Schema.Struct({})])`,
-  such an instance is sent as `null` in a JSON body and reaches a path renderer as `undefined`,
-  where 0.18.0 sent `{}`. No field with a value is lost
-  ([#264](https://github.com/viell-dev/slop-effect-schema-http/issues/264)). Leave out keys set to
-  `undefined`, or give a plain object.
 - An empty `Schema.Class` keeps 0.18.0's reading beside a list member or a member that states
   fields. `Union([Bare, Schema.Array(Plain)])`, where `Bare` is an empty class, sends
   `{"0":{"limit":"x"}}` for `[{ limit: "x", extra: 1 }]`, although Effect's first fit gives the
