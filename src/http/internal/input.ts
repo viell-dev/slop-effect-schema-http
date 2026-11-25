@@ -930,10 +930,10 @@ type Write<S extends Schema.Top, A, R> = (
  * in the same way, where the two state different names. So a schema with either choice reads what
  * the caller means strictly, through both steps, and a read that passes has stripped nothing.
  *
- * A value that cannot be read that way is read as Effect reads it, and the result is compared with
- * what went in, so what is lost is what actually went, not what a failure suggests would. The write
- * is strict first, because a loose write can choose another member and lose what the read kept.
- * The loose write notes which member wrote each value, and a field that member does not state is
+ * A value that cannot be read that way is read with every route accounting for what it was given,
+ * and the result is compared with what went in. The write is strict first, because a loose write can
+ * choose another member and lose what the read kept. The loose write tries each union's members
+ * strictly first too and notes which wrote each value, and a field that member does not state is
  * lost, since its struct drops the field before anything else it does runs.
  *
  * The strict pass also gives a visible object or list a chance to win over Void in an any-of union.

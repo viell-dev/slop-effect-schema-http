@@ -96,9 +96,8 @@ export type QueryFields = Readonly<
  * supplied field. A constructor that lost a field gives way to a route that loses less, and what is
  * still lost is a `SchemaError` naming the field. A field given under both its names refuses, and so
  * does a list whose items are on different sides. A key a decoder adds is not
- * the caller's. Where only a relaxed write can send a value, a schema with a union between objects
- * is read as Effect reads it, and what that loses is refused. Defaults, checks, decoders and their
- * services can run more than once. A value held behind an accessor, a class instance, and a schema
+ * the caller's. Defaults, checks, decoders and their services can run more than once, and the value
+ * has to stay unchanged until preparation ends. A value held behind an accessor, a class instance, and a schema
  * that uses a name every object has, such as `toString`, read as Effect reads them.
  *
  * A value that fits the decoded side is read as decoded. Under a schema whose two sides share a

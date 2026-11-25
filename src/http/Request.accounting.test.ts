@@ -792,6 +792,30 @@ describe("a reading that keeps everything", () => {
     }),
   );
 
+  it.effect("does not notice a value that changes during preparation", () =>
+    Effect.gen(function* () {
+      // The value has to stay unchanged. Nothing promises which of its states is sent.
+      const input = { f: { page_size: "05" }, touch: "x", c: { a: "y" } };
+      const schema = Schema.Struct({
+        f: Filter,
+        touch: Schema.String.pipe(
+          Schema.decodeTo(Schema.String, {
+            decode: SchemaGetter.transformEffect((text: string) =>
+              Effect.sync(() => {
+                input.f = { page_size: "07" };
+                return text;
+              }),
+            ),
+            encode: SchemaGetter.passthrough(),
+          }),
+        ),
+        c: Counted,
+      });
+      const [body] = yield* outcomes(schema, input);
+      expect(["5", "7"]).toContain(JSON.parse(body!).f.page_size);
+    }),
+  );
+
   it.effect("runs with each call's own services", () =>
     Effect.gen(function* () {
       class Tenant extends Context.Service<Tenant, string>()(
