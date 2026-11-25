@@ -16,8 +16,11 @@ export type WriterNotes = Array<WriterNote>;
 // Effect 4.0.7 and 4.1.4 spread parse options, preserving this per-write record. Revisit the
 // channel if a supported peer stops forwarding symbol keys.
 const record = Symbol("record union writers");
+// The options of the write around a union's strict attempt, for what that attempt has to write loosely.
+const around = Symbol("options around a strict attempt");
 type RecordingOptions = SchemaAST.ParseOptions & {
   readonly [record]?: WriterNotes;
+  readonly [around]?: RecordingOptions;
 };
 
 /** Parse options that make a recording writer note each member that wrote a value. */
@@ -51,13 +54,16 @@ const parser = (
 };
 
 /**
- * A union that writes as Effect's union does and notes which member wrote each value.
+ * A union that writes strictly where a member can, or else as Effect's union does, and notes which
+ * member wrote each value.
  *
  * @remarks
  * The members to try are pre-selected as Effect selects them, so a member Effect would skip never
- * runs. Each is tried in order. A failed attempt forgets what was noted inside it, so only the members of
- * the write that succeeded remain. An any-of union keeps its first success; a one-of union fails if
- * two members write. The union's checks, encoding and context stay with it.
+ * runs. Each is tried in order: strictly, so a member that writes the whole value comes before one
+ * that strips it, and then as the write's options say. A failed attempt forgets what was noted inside
+ * it, so only the members of the write that succeeded remain. An any-of union keeps its first
+ * success; a one-of union fails if two members write. The union's checks, encoding and context stay
+ * with it.
  */
 const noting = (
   original: SchemaAST.Union,
@@ -99,69 +105,101 @@ const noting = (
     original.encodingChecks,
     () => (input, _self, options: RecordingOptions) => {
       const writers = options[record];
-      const start = writers?.length ?? 0;
-      const forget = (mark: number) => {
-        if (writers !== undefined) writers.length = mark;
-      };
       const order = (select ??= candidates(flipped))(input);
-      const issues: Array<SchemaIssue.Issue> = [];
-      let before: SchemaIssue.Issue | undefined;
-      let written:
-        { readonly output: unknown; readonly index: number } | undefined;
-      const successes: Array<SchemaAST.AST> = [];
-      const attempt = (
-        position: number,
+      const trying = (
+        parseOptions: RecordingOptions,
       ): Effect.Effect<unknown, SchemaIssue.Issue> => {
-        if (position === order.length) {
-          if (written === undefined)
-            return Effect.fail(
-              new SchemaIssue.AnyOf(asParsed, issues, input, options),
-            );
-          if (
-            writers !== undefined &&
-            typeof input === "object" &&
-            input !== null
-          )
-            writers.push({
-              value: input,
-              union: original,
-              member: original.types[written.index]!,
-              before,
-            });
-          return Effect.succeed(written.output);
-        }
-        const index = order[position]!;
-        const mark = writers?.length ?? 0;
-        return Effect.matchEffect(encoders[index]!()(input, options), {
-          onFailure: (issue) => {
-            forget(mark);
-            issues.push(issue);
-            if (
-              written === undefined &&
-              before === undefined &&
-              !declinedByVoid(issue)
-            )
-              before = issue;
-            return attempt(position + 1);
-          },
-          onSuccess: (output) => {
-            if (!oneOf) {
-              written = { output, index };
-              return attempt(order.length);
-            }
-            successes.push(flipped[index]!);
-            if (written !== undefined) {
-              forget(start);
+        const start = writers?.length ?? 0;
+        const forget = (mark: number) => {
+          if (writers !== undefined) writers.length = mark;
+        };
+        const issues: Array<SchemaIssue.Issue> = [];
+        let before: SchemaIssue.Issue | undefined;
+        let written:
+          { readonly output: unknown; readonly index: number } | undefined;
+        const successes: Array<SchemaAST.AST> = [];
+        const attempt = (
+          position: number,
+        ): Effect.Effect<unknown, SchemaIssue.Issue> => {
+          if (position === order.length) {
+            if (written === undefined)
               return Effect.fail(
-                new SchemaIssue.OneOf(asParsed, successes, input, options),
+                new SchemaIssue.AnyOf(asParsed, issues, input, parseOptions),
               );
-            }
-            written = { output, index };
+            if (
+              writers !== undefined &&
+              typeof input === "object" &&
+              input !== null
+            )
+              writers.push({
+                value: input,
+                union: original,
+                member: original.types[written.index]!,
+                before,
+              });
+            return Effect.succeed(written.output);
+          }
+          const index = order[position]!;
+          const { _tag } = original.types[index]!;
+          // A Void writes any value strictly, so it may only follow the members that keep one.
+          if (
+            _tag === "Void" &&
+            parseOptions.onExcessProperty === "error" &&
+            isKeyed(input)
+          )
             return attempt(position + 1);
-          },
-        });
+          // A class can hold own fields beside those it states, which only it knows how to write.
+          const memberOptions =
+            _tag === "Declaration"
+              ? (parseOptions[around] ?? parseOptions)
+              : parseOptions;
+          const mark = writers?.length ?? 0;
+          return Effect.matchEffect(encoders[index]!()(input, memberOptions), {
+            onFailure: (issue) => {
+              forget(mark);
+              issues.push(issue);
+              if (
+                written === undefined &&
+                before === undefined &&
+                !declinedByVoid(issue)
+              )
+                before = issue;
+              return attempt(position + 1);
+            },
+            onSuccess: (output) => {
+              if (!oneOf) {
+                written = { output, index };
+                return attempt(order.length);
+              }
+              successes.push(flipped[index]!);
+              if (written !== undefined) {
+                forget(start);
+                return Effect.fail(
+                  new SchemaIssue.OneOf(
+                    asParsed,
+                    successes,
+                    input,
+                    parseOptions,
+                  ),
+                );
+              }
+              written = { output, index };
+              return attempt(position + 1);
+            },
+          });
+        };
+        return attempt(0);
       };
-      return attempt(0);
+      return options.onExcessProperty === "error"
+        ? trying(options)
+        : Effect.catch(
+            trying({
+              ...options,
+              onExcessProperty: "error",
+              [around]: options,
+            }),
+            () => trying(options),
+          );
     },
   );
 };

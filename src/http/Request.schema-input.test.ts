@@ -1880,27 +1880,6 @@ describe("a field a part lost under a parent read field by field", () => {
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/250
   it.effect(
-    "currently refuses a part the relaxed write sends through an earlier member",
-    () =>
-      Effect.gen(function* () {
-        // The part reads `"many"` as a `Word`. The relaxed write takes `Filter` first, as Effect
-        // does, and `Filter` writes the word as nothing.
-        const f = Schema.Union([Filter, Word]);
-        for (const [place, wrap, at] of placings) {
-          const parent = parentOf(place(f), true);
-          expect(
-            yield* schemaFailure(posted(parent.schema), {
-              body: parent.body(wrap({ page_size: "many" })),
-            }),
-          ).toBe(
-            `The schema cannot keep this field with the rest of the value\n  at ["f"]${at}["page_size"]`,
-          );
-        }
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
-  it.effect.fails(
     "sends a part through the member it was read by beside a relaxing sibling",
     () =>
       Effect.gen(function* () {
@@ -1945,43 +1924,18 @@ describe("a field a part lost under a parent read field by field", () => {
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/250
   it.effect(
-    "currently refuses a lossless reading the relaxed write sends through a stripping member",
-    () =>
-      Effect.gen(function* () {
-        // The part reads the pair as `Pair`; the relaxed write takes `MaybeCursor` first, as
-        // Effect does, and it states neither field.
-        const MaybeCursor = Schema.Struct({
-          cursor: Schema.optionalKey(Schema.String),
-        });
-        const f = Schema.Union([MaybeCursor, Pair]);
-        const alone = parentOf(f, false);
-        expect(yield* sentBy(alone.schema, alone.body(pair))).toBe(
-          alone.sent({ p: "1", q: "2" }),
-        );
-        const relaxed = parentOf(f, true);
-        expect(
-          yield* schemaFailure(posted(relaxed.schema), {
-            body: relaxed.body(pair),
-          }),
-        ).toBe(
-          'The schema cannot keep this field with the rest of the value\n  at ["f"]["p"]\n' +
-            'The schema cannot keep this field with the rest of the value\n  at ["f"]["q"]',
-        );
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/250
-  it.effect.fails(
     "sends a lossless reading through its member beside a relaxing sibling",
     () =>
       Effect.gen(function* () {
         const MaybeCursor = Schema.Struct({
           cursor: Schema.optionalKey(Schema.String),
         });
-        const parent = parentOf(Schema.Union([MaybeCursor, Pair]), true);
-        expect(yield* sentBy(parent.schema, parent.body(pair))).toBe(
-          parent.sent({ p: "1", q: "2" }),
-        );
+        for (const relaxing of [false, true]) {
+          const parent = parentOf(Schema.Union([MaybeCursor, Pair]), relaxing);
+          expect(yield* sentBy(parent.schema, parent.body(pair))).toBe(
+            parent.sent({ p: "1", q: "2" }),
+          );
+        }
       }),
   );
 

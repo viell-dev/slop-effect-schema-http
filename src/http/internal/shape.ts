@@ -252,6 +252,21 @@ export const others = (
         ...taken.settled,
       ]);
 
+/**
+ * Whether another schema took a field this one lost. A name this schema writes itself is not one:
+ * what it wrote there is not what the caller gave, and both would be sent.
+ */
+export const takenElsewhere = (
+  taken: Taken | undefined,
+  own: Output | undefined,
+  fold: Fold,
+) => {
+  const names = own && written(own, fold);
+  return (name: PropertyKey): boolean =>
+    taken?.fields.has(name) === true &&
+    !(typeof name === "string" && names?.has(fold(name)) === true);
+};
+
 /** The record once a schema has added what it took. */
 export const taking = (
   taken: Taken | undefined,
