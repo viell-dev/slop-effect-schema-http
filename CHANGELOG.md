@@ -136,15 +136,16 @@
   tuple, guarded Void beside them included; beside a class, including an empty `Schema.Class`, a
   declaration, an open schema, middleware or any other codec, a value and every value inside it keep
   0.18.0's reading. A class instance the empty struct keeps reaches a path renderer as the same
-  instance, except that an inherited accessor a stated member names makes it a plain copy. What the
-  empty struct keeps goes to the writer as given, and the writers refuse a kept value they would
-  leave out or replace, as for any value: a symbol key, `NaN` or a BigInt in a JSON body is
-  `HttpBodyError`, and a header value that is not text or an object in a query is `InvalidRequest`.
-  In a stacked query or header group, such a union bound after a schema that states the field writes
-  the caller's value in its place: `Count = Schema.Struct({ z: Schema.FiniteFromString })` stacked
-  before `Union([A, Struct({})])` sends `{ a: "x", z: "05" }` as `?a=x&z=05`, where 0.18.0 sent
-  `?z=5&a=x`. Bind the stated member directly, or bind the union first, to keep its reading. See the
-  [migration
+  instance, except that an inherited accessor a stated member names makes it a plain copy, and so
+  does a key set to `undefined` beside fields those members all state
+  ([#264](https://github.com/viell-dev/slop-effect-schema-http/issues/264)). What the empty struct
+  keeps goes to the writer as given, and the writers refuse a kept value they would leave out or
+  replace, as for any value: a symbol key, `NaN` or a BigInt in a JSON body is `HttpBodyError`, and
+  a header value that is not text or an object in a query is `InvalidRequest`. In a stacked query or
+  header group, such a union bound after a schema that states the field writes the caller's value in
+  its place: `Count = Schema.Struct({ z: Schema.FiniteFromString })` stacked before
+  `Union([A, Struct({})])` sends `{ a: "x", z: "05" }` as `?a=x&z=05`, where 0.18.0 sent `?z=5&a=x`.
+  Bind the stated member directly, or bind the union first, to keep its reading. See the [migration
   note](https://viell-dev.github.io/slop-effect-schema-http/schema-input#a-union-keeps-what-the-caller-gave).
 - **Breaking:** count only members that can read the caller's container during normalization and
   field-loss accounting (#243). A record or a struct that states a field holds none of a list's
@@ -167,6 +168,8 @@
   first cell and a later cell holding a key set to `undefined`,
   `Union([Schema.Array(A), Schema.Unknown])` passed `[null, …]` to a path renderer; the rebuilt list
   now keeps the cell where the caller put it.
+- A refusal names the innermost lost fields, so it no longer names a field beside one inside it
+  ([#262](https://github.com/viell-dev/slop-effect-schema-http/issues/262)).
 
 ## 0.18.0 — 2026-11-18
 

@@ -135,10 +135,11 @@ constructor-default validation.
 These checks, and the relaxed write's below, run only where preparation can establish what the
 caller gave: on plain data. Plain data is a list, or an object whose prototype is `Object.prototype`
 or `null`, that holds only own data properties, none of them named after an `Object.prototype`
-member, under a schema that states no field and no wire name named after one. A value held behind an
-accessor, a class instance, `Schema.Class` instances among them, and a schema or union tag that uses
-such a name read as Effect reads them: where the facts cannot be established, the value keeps its
-earlier reading.
+member, under a schema that states no field and no wire name named after one. A proxy over plain
+data is plain data too, because nothing tells it from its target, so its traps run. A value held
+behind an accessor, a class instance, `Schema.Class` instances among them, and a schema or union tag
+that uses such a name read as Effect reads them: where the facts cannot be established, the value
+keeps its earlier reading.
 
 For visible fields the intended rule is kept or refused. Strict reads and actual-consumption
 evidence protect that rule across unions and stacked bindings; opaque values retain their schema's

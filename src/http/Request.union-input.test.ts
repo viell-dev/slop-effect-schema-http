@@ -3421,32 +3421,114 @@ describe("values at the edge of the known alternatives", () => {
       }),
   );
 
-  // A class instance whose only own key is an index set to `undefined`.
-  class Unset {
-    readonly 0 = undefined;
-  }
-  const Unsettled = Schema.Union([
-    Schema.Struct({ a: Schema.optionalKey(Schema.String) }),
-    Schema.Void,
-    Empty,
-  ]);
-
   // https://github.com/viell-dev/slop-effect-schema-http/issues/264
-  it.effect(
-    "currently lets the Void take a class instance whose only key is undefined",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* sent(Unsettled, new Unset())).toBe("null");
-        expect(yield* rendered(Unsettled, new Unset())).toBeUndefined();
-      }),
-  );
+  describe("a class instance with a key set to undefined", () => {
+    class Held {
+      readonly z = undefined;
+      constructor(fields: object = {}) {
+        Object.assign(this, fields);
+      }
+    }
+    class Written extends Held {
+      toJSON() {
+        return { written: true };
+      }
+    }
+    const Settled = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+    const Filter = Schema.Struct({
+      limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+        Schema.withConstructorDefault(Effect.succeed(25)),
+      ),
+    }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+    const keeping = Schema.Union([Settled, Empty]);
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/264
-  it.effect.fails(
-    "sends a class instance whose only key is undefined as an empty object",
-    () =>
+    it.effect("is not left to a Void", () =>
       Effect.gen(function* () {
-        expect(yield* sent(Unsettled, new Unset())).toBe("{}");
+        for (const schema of [
+          Schema.Union([Settled, Schema.Void, Empty]),
+          Schema.Union([Settled, Empty, Schema.Void]),
+        ])
+          for (const fields of [{}, { 0: undefined }, { a: undefined }]) {
+            expect(yield* sent(schema, new Held(fields))).toBe("{}");
+            expect(yield* rendered(schema, new Held(fields))).toEqual({});
+          }
+        const nested = Schema.Struct({
+          p: Schema.Union([Settled, Schema.Void, Empty]),
+        });
+        expect(yield* sent(nested, { p: new Held() })).toBe('{"p":{}}');
       }),
-  );
+    );
+
+    it.effect("stays with the member that states its other fields", () =>
+      Effect.gen(function* () {
+        const schema = Schema.Union([Filter, Empty]);
+        expect(yield* sent(schema, new Held({ limit: 5 }))).toBe(
+          '{"page_size":"5"}',
+        );
+        expect(yield* sent(schema, new Held({ page_size: "05" }))).toBe(
+          '{"page_size":"05"}',
+        );
+        class Accessed {
+          readonly z = undefined;
+          get limit() {
+            return 5;
+          }
+        }
+        expect(yield* sent(schema, new Accessed())).toBe('{"page_size":"5"}');
+      }),
+    );
+
+    it.effect("reads its getters no more often than other members do", () =>
+      Effect.gen(function* () {
+        let reads = 0;
+        const readsUnder = (schema: Schema.Codec<unknown, unknown>) => {
+          reads = 0;
+          const value = Object.defineProperty(new Held(), "a", {
+            enumerable: true,
+            get: () => {
+              reads += 1;
+              return "x";
+            },
+          });
+          return Effect.map(rendered(schema, value), () => reads);
+        };
+        const Other = Schema.Struct({ b: Schema.String });
+        expect(yield* readsUnder(keeping)).toBe(
+          yield* readsUnder(Schema.Union([Settled, Other])),
+        );
+      }),
+    );
+
+    it.effect(
+      "is kept as given where only the empty struct holds a field",
+      () =>
+        Effect.gen(function* () {
+          const extra = new Held({ a: "x", extra: 1 });
+          expect(yield* rendered(keeping, extra)).toBe(extra);
+          expect(yield* sent(keeping, new Written({ extra: 1 }))).toBe(
+            '{"written":true}',
+          );
+        }),
+    );
+
+    it.effect("is kept as given where no member states a field", () =>
+      Effect.gen(function* () {
+        const value = new Held();
+        for (const schema of [
+          Schema.Union([Empty, Schema.Void]),
+          Schema.Union([Empty, Schema.Array(Schema.String)]),
+        ])
+          expect(yield* rendered(schema, value)).toBe(value);
+      }),
+    );
+
+    it.effect("is kept as given where its content is not in its fields", () =>
+      Effect.gen(function* () {
+        const map = Object.assign(new Map([["k", "v"]]), { z: undefined });
+        expect(yield* rendered(keeping, map)).toBe(map);
+        const failure = yield* Effect.flip(sent(keeping, map));
+        expect(failure.message).toContain("cannot encode Map");
+      }),
+    );
+  });
 });

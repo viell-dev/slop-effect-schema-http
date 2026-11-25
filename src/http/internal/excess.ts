@@ -1,4 +1,5 @@
 import { Equal, Schema, SchemaAST, SchemaIssue } from "effect";
+import { stateOf } from "./object-brand.js";
 import { extraArrayField } from "./writer-error.js";
 import { isObjectMember, stageRefuses } from "./primitive.js";
 
@@ -651,6 +652,29 @@ const readAsStruct = (sides: ReadonlyArray<Ast>, open: boolean): boolean =>
   !open && !sides.some(({ _tag }) => _tag === "Declaration");
 
 /**
+ * Whether an instance beside an empty struct reads as a struct does, because it holds a key set to
+ * `undefined` and otherwise only fields the other members state. Such a key holds nothing, so it may
+ * not push the instance out of those members, nor leave it to a Void. The empty struct keeps any
+ * other instance as given, and one whose content is not in its own fields, as a `Map` is.
+ */
+const meansStated = (
+  { sides, holdsAsGiven }: View,
+  value: object,
+  keys: ReadonlyArray<PropertyKey>,
+  items: ReadonlyArray<unknown>,
+): boolean =>
+  holdsAsGiven &&
+  items.includes(undefined) &&
+  sides.some(
+    (side) => side._tag === "Objects" && !isSignaturelessObject(side),
+  ) &&
+  keys.every(
+    (key, index) =>
+      items[index] === undefined || typesAt(sides, key).length > 0,
+  ) &&
+  stateOf(value, true) === undefined;
+
+/**
  * Discover array layout only where no opaque reading can retain it untouched. An empty struct reads
  * a list too, but beside a list member a rewrite still has to keep every readable cell, hidden or
  * inherited, in place.
@@ -673,7 +697,6 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     const open = leaveKeysOpen(view);
     const keepKeys = open || statesNothing(sides);
     const plain = isPlain(value);
-    const asStruct = !plain && readAsStruct(sides, open);
     const asArray = readAsArray(sides);
     const isList = Array.isArray(value);
     // A list rebuilt in a view that does not read its layout copies its own cells' descriptors, so
@@ -681,9 +704,15 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     const own = isList && !asArray ? ownDescriptors(value) : undefined;
     const keys = [...keysOf(value, asArray, own), ...hidden];
     // Read each key once: a getter is the caller's code.
+    const items =
+      !plain && view.holdsAsGiven ? keys.map((key) => value[key]) : undefined;
+    const asStruct =
+      !plain &&
+      (readAsStruct(sides, open) ||
+        (items !== undefined && meansStated(view, value, keys, items)));
     let changed = asStruct || hidden.length > 0;
-    const entries = keys.flatMap((key) => {
-      const item = value[key];
+    const entries = keys.flatMap((key, index) => {
+      const item = items === undefined ? value[key] : items[index];
       const inner = heldAt(view, key);
       if (
         (plain || asStruct) &&

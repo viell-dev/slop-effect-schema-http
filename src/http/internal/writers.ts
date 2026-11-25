@@ -440,7 +440,8 @@ export const dropped = (
             before: chosen?.before,
           });
         else if (isKeyed(supplied[key]) && isKeyed(held[key])) {
-          // Plain data holds every field as its own data, so reading it runs nothing.
+          // Plain data holds every field as its own data, so reading it runs no accessor. A proxy's
+          // traps run, as they do throughout preparation.
           const at = [...path, key];
           for (const type of types)
             visit(type, supplied[key], held[key], caller[key], at, chosen);
