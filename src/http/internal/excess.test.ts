@@ -957,6 +957,70 @@ it("does not pair a reordered wire name by position after a loose write", () => 
   ).toEqual([]);
 });
 
+it("does not pair a reordered decoded name from a handwritten link", () => {
+  const field = Schema.optionalKey(Schema.String);
+  const payload = Schema.Struct({ B: field, zero: field }).pipe(
+    Schema.decodeTo(
+      Schema.Struct({ b: field, 0: field }),
+      SchemaTransformation.transform({
+        decode: ({ B, zero }) => ({
+          ...(B === undefined ? {} : { b: B }),
+          ...(zero === undefined ? {} : { 0: zero }),
+        }),
+        encode: (value) => ({
+          ...(value.b === undefined ? {} : { B: value.b }),
+          ...(value[0] === undefined ? {} : { zero: value[0] }),
+        }),
+      }),
+    ),
+  );
+  const schema = Schema.OptionFromNullOr(payload);
+  const b = Option.some({ b: "bee" });
+  const zero = Option.some({ 0: "zed" });
+  expect(Excess.optionLoss(schema.ast, b, b, { B: "bee" }, true)).toEqual([]);
+  expect(
+    Excess.optionLoss(schema.ast, zero, zero, { zero: "zed" }, true),
+  ).toEqual([]);
+});
+
+it("checks an encoded name against its paired decoded field inside Schema.Option", () => {
+  const owner = Schema.Struct({ owner: text });
+  const wide = Schema.Struct({ owner: text, limit: text }).pipe(
+    Schema.encodeKeys({ limit: "page_size" }),
+  );
+  const schema = Schema.Option(Schema.Union([owner, wide]));
+  const given = Option.some({ owner: "a", page_size: "5" });
+  const complete = Option.some({ owner: "a", limit: "5" });
+  const narrowed = Option.some({ owner: "a" });
+  expect(
+    Excess.optionLoss(schema.ast, given, complete, undefined, true),
+  ).toEqual([]);
+  expect(
+    Excess.optionLoss(schema.ast, given, narrowed, undefined, true),
+  ).toEqual([["value", "page_size"]]);
+});
+
+it("compares opaque Option reads only on the loose route", () => {
+  const payload = Schema.Union([
+    Schema.Struct({ a: Schema.String }),
+    Schema.Struct({ a: Schema.String, b: Schema.String }),
+  ]);
+  const schema = Schema.OptionFromNullOr(
+    Schema.Struct({
+      inner: Schema.OptionFromOptionalNullOr(payload, { onNoneEncoding: null }),
+    }),
+  );
+  const given = Option.some({ inner: Option.some({ a: "a", b: "b" }) });
+  const narrowed = Option.some({ inner: Option.some({ a: "a" }) });
+  const written = { inner: { a: "a" } };
+  expect(
+    Excess.optionLoss(schema.ast, given, narrowed, written, false),
+  ).toEqual([]);
+  expect(Excess.optionLoss(schema.ast, given, narrowed, written, true)).toEqual(
+    [["value", "inner", "value", "b"]],
+  );
+});
+
 it("uses another written name when only one candidate shares its name", () => {
   const first = Schema.Struct({ code: Schema.String }).pipe(
     Schema.encodeTo(

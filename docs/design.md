@@ -220,7 +220,10 @@ Every union it reaches can try a member that holds the whole payload, including 
 index-like rename whose field names cannot be paired by position. The relaxed route still checks
 what the read held. Output comparison uses candidate wire names where they can be paired. An
 unpairable rename by itself supplies no output evidence. The writer's selection still applies there.
-A value that Void reads as nothing in place still holds its field.
+Inside `Schema.Option(X)`, the read comparison can pair a supplied wire name with its decoded name
+when the field order supports the pairing on both sides. Where X has an encoded side, the read can
+also change a scalar's representation. A value that Void reads as nothing in place still holds its
+field.
 
 The second rule: an empty struct, an open schema without a check, or, for a value that is not a
 list, an empty class keeps every key of the value it reads, at every depth, as an alternative of its

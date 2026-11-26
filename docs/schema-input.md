@@ -96,8 +96,8 @@ encoded value --> decode --> decoded -> encode --> wire
 
 **What the library promises.** For a value it can see, a field the caller gave is kept, or the
 request is refused. It can see plain objects, lists, tuples, classes and unions of those, at any
-depth. Plain `Some` payloads are visible where [the codec and surrounding
-schema](#an-opaque-value-is-the-schema-s-own-reading) expose their fields. Inside an opaque value,
+depth. Preparation can check a valid plain `Some` payload where [the codec and surrounding
+schema](#an-opaque-value-is-the-schema-s-own-reading) expose its fields. Inside an opaque value,
 such as text that holds JSON, a `Map` or a `Schema.Option` payload, the schema's own reading
 applies. To choose a union member for certain, bind that member directly.
 
@@ -581,9 +581,13 @@ has to run loosely, unions the writer reaches through the Option's payload schem
 that keeps the whole value first. This includes a nested `Some` and a payload below a key renamed to
 an index-like name such as `"0"`.
 
-Use decoded names inside a `Some`. For a payload that writes `limit` as `page_size`, pass
-`Some({ limit: "5" })`. To supply the wire name, pass the encoded value `{ page_size: "5" }` at the
-Option's position. A field called `value` inside the payload belongs to the payload.
+Use decoded names inside a `Some` that an unwrapping codec reads. For a payload that writes `limit`
+as `page_size`, pass `Some({ limit: "5" })`. To supply the wire name, pass the encoded value
+`{ page_size: "5" }` at the Option's position. A field called `value` inside the payload belongs to
+the payload. At runtime, `Schema.Option(X)` can also read X's encoded names and values inside a
+`Some`. The typed input expects decoded contents. On a loose write, preparation can check that a
+supplied wire name still has its decoded field when a structural rename pairs those names. Other
+payloads follow Effect's own reading.
 
 ### The reading of Effect is tested, not checked at run time
 
@@ -670,8 +674,15 @@ the schema does with it. These are the places where it cannot, and what happens 
   example when a stray key defeats the strict read and competing codecs hide the payload. A loose
   write can select a wider member for data that reaches it through an Option declaration. Data
   already narrowed by the read, a class instance, or a custom writer can remain outside that
-  recovery. Choose the intended member directly or validate and supply the encoded representation
+  recovery. For example, `Union([OptionFromNullOr(Filter), Struct({ z: String })])` inside another
+  `Some` can take a narrower member of `Filter` on a loose write even when there is no stray key.
+  Choose the intended member directly or validate and supply the encoded representation
   ([#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)).
+- After an invalid `Some` fails the decoded read, preparation can read the wrapper itself as an
+  encoded struct whose fields are all optional. With
+  `OptionFromNullOr(Struct({ a: optionalKey(String), b: optionalKey(String) }))`,
+  `Some({ a: 5, b: "kept?" })` can write `{}`. Validate the payload before wrapping it
+  ([#309](https://github.com/viell-dev/slop-effect-schema-http/issues/309)).
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
   recovery's value is not checked against what it was given: a `Schema.catchDecoding` record beside
   a list member can take a list whose cells hold a key the list member does not state, and what it
