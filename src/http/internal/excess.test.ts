@@ -568,18 +568,37 @@ describe("boundaries of a visible Some payload", () => {
 
   it("requires matching payload bodies even with an actual Effect unwrapping getter", () => {
     const option = Schema.OptionFromOptionalKey(Struct).ast;
-    if (option._tag !== "Declaration" || option.encoding === undefined)
-      throw new Error("expected an unwrapping declaration");
+    const fields = Struct.ast;
+    if (
+      option._tag !== "Declaration" ||
+      option.encoding === undefined ||
+      fields._tag !== "Objects"
+    )
+      throw new Error("expected a struct and an unwrapping declaration");
+    const { to, transformation } = option.encoding[0];
+    const extra = Schema.Struct({ a: Schema.String, stray: Schema.String }).ast;
+    const rest = Schema.Record(Schema.String, Schema.String).ast;
+    if (extra._tag !== "Objects" || rest._tag !== "Objects")
+      throw new Error("expected an object shape");
     for (const source of [
-      Schema.optionalKey(
-        Schema.Struct({ a: Schema.String, stray: Schema.String }),
+      Struct.pipe(Schema.annotateKey({ description: "required source" })).ast,
+      Schema.optionalKey(Struct.annotate({ description: "other source" })).ast,
+      Schema.optionalKey(Struct.check(Schema.makeFilter(() => true))).ast,
+      new SchemaAST.Objects(
+        extra.propertySignatures,
+        fields.indexSignatures,
+        undefined,
+        undefined,
+        undefined,
+        to.context,
       ),
-      Schema.optionalKey(Struct.annotate({ description: "other source" })),
-      Schema.optionalKey(Struct.check(Schema.makeFilter(() => true))),
-      Schema.optionalKey(
-        Schema.StructWithRest(Struct, [
-          Schema.Record(Schema.String, Schema.String),
-        ]),
+      new SchemaAST.Objects(
+        fields.propertySignatures,
+        rest.indexSignatures,
+        undefined,
+        undefined,
+        undefined,
+        to.context,
       ),
     ]) {
       const declaration = new SchemaAST.Declaration(
@@ -587,10 +606,100 @@ describe("boundaries of a visible Some payload", () => {
         option.run,
         option.annotations,
         option.checks,
-        [new SchemaAST.Link(source.ast, option.encoding[0].transformation)],
+        [new SchemaAST.Link(source, transformation)],
       );
+      expect(Excess.mayUnwrapOption(declaration)).toBe(false);
       expect(Excess.normalisedOptions(declaration, input)).toBe(input);
     }
+    const invalid = new SchemaAST.Declaration(
+      [...option.typeParameters, Schema.String.ast],
+      option.run,
+      option.annotations,
+      option.checks,
+      option.encoding,
+    );
+    expect(Excess.mayUnwrapOption(invalid)).toBe(false);
+  });
+
+  it("requires the same union members and selection mode when a source key is optional", () => {
+    const payload = Schema.Union([Struct, Schema.Struct({ b: text })]);
+    const option = Schema.OptionFromOptionalKey(payload).ast;
+    if (
+      option._tag !== "Declaration" ||
+      option.encoding === undefined ||
+      payload.ast._tag !== "Union"
+    )
+      throw new Error("expected a union payload");
+    const { to, transformation } = option.encoding[0];
+    for (const source of [
+      new SchemaAST.Union(
+        [Struct.ast, Schema.Struct({ c: text }).ast],
+        payload.ast.options,
+        undefined,
+        undefined,
+        undefined,
+        to.context,
+      ),
+      new SchemaAST.Union(
+        payload.ast.types,
+        { mode: "oneOf" },
+        undefined,
+        undefined,
+        undefined,
+        to.context,
+      ),
+    ]) {
+      const declaration = new SchemaAST.Declaration(
+        option.typeParameters,
+        option.run,
+        option.annotations,
+        option.checks,
+        [new SchemaAST.Link(source, transformation)],
+      );
+      expect(Excess.mayUnwrapOption(declaration)).toBe(false);
+      expect(Excess.normalisedOptions(declaration, input)).toBe(input);
+    }
+  });
+
+  it("does not look through a custom codec on a nullish Option source", () => {
+    const option = Schema.OptionFromNullOr(Struct).ast;
+    if (option._tag !== "Declaration" || option.encoding === undefined)
+      throw new Error("expected an unwrapping declaration");
+    const source = Schema.NullOr(Struct).pipe(
+      Schema.middlewareEncoding((effect) => effect),
+    );
+    const declaration = new SchemaAST.Declaration(
+      option.typeParameters,
+      option.run,
+      option.annotations,
+      option.checks,
+      [new SchemaAST.Link(source.ast, option.encoding[0].transformation)],
+    );
+    expect(Excess.mayUnwrapOption(declaration)).toBe(false);
+    expect(Excess.normalisedOptions(declaration, input)).toBe(input);
+  });
+
+  it("requires a transformation even when middleware carries a familiar getter", () => {
+    const option = Schema.OptionFromOptionalKey(Struct).ast;
+    if (option._tag !== "Declaration" || option.encoding === undefined)
+      throw new Error("expected an unwrapping declaration");
+    const encode = Object.assign(<T>(effect: T): T => effect, {
+      _tag: "TransformOptional",
+      transform: Option.flatten,
+    });
+    const declaration = new SchemaAST.Declaration(
+      option.typeParameters,
+      option.run,
+      option.annotations,
+      option.checks,
+      [
+        new SchemaAST.Link(
+          option.encoding[0].to,
+          new SchemaTransformation.Middleware(encode, encode),
+        ),
+      ],
+    );
+    expect(Excess.mayUnwrapOption(declaration)).toBe(false);
   });
 
   it("keeps two object alternatives even when one is the Option's exact wire projection", () => {
@@ -703,8 +812,8 @@ describe("accounting for written Some fields", () => {
       ),
     ).toEqual([]);
     expect(
-      Excess.optionLoss(schema.ast, input, input, { SIZE: "5" }, false),
-    ).toEqual([["value", "owner"]]);
+      Excess.optionLoss(schema.ast, input, input, { owner: "a" }, false),
+    ).toEqual([["value", "size"]]);
   });
 
   it("keeps a list's null prototype when copying a cell's payload", () => {
@@ -725,7 +834,7 @@ describe("accounting for written Some fields", () => {
     const schema = Schema.Union([
       Schema.OptionFromNullOr(Owner),
       Schema.OptionFromNullOr(
-        Schema.Struct({ owner: Schema.String, stray: Schema.String }),
+        Schema.Struct({ owner: Schema.String, limit: Schema.String }),
       ),
     ]);
     expect(Excess.normalisedOptions(schema.ast, input)).toBe(input);

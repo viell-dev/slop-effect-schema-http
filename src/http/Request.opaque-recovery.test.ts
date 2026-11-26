@@ -508,10 +508,10 @@ const stray = { ...owner, stray: "x" };
 describe("a stray key inside an Option with a visible encoded object", () => {
   it.effect("leaves out the stray key and keeps the visible union", () =>
     Effect.gen(function* () {
-      expect(yield* json(Held, { held: Option.some(stray), filter })).toEqual({
-        held: owner,
-        filter,
-      });
+      const input = { held: Option.some(stray), filter };
+      for (const value of [input, { ...input, strayAtRoot: "x" }]) {
+        expect(yield* json(Held, value)).toEqual({ held: owner, filter });
+      }
     }),
   );
 
@@ -944,6 +944,17 @@ it.effect("refuses a repaired input when an unrelated strict write fails", () =>
       json(schema, { held: Option.some(stray), filter, codec: supplied }),
     );
     expect(failure.message).toContain('["held"]["value"]["stray"]');
+    const withWiderPayload = Schema.Struct({
+      held: Schema.OptionFromNullOr(Filter),
+      codec,
+    });
+    const lost = yield* Effect.flip(
+      json(withWiderPayload, {
+        held: Option.some({ ...owner, limit: "l" }),
+        codec: supplied,
+      }),
+    );
+    expect(lost.message).toContain('["held"]["value"]["limit"]');
   }),
 );
 
@@ -1224,4 +1235,30 @@ it.effect("checks the written field under either candidate's wire name", () =>
       ).toEqual({ held: { id: "1", page_size: "5", cursor: "c" } });
     }
   }),
+);
+
+it.effect(
+  "allows an undefined wire value where the fallback read still writes strictly",
+  () =>
+    Effect.gen(function* () {
+      const schema = Schema.Struct({
+        held: Schema.OptionFromNullOr(
+          Schema.TaggedStruct("A", {
+            child: Schema.OptionFromOptionalKey(Schema.Undefined),
+          }),
+        ),
+        other: Schema.Option(Schema.Struct({ x: Schema.String })),
+        filter: Filter,
+      });
+      const result = yield* Inputs.reader(schema)({
+        held: Option.some({
+          _tag: "A" as const,
+          child: Option.some(undefined),
+        }),
+        other: Option.some({ x: "1", stray: "x" }),
+        filter,
+      });
+      expect(result.lost).toEqual([]);
+      expect(result.output.held).toEqual({ _tag: "A", child: undefined });
+    }),
 );
