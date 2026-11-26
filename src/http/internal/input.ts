@@ -241,7 +241,7 @@ const chooseReading = (
         }
       } else if (
         result.success.lost.length === 0 ||
-        (!keepMost && ambiguity === undefined)
+        (!keepMost && enclosingUnion === undefined)
       ) {
         if (!countReaders)
           return ambiguity === undefined

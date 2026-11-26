@@ -1,9 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Schema, SchemaGetter, SchemaIssue } from "effect";
+import { vi } from "vitest";
 import { bodyOf } from "../../test/request.js";
 import * as Body from "./Body.js";
 import * as Request from "./Request.js";
 import { FieldlessOneOf, readFailure } from "./internal/ambiguity.js";
+import * as Excess from "./internal/excess.js";
 import { reader, toDecoded } from "./internal/input.js";
 
 const post = <S extends Schema.Top>(schema: S) =>
@@ -313,10 +315,18 @@ it.effect(
   "tries the exposed input when the normalized read cannot write strictly",
   () =>
     Effect.gen(function* () {
+      const readModes: Array<string> = [];
       const first = Schema.Struct({
         tag: Schema.Literal("first"),
         x: Schema.optional(S),
-      });
+      }).check(
+        Schema.makeFilter((value, _, options) => {
+          readModes.push(
+            `${options.onExcessProperty}:${Object.hasOwn(value, "x")}`,
+          );
+          return true;
+        }),
+      );
       const second = Schema.Struct({ tag: Schema.Literal("second") });
       const contract = Schema.Union([first, second]);
       const failure = new Schema.SchemaError(
@@ -334,6 +344,7 @@ it.effect(
       const result = yield* read({ tag: "first", x: undefined });
       expect(result.output).toEqual({ tag: "first", x: undefined });
       expect(modes).toEqual(["strict:false", "strict:true"]);
+      expect(readModes.toSorted()).toEqual(["error:false", "error:true"]);
     }),
 );
 
@@ -370,5 +381,169 @@ it.effect(
           f: new Map(),
         }),
       ).toBe('sent {"f":{"a":"x"}}');
+    }),
+);
+
+it("treats an unresolved suspension as a possible oneOf without opening it", () => {
+  let resolutions = 0;
+  const schema = Schema.suspend(() => {
+    resolutions++;
+    return oneOf(Adef, B);
+  });
+  expect(Excess.mayHaveOneOf(schema.ast)).toBe(true);
+  expect(Excess.choosesMemberResolved(Schema.Union([Adef, schema]).ast)).toBe(
+    true,
+  );
+  expect(resolutions).toBe(0);
+});
+
+it.effect(
+  "uses the successful normalized constructor when the raw constructor fails",
+  () =>
+    Effect.gen(function* () {
+      const looseReads: Array<boolean> = [];
+      const normalOnly = Schema.declareConstructor<object>()(
+        [],
+        () => (value, ast, options) => {
+          const own =
+            typeof value === "object" &&
+            value !== null &&
+            Object.hasOwn(value, "unused");
+          if (options.onExcessProperty !== "error") {
+            looseReads.push(own);
+            if (!own && typeof value === "object" && value !== null)
+              return Effect.succeed(value);
+          }
+          return Effect.fail(new SchemaIssue.InvalidType(ast));
+        },
+      );
+      const contract = Schema.Union([
+        normalOnly,
+        Schema.Struct({ required: oneOf(Adef, B) }),
+      ]);
+      const read = reader(contract, Effect.succeed);
+      expect((yield* read({ unused: undefined })).output).toEqual({});
+      expect(looseReads).toEqual([false, true]);
+    }),
+);
+
+it.effect("reports an ambiguity first found during memberwise recovery", () =>
+  Effect.gen(function* () {
+    const branch = Schema.Struct({ a: F, b: F, f: oneOf(Adef, B) });
+    for (const mode of ["anyOf", "oneOf"] as const) {
+      const contract = Schema.Union([branch, S], { mode });
+      const failure = yield* Effect.flip(
+        toDecoded(contract)({ a: "5", b: 6, f: {} }),
+      );
+      expect(failure.message).toBe(
+        'Expected exactly one member to match\n  at ["f"]',
+      );
+    }
+  }),
+);
+
+it.effect(
+  "reads a named field while accounting for an encoded sibling and opaque excess",
+  () =>
+    Effect.gen(function* () {
+      const o = Schema.Option(Schema.Struct({ a: S }));
+      const f = oneOf(Adef, Encoded);
+      const request = post(Schema.Struct({ n: F, o, f }));
+      expect(
+        yield* outcome(request, {
+          n: "5",
+          o: Option.some({ a: "x", extra: 1 }),
+          f: {},
+        }),
+      ).toBe(
+        'sent {"n":"5","o":{"_tag":"Some","value":{"a":"x"}},"f":{"a":"x"}}',
+      );
+    }),
+);
+
+it.effect(
+  "keeps a fieldwise alternative's ambiguity through its enclosing field",
+  () =>
+    Effect.gen(function* () {
+      const f = oneOf(Schema.Void, Schema.Struct({}));
+      const branch = Schema.Struct({ a: F, b: F, f });
+      const keeping = Schema.Struct({ a: F, b: F, f: Schema.Any });
+      const p = Schema.Union([branch, keeping]);
+      const o = Schema.Option(Schema.Struct({ a: S }));
+      for (const neighbour of [
+        Option.some({ a: "x" }),
+        Option.some({ a: "x", extra: 1 }),
+      ]) {
+        const request = post(Schema.Struct({ n: F, o, p }));
+        expect(
+          yield* outcome(request, {
+            n: 1,
+            o: neighbour,
+            p: { a: "5", b: 6, f: [undefined] },
+          }),
+        ).toBe(
+          'SchemaError: Expected exactly one member to match\n  at ["p"]["f"]',
+        );
+      }
+    }),
+);
+
+it.effect(
+  "keeps the constructor ambiguity after an encoded alternative reads",
+  () =>
+    Effect.gen(function* () {
+      const f = oneOf(Schema.Void, Schema.Struct({}));
+      const branch = Schema.Struct({ f, n: Schema.Finite });
+      const keeping = Schema.Struct({ f: Schema.Any, n: F });
+      const request = post(Schema.Union([keeping, branch]));
+      expect(yield* outcome(request, { f: [undefined], n: "5" })).toBe(
+        'SchemaError: Expected exactly one member to match\n  at ["f"]',
+      );
+    }),
+);
+
+it.effect("rejects a normalized JSON retry that loses a supplied field", () =>
+  Effect.gen(function* () {
+    const f = Schema.Union([Schema.Struct({ c: S }), Schema.Unknown]);
+    const o = Schema.Option(Schema.Struct({ a: S }));
+    const request = post(Schema.Struct({ f, o, mark: S }));
+    const body = {
+      f: { c: undefined },
+      o: Option.some({ a: "x", extra: 1 }),
+      mark: "kept",
+    };
+    const missing = Excess.missing;
+    let compared = 0;
+    // Inject a loss in the comparison of the normalized retry's output.
+    const instrumented = vi
+      .spyOn(Excess, "missing")
+      .mockImplementation((types, given, value, output, options) => {
+        if (output !== undefined) {
+          compared++;
+          return [["mark"]];
+        }
+        return missing(types, given, value, output, options);
+      });
+    try {
+      const result = yield* outcome(request, body);
+      expect(compared).toBe(1);
+      expect(result).toContain('Expected JSON value\n  at ["f"]');
+    } finally {
+      instrumented.mockRestore();
+    }
+  }),
+);
+
+it.effect(
+  "retains the ambiguity for a field available only under its wire name",
+  () =>
+    Effect.gen(function* () {
+      const contract = Schema.Struct({ f: oneOf(Adef, B) }).pipe(
+        Schema.encodeKeys({ f: "wire" }),
+      );
+      const refusal = yield* Effect.flip(toDecoded(contract)({ wire: {} }));
+      expect(refusal.message).toBe(
+        'Expected exactly one member to match\n  at ["wire"]',
+      );
     }),
 );
