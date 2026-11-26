@@ -10,7 +10,7 @@ description = "Serves Warded route tables described by the suite's tests, and re
 # The commits under test. `warded` is not a direct dependency: the host takes the router through
 # `warded_server::warded`, so that both use one set of types. The patch below replaces the
 # crates.io release that the server pins with the router commit under test.
-warded-server = { git = "https://github.com/viell-dev/slop-warded-server", rev = "04d2973aa468eb812db0a62db63dc5051ce9db09" }
+warded-server = { git = "https://github.com/viell-dev/slop-warded-server", rev = "ff332121ba83d6a209957396785c5cbfaf7a1bf6" }
 
 axum = { version = "0.8.9", default-features = false, features = ["http1", "http2", "tokio"] }
 base64 = "0.23"
@@ -23,7 +23,7 @@ tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-m
 tower = { version = "0.5.3", features = ["util"] }
 
 [patch.crates-io]
-warded = { git = "https://github.com/viell-dev/slop-warded-router", rev = "3b19779c265905951f890db767da411a907338b8" }
+warded = { git = "https://github.com/viell-dev/slop-warded-router", rev = "7a71066e56c4b26703502954645fa32d8e9b0951" }
 
 [lints.rust]
 unsafe_code = "forbid"
