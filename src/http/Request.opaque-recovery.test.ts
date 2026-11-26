@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schema } from "effect";
+import { Effect, Option, Schema, SchemaTransformation } from "effect";
 import * as Body from "./Body.js";
 import * as Inputs from "./internal/input.js";
 import * as Request from "./Request.js";
@@ -645,6 +645,30 @@ describe("a stray key inside an Option with a visible encoded object", () => {
           ["owner", "ada"],
           ["limit", "z"],
         ]);
+      }),
+  );
+
+  it.effect(
+    "keeps the refusal when a custom Option write replaces the payload",
+    () =>
+      Effect.gen(function* () {
+        const Payload = Schema.Struct({
+          owner: Schema.optionalKey(Schema.String),
+        });
+        const held = Schema.NullOr(Payload).pipe(
+          Schema.decodeTo(
+            Schema.Option(Schema.toType(Payload)),
+            SchemaTransformation.transform({
+              decode: Option.fromNullOr,
+              encode: () => ({}),
+            }),
+          ),
+        );
+        const schema = Schema.Struct({ held, filter: Filter });
+        const failure = yield* Effect.flip(
+          json(schema, { held: Option.some(stray), filter }),
+        );
+        expect(failure.message).toContain('["held"]["value"]["stray"]');
       }),
   );
 });
