@@ -1079,6 +1079,7 @@ const closedSides = (ast: Ast): ReadonlyArray<Ast> | undefined => {
  * that same payload directly. Effect's OptionFrom… codecs add nullish or optional cases around
  * the source and use its decoded projection as the Option declaration's only type parameter.
  * Keep the source itself for comparison, since it also states the payload's wire names.
+ * Check the getter as well: a custom link between the same schemas can replace the payload.
  */
 const optionSource = (ast: Ast): Ast | undefined => {
   if (
@@ -1086,10 +1087,19 @@ const optionSource = (ast: Ast): Ast | undefined => {
     SchemaAST.resolveAt<{ readonly id: string }>("representation")(ast)?.id !==
       "effect/schema/Option" ||
     ast.typeParameters.length !== 1 ||
-    ast.encoding?.length !== 1 ||
-    ast.encoding[0].transformation._tag !== "Transformation"
+    ast.encoding?.length !== 1
   )
     return undefined;
+  const { to, transformation } = ast.encoding[0];
+  if (transformation._tag !== "Transformation") return undefined;
+  const { encode } = transformation;
+  const unwraps =
+    (encode._tag === "Transform" &&
+      (encode.transform === Option.getOrNull ||
+        encode.transform === Option.getOrUndefined)) ||
+    (encode._tag === "TransformOptional" &&
+      encode.transform === Option.flatten);
+  if (!unwraps) return undefined;
   const payload = ast.typeParameters[0]!;
   const find = (source: Ast): Ast | undefined => {
     const decoded = SchemaAST.toType(source);
@@ -1118,7 +1128,7 @@ const optionSource = (ast: Ast): Ast | undefined => {
     );
     return content.length === 1 ? find(content[0]!) : undefined;
   };
-  return find(ast.encoding[0].to);
+  return find(to);
 };
 
 /** An own enumerable data property, without running a getter to find its value. */
