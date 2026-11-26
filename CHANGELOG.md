@@ -23,15 +23,25 @@
   ([#310](https://github.com/viell-dev/slop-effect-schema-http/issues/310)).
 - Prepare an all-undefined field the same way when an opaque neighbour has an unstated key
   ([#307](https://github.com/viell-dev/slop-effect-schema-http/issues/307)).
-- Leave out keys that no member states in a plain `Some` payload exposed by an Effect codec such as
-  `Schema.OptionFromNullOr`. A stray key beside a visible union no longer causes a refusal when the
-  request can keep the same fields it sends without that key
-  ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)).
-- Keep the payload's own `value` field separate from the `Some` wrapper, and keep stated fields in
-  nested and tagged payloads that used to be lost when a stray key was present. Requests that
-  silently replaced or dropped a stated field now keep it or refuse it
-  ([#299](https://github.com/viell-dev/slop-effect-schema-http/issues/299),
-  [#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)).
+- Leave out unstated keys in a plain `Some` payload where one built-in unwrapping codec exposes it
+  and the whole strict read and write succeed
+  ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)). This includes scalar
+  alternatives, suspensions, renamed struct parents and plain inputs to a stated class. See [schema
+  input
+  limits](https://viell-dev.github.io/slop-effect-schema-http/schema-input#active-limits-and-recovery)
+  for opaque or ambiguous positions and custom writers.
+- **Breaking:** keep a visible payload's own `value` separate from the `Some` wrapper
+  ([#299](https://github.com/viell-dev/slop-effect-schema-http/issues/299)). For example,
+  `Some({ value: { a: "inner" }, a: "outer" })` keeps `value.a` as `"inner"` where a union member
+  states it. Pass the desired value under its declared payload field.
+- **Breaking:** preserve a stated payload field such as `limit` where a narrower choice used to drop
+  it in a tagged, nested or list payload
+  ([#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)). If an unrelated strict
+  failure forces a relaxed route that loses the field, preparation can now refuse naming it. Remove
+  the keys that prevent the strict attempt, or bind the intended union member directly.
+- **Breaking:** a wire name such as `page_size` inside a nested `Some` can now be refused at
+  `["held"]["value"]["inner"]["value"]["page_size"]` where it was silently dropped. Give the decoded
+  name `limit` inside the `Some`, or supply the encoded value at the Option's position.
 - Write a class instance through its class beside a struct that would strip it
   ([#274](https://github.com/viell-dev/slop-effect-schema-http/issues/274)). Under
   `Schema.Union([Filter, Counted])`, where `Filter` is a struct and `Counted` a `Schema.Class` whose

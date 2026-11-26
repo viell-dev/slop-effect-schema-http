@@ -280,15 +280,23 @@ const ruledOut = (member: Ast, value: unknown): boolean => {
  * form of the same type. The key names and what the transformation does with the fields are not
  * inspected.
  */
-const isKeyRename = (ast: SchemaAST.Objects): boolean => {
+const isKeyRename = (
+  ast: SchemaAST.Objects,
+  allowsOptionalWireKey?: (type: Ast) => boolean,
+): boolean => {
   const [link, ...others] = ast.encoding ?? [];
-  return link !== undefined && others.length === 0 && renamesKeys(ast, link);
+  return (
+    link !== undefined &&
+    others.length === 0 &&
+    renamesKeys(ast, link, allowsOptionalWireKey)
+  );
 };
 
 /** Whether a link leads from a struct to one of the same shape, as {@link isKeyRename} describes. */
 const renamesKeys = (
   from: SchemaAST.Objects,
   { to, transformation }: SchemaAST.Link,
+  allowsOptionalWireKey?: (type: Ast) => boolean,
 ): boolean =>
   transformation._tag === "Transformation" &&
   to._tag === "Objects" &&
@@ -300,8 +308,10 @@ const renamesKeys = (
   from.propertySignatures.every(({ type }, index) => {
     const encoded = to.propertySignatures[index]!.type;
     return (
-      SchemaAST.isOptional(type) === SchemaAST.isOptional(encoded) &&
-      SchemaAST.toEncoded(type) === encoded
+      SchemaAST.toEncoded(type) === encoded &&
+      (SchemaAST.isOptional(type) === SchemaAST.isOptional(encoded) ||
+        (SchemaAST.isOptional(encoded) &&
+          allowsOptionalWireKey?.(type) === true))
     );
   });
 
@@ -1072,7 +1082,9 @@ const optionalCopyOf = (source: Ast, payload: Ast): boolean =>
   Object.keys(source).length === Object.keys(payload).length &&
   Object.entries(source).every(
     ([key, value]) =>
-      key === "context" || (Object.hasOwn(payload, key) && Object.is(value, Reflect.get(payload, key))),
+      key === "context" ||
+      (Object.hasOwn(payload, key) &&
+        Object.is(value, Reflect.get(payload, key))),
   );
 
 /**
@@ -1117,6 +1129,18 @@ const optionSource = (ast: Ast): Ast | undefined => {
   return find(to);
 };
 
+// OptionFromOptionalKey and its relatives can omit a wire key required on the decoded side.
+const isOptionFrame = (ast: Ast): boolean =>
+  isStructural(ast) ||
+  (ast._tag === "Objects" &&
+    isKeyRename(ast, (type) => optionSource(type) !== undefined));
+
+/** A native class may be constructed from a plain input using these fields. */
+const plainClassFrame = (ast: Ast): Ast | undefined =>
+  isStatedClass(ast) && typeof ast.annotations?.["~constructor"] === "function"
+    ? classFields(ast)
+    : undefined;
+
 /** Structural alternatives left by the same literal-tag rule as an ordinary field. */
 const structuralFrames = (
   types: ReadonlyArray<Ast>,
@@ -1124,20 +1148,15 @@ const structuralFrames = (
 ): ReadonlyArray<Ast> | undefined => {
   const frames: Ast[] = [];
   const active = new Set<Ast>();
-  const visit = (type: Ast): boolean => {
+  const visit = (type: Ast, retained: boolean): boolean => {
     if (active.has(type)) return false;
-    const fields =
-      isStatedClass(type) &&
-      typeof type.annotations?.["~constructor"] === "function"
-        ? classFields(type)
-        : undefined;
-    const frame = fields ?? type;
+    const frame = plainClassFrame(type) ?? type;
     if (
-      isStructural(frame) &&
+      isOptionFrame(frame) &&
       !isSignaturelessObject(frame) &&
       !statesPrototypeName(frame)
     ) {
-      frames.push(frame);
+      if (retained) frames.push(frame);
       return true;
     }
     if (
@@ -1147,14 +1166,16 @@ const structuralFrames = (
       active.add(type);
       const known =
         type._tag === "Suspend"
-          ? visit(type.thunk())
-          : type.types.every((member) => ruledOut(member, value) || visit(member));
+          ? visit(type.thunk(), retained)
+          : type.types.every((member) =>
+              visit(member, retained && !ruledOut(member, value)),
+            );
       active.delete(type);
       return known;
     }
     return takesNoObject(type);
   };
-  return types.every(visit) ? frames : undefined;
+  return types.every((type) => visit(type, true)) ? frames : undefined;
 };
 
 /**
@@ -1217,12 +1238,18 @@ const sourceAt = (types: ReadonlyArray<Ast>): Ast | undefined => {
   return types.every(visit) ? source : undefined;
 };
 
-// A suspension can hide a codec. Leave its thunk alone until a value reaches that position.
-export const mayUnwrapOption = holding(
-  (type) =>
-    (type._tag === "Suspend" && type.encoding === undefined) ||
-    optionSource(type) !== undefined,
-);
+/** Find codecs under visible structure without invoking suspension thunks at binding time. */
+export const mayUnwrapOption = (ast: Ast): boolean => {
+  if (optionSource(ast) !== undefined) return true;
+  if (ast._tag === "Suspend") return ast.encoding === undefined;
+  const fields = plainClassFrame(ast);
+  if (fields !== undefined) return mayUnwrapOption(fields);
+  return (
+    (isOptionFrame(ast) ||
+      (ast._tag === "Union" && ast.encoding === undefined)) &&
+    partsOf(ast).some(mayUnwrapOption)
+  );
+};
 
 /**
  * Remove only unstated own fields inside a visible Some before the strict read. Using that read
@@ -1405,8 +1432,12 @@ export const optionLoss = (
         inSome &&
         (decoded === undefined ||
           (!isObject(expected) && !Object.is(decoded, expected)) ||
-          (mustWrite && !omittedNone && outputs.every((actual) => actual === undefined)) ||
-          (renamed && directScalar && !outputs.some((actual) => Object.is(actual, expected))))
+          (mustWrite &&
+            !omittedNone &&
+            outputs.every((actual) => actual === undefined)) ||
+          (renamed &&
+            directScalar &&
+            !outputs.some((actual) => Object.is(actual, expected))))
       ) {
         lost.push(here);
         continue;
@@ -1415,7 +1446,11 @@ export const optionLoss = (
       const before = lost.length;
       let firstLoss: Path[] | undefined;
       for (const actual of outputs) {
-        if (outputs.length > 1 && actual === undefined && outputs.some((item) => item !== undefined))
+        if (
+          outputs.length > 1 &&
+          actual === undefined &&
+          outputs.some((item) => item !== undefined)
+        )
           continue;
         visit(children, expected, decoded, actual, here, inSome, mustWrite);
         if (lost.length === before) {

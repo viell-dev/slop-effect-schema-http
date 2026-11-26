@@ -571,7 +571,6 @@ describe("a stray key inside an Option with a visible encoded object", () => {
           json(Renamed, { held: Option.some(mixed), filter }),
         );
         expect(failure.message).toContain('["held"]["value"]["OWNER"]');
-        expect(failure.message).not.toContain('["stray"]');
       }),
   );
 
@@ -783,17 +782,26 @@ it.effect("writes the same body with a stray Some field as without it", () =>
     const wide = { ...owner, limit: "l" };
     const TaggedOwner = Schema.TaggedStruct("A", Owner.fields);
     const TaggedWide = Schema.TaggedStruct("A", Wide.fields);
+    const tagged = { _tag: "A" as const, ...wide };
+    const holder = { _tag: "A" as const, f: wide };
+    const withValue = { value: { a: "1" }, f: wide };
     const neighbours = [
-      [Filter, wide],
+      [Filter, wide, wide],
       [
         Schema.OptionFromNullOr(Schema.TaggedStruct("A", { f: Filter })),
-        Option.some({ _tag: "A" as const, f: wide }),
+        Option.some(holder),
+        holder,
       ],
       [
         Schema.OptionFromNullOr(Schema.Union([TaggedOwner, TaggedWide])),
-        Option.some({ _tag: "A" as const, ...wide }),
+        Option.some(tagged),
+        tagged,
       ],
-      [Schema.OptionFromNullOr(Schema.Array(Filter)), Option.some([wide])],
+      [
+        Schema.OptionFromNullOr(Schema.Array(Filter)),
+        Option.some([wide]),
+        [wide],
+      ],
       [
         Schema.OptionFromNullOr(
           Schema.Struct({
@@ -801,11 +809,16 @@ it.effect("writes the same body with a stray Some field as without it", () =>
             f: Filter,
           }),
         ),
-        Option.some({ value: { a: "1" }, f: wide }),
+        Option.some(withValue),
+        withValue,
       ],
-      [Schema.Option(Filter), Option.some(wide)],
-      [Schema.ReadonlyMap(Schema.String, Filter), new Map([["k", wide]])],
-      [Schema.OptionFromNullOr(Filter), Option.some(wide)],
+      [Schema.Option(Filter), Option.some(wide), { _tag: "Some", value: wide }],
+      [
+        Schema.ReadonlyMap(Schema.String, Filter),
+        new Map([["k", wide]]),
+        [["k", wide]],
+      ],
+      [Schema.OptionFromNullOr(Filter), Option.some(wide), wide],
     ] as const;
     for (const codec of [
       Schema.OptionFromNullOr,
@@ -815,24 +828,21 @@ it.effect("writes the same body with a stray Some field as without it", () =>
       Schema.OptionFromOptional,
       Schema.OptionFromOptionalNullOr,
     ]) {
-      for (const [other, value] of neighbours) {
+      for (const [other, value, expected] of neighbours) {
         const schema = Schema.Struct({
           held: codec(Owner),
           other,
           filter: Filter,
         });
-        const control = yield* json(schema, {
-          held: Option.some(owner),
-          other: value,
-          filter,
-        });
-        expect(
-          yield* json(schema, {
-            held: Option.some(stray),
-            other: value,
-            filter,
-          }),
-        ).toEqual(control);
+        for (const contents of [owner, stray]) {
+          expect(
+            yield* json(schema, {
+              held: Option.some(contents),
+              other: value,
+              filter,
+            }),
+          ).toEqual({ held: owner, other: expected, filter });
+        }
       }
       const Nested = Schema.Struct({
         inner: Schema.OptionFromNullOr(Filter),
@@ -933,7 +943,7 @@ it.effect("refuses a repaired input when an unrelated strict write fails", () =>
     const failure = yield* Effect.flip(
       json(schema, { held: Option.some(stray), filter, codec: supplied }),
     );
-    expect(failure.message).toContain('["codec"]["b"]');
+    expect(failure.message).toContain('["held"]["value"]["stray"]');
   }),
 );
 
@@ -972,6 +982,246 @@ it.effect("refuses a stated wire name that a nested Some would strip", () =>
       expect(failure.message).toContain(
         '["held"]["value"]["inner"]["value"]["page_size"]',
       );
+    }
+  }),
+);
+
+it.effect(
+  "keeps visible Some fields through scalar alternatives and suspension",
+  () =>
+    Effect.gen(function* () {
+      const payload = Schema.Union([
+        Schema.TaggedStruct("A", Owner.fields),
+        Schema.TaggedStruct("A", Wide.fields),
+      ]);
+      const option = Schema.OptionFromNullOr(payload);
+      const value = { _tag: "A" as const, ...owner, limit: "l" };
+      class Holder extends Schema.Class<Holder>("Holder")({
+        held: option,
+        filter: Filter,
+      }) {}
+      for (const schema of [
+        Schema.Struct({ held: Schema.optional(option), filter: Filter }),
+        Schema.Struct({ held: Schema.NullOr(option), filter: Filter }),
+        Schema.Struct({ held: Schema.UndefinedOr(option), filter: Filter }),
+        Schema.Struct({
+          held: Schema.Union([Schema.String, option]),
+          filter: Filter,
+        }),
+        Schema.Struct({ held: Schema.suspend(() => option), filter: Filter }),
+        Holder,
+      ]) {
+        expect(
+          yield* json(schema, {
+            held: Option.some({ ...value, stray: "x" }),
+            filter,
+          }),
+        ).toEqual({ held: value, filter });
+      }
+    }),
+);
+
+it.effect(
+  "keeps list and tuple contents of OptionFromOptionalKey through a renamed parent",
+  () =>
+    Effect.gen(function* () {
+      const wide = { ...owner, limit: "l" };
+      const value = { ...wide, stray: "x" };
+      const list = Schema.Struct({
+        held: Schema.OptionFromOptionalKey(Schema.Array(Filter)),
+        sortBy: Schema.String,
+      }).pipe(Schema.encodeKeys({ sortBy: "sort_by" }));
+      expect(
+        yield* json(list, { held: Option.some([value]), sortBy: "s" }),
+      ).toEqual({
+        held: [wide],
+        sort_by: "s",
+      });
+      const tuple = Schema.Struct({
+        held: Schema.OptionFromOptionalKey(
+          Schema.Tuple([Filter, Schema.String]),
+        ),
+      }).pipe(Schema.encodeKeys({ held: "HELD" }));
+      expect(
+        yield* json(tuple, { held: Option.some([value, "s"] as const) }),
+      ).toEqual({
+        HELD: [wide, "s"],
+      });
+    }),
+);
+
+it.effect(
+  "keeps the actual payload value under a class and an optional wire key",
+  () =>
+    Effect.gen(function* () {
+      const Payload = Schema.Union([
+        Schema.Struct({ value: Schema.Struct({ a: Schema.String }) }),
+        Schema.Struct({ c: Schema.String }),
+      ]);
+      class Holder extends Schema.Class<Holder>("ValueHolder")({
+        held: Schema.OptionFromNullOr(Payload),
+      }) {}
+      const Renamed = Schema.Struct({
+        held: Schema.OptionFromOptionalKey(Payload),
+      }).pipe(Schema.encodeKeys({ held: "HELD" }));
+      const value = { a: "inner" };
+      const input = { held: Option.some({ value, a: "outer" }) };
+      expect(yield* json(Holder, input)).toEqual({ held: { value } });
+      expect(yield* json(Renamed, input)).toEqual({ HELD: { value } });
+    }),
+);
+
+it.effect(
+  "uses the original read when an opaque neighbour prevents strict preparation",
+  () =>
+    Effect.gen(function* () {
+      const Tagged = Schema.TaggedStruct("A", Owner.fields);
+      const Opaque = Schema.Option(Schema.Struct({ x: Schema.String }));
+      const tagged = { _tag: "A" as const, ...owner };
+      const withStray = { ...tagged, stray: "x" };
+      const other = { x: "1", stray2: "y" };
+      const wrapped = Option.some(other);
+      const written = { _tag: "Some", value: { x: "1" } };
+      const schema = Schema.Struct({
+        held: Schema.OptionFromNullOr(Tagged),
+        other: Opaque,
+        filter: Filter,
+      });
+      expect(
+        yield* json(schema, {
+          held: Option.some(withStray),
+          other: wrapped,
+          filter,
+        }),
+      ).toEqual({
+        held: tagged,
+        other: written,
+        filter,
+      });
+      const list = Schema.Struct({
+        held: Schema.OptionFromNullOr(Schema.Array(Tagged)),
+        other: Opaque,
+        filter: Filter,
+      });
+      expect(
+        yield* json(list, {
+          held: Option.some([withStray]),
+          other: wrapped,
+          filter,
+        }),
+      ).toEqual({
+        held: [tagged],
+        other: written,
+        filter,
+      });
+      const nested = Schema.Struct({
+        held: Schema.OptionFromNullOr(
+          Schema.Struct({ inner: Schema.OptionFromNullOr(Tagged) }),
+        ),
+        other: Schema.ReadonlyMap(
+          Schema.String,
+          Schema.Struct({ x: Schema.String }),
+        ),
+        filter: Filter,
+      });
+      expect(
+        yield* json(nested, {
+          held: Option.some({ inner: Option.some(withStray) }),
+          other: new Map([["k", other]]),
+          filter,
+        }),
+      ).toEqual({
+        held: { inner: tagged },
+        other: [["k", written.value]],
+        filter,
+      });
+    }),
+);
+
+it.effect(
+  "reports a stated field lost on the relaxed route at its Some path",
+  () =>
+    Effect.gen(function* () {
+      const other = Schema.Option(Schema.Struct({ x: Schema.String }));
+      const neighbour = { x: "1", stray: "x" };
+      const wide = { ...owner, limit: "l" };
+      const input = { other: Option.some(neighbour) };
+      const tagged = Schema.TaggedStruct("A", { f: Filter });
+      const holder = Schema.Struct({
+        held: Schema.OptionFromNullOr(tagged),
+        other,
+      });
+      const list = Schema.Struct({
+        held: Schema.OptionFromNullOr(Schema.Array(Filter)),
+        other,
+      });
+      const nested = Schema.Struct({
+        held: Schema.OptionFromNullOr(
+          Schema.Struct({ inner: Schema.OptionFromNullOr(Filter) }),
+        ),
+        other,
+      });
+      for (const [read, path] of [
+        [
+          json(holder, {
+            ...input,
+            held: Option.some({ _tag: "A" as const, f: wide }),
+          }),
+          '["held"]["value"]["f"]["limit"]',
+        ],
+        [
+          json(list, { ...input, held: Option.some([wide]) }),
+          '["held"]["value"][0]["limit"]',
+        ],
+        [
+          json(nested, {
+            ...input,
+            held: Option.some({ inner: Option.some(wide) }),
+          }),
+          '["held"]["value"]["inner"]["value"]["limit"]',
+        ],
+      ] as const) {
+        expect((yield* Effect.flip(read)).message).toContain(path);
+      }
+    }),
+);
+
+it.effect(
+  "ignores names exclusive to a payload member ruled out by a literal tag",
+  () =>
+    Effect.gen(function* () {
+      const held = Schema.OptionFromNullOr(
+        Schema.Union([
+          Schema.TaggedStruct("N", Owner.fields),
+          Schema.TaggedStruct("W", { limit: Schema.String }),
+        ]),
+      );
+      const schema = Schema.Struct({ held, filter: Filter });
+      const value = { _tag: "N" as const, ...owner, limit: "wrong-variant" };
+      for (const payload of [value, { ...value, stray: "x" }]) {
+        expect(
+          yield* json(schema, { held: Option.some(payload), filter }),
+        ).toEqual({
+          held: { _tag: "N", ...owner },
+          filter,
+        });
+      }
+    }),
+);
+
+it.effect("checks the written field under either candidate's wire name", () =>
+  Effect.gen(function* () {
+    const V1 = Schema.Struct({ id: Schema.String, limit: Schema.String });
+    const V2 = Schema.Struct({ ...V1.fields, cursor: Schema.String }).pipe(
+      Schema.encodeKeys({ limit: "page_size" }),
+    );
+    for (const payload of [Schema.Union([V1, V2]), Schema.Union([V2, V1])]) {
+      const schema = Schema.Struct({ held: Schema.OptionFromNullOr(payload) });
+      expect(
+        yield* json(schema, {
+          held: Option.some({ id: "1", limit: "5", cursor: "c", stray: "x" }),
+        }),
+      ).toEqual({ held: { id: "1", page_size: "5", cursor: "c" } });
     }
   }),
 );
