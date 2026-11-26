@@ -17,7 +17,18 @@ export class FieldlessOneOf extends Data.TaggedError("FieldlessOneOf")<{
   readonly matches: ReadonlyArray<SchemaAST.AST>;
   /** The enclosing union failed as a whole. Another alternative can fit on the other side. */
   readonly insideUnion?: true;
+  /**
+   * It stands only because another reading of the same value failed. A pass that refuses keys
+   * Effect strips cannot settle that: the reading may have failed on such a key alone.
+   */
+  readonly afterAlternative?: true;
 }> {}
+
+/** Another reading of the same value failed, so the ambiguity stands for this pass. */
+export const afterAlternative = (failure: FieldlessOneOf): FieldlessOneOf =>
+  failure.afterAlternative
+    ? failure
+    : new FieldlessOneOf({ ...failure, afterAlternative: true });
 
 export type ReadFailure = Schema.SchemaError | FieldlessOneOf;
 
