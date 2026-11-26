@@ -6,7 +6,7 @@
  * differ by lane; the socket listener, which reuses no connection, is the control for that.
  */
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Schedule } from "effect";
+import { Effect, Exit, Schedule, Scope } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { lane } from "#lane";
 import { Operation, Policy, Request, Response } from "viell-effect-schema-http";
@@ -457,9 +457,14 @@ describe(`ambiguous completion of writes (${lane.name})`, () => {
       `[EXT-24i] ${provider}: with the link down the key protects nothing, and each region has a booking under it`,
       () =>
         Effect.gen(function* () {
-          const gone = yield* Effect.scoped(lane.backend("bookings"));
+          // The placeholder listens until both regions do, so neither can be given its port.
+          const placeholder = yield* Scope.make();
+          const gone = yield* lane
+            .backend("bookings")
+            .pipe(Scope.provide(placeholder));
           const first = yield* eu([bookingRule("closed")]);
           const second = yield* us({ peer: gone.origin });
+          yield* Scope.close(placeholder, Exit.void);
           const answer = yield* Bookings.book({
             policy: retrying,
             transformClient: moving([first, second]),
