@@ -1,5 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Option, Schema, SchemaGetter } from "effect";
+import {
+  Cause,
+  Effect,
+  Option,
+  Schema,
+  SchemaGetter,
+  SchemaIssue,
+} from "effect";
 import {
   bodyOf,
   linesOf,
@@ -811,6 +818,44 @@ describe("request preparation beside Void", () => {
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/307
+  it.effect(
+    "reads an encoded tuple item after dropping its undefined keys",
+    () =>
+      Effect.gen(function* () {
+        const C = Schema.Struct({ c: Schema.String });
+        const encoded = Schema.Struct({
+          marker: Schema.optionalKey(Schema.String),
+        }).pipe(
+          Schema.decodeTo(Schema.Struct({ code: Schema.String }), {
+            decode: SchemaGetter.transform(() => ({ code: "read" })),
+            encode: SchemaGetter.transform(() => ({})),
+          }),
+        );
+        const option = Schema.Option(Schema.Struct({ a: Schema.String }));
+        const input = { c: undefined, marker: undefined };
+        for (const members of [
+          [C, encoded],
+          [encoded, C],
+        ] as const) {
+          const item = Schema.Union(members, { mode: "oneOf" });
+          const schema = Schema.Tuple([option, item]);
+          const request = Request.get("").pipe(
+            Request.path(schema, ([, value]) =>
+              Object.keys(value).length === 0 ? "/empty" : "/unexpected",
+            ),
+          );
+          for (const o of [
+            Option.some({ a: "x" }),
+            Option.some({ a: "x", extra: 1 }),
+          ])
+            expect(yield* urlOf(request, { path: [o, input] } as never)).toBe(
+              "/empty",
+            );
+        }
+      }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/276
   it.effect(
     "retains the ambiguity when the alternative cannot write JSON",
@@ -892,6 +937,41 @@ describe("request preparation beside Void", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("keeps a loose read's ambiguity after a strict write fails", () =>
+    Effect.gen(function* () {
+      const wire = Schema.Struct({ marker: Schema.optionalKey(Schema.String) });
+      const application = Schema.Struct({
+        a: Schema.optionalKey(Schema.String).pipe(
+          Schema.withConstructorDefault(Effect.succeed("x")),
+        ),
+      });
+      const transforming = wire.pipe(
+        Schema.decodeTo(application, {
+          decode: SchemaGetter.transform(() => ({})),
+          encode: SchemaGetter.transform(() => ({ marker: "x", extra: true })),
+        }),
+      );
+      const looselyEmpty = Schema.declareConstructor<object>()(
+        [],
+        () => (value, ast, options) =>
+          options.onExcessProperty !== "error" &&
+          typeof value === "object" &&
+          value !== null &&
+          Reflect.ownKeys(value).length === 0
+            ? Effect.succeed(value)
+            : Effect.fail(new SchemaIssue.InvalidType(ast, value, options)),
+      );
+      const schema = Schema.Union([transforming, looselyEmpty], {
+        mode: "oneOf",
+      });
+      const path = Request.get("").pipe(Request.path(schema, () => "/wrote"));
+      expect(yield* schemaFailure(path, { path: {} })).toBe(
+        "Expected exactly one member to match",
+      );
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
   it.effect("cannot evade encoded ambiguity by dropping an aliased field", () =>
     Effect.gen(function* () {
       const coded = (code: string) =>
@@ -901,15 +981,17 @@ describe("request preparation beside Void", () => {
             encode: SchemaGetter.transform(() => ({})),
           }),
         );
+      const o = Schema.Option(Schema.Struct({ a: Schema.String }));
+      const neighbour = Option.some({ a: "x", extra: true });
       const a = coded("first");
       const b = coded("second");
       const f = Schema.optionalKey(Schema.Union([a, b], { mode: "oneOf" }));
       const request = post(
-        Schema.Struct({ f }).pipe(Schema.encodeKeys({ f: "wire" })),
+        Schema.Struct({ o, f }).pipe(Schema.encodeKeys({ f: "wire" })),
       );
-      expect(yield* schemaFailure(request, { body: { wire: {} } })).toBe(
-        'Expected exactly one member to match\n  at ["wire"]',
-      );
+      expect(
+        yield* schemaFailure(request, { body: { o: neighbour, wire: {} } }),
+      ).toBe('Expected exactly one member to match\n  at ["wire"]');
 
       const defaulting = Schema.Struct({
         a: Schema.optionalKey(Schema.String).pipe(
@@ -918,12 +1000,15 @@ describe("request preparation beside Void", () => {
       });
       const mixed = post(
         Schema.Struct({
+          o,
           f: Schema.Union([a, defaulting], { mode: "oneOf" }),
           note: Schema.optionalKey(Schema.String),
         }).pipe(Schema.encodeKeys({ note: "wire" })),
       );
       expect(
-        yield* schemaFailure(mixed, { body: { f: {}, wire: "supplied" } }),
+        yield* schemaFailure(mixed, {
+          body: { o: neighbour, f: {}, wire: "supplied" },
+        }),
       ).toBe('Expected exactly one member to match\n  at ["f"]');
     }),
   );

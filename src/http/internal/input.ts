@@ -673,6 +673,8 @@ const decodedReading = <S extends Schema.Top>(
           : Effect.fail(ambiguity),
       onSuccess: ({ read, stripped, refused = failure }) => {
         // A loose read can take another union member than a strict one and strip its names unseen.
+        // If only an opaque neighbour kept the strict decoder from reading, retry a failed loose
+        // read without undefined keys before deciding the encoded side cannot take the value.
         const loose =
           stripped === undefined
             ? read === undefined
@@ -681,7 +683,13 @@ const decodedReading = <S extends Schema.Top>(
             : constructed && Excess.choosesMemberResolved(contract.ast)
               ? Effect.fail(failure)
               : Effect.map(
-                  decode(input, parseOptions),
+                  stripped.length === 0 && given !== input
+                    ? recoverRead(decode(input, parseOptions), (rawFailure) =>
+                        recoverRead(decode(given, parseOptions, input), () =>
+                          Effect.fail(rawFailure),
+                        ),
+                      )
+                    : decode(input, parseOptions),
                   (value): Decoded<unknown> => ({
                     value,
                     lost: mergePaths(stripped, leftOut(input, given, value)),
