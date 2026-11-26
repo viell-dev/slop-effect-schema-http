@@ -1076,6 +1076,160 @@ describe("loose writes inside Some", () => {
       }),
   );
 
+  const Page = Schema.Struct({
+    owner: Schema.String,
+    limit: Schema.String,
+  }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+  const wirePage = { owner: "a", page_size: "5" };
+
+  it.effect(
+    "accepts a wire name inside Schema.Option under a renamed parent",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Struct({
+          held: Schema.Option(Page),
+          who: Counted,
+        }).pipe(Schema.encodeKeys({ held: "h" }));
+        expect(
+          // Exercise the encoded payload at runtime; this typed input expects decoded contents.
+          yield* json(schema, { held: Option.some(wirePage), who } as never),
+        ).toEqual({
+          h: { _tag: "Some", value: wirePage },
+          who: writtenWho,
+        });
+      }),
+  );
+
+  it.effect(
+    "accepts an encoded scalar inside Schema.Option on the loose route",
+    () =>
+      Effect.gen(function* () {
+        const Count = Schema.Struct({
+          owner: Schema.String,
+          n: Schema.FiniteFromString,
+        });
+        const schema = Schema.Struct({
+          held: Schema.Option(Count),
+          who: Counted,
+        }).pipe(Schema.encodeKeys({ held: "h" }));
+        const value = { owner: "a", n: "5" };
+        expect(
+          yield* json(schema, { held: Option.some(value), who } as never),
+        ).toEqual({
+          h: { _tag: "Some", value },
+          who: writtenWho,
+        });
+      }),
+  );
+
+  it.effect(
+    "keeps the class member beside an encoded Schema.Option payload",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Struct({
+          held: Schema.Option(Page),
+          item: Schema.Union([Schema.Struct({ a: Schema.String }), Counted]),
+        });
+        expect(
+          yield* json(schema, { held: Option.some(wirePage), item: who }),
+        ).toEqual({
+          held: { _tag: "Some", value: wirePage },
+          item: writtenWho,
+        });
+      }),
+  );
+
+  it.effect(
+    "keeps configured tagged and list payloads below a renamed parent",
+    () =>
+      Effect.gen(function* () {
+        const tagged = Schema.Union([
+          Schema.TaggedStruct("A", Owner.fields),
+          Schema.TaggedStruct("A", Wide.fields),
+        ]);
+        const taggedRoot = Schema.Struct({
+          held: Schema.OptionFromOptionalNullOr(tagged, {
+            onNoneEncoding: null,
+          }),
+          who: Counted,
+        }).pipe(Schema.encodeKeys({ held: "h" }));
+        const listRoot = Schema.Struct({
+          held: Schema.OptionFromOptionalNullOr(Schema.Array(Filter), {
+            onNoneEncoding: null,
+          }),
+          who: Counted,
+        }).pipe(Schema.encodeKeys({ held: "h" }));
+        const payload = { _tag: "A" as const, ...wide };
+        expect(
+          yield* json(taggedRoot, { held: Option.some(payload), who }),
+        ).toEqual({
+          h: payload,
+          who: writtenWho,
+        });
+        expect(
+          yield* json(listRoot, { held: Option.some([wide]), who }),
+        ).toEqual({
+          h: [wide],
+          who: writtenWho,
+        });
+      }),
+  );
+
+  it.effect("lets a configured codec write its payload's wire names", () =>
+    Effect.gen(function* () {
+      const schema = Schema.Struct({
+        held: Schema.OptionFromOptionalNullOr(Page, { onNoneEncoding: null }),
+        who: Counted,
+      });
+      expect(
+        yield* json(schema, {
+          held: Option.some({ owner: "a", limit: "5" }),
+          who,
+        }),
+      ).toEqual({ held: wirePage, who: writtenWho });
+    }),
+  );
+
+  it.effect("leaves map payloads opaque on either side of an Option", () =>
+    Effect.gen(function* () {
+      const OptionOfMap = Schema.Struct({
+        held: Schema.Option(Schema.ReadonlyMap(Schema.String, Filter)),
+        who: Counted,
+        filter: Filter,
+      });
+      const MapOfOptions = Schema.Struct({
+        held: Schema.ReadonlyMap(
+          Schema.String,
+          Schema.OptionFromNullOr(Filter),
+        ),
+        who: Counted,
+        filter: Filter,
+      });
+      expect(
+        yield* json(OptionOfMap, {
+          held: Option.some(new Map([["k", wide]])),
+          who,
+          filter: wide,
+        }),
+      ).toEqual({
+        held: { _tag: "Some", value: [["k", owner]] },
+        who: writtenWho,
+        filter: wide,
+      });
+      expect(
+        yield* json(MapOfOptions, {
+          held: new Map([["k", Option.some(wide)]]),
+          who,
+          filter: wide,
+        }),
+      ).toEqual({
+        held: [["k", owner]],
+        who: writtenWho,
+        filter: wide,
+      });
+    }),
+  );
+
   it.effect("keeps a configured tagged payload wide after a loose read", () =>
     Effect.gen(function* () {
       const tagged = Schema.Union([

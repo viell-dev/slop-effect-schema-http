@@ -41,12 +41,22 @@
   This includes configured `OptionFromOptionalNullOr` and a native `Some` supplied as a struct
   beside an Option alternative. Remove the unstated key, rename the payload's `value` field, or use
   a visible `OptionFromNullOr`. For the struct case, supply a plain object.
-- Preserve wider members inside Options on a loose write
+- **Breaking:** preserve wider members inside Options on a loose write
   ([#308](https://github.com/viell-dev/slop-effect-schema-http/issues/308)). A class instance
   elsewhere in the body can force a loose write. The payload writer can now keep wider fields in
-  nested Options, renamed payloads, and configured `OptionFromOptionalNullOr` codecs. A union member
-  that writes one field under another's name no longer wins those cases. Requests that previously
-  refused or sent a narrowed body can now send the full payload.
+  nested Options and renamed payloads, including configured `OptionFromOptionalNullOr` with a
+  renamed parent and a same-tag or list payload. A union member that writes one field under
+  another's name no longer wins those cases. Requests that previously refused or sent a narrowed
+  body can now send the full payload.
+- **Breaking:** on a loose write through `Schema.Option(X)`, check that a wire-named field survives
+  the read when a structural rename pairs it with a decoded name. A narrower union member that used
+  to drop `page_size` can now cause a refusal at that name. Bind the intended member directly.
+  Encoded values that the read keeps, such as `"5"` under `FiniteFromString`, can still be sent.
+- Checking Option payloads adds preparation work. On Linux with Node 24 and Effect 4.1.5, a
+  20,000-row body with an `OptionFromNullOr` of a union in each row took 0.90 s on the strict route,
+  up from 0.69 s in 0.19.0. The loose-write probe with narrow payloads took 2.60 s, up from 1.52 s.
+  [#298](https://github.com/viell-dev/slop-effect-schema-http/pull/298) records both probes and
+  their controls without Options.
 - **Breaking:** preserve a stated payload field such as `limit` where a narrower choice used to drop
   it in a tagged, nested or list payload
   ([#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)). If an unrelated strict

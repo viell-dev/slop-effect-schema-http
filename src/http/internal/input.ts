@@ -1384,7 +1384,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
               visibleOptions ||
                 (custom === undefined &&
                   strict !== undefined &&
-                  Excess.mayUnwrapOption(ast, { decodedOnly: true }))
+                  Excess.mayContainOption(ast))
                 ? Excess.optionLoss(
                     ast,
                     given,

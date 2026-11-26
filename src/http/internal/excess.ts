@@ -1160,8 +1160,7 @@ const optionSource = (ast: Ast): Ast | undefined => {
 // OptionFromOptionalKey and its relatives can omit a wire key required on the decoded side.
 const isOptionFrame = (ast: Ast): boolean =>
   isStructural(ast) ||
-  (ast._tag === "Objects" &&
-    isKeyRename(ast, (type) => optionSource(type) !== undefined));
+  (ast._tag === "Objects" && isKeyRename(ast, isOptionDeclaration));
 
 /** A native class may be constructed from a plain input using these fields. */
 const plainClassFrame = (ast: Ast): Ast | undefined =>
@@ -1253,7 +1252,7 @@ const ownSome = (value: object): PropertyDescriptor | undefined => {
  */
 const sourceAt = (
   types: ReadonlyArray<Ast>,
-  { decodedOnly = false }: { readonly decodedOnly?: boolean } = {},
+  decodedOnly = false,
 ): Ast | undefined => {
   const active = new Set<Ast>();
   let option: Ast | undefined;
@@ -1293,18 +1292,12 @@ const sourceAt = (
 const unwrappingOptions = new WeakMap<Ast, boolean>();
 const allOptions = new WeakMap<Ast, boolean>();
 
-/** Find Option declarations under visible structure without resolving suspensions at binding time. */
-export const mayUnwrapOption = (
-  ast: Ast,
-  { decodedOnly = false }: { readonly decodedOnly?: boolean } = {},
-): boolean => {
-  const cache = decodedOnly ? allOptions : unwrappingOptions;
+const containsOption = (ast: Ast, all: boolean): boolean => {
+  const cache = all ? allOptions : unwrappingOptions;
   const known = cache.get(ast);
   if (known !== undefined) return known;
-  const visit = (type: Ast) => mayUnwrapOption(type, { decodedOnly });
-  let found = decodedOnly
-    ? isOptionDeclaration(ast)
-    : optionSource(ast) !== undefined;
+  const visit = all ? mayContainOption : mayUnwrapOption;
+  let found = all ? isOptionDeclaration(ast) : optionSource(ast) !== undefined;
   if (ast._tag === "Suspend") found = ast.encoding === undefined;
   if (!found) {
     const fields = plainClassFrame(ast);
@@ -1318,6 +1311,14 @@ export const mayUnwrapOption = (
   cache.set(ast, found);
   return found;
 };
+
+/** Find visible unwrapping codecs without resolving suspensions at binding time. */
+export const mayUnwrapOption = (ast: Ast): boolean =>
+  containsOption(ast, false);
+
+/** Find Option declarations, including opaque codecs. */
+export const mayContainOption = (ast: Ast): boolean =>
+  containsOption(ast, true);
 
 /**
  * Remove only unstated own fields inside a visible Some before the strict read. Using that read
@@ -1335,7 +1336,7 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
       types.length === 0 ||
       !isObject(value) ||
       active.has(value) ||
-      (!inSome && !types.some((type) => mayUnwrapOption(type)))
+      (!inSome && !types.some(mayUnwrapOption))
     )
       return value;
     active.add(value);
@@ -1397,19 +1398,52 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
 export const holdsNothing = (value: unknown): boolean =>
   value === null || (isObject(value) && !hasDefinedFields(value));
 
+const optionNames = new WeakMap<
+  SchemaAST.Objects,
+  ReadonlyArray<Naming> | null
+>();
+
+/** Pair a struct rename only if both sides preserve the original field order. */
+const optionNamesAlong = (side: SchemaAST.Objects) => {
+  const known = optionNames.get(side);
+  if (known !== undefined) return known ?? undefined;
+  const links = side.encoding ?? [];
+  // A hand-written rename can reorder index or symbol fields on the decoded side too.
+  if (links.length > 0 && !keepsOrder(side)) return undefined;
+  const names = namesAlong(side, links, isOptionDeclaration);
+  optionNames.set(side, names ?? null);
+  return names;
+};
+
+/**
+ * The decoded field corresponding to a wire name inside an opaque Some. A competing field can
+ * make the name ambiguous, so use only an agreed rename.
+ */
+const pairedReadName = (
+  sides: ReadonlyArray<Ast>,
+  key: PropertyKey,
+): PropertyKey | undefined => {
+  let paired: PropertyKey | undefined;
+  for (const side of sides) {
+    if (side._tag !== "Objects") continue;
+    const pairs = optionNamesAlong(side);
+    if (pairs === undefined) return undefined;
+    for (const [name, wire] of pairs) {
+      if (wire !== key) continue;
+      if (paired !== undefined && paired !== name) return undefined;
+      paired = name;
+    }
+  }
+  return paired;
+};
+
 /** Possible wire names for one field and whether another decoded name can write there too. */
 const optionWireNames = (sides: ReadonlyArray<Ast>, key: PropertyKey) => {
   const names = new Set<PropertyKey>();
   const otherNames = new Set<PropertyKey>();
   for (const side of sides) {
     if (side._tag !== "Objects") continue;
-    const links = side.encoding ?? [];
-    if (links.length > 0 && !keepsOrder(side)) return undefined;
-    const pairs = namesAlong(
-      side,
-      links,
-      (type) => optionSource(type) !== undefined,
-    );
+    const pairs = optionNamesAlong(side);
     if (pairs === undefined) return undefined;
     for (const [name, written] of pairs)
       (name === key ? names : otherNames).add(written);
@@ -1434,10 +1468,12 @@ export const optionLoss = (
 ): ReadonlyArray<Path> => {
   const lost: Path[] = [];
   const active = new Set<object>();
+  const mayContain = checkWrite ? mayContainOption : mayUnwrapOption;
   interface Position {
     readonly path: Path;
     readonly inSome: boolean;
     readonly writing: boolean;
+    readonly mayDecode: boolean;
   }
   const visit = (
     types: ReadonlyArray<Ast>,
@@ -1449,10 +1485,7 @@ export const optionLoss = (
     if (
       !isObject(given) ||
       active.has(given) ||
-      (!position.inSome &&
-        !types.some((type) =>
-          mayUnwrapOption(type, { decodedOnly: checkWrite }),
-        ))
+      (!position.inSome && !types.some(mayContain))
     )
       return;
     active.add(given);
@@ -1464,15 +1497,14 @@ export const optionLoss = (
     given: Record<PropertyKey, unknown>,
     value: unknown,
     written: unknown,
-    { path, inSome, writing }: Position,
+    { path, inSome, writing, mayDecode }: Position,
   ): void => {
     if (Option.isOption(given)) {
       const unwrapped = sourceAt(types);
       // A loose write can follow a read that already narrowed a configured Option's payload.
       // The type parameter states decoded fields even if the wire payload cannot be paired.
       const source =
-        unwrapped ??
-        (checkWrite ? sourceAt(types, { decodedOnly: true }) : undefined);
+        unwrapped ?? (checkWrite ? sourceAt(types, true) : undefined);
       const some = ownSome(given);
       if (source === undefined || some === undefined) return;
       visit(
@@ -1484,15 +1516,33 @@ export const optionLoss = (
           path: [...path, "value"],
           inSome: true,
           writing: writing && unwrapped !== undefined,
+          // Opaque Option declarations can decode the Some through their type parameter.
+          mayDecode:
+            mayDecode ||
+            (unwrapped === undefined &&
+              (SchemaAST.toType(source) !== source ||
+                SchemaAST.toEncoded(source) !== source)),
         },
       );
       return;
     }
     if (!isPlainData(given)) return;
-    const sides = structuralFrames(types, given);
+    const frames = structuralFrames(types, given);
+    const sides =
+      frames ??
+      (mayDecode
+        ? structuralFrames(types.map(SchemaAST.toType), given)
+        : undefined);
     if (sides === undefined) return;
     for (const key of keysOf(given)) {
-      const children = frameTypesAt(sides, key);
+      const paired =
+        mayDecode && frames !== undefined
+          ? pairedReadName(frames, key)
+          : undefined;
+      const readKey = paired !== undefined && !has(value, key) ? paired : key;
+      const children = mayDecode
+        ? typesAt(sides, readKey)
+        : frameTypesAt(sides, key);
       if (children.length === 0) continue;
       const expected = at(given, key);
       if (expected === undefined) continue;
@@ -1500,12 +1550,12 @@ export const optionLoss = (
         ...path,
         Array.isArray(given) ? (arrayIndex(key) ?? key) : key,
       ];
-      const decoded = at(value, key);
+      const decoded = at(value, readKey);
       // Void can read an empty value as undefined and still hold its field.
       if (
         decoded === undefined &&
         isObject(value) &&
-        key in value &&
+        readKey in value &&
         holdsNothing(expected)
       )
         continue;
@@ -1547,7 +1597,9 @@ export const optionLoss = (
       if (
         inSome &&
         (decoded === undefined ||
-          (!isObject(expected) && !Object.is(decoded, expected)) ||
+          (!mayDecode &&
+            !isObject(expected) &&
+            !Object.is(decoded, expected)) ||
           (mustWrite &&
             !omittedNone &&
             outputs.every((actual) => actual === undefined)))
@@ -1569,6 +1621,7 @@ export const optionLoss = (
           path: here,
           inSome,
           writing: mustWrite,
+          mayDecode,
         });
         if (lost.length === before) {
           firstLoss = undefined;
@@ -1584,6 +1637,7 @@ export const optionLoss = (
     path: [],
     inSome: false,
     writing: checkWrite,
+    mayDecode: false,
   });
   return lost;
 };
