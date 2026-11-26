@@ -59,7 +59,10 @@ const filtered = (
 const unfiltered = (name: string) =>
   lane.backend("bookings", { region: name }, { cors: "backend" });
 
-/** An origin nothing listens on: a region started in a scope of its own that has ended. */
+/**
+ * An origin nothing listens on: a region started in a scope of its own that has ended. Take it after
+ * the test's other backends have started, so none of them can be given its port.
+ */
 const closedPort = Effect.gen(function* () {
   const gone = yield* Effect.scoped(lane.backend("bookings"));
   return gone.origin;
@@ -129,9 +132,9 @@ describe(`a client that finds its API at runtime (${lane.name})`, () => {
       `[EXT-28a] ${provider}: a closed port and a reset are each a TransportError, and the last candidate is chosen`,
       () =>
         Effect.gen(function* () {
-          const closed = yield* closedPort;
           const resets = yield* region("reset", onEveryRoute("reset"));
           const healthy = yield* region("us");
+          const closed = yield* closedPort;
           expect(healthy.origin).not.toBe(closed);
           const found = yield* search(closed, resets.origin, healthy.origin);
           expect(found.region).toBe("us");
@@ -151,8 +154,8 @@ describe(`a client that finds its API at runtime (${lane.name})`, () => {
       `[EXT-28a] ${provider}: when no candidate counts the search fails as NoRegion, saying what each did`,
       () =>
         Effect.gen(function* () {
-          const closed = yield* closedPort;
           const parked = yield* region("parked", onEveryRoute("parked"));
+          const closed = yield* closedPort;
           const error = yield* Effect.flip(search(closed, parked.origin));
           expect(error).toBeInstanceOf(Bookings.NoRegion);
           expect(
