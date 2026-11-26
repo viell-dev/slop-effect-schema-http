@@ -78,22 +78,33 @@ describe("headers", () => {
         ).toMatchObject({ route: "other" });
         // HTTP/1.1 parsers drop the whitespace around a field value. HTTP/2 has no such step: RFC
         // 9113 section 8.2.1 makes a value that starts or ends with whitespace malformed. Undici's
-        // HTTP/2 client sends it as given, and the Warded Server hands it to the router as it
-        // arrived, so `header_eq` sees ` acme `. This pins the current behaviour of
-        // https://github.com/viell-dev/slop-warded-server/issues/25.
-        const padded = yield* run(
-          getting.pipe(Request.setHeader("x-tenant", " acme ")),
-          undefined,
-        );
-        // Fetch trims a value itself, before any protocol is chosen.
-        const untrimmed =
-          padded.seen.version === "HTTP/2" && client.name !== "fetch";
-        expect(values(padded.seen.headers, "x-tenant")).toEqual([
-          untrimmed ? " acme " : "acme",
-        ]);
-        expect(padded.outcome).toMatchObject({
-          route: untrimmed ? "other" : "tenant",
-        });
+        // HTTP/2 client sends it as given, and the Warded Server refuses the request with a 400
+        // before any route runs, as
+        // https://github.com/viell-dev/slop-warded-server/issues/25 asked.
+        const padded = yield* Effect.gen(function* () {
+          const routes = yield* serve(table);
+          return yield* send(
+            routes,
+            listener,
+            client,
+            operation(getting.pipe(Request.setHeader("x-tenant", " acme "))),
+            undefined,
+          );
+        }).pipe(Effect.scoped);
+        // Fetch trims a value itself, before any protocol is chosen. Undici is the lane's only
+        // HTTP/2 client, and only over HTTPS.
+        if (client.name === "undici" && listener === "https") {
+          expect(padded.exchanges).toEqual([]);
+          expect(padded.outcome).toMatchObject({
+            kind: "answered",
+            status: 400,
+          });
+        } else {
+          expect(values(only(padded).seen.headers, "x-tenant")).toEqual([
+            "acme",
+          ]);
+          expect(padded.outcome).toMatchObject({ route: "tenant" });
+        }
         expect(
           (yield* run(
             getting.pipe(Request.setHeader("x-empty", "")),
