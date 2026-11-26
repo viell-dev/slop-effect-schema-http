@@ -658,8 +658,9 @@ replace the original lines of that field only. On responses, provider-observed l
 invents lines.
 
 The library does not refuse a carriage return or line feed in a URL, a header name or a header
-value. `fetch` and `node:http` do not put them on the wire, and a provider that writes bytes itself
-[has to refuse them](./modules/transport.md#refuse-cr-and-lf-in-a-provider-that-writes-bytes).
+value, a header name that is not a token, or a NUL in a value. `fetch` and `node:http` keep them off
+the wire, and a provider that writes bytes itself [has to refuse
+them](./modules/transport.md#refuse-cr-and-lf-in-a-provider-that-writes-bytes).
 
 ## Responses
 

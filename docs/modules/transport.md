@@ -50,12 +50,22 @@ percent-encodes some characters, so read `request.hash` for the exact text. A pr
 `HttpClient.makeWith` reads `request.url` directly, so it has to read `request.hash` as well or the
 fragment is lost.
 
-### Refuse CR and LF in a provider that writes bytes
+### Refuse what the wire cannot carry in a provider that writes bytes {#refuse-cr-and-lf-in-a-provider-that-writes-bytes}
 
 The library does not refuse a carriage return or line feed in a URL, a header name or a header
-value. It stays as permissive as possible on its own end, so this check belongs to the provider.
-`fetch` and `node:http` do not put them on the wire. A provider that writes bytes itself must refuse
-them: otherwise a value taken from user input can add a header or split a request.
+value, a header name that is not a token, or a NUL in a value. It stays as permissive as possible on
+its own end, so these checks belong to the provider. `fetch` and `node:http` keep them off the wire.
+A provider that writes bytes itself must refuse them, or a value taken from user input can change
+what the server reads:
+
+- A carriage return or line feed in the URL, a name or a value can add a header or split a request.
+- A header name must be a token ([RFC 9110, section
+  5.1](https://www.rfc-editor.org/rfc/rfc9110#section-5.1)). The first colon on a line ends the
+  name, so the name `x:a` with the value `b` arrives as the field `x` with the value `a: b`. A name
+  built from input can then choose another field. A space, a NUL and an empty name are not tokens
+  either.
+- A header value must not contain a NUL ([RFC 9110, section
+  5.5](https://www.rfc-editor.org/rfc/rfc9110#section-5.5)).
 
 ### Read response metadata
 
