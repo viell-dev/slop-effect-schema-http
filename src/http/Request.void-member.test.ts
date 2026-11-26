@@ -1002,12 +1002,13 @@ describe("request preparation beside Void", () => {
         Schema.Struct({
           o,
           f: Schema.Union([a, defaulting], { mode: "oneOf" }),
+          n: Schema.FiniteFromString,
           note: Schema.optionalKey(Schema.String),
         }).pipe(Schema.encodeKeys({ note: "wire" })),
       );
       expect(
         yield* schemaFailure(mixed, {
-          body: { o: neighbour, f: {}, wire: "supplied" },
+          body: { o: neighbour, f: {}, n: "5", wire: "supplied" },
         }),
       ).toBe('Expected exactly one member to match\n  at ["f"]');
     }),
