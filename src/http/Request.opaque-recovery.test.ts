@@ -658,7 +658,10 @@ describe("a stray key inside an Option with a visible encoded object", () => {
         const held = Schema.NullOr(Payload).pipe(
           Schema.decodeTo(
             Schema.Option(Schema.toType(Payload)),
-            SchemaTransformation.transform({
+            SchemaTransformation.transform<
+              Option.Option<typeof Payload.Type>,
+              typeof Payload.Encoded | null
+            >({
               decode: Option.fromNullOr,
               encode: () => ({}),
             }),
@@ -685,8 +688,12 @@ describe("a stray key inside an Option with a visible encoded object", () => {
         const Payload = Encoded.pipe(
           Schema.decodeTo(
             Decoded,
-            SchemaTransformation.transform({
-              decode: (wire) => ({ owner: wire.OWNER }),
+            SchemaTransformation.transform<
+              typeof Decoded.Type,
+              typeof Encoded.Encoded
+            >({
+              decode: ({ OWNER }) =>
+                OWNER === undefined ? {} : { owner: OWNER },
               encode: () => ({}),
             }),
           ),
