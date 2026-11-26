@@ -1,5 +1,13 @@
 # Change history
 
+## Unreleased
+
+- Wait up to eight minutes, not five, for npm to show a published version and its attestations
+  before publication verification fails
+  ([#288](https://github.com/viell-dev/slop-effect-schema-http/issues/288)). 0.19.0's upload needed
+  about 250 seconds before its version appeared. The publication and read-only verification jobs
+  allow 12 and 10 minutes. This is release tooling and does not change the package.
+
 ## 0.19.0 — 2026-11-26
 
 [What's in 0.19](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.19) gives each
