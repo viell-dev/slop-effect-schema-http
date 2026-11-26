@@ -281,25 +281,28 @@ const ruledOut = (member: Ast, value: unknown): boolean => {
  */
 const isKeyRename = (ast: SchemaAST.Objects): boolean => {
   const [link, ...others] = ast.encoding ?? [];
-  if (link === undefined || others.length > 0) return false;
-  const { to, transformation } = link;
-  return (
-    transformation._tag === "Transformation" &&
-    to._tag === "Objects" &&
-    to.encoding === undefined &&
-    to.checks === undefined &&
-    ast.indexSignatures.length === 0 &&
-    to.indexSignatures.length === 0 &&
-    to.propertySignatures.length === ast.propertySignatures.length &&
-    ast.propertySignatures.every(({ type }, index) => {
-      const encoded = to.propertySignatures[index]!.type;
-      return (
-        SchemaAST.isOptional(type) === SchemaAST.isOptional(encoded) &&
-        SchemaAST.toEncoded(type) === encoded
-      );
-    })
-  );
+  return link !== undefined && others.length === 0 && renamesKeys(ast, link);
 };
+
+/** Whether a link leads from a struct to one of the same shape, as {@link isKeyRename} describes. */
+const renamesKeys = (
+  from: SchemaAST.Objects,
+  { to, transformation }: SchemaAST.Link,
+): boolean =>
+  transformation._tag === "Transformation" &&
+  to._tag === "Objects" &&
+  to.encoding === undefined &&
+  to.checks === undefined &&
+  from.indexSignatures.length === 0 &&
+  to.indexSignatures.length === 0 &&
+  to.propertySignatures.length === from.propertySignatures.length &&
+  from.propertySignatures.every(({ type }, index) => {
+    const encoded = to.propertySignatures[index]!.type;
+    return (
+      SchemaAST.isOptional(type) === SchemaAST.isOptional(encoded) &&
+      SchemaAST.toEncoded(type) === encoded
+    );
+  });
 
 /**
  * A struct, record, list or tuple, or a struct decoded from a same-shaped struct through any single
@@ -877,6 +880,142 @@ const has = (value: unknown, key: PropertyKey): boolean =>
 const at = (value: unknown, key: PropertyKey): unknown =>
   isObject(value) ? value[key] : undefined;
 
+/** A field's name as a struct reads it, and the name a key rename writes it under. */
+type Rename = readonly [read: PropertyKey, written: PropertyKey];
+
+/**
+ * Whether a struct renamed to these names states its fields in the order they were renamed. An
+ * object lists index names first and symbols last, so `Schema.encodeKeys` onto such a name can state
+ * the encoded fields in another order than the decoded ones, and position no longer pairs them.
+ */
+const keepsOrder = ({ propertySignatures }: SchemaAST.Objects): boolean =>
+  propertySignatures.every(
+    ({ name }) => typeof name === "string" && arrayIndex(name) === undefined,
+  );
+
+/**
+ * What a struct's fields are renamed to through these links, by position. Each link has to lead to a
+ * struct of the same shape, onto names that keep their order. Undefined where one does not.
+ */
+const renamesAlong = (
+  from: SchemaAST.Objects,
+  links: ReadonlyArray<SchemaAST.Link>,
+): ReadonlyArray<Rename> | undefined => {
+  let end = from;
+  for (const link of links) {
+    if (!renamesKeys(end, link)) return undefined;
+    end = link.to as SchemaAST.Objects;
+    if (!keepsOrder(end)) return undefined;
+  }
+  return from.propertySignatures.flatMap(({ name }, index) => {
+    const written = end.propertySignatures[index]!.name;
+    return written === name ? [] : [[name, written] as const];
+  });
+};
+
+const renamesFound = new WeakMap<Ast, ReadonlyArray<Rename> | null>();
+
+/**
+ * The fields one alternative writes under another name than it reads them by, through key renames
+ * such as `Schema.encodeKeys` makes on a struct or a class. Empty where it writes each name as it
+ * reads it, or writes no object. Undefined where another step could write any name: another
+ * transformation, middleware, a declaration that is not a class, or a rename whose fields need not
+ * keep their order.
+ */
+const renamesOf = (ast: Ast): ReadonlyArray<Rename> | undefined => {
+  const known = renamesFound.get(ast);
+  if (known !== undefined) return known ?? undefined;
+  let found: ReadonlyArray<Rename> | undefined;
+  if (ast.encoding === undefined)
+    found = ast._tag === "Declaration" ? undefined : [];
+  else if (takesNoObject(ast)) found = [];
+  else if (ast._tag === "Objects") found = renamesAlong(ast, ast.encoding);
+  else {
+    // A class writes the struct of its fields, and then what that struct is renamed to.
+    const fields = classFields(ast);
+    const [link, ...links] = ast.encoding;
+    if (
+      fields?._tag === "Objects" &&
+      link.transformation._tag === "Transformation"
+    )
+      found =
+        links.length === 0
+          ? renamesAlong(fields, fields.encoding ?? [])
+          : fields.encoding === undefined
+            ? renamesAlong(fields, links)
+            : undefined;
+  }
+  renamesFound.set(ast, found ?? null);
+  return found;
+};
+
+/** The renames of every alternative here, or undefined where one could write any name. */
+const renamesAt = (
+  types: ReadonlyArray<Ast>,
+): ReadonlyArray<Rename> | undefined => {
+  const renames: Array<Rename> = [];
+  const seen = new Set<Ast>();
+  const visit = (ast: Ast): boolean => {
+    if (seen.has(ast)) return true;
+    seen.add(ast);
+    if (ast.encoding === undefined && ast._tag === "Union")
+      return ast.types.every(visit);
+    if (ast.encoding === undefined && ast._tag === "Suspend")
+      return visit(ast.thunk());
+    const own = renamesOf(ast);
+    if (own === undefined) return false;
+    renames.push(...own);
+    return true;
+  };
+  return types.every(visit) ? renames : undefined;
+};
+
+/**
+ * The names a rename here writes each field under where nothing else here can write them: no other
+ * field is renamed to the name, and the value holds no key of that name. A list's cells keep their
+ * places.
+ */
+const soleRenames = (
+  types: ReadonlyArray<Ast>,
+  given: object,
+  keys: ReadonlyArray<PropertyKey>,
+): ReadonlyMap<PropertyKey, ReadonlyArray<PropertyKey>> => {
+  const sole = new Map<PropertyKey, Array<PropertyKey>>();
+  const renames = Array.isArray(given) ? undefined : renamesAt(types);
+  if (renames === undefined) return sole;
+  const held = new Set(keys);
+  for (const [read, written] of renames) {
+    if (
+      held.has(written) ||
+      renames.some(([other, name]) => name === written && other !== read)
+    )
+      continue;
+    const names = sole.get(read);
+    if (names === undefined) sole.set(read, [written]);
+    else if (!names.includes(written)) names.push(written);
+  }
+  return sole;
+};
+
+/**
+ * Where `output`, written from `given` here, holds each of its fields: under the name it was given
+ * by, or else under the name a key rename here writes it as, where nothing else here can write that
+ * name. Undefined where neither holds it.
+ */
+const writtenNames = (
+  types: ReadonlyArray<Ast>,
+  given: object,
+  keys: ReadonlyArray<PropertyKey>,
+  output: unknown,
+): ((key: PropertyKey) => PropertyKey | undefined) => {
+  let renamed: ReturnType<typeof soleRenames> | undefined;
+  return (key) => {
+    if (has(output, key)) return key;
+    renamed ??= soleRenames(types, given, keys);
+    return renamed.get(key)?.find((name) => has(output, name));
+  };
+};
+
 /** Whether a value keeps its names through a schema, as one with no encoding of its own does. */
 const keepsNames = (ast: Ast): boolean =>
   ast.encoding === undefined
@@ -905,7 +1044,8 @@ export const missing = (
     readonly sameNames?: boolean;
     /**
      * Whether a value kept as given has to be written too, as where a strict read kept it and a
-     * loose write could still strip it.
+     * loose write could still strip it. Each field is then followed into what was written under the
+     * name it is written by, as {@link writtenNames} finds it.
      */
     readonly written?: boolean;
   } = {},
@@ -929,7 +1069,12 @@ export const missing = (
     (!isObject(value) ||
       !decoded.has(String(key)) ||
       Equal.equals(at(output, key), given[key]));
-  return keysOf(given, readAsArray(sides)).flatMap((key) => {
+  const keys = keysOf(given, readAsArray(sides));
+  const writtenAs =
+    options.written === true
+      ? writtenNames(types, given, keys, output)
+      : undefined;
+  return keys.flatMap((key) => {
     const here = [
       ...path,
       Array.isArray(given) ? (arrayIndex(key) ?? key) : key,
@@ -939,7 +1084,7 @@ export const missing = (
         heldAt(view, key),
         given[key],
         at(value, key),
-        at(output, key),
+        at(output, writtenAs?.(key) ?? key),
         options,
         here,
         view,
@@ -950,8 +1095,9 @@ export const missing = (
 
 /**
  * What a write lost of a value a read kept as given: each key has to be in `output` under the name it
- * was given by. Under a value that is not plain data, only a key a side states counts, unless its
- * keys are open there, because a key no member states is left out.
+ * was given by, or under the name a key rename here writes it as, as {@link writtenNames} finds it.
+ * Under a value that is not plain data, only a key a side states counts, unless its keys are open
+ * there, because a key no member states is left out.
  */
 const unwritten = (
   types: ReadonlyArray<Ast>,
@@ -968,16 +1114,21 @@ const unwritten = (
     isPlain(given) || leaveKeysOpen(view)
       ? () => true
       : (key: PropertyKey) => typesAt(sides, key).length > 0;
-  return keysOf(given, readAsArray(sides)).flatMap((key) => {
-    if (!counts(key) || given[key] === undefined) return [];
+  const keys = keysOf(given, readAsArray(sides));
+  const writtenAs = writtenNames(types, given, keys, output);
+  return keys.flatMap((key) => {
+    if (!counts(key)) return [];
+    // Read each value once: a getter is the caller's code.
+    const inner = given[key];
+    if (inner === undefined) return [];
     const here = [
       ...path,
       Array.isArray(given) ? (arrayIndex(key) ?? key) : key,
     ];
-    if (!has(output, key)) return [here];
-    const inner = given[key];
+    const name = writtenAs(key);
+    if (name === undefined) return [here];
     return isObject(inner)
-      ? unwritten(heldAt(view, key), inner, at(output, key), here, view)
+      ? unwritten(heldAt(view, key), inner, at(output, name), here, view)
       : [];
   });
 };
