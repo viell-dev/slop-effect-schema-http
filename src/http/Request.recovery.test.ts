@@ -10,6 +10,7 @@ import {
   SchemaIssue,
   SchemaTransformation,
 } from "effect";
+import { FieldlessOneOf } from "./internal/ambiguity.js";
 import * as Groups from "./internal/group.js";
 import * as Inputs from "./internal/input.js";
 import * as Shapes from "./internal/shape.js";
@@ -846,6 +847,46 @@ describe("remaining group-field recovery", () => {
           expect(claims).toBe(0);
         }
       }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("tries the next group permutation after an ambiguous read", () =>
+    Effect.gen(function* () {
+      const token = {};
+      const output = { b: "y" };
+      const alternate = { a: "x", b: "y", c: "z" };
+      const group = Schema.Union([B, AC]);
+      const oneOf = Schema.Union([Schema.Struct({}), Schema.Void], {
+        mode: "oneOf",
+      });
+      const readers = vi.spyOn(Inputs, "reorderedReaders").mockReturnValue([
+        () =>
+          Effect.fail(
+            new FieldlessOneOf({
+              ast: oneOf.ast,
+              matches: oneOf.ast.types,
+              path: [],
+            }),
+          ),
+        () => Effect.succeed({ output: alternate, lost: [] }),
+      ]);
+      try {
+        const result = yield* Groups.recovery(group)(
+          input.query,
+          { output, lost: [["a"], ["c"]], snapshot: Shapes.snapshot(output) },
+          {
+            fields: new Set(["b"]),
+            settled: new Set(),
+            certificates: new Map([[token, new Set(["b"])]]),
+          },
+          token,
+          () => new Set(["a", "b", "c"]),
+        );
+        expect(result?.reading.output).toEqual(alternate);
+      } finally {
+        readers.mockRestore();
+      }
+    }),
   );
 
   it("excludes transformed members, open members and iterable members", () => {
