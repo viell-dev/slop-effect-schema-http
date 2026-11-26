@@ -356,6 +356,36 @@ describe("request preparation beside Void", () => {
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/276
   it.effect(
+    "refuses an ambiguous omitted or stacked query or header group",
+    () =>
+      Effect.gen(function* () {
+        const other = Schema.Struct({ b: Schema.optionalKey(Schema.String) });
+        const f = Schema.Union([Filter, other], { mode: "oneOf" });
+        const z = Schema.Struct({ z: Schema.String });
+        const root = Request.get("/x");
+        const message = "Expected exactly one member to match";
+        for (const failure of [
+          schemaFailure(root.pipe(Request.query(f)), {} as never),
+          schemaFailure(root.pipe(Request.headers(f)), {} as never),
+          schemaFailure(root.pipe(Request.query(f), Request.query(z)), {
+            query: { z: "given" },
+          }),
+          schemaFailure(root.pipe(Request.query(z), Request.query(f)), {
+            query: { z: "given" },
+          }),
+          schemaFailure(root.pipe(Request.headers(f), Request.headers(z)), {
+            headers: { z: "given" },
+          }),
+          schemaFailure(root.pipe(Request.headers(z), Request.headers(f)), {
+            headers: { z: "given" },
+          }),
+        ])
+          expect(yield* failure).toBe(message);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
     "refuses fieldless oneOf through enclosing unions and list positions",
     () =>
       Effect.gen(function* () {
@@ -479,22 +509,305 @@ describe("request preparation beside Void", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("takes the complete fieldwise reading in either anyOf order", () =>
+    Effect.gen(function* () {
+      const n = Schema.FiniteFromString;
+      const m = Schema.FiniteFromString;
+      const f = Schema.Union([Filter, Schema.Void], { mode: "oneOf" });
+      const ambiguous = Schema.Struct({ f, n, m });
+      const keeping = Schema.Struct({ f: Schema.Unknown, n, m });
+      const body = { f: {}, n: "5", m: 6 };
+      const first = post(Schema.Union([ambiguous, keeping]));
+      const last = post(Schema.Union([keeping, ambiguous]));
+      expect(yield* bodyOf(first, { body })).toBe('{"f":{},"n":"5","m":"6"}');
+      expect(yield* bodyOf(last, { body })).toBe('{"f":{},"n":"5","m":"6"}');
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
   it.effect(
-    "refuses instead of switching a fieldwise read to a different output",
+    "retains the ambiguity when the enclosing alternative would lose a field",
+    () =>
+      Effect.gen(function* () {
+        const f = Schema.Union([Filter, Schema.Void], { mode: "oneOf" });
+        const n = Schema.FiniteFromString;
+        const ambiguous = Schema.Struct({ f, n, m: n, kept: Schema.String });
+        const strips = Schema.Struct({ f: Schema.Unknown, n, m: n });
+        const body = { f: {}, n: "5", m: 6, kept: "given" };
+        for (const order of [
+          [ambiguous, strips],
+          [strips, ambiguous],
+        ] as const)
+          expect(
+            yield* schemaFailure(post(Schema.Union(order)), { body }),
+          ).toBe('Expected exactly one member to match\n  at ["f"]');
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("reads past an ambiguous candidate that fails elsewhere", () =>
+    Effect.gen(function* () {
+      const F = Schema.FiniteFromString;
+      const defaulting = Schema.Struct({
+        a: Schema.optionalKey(Schema.String).pipe(
+          Schema.withConstructorDefault(Effect.succeed("x")),
+        ),
+      });
+      const other = Schema.Struct({ b: Schema.optionalKey(Schema.String) });
+      for (const members of [
+        [Filter, Schema.Void],
+        [Schema.Void, Filter],
+        [defaulting, other],
+        [other, defaulting],
+      ] as const) {
+        const one = Schema.Union(members, { mode: "oneOf" });
+        for (const f of [
+          one,
+          Schema.optional(one),
+          Schema.NullOr(one),
+          Schema.Union([one, Schema.String]),
+        ] as const) {
+          const cases = [
+            [
+              Schema.Struct({ f, n: Schema.Finite, m: Schema.String }),
+              Schema.Struct({ f: Schema.Unknown, n: F, m: F }),
+              { f: {}, n: "5", m: 6 },
+              '{"f":{},"n":"5","m":"6"}',
+            ],
+            [
+              Schema.Struct({ f, required: Schema.String, n: F, m: F }),
+              Schema.Struct({ f: Schema.Unknown, n: F, m: F }),
+              { f: {}, n: "5", m: 6 },
+              '{"f":{},"n":"5","m":"6"}',
+            ],
+            [
+              Schema.Struct({ f, required: Schema.String, n: F, m: F }),
+              Schema.Struct({ f: Schema.Unknown, n: F, m: F }),
+              { f: {}, required: undefined, n: "5", m: 6 },
+              '{"f":{},"n":"5","m":"6"}',
+            ],
+            [
+              Schema.Struct({
+                g: Schema.Struct({ f, required: Schema.String }),
+                n: F,
+                m: F,
+              }),
+              Schema.Struct({ g: Schema.Unknown, n: F, m: F }),
+              { g: { f: {} }, n: "5", m: 6 },
+              '{"g":{"f":{}},"n":"5","m":"6"}',
+            ],
+            [
+              Schema.Struct({
+                g: Schema.Struct({ f, required: Schema.String }),
+                n: F,
+                m: F,
+              }),
+              Schema.Struct({ g: Schema.Unknown, n: F, m: F }),
+              { g: { f: {}, required: 7 }, n: "5", m: 6 },
+              '{"g":{"f":{},"required":7},"n":"5","m":"6"}',
+            ],
+          ] as const;
+          for (const [ambiguous, keeping, body, output] of cases)
+            for (const order of [
+              [ambiguous, keeping],
+              [keeping, ambiguous],
+            ] as const)
+              expect(
+                yield* bodyOf(post(Schema.Union(order)), { body } as never),
+              ).toBe(output);
+        }
+      }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "judges the empty field independently of excess keys in an opaque neighbour",
+    () =>
+      Effect.gen(function* () {
+        const Inner = Schema.Struct({ a: Schema.String });
+        const O = Schema.Option(Inner);
+        const defaulting = Schema.Struct({
+          a: Schema.optionalKey(Schema.String).pipe(
+            Schema.withConstructorDefault(Effect.succeed("x")),
+          ),
+        });
+        const other = Schema.Struct({ b: Schema.optionalKey(Schema.String) });
+        for (const members of [
+          [Filter, Schema.Void],
+          [Schema.Void, Filter],
+          [defaulting, other],
+          [other, defaulting],
+        ] as const) {
+          const u = Schema.Union(members, { mode: "oneOf" });
+          for (const [schema, input, path] of [
+            [
+              Schema.Struct({ o: O, f: u }),
+              (o: unknown, f: unknown) => ({ o, f }),
+              '["f"]',
+            ],
+            [
+              Schema.Struct({ f: u, o: O }),
+              (o: unknown, f: unknown) => ({ f, o }),
+              '["f"]',
+            ],
+            [
+              Schema.Struct({ o: O, f: Schema.optional(u) }),
+              (o: unknown, f: unknown) => ({ o, f }),
+              '["f"]',
+            ],
+            [
+              Schema.Struct({ o: O, g: Schema.Struct({ f: u }) }),
+              (o: unknown, f: unknown) => ({ o, g: { f } }),
+              '["g"]["f"]',
+            ],
+            [
+              Schema.Struct({ o: O, r: Schema.Record(Schema.String, u) }),
+              (o: unknown, f: unknown) => ({ o, r: { k: f } }),
+              '["r"]["k"]',
+            ],
+            [Schema.Tuple([O, u]), (o: unknown, f: unknown) => [o, f], "[1]"],
+          ] as const) {
+            for (const o of [
+              Option.some({ a: "x" }),
+              Option.some({ a: "x", extra: 1 }),
+            ])
+              for (const f of [
+                {},
+                { extra: true },
+                { limit: undefined, a: undefined, b: undefined },
+              ])
+                expect(
+                  yield* schemaFailure(post(schema), {
+                    body: input(o, f),
+                  } as never),
+                ).toBe("Expected exactly one member to match\n  at " + path);
+          }
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "keeps the caller's named array field in view during reassembly",
+    () =>
+      Effect.gen(function* () {
+        const list = Schema.Array(Schema.Unknown);
+        const tuple = Schema.Tuple([Schema.optionalKey(Schema.String)]);
+        const n = Schema.FiniteFromString;
+        for (const members of [
+          [list, tuple],
+          [tuple, list],
+        ] as const) {
+          const f = Schema.Union(members, { mode: "oneOf" });
+          const schema = Schema.Union([
+            Schema.Struct({ f, n, m: n }),
+            Schema.Struct({ f: Schema.Unknown, n, m: n }),
+          ]);
+          const input = {
+            f: Object.assign([], { tag: "named" }),
+            n: "5",
+            m: 6,
+          };
+          const path = Request.get("").pipe(
+            Request.path(schema, (value) =>
+              Array.isArray(value.f) && Reflect.get(value.f, "tag") === "named"
+                ? "/kept"
+                : "/missing",
+            ),
+          );
+          expect(yield* urlOf(path, { path: input })).toBe("/kept");
+          const failure = yield* Effect.flip(
+            bodyOf(post(schema), { body: input }),
+          );
+          expect(failure).toMatchObject({
+            _tag: "HttpBodyError",
+            message:
+              'JSON body at $["f"]["tag"] cannot encode an extra array field',
+          });
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "uses the field's constructor when only its encoded side is ambiguous",
     () =>
       Effect.gen(function* () {
         const n = Schema.FiniteFromString;
-        const m = Schema.FiniteFromString;
-        const f = Schema.Union([Filter, Schema.Void], { mode: "oneOf" });
-        const ambiguous = Schema.Struct({ f, n, m });
-        const keeping = Schema.Struct({ f: Schema.Unknown, n, m });
-        const body = { f: {}, n: "5", m: 6 };
-        const first = post(Schema.Union([ambiguous, keeping]));
-        const last = post(Schema.Union([keeping, ambiguous]));
-        expect(yield* schemaFailure(first, { body })).toBe(
-          'Expected exactly one member to match\n  at ["f"]',
+        const A = Schema.Struct({
+          a: Schema.optionalKey(Schema.String).pipe(
+            Schema.withConstructorDefault(Effect.succeed("x")),
+          ),
+        });
+        const B = Schema.Struct({
+          marker: Schema.optionalKey(Schema.String),
+        }).pipe(
+          Schema.decodeTo(Schema.Struct({ code: Schema.String }), {
+            decode: SchemaGetter.transform(() => ({ code: "decoded" })),
+            encode: SchemaGetter.transform(() => ({})),
+          }),
         );
-        expect(yield* bodyOf(last, { body })).toBe('{"f":{},"n":"5","m":"6"}');
+        for (const members of [
+          [A, B],
+          [B, A],
+        ] as const) {
+          const f = Schema.Union(members, { mode: "oneOf" });
+          for (const schema of [
+            Schema.Struct({ f, n, m: n }),
+            Schema.Struct({ n, m: n, f }),
+          ])
+            for (const [a, b] of [
+              [5, 6],
+              ["5", "6"],
+              ["5", 6],
+              [5, "6"],
+            ] as const)
+              expect(
+                JSON.parse(
+                  (yield* bodyOf(post(schema), {
+                    body: { f: {}, n: a, m: b },
+                  }))!,
+                ),
+              ).toEqual({
+                f: { a: "x" },
+                n: "5",
+                m: "6",
+              });
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/307
+  it.effect(
+    "writes an all-undefined field beside an opaque neighbour with excess keys",
+    () =>
+      Effect.gen(function* () {
+        const o = Schema.Option(Schema.Struct({ a: Schema.String }));
+        const C = Schema.Struct({ c: Schema.String });
+        for (const mode of ["anyOf", "oneOf"] as const) {
+          const f = Schema.Union([C, Schema.Unknown], { mode });
+          for (const schema of [
+            Schema.Struct({ f, o }),
+            Schema.Struct({ o, f }),
+          ]) {
+            const request = post(schema);
+            for (const option of [
+              Option.some({ a: "x" }),
+              Option.some({ a: "x", extra: 1 }),
+            ])
+              expect(
+                JSON.parse(
+                  (yield* bodyOf(request, {
+                    body: { f: { limit: undefined }, o: option },
+                  }))!,
+                ),
+              ).toEqual({
+                f: {},
+                o: { _tag: "Some", value: { a: "x" } },
+              });
+          }
+        }
       }),
   );
 

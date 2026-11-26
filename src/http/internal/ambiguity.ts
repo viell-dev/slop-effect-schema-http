@@ -1,4 +1,11 @@
-import { Data, Effect, Schema, type SchemaAST, SchemaIssue } from "effect";
+import {
+  Data,
+  Effect,
+  Result,
+  Schema,
+  type SchemaAST,
+  SchemaIssue,
+} from "effect";
 import { hasDefinedFields } from "./excess.js";
 import { isPlainData } from "./plain.js";
 import { extraArrayField } from "./writer-error.js";
@@ -8,7 +15,7 @@ export class FieldlessOneOf extends Data.TaggedError("FieldlessOneOf")<{
   readonly ast: SchemaAST.Union;
   readonly matches: ReadonlyArray<SchemaAST.AST>;
   /** The enclosing union failed as a whole. Another alternative can fit on the other side. */
-  readonly withinUnion?: true;
+  readonly insideAnyOf?: true;
 }> {}
 
 export type ReadFailure = Schema.SchemaError | FieldlessOneOf;
@@ -35,22 +42,29 @@ const ownValueAt = (
 /**
  * Extract the ambiguity while the read still knows its input. A union that failed can wrap the
  * ambiguity of one of its alternatives in AnyOf. A diagnostic read can also find it after an
- * independently invalid sibling. Let fieldwise recovery decide where the whole read cannot.
+ * independently invalid sibling. A result of `undefined` means only excess keys were found.
+ * `"invalid"` means another issue prevents classifying this read as an ambiguity.
  */
 const locate = (
   issue: SchemaIssue.Issue,
   input: unknown,
+  caller: unknown,
+  normalised: () => unknown,
   path: ReadonlyArray<PropertyKey>,
 ): FieldlessOneOf | "invalid" | undefined => {
   switch (issue._tag) {
     case "Pointer":
-      return locate(issue.issue, input, [...path, ...issue.path]);
+      return locate(issue.issue, input, caller, normalised, [
+        ...path,
+        ...issue.path,
+      ]);
     case "Encoding":
-      return locate(issue.issue, input, path);
+    case "Filter":
+      return locate(issue.issue, input, caller, normalised, path);
     case "Composite": {
       let ambiguity: FieldlessOneOf | undefined;
       for (const member of issue.issues) {
-        const found = locate(member, input, path);
+        const found = locate(member, input, caller, normalised, path);
         if (found === "invalid") return found;
         ambiguity ??= found;
       }
@@ -58,11 +72,13 @@ const locate = (
     }
     case "AnyOf": {
       for (const member of issue.issues) {
-        const found = locate(member, input, path);
+        const found = locate(member, input, caller, normalised, path);
         if (found !== undefined && found !== "invalid")
-          return issue.ast.types.length === 1 || found.withinUnion
+          return issue.ast.types.length === 1 ||
+            issue.ast.options?.mode === "oneOf" ||
+            found.insideAnyOf
             ? found
-            : new FieldlessOneOf({ ...found, withinUnion: true });
+            : new FieldlessOneOf({ ...found, insideAnyOf: true });
       }
       return "invalid";
     }
@@ -71,6 +87,8 @@ const locate = (
     case "OneOf":
       if (
         isFieldless(ownValueAt(input, path)) &&
+        !hasNamedArrayContent(ownValueAt(caller, path)) &&
+        isFieldless(ownValueAt(normalised(), path)) &&
         (issue.input === undefined || isFieldless(issue.input))
       )
         return new FieldlessOneOf({
@@ -84,11 +102,16 @@ const locate = (
   }
 };
 
+const hasNamedArrayContent = (value: unknown): boolean =>
+  Array.isArray(value) && extraArrayField(value, value.length) !== undefined;
+
 export const readFailure = (
   failure: Schema.SchemaError,
   input: unknown,
+  caller: unknown,
+  normalised: () => unknown,
 ): ReadFailure => {
-  const found = locate(failure.issue, input, []);
+  const found = locate(failure.issue, input, caller, normalised, []);
   return found === undefined || found === "invalid" ? failure : found;
 };
 
@@ -98,6 +121,26 @@ export const recoverRead = <A, B, E, R, R2>(
   recover: (error: Schema.SchemaError) => Effect.Effect<B, E, R2>,
 ): Effect.Effect<A | B, E | FieldlessOneOf, R | R2> =>
   Effect.catchTag(effect, "SchemaError", recover);
+
+/** Capture ordinary read failures. An ambiguity stays in the error channel. */
+export const attemptRead = <A, R>(effect: Effect.Effect<A, ReadFailure, R>) =>
+  recoverRead(Effect.map(effect, Result.succeed), (failure) =>
+    Effect.succeed(Result.fail(failure)),
+  );
+
+/** Handle a reading's success and ordinary failure without handling ambiguity. */
+export const matchRead = <A, B, C, E, E2, R, R2, R3>(
+  effect: Effect.Effect<A, ReadFailure, R>,
+  handlers: {
+    readonly onSuccess: (value: A) => Effect.Effect<B, E, R2>;
+    readonly onFailure: (error: Schema.SchemaError) => Effect.Effect<C, E2, R3>;
+  },
+) =>
+  Effect.flatMap(
+    attemptRead(effect),
+    (result): Effect.Effect<B | C, E | E2, R2 | R3> =>
+      Result.match(result, handlers),
+  );
 
 /** The public issue carries only the ambiguous path and match information, without input. */
 export const publicRead = <A, R>(
