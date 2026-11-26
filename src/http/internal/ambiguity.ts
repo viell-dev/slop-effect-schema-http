@@ -94,15 +94,26 @@ const locate = (
   }
 };
 
+/** A strict pass may copy an opaque value into a plain object. The copy is not a witness. */
+export const hasPlainWitness = (
+  input: unknown,
+  path: ReadonlyArray<PropertyKey>,
+) => {
+  const value = ownValueAt(input, path);
+  return typeof value === "object" && value !== null && isPlainData(value);
+};
+
 export const readFailure = (
   failure: Schema.SchemaError,
   input: unknown,
   normalised: () => unknown,
+  witness?: (path: ReadonlyArray<PropertyKey>) => boolean,
 ): ReadFailure => {
   const found = locate(
     failure.issue,
     (path) =>
       isFieldless(ownValueAt(input, path)) &&
+      (witness?.(path) ?? true) &&
       isFieldless(ownValueAt(normalised(), path)),
     [],
   );
