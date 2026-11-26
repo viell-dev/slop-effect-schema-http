@@ -387,8 +387,9 @@ optional fields can both read `{}`, even if constructing one would fill a defaul
 in either member order, including inside an optional field, a list or another union. The failure
 names the ambiguous value's path and omits the input. The constructor counts matches on the decoded
 side. The encoded side counts its own matches if preparation reaches that reader. A successful
-decoded reading needs no extra check for encoded-only matches. The default `anyOf` mode still takes
-the first successful member.
+decoded reading needs no extra check for encoded-only matches. An enclosing union can still read the
+whole value successfully through another member, including on the encoded side. The default `anyOf`
+mode takes the first successful member.
 
 ### Void takes only an empty value
 

@@ -7,8 +7,8 @@ export class FieldlessOneOf extends Data.TaggedError("FieldlessOneOf")<{
   readonly path: ReadonlyArray<PropertyKey>;
   readonly ast: SchemaAST.Union;
   readonly matches: ReadonlyArray<SchemaAST.AST>;
-  /** The ambiguity was one of several failed alternatives of an enclosing union. */
-  readonly besideAlternative?: true;
+  /** The enclosing union failed as a whole. Another alternative can fit on the other side. */
+  readonly withinUnion?: true;
 }> {}
 
 export type ReadFailure = Schema.SchemaError | FieldlessOneOf;
@@ -60,9 +60,9 @@ const locate = (
       for (const member of issue.issues) {
         const found = locate(member, input, path);
         if (found !== undefined && found !== "invalid")
-          return issue.issues.length === 1 || found.besideAlternative
+          return issue.ast.types.length === 1 || found.withinUnion
             ? found
-            : new FieldlessOneOf({ ...found, besideAlternative: true });
+            : new FieldlessOneOf({ ...found, withinUnion: true });
       }
       return "invalid";
     }
@@ -92,7 +92,7 @@ export const readFailure = (
   return found === undefined || found === "invalid" ? failure : found;
 };
 
-/** Ambiguity is terminal. Only an ordinary schema failure permits a different reading. */
+/** Only an ordinary schema failure permits general fallback. */
 export const recoverRead = <A, B, E, R, R2>(
   effect: Effect.Effect<A, ReadFailure, R>,
   recover: (error: Schema.SchemaError) => Effect.Effect<B, E, R2>,

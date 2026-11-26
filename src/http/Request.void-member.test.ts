@@ -8,6 +8,7 @@ import {
   urlOf,
 } from "../../test/request.js";
 import * as Body from "./Body.js";
+import * as Inputs from "./internal/input.js";
 import * as Request from "./Request.js";
 
 /** What path and JSON body preparation write, or `"refused"` for a `SchemaError`. */
@@ -211,6 +212,29 @@ describe("request preparation beside Void", () => {
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/276
   it.effect(
+    "omits input from the ambiguity even when parse options request it",
+    () =>
+      Effect.gen(function* () {
+        const f = Schema.Union([Filter, Schema.Void], { mode: "oneOf" });
+        const decode = Inputs.toDecoded(Schema.Struct({ f }), {
+          errors: "all",
+          reportInput: true,
+        });
+        const failure = yield* Effect.flip(decode({ f: {} }));
+        expect(failure.message).toBe(
+          'Expected exactly one member to match\n  at ["f"]',
+        );
+        if (
+          failure.issue._tag !== "Pointer" ||
+          failure.issue.issue._tag !== "OneOf"
+        )
+          throw failure;
+        expect(failure.issue.issue.input).toBeUndefined();
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
     "names the ambiguous field at its full path in mixed-side input",
     () =>
       Effect.gen(function* () {
@@ -350,7 +374,8 @@ describe("request preparation beside Void", () => {
             Schema.suspend(() => Schema.NullOr(union)),
           ]) {
             const record = post(Schema.Struct({ f: wrapped }));
-            const list = post(Schema.Array(wrapped));
+            const listSchema = Schema.Array(wrapped);
+            const list = post(listSchema);
             for (const f of [
               {},
               { extra: "synthetic-unused" },
@@ -361,7 +386,11 @@ describe("request preparation beside Void", () => {
                 message + '\n  at ["f"]',
               );
               expect(
-                yield* schemaFailure(list, { body: [{ limit: 5 }, input] }),
+                yield* schemaFailure(list, {
+                  body: [{ limit: 5 }, input] as Request.Input<
+                    typeof listSchema
+                  >,
+                }),
               ).toBe(message + "\n  at [1]");
             }
             for (const f of [{ limit: 5 }, { page_size: "05" }]) {
@@ -396,6 +425,57 @@ describe("request preparation beside Void", () => {
         );
       }
     }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "still reads an encoded-only alternative of an enclosing union",
+    () =>
+      Effect.gen(function* () {
+        const union = Schema.Union([Filter, Schema.Void], { mode: "oneOf" });
+        const alternative = Schema.Struct({}).pipe(
+          Schema.decodeTo(Schema.Literal("encoded"), {
+            decode: SchemaGetter.transform(() => "encoded" as const),
+            encode: SchemaGetter.transform(() => ({})),
+          }),
+        );
+        for (const members of [
+          [union, alternative],
+          [alternative, union],
+        ] as const) {
+          expect(yield* bodyOf(post(Schema.Union(members)), { body: {} })).toBe(
+            "{}",
+          );
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "still reads a distinct enclosing union member field by field",
+    () =>
+      Effect.gen(function* () {
+        const f = Schema.Union([Filter, Schema.Void], { mode: "oneOf" });
+        const ambiguous = Schema.Struct({
+          f,
+          n: Schema.Finite,
+          m: Schema.String,
+        });
+        const keeping = Schema.Struct({
+          f: Schema.Unknown,
+          n: Schema.FiniteFromString,
+          m: Schema.FiniteFromString,
+        });
+        for (const members of [
+          [ambiguous, keeping],
+          [keeping, ambiguous],
+        ] as const) {
+          const request = post(Schema.Union(members));
+          expect(
+            yield* bodyOf(request, { body: { f: {}, n: "5", m: 6 } }),
+          ).toBe('{"f":{},"n":"5","m":"6"}');
+        }
+      }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/276
