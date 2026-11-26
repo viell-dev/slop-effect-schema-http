@@ -1,5 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schema, SchemaTransformation } from "effect";
+import {
+  Effect,
+  Option,
+  Schema,
+  SchemaAST,
+  SchemaTransformation,
+} from "effect";
 import * as Excess from "./excess.js";
 import * as Shapes from "./shape.js";
 
@@ -419,5 +425,139 @@ describe("Excess.missing", () => {
         { at: "x" },
       ),
     ).toEqual([]);
+  });
+});
+
+describe("normalising visible Some payloads", () => {
+  const Payload = Schema.Struct({ a: text });
+  const Held = Schema.OptionFromNullOr(Payload);
+  const extra = { a: "a", stray: "x" };
+
+  it("does not copy an accessor, prototype-named field or a wrapper with its own state", () => {
+    const access = Object.defineProperty({ a: "a" }, "stray", {
+      enumerable: true,
+      get: () => {
+        throw new Error("read an accessor");
+      },
+    });
+    for (const input of [
+      Option.some(access),
+      Option.some({ ...extra, toString: "x" }),
+      Object.assign(Option.some(extra), { note: "keep" }),
+      Object.defineProperty(Option.some(extra), "value", { enumerable: false }),
+    ]) {
+      expect(Excess.normalisedOptions(Held.ast, input)).toBe(input);
+    }
+  });
+
+  it("keeps data under prototype-named or open alternatives", () => {
+    const input = Option.some(extra);
+    for (const schema of [
+      Schema.OptionFromNullOr(
+        Schema.Struct({ a: text, toString: Schema.optionalKey(text) }),
+      ),
+      Schema.OptionFromNullOr(Schema.Union([Payload, Schema.Unknown])),
+      Schema.OptionFromNullOr(Schema.Union([Payload, Schema.Struct({})])),
+      Schema.OptionFromNullOr(Schema.Record(text, text)),
+    ]) {
+      expect(Excess.normalisedOptions(schema.ast, input)).toBe(input);
+    }
+  });
+
+  it("only strips inside the payload and uses every member's names", () => {
+    const Part = Schema.Struct({ a: text });
+    const Tagged = Schema.TaggedStruct("B", { b: text });
+    const TaggedHeld = Schema.OptionFromNullOr(Schema.Union([Part, Tagged]));
+    const schema = Schema.Struct({ held: TaggedHeld });
+    const input = { held: Option.some({ ...extra, b: "b" }), stray: "keep" };
+    expect(Excess.normalisedOptions(schema.ast, input)).toEqual({
+      held: Option.some({ a: "a", b: "b" }),
+      stray: "keep",
+    });
+  });
+
+  it("requires an Option declaration and the matching payload source", () => {
+    const ast = Held.ast;
+    if (ast._tag !== "Declaration" || ast.encoding === undefined)
+      throw new Error("expected an unwrapping Option");
+    const invalid = [
+      new SchemaAST.Declaration(
+        ast.typeParameters,
+        ast.run,
+        undefined,
+        ast.checks,
+        ast.encoding,
+      ),
+      new SchemaAST.Declaration(
+        [Either.ast],
+        ast.run,
+        ast.annotations,
+        ast.checks,
+        ast.encoding,
+      ),
+      new SchemaAST.Declaration(
+        ast.typeParameters,
+        ast.run,
+        ast.annotations,
+        ast.checks,
+        [ast.encoding[0], ast.encoding[0]],
+      ),
+    ];
+    const input = Option.some(extra);
+    for (const declaration of invalid)
+      expect(Excess.normalisedOptions(declaration, input)).toBe(input);
+    expect(Excess.normalisedOptions(Held.ast, { value: extra })).toEqual({
+      value: extra,
+    });
+  });
+
+  it("does not drop array metadata or read a non-enumerable payload field", () => {
+    const list = Object.assign([{ ...extra }], { note: "keep" });
+    Object.defineProperty(list[0]!, "hidden", { value: "kept" });
+    const input = Option.some(list);
+    const output = Excess.normalisedOptions(
+      Schema.OptionFromNullOr(Schema.Array(Payload)).ast,
+      input,
+    );
+    expect(Option.isOption(output) && Option.isSome(output)).toBe(true);
+    if (
+      !Option.isOption(output) ||
+      !Option.isSome(output) ||
+      !Array.isArray(output.value)
+    )
+      throw new Error("expected Some array");
+    expect(Object.getOwnPropertyDescriptor(output.value, "note")?.value).toBe(
+      "keep",
+    );
+    expect(
+      Object.getOwnPropertyDescriptor(output.value[0] as object, "hidden")
+        ?.value,
+    ).toBe("kept");
+  });
+
+  it("reports fields the read or the loose write lost at the payload's own path", () => {
+    const HeldWide = Schema.OptionFromNullOr(Either);
+    const input = Option.some({ a: "inner", b: "b" });
+    expect(
+      Excess.optionLoss(HeldWide.ast, input, input, { a: "inner" }, true),
+    ).toEqual([["value", "b"]]);
+    expect(
+      Excess.optionLoss(
+        HeldWide.ast,
+        input,
+        Option.some({ a: "outer", b: "b" }),
+        { a: "outer", b: "b" },
+        false,
+      ),
+    ).toEqual([["value", "a"]]);
+  });
+
+  it("sees an Option wrapper only when all views agree about its codec", () => {
+    const schema = Schema.Union([
+      Schema.Struct({ held: Held }),
+      Schema.Struct({ held: Schema.Option(Payload) }),
+    ]);
+    const input = { held: Option.some(extra) };
+    expect(Excess.normalisedOptions(schema.ast, input)).toBe(input);
   });
 });

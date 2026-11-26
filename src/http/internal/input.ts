@@ -1249,6 +1249,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   // A custom writer is the caller's own, except that it knows no guard.
   const strictWriter =
     guarded === codec.ast ? write : Schema.encodeEffect(guardedCodec);
+  const visibleOptions = custom === undefined && Excess.mayUnwrapOption(ast);
   const readOriginal = decodedReading(contract);
   const readingFrom = (input: Input<S>, caller: Input<S>) =>
     caller === input
@@ -1266,7 +1267,8 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   const kept = (
     input: Input<S>,
     options: SchemaAST.ParseOptions,
-    caller = input,
+    caller: Input<S>,
+    changed: boolean,
   ) => {
     return Effect.flatMap(
       readingFrom(input, caller)(input, { parseOptions: options }),
@@ -1275,7 +1277,12 @@ const readerForCodec = <S extends Schema.Top, A, R>(
           onSuccess: (output): Kept => ({
             written: {
               output,
-              lost: losses(input, read.value, output),
+              lost: mergePaths(
+                losses(input, read.value, output),
+                changed
+                  ? Excess.optionLoss(ast, input, read.value, output, false)
+                  : [],
+              ),
               ambiguity: read.ambiguity,
             },
           }),
@@ -1399,21 +1406,18 @@ const readerForCodec = <S extends Schema.Top, A, R>(
               // What a strict read kept as given, only what was written can say it holds.
               Excess.missing([ast], given, value, output, {
                 written: strictly !== undefined,
-              }).filter(
-                (path) =>
-                  isHeld(path) &&
-                  (strict !== undefined ||
-                    custom !== undefined ||
-                    !Excess.unstatedOptionField(
-                      ast,
-                      given,
-                      value,
-                      output,
-                      path,
-                    )),
-              ),
+              }).filter(isHeld),
               losses(input, value, output),
               lostByRead,
+              visibleOptions
+                ? Excess.optionLoss(
+                    ast,
+                    given,
+                    value,
+                    output,
+                    strict !== undefined,
+                  )
+                : [],
             ),
             refused,
           );
@@ -1438,10 +1442,14 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   return (
     input: Input<S>,
   ): Effect.Effect<Written<A>, ReadFailure, R | S["DecodingServices"]> => {
-    const given = Excess.normalised([ast], input);
+    const cleaned = visibleOptions
+      ? (Excess.normalisedOptions(ast, input) as Input<S>)
+      : input;
+    const changed = cleaned !== input;
+    const given = Excess.normalised([ast], cleaned);
     // A strict read cannot see a field outside a value's keys, so it may not fall back on `input`.
     const seen = (
-      given === input ? input : Excess.exposed([ast], input)
+      given === cleaned ? cleaned : Excess.exposed([ast], cleaned)
     ) as Input<S>;
     // A strict pass refuses keys Effect strips. Where its ambiguity rests on another reading having
     // failed, that reading may have failed on such a key alone, so the pass ends as any strict
@@ -1463,9 +1471,9 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     const attempt = (
       options: SchemaAST.ParseOptions,
     ): Effect.Effect<Kept, ReadFailure, R | S["DecodingServices"]> => {
-      if (given === input) return strictly(kept(input, options));
-      const second = recoverExposed(kept(seen, options, input));
-      return matchRead(strictly(kept(given as Input<S>, options, input)), {
+      if (given === cleaned) return strictly(kept(cleaned, options, input, changed));
+      const second = recoverExposed(kept(seen, options, input, changed));
+      return matchRead(strictly(kept(given as Input<S>, options, input, changed)), {
         // The exposed value is not read after a provisional ambiguity: read strictly, its
         // undefined-valued keys make members fail, and the one left would be chosen.
         onFailure: (failure) =>
@@ -1486,6 +1494,13 @@ const readerForCodec = <S extends Schema.Top, A, R>(
               ),
       });
     };
+    // A cleaned payload can be used only by the strict read and write.
+    if (changed)
+      return Effect.flatMap(attempt(Excess.strict), (result) =>
+        "written" in result
+          ? Effect.succeed(result.written)
+          : Effect.fail(result.failure),
+      );
     const loose = () => compared(input, given);
     return matchRead(attempt(Excess.strict), {
       onFailure: () =>

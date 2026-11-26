@@ -23,12 +23,15 @@
   ([#310](https://github.com/viell-dev/slop-effect-schema-http/issues/310)).
 - Prepare an all-undefined field the same way when an opaque neighbour has an unstated key
   ([#307](https://github.com/viell-dev/slop-effect-schema-http/issues/307)).
-- Leave out unstated keys in a plain `Some` payload whose Effect Option codec exposes it on the
-  encoded side ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)). A stray
-  key under `Schema.OptionFromNullOr` beside a visible union previously refused the body. It now
-  sends the stated fields when the strict write succeeds. A field the payload's schema states can
-  still cause a refusal if the read loses it.
-
+- Leave out keys that no member states in a plain `Some` payload exposed by an Effect codec such as
+  `Schema.OptionFromNullOr`. A stray key beside a visible union no longer causes a refusal when the
+  request can keep the same fields it sends without that key
+  ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)).
+- Keep the payload's own `value` field separate from the `Some` wrapper, and keep stated fields in
+  nested and tagged payloads that used to be lost when a stray key was present. Requests that
+  silently replaced or dropped a stated field now keep it or refuse it
+  ([#299](https://github.com/viell-dev/slop-effect-schema-http/issues/299),
+  [#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)).
 - Write a class instance through its class beside a struct that would strip it
   ([#274](https://github.com/viell-dev/slop-effect-schema-http/issues/274)). Under
   `Schema.Union([Filter, Counted])`, where `Filter` is a struct and `Counted` a `Schema.Class` whose

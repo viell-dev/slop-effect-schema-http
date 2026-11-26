@@ -723,6 +723,8 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     also: ReadonlyArray<Ast> = [],
   ): unknown => {
     if (types.length === 0 || !isObject(value)) return value;
+    // The encoding's "value" field belongs to the payload, never to the Option wrapper.
+    if (sourceAt(types) !== undefined && Option.isOption(value)) return value;
     const view = viewAt(types, value, within);
     const { sides } = view;
     const hidden = unlisted(sides, value);
@@ -1060,19 +1062,22 @@ const keepsNames = (ast: Ast): boolean =>
 const comparable = (sides: ReadonlyArray<Ast>, value: object): boolean =>
   isPlain(value) || sides.some(({ _tag }) => _tag === "Objects");
 
-/** The closed structural sides used to establish that no member states a key. */
-const closedSides = (ast: Ast): ReadonlyArray<Ast> | undefined => {
-  if (takesNoObject(ast)) return [];
-  if (ast._tag === "Union" && ast.encoding === undefined) {
-    const members = ast.types.map(closedSides);
-    return members.every((member) => member !== undefined)
-      ? members.flat()
-      : undefined;
-  }
-  return isStructural(ast) && !isSignaturelessObject(ast)
-    ? objectSides(ast)
-    : undefined;
-};
+/**
+ * OptionFromOptionalKey copies the payload node with optional key context. A matching structural
+ * node has the same children, checks and annotations. No other change in shape is enough.
+ */
+const optionalCopyOf = (source: Ast, payload: Ast): boolean =>
+  SchemaAST.isOptional(source) &&
+  source.checks === payload.checks &&
+  source.annotations === payload.annotations &&
+  ((source._tag === "Objects" &&
+    payload._tag === "Objects" &&
+    source.propertySignatures === payload.propertySignatures &&
+    source.indexSignatures === payload.indexSignatures) ||
+    (source._tag === "Union" &&
+      payload._tag === "Union" &&
+      source.types === payload.types &&
+      source.options === payload.options));
 
 /**
  * The schema of a native Some's payload where the source of its single encoding link exposes
@@ -1084,8 +1089,10 @@ const closedSides = (ast: Ast): ReadonlyArray<Ast> | undefined => {
 const optionSource = (ast: Ast): Ast | undefined => {
   if (
     ast._tag !== "Declaration" ||
-    SchemaAST.resolveAt<{ readonly id: string }>("representation")(ast)?.id !==
-      "effect/schema/Option" ||
+    (
+      ast.annotations?.["representation"] as
+        { readonly id?: string } | undefined
+    )?.id !== "effect/schema/Option" ||
     ast.typeParameters.length !== 1 ||
     ast.encoding?.length !== 1
   )
@@ -1103,24 +1110,7 @@ const optionSource = (ast: Ast): Ast | undefined => {
   const payload = ast.typeParameters[0]!;
   const find = (source: Ast): Ast | undefined => {
     const decoded = SchemaAST.toType(source);
-    // OptionFromOptionalKey also copies its source with an optional key context.
-    const matches =
-      decoded === payload ||
-      (SchemaAST.isOptional(source) &&
-        decoded.checks === payload.checks &&
-        decoded.annotations === payload.annotations &&
-        ((decoded._tag === "Objects" &&
-          payload._tag === "Objects" &&
-          decoded.propertySignatures === payload.propertySignatures &&
-          decoded.indexSignatures === payload.indexSignatures) ||
-          (decoded._tag === "Union" &&
-            payload._tag === "Union" &&
-            decoded.types === payload.types &&
-            decoded.options === payload.options)));
-    if (matches)
-      return closedSides(source)?.some(({ _tag }) => _tag === "Objects")
-        ? source
-        : undefined;
+    if (decoded === payload || optionalCopyOf(decoded, payload)) return source;
     if (source._tag !== "Union" || source.encoding !== undefined)
       return undefined;
     const content = source.types.filter(
@@ -1131,130 +1121,235 @@ const optionSource = (ast: Ast): Ast | undefined => {
   return find(to);
 };
 
-/** An own enumerable data property, without running a getter to find its value. */
-const ownValue = (value: unknown, key: PropertyKey): unknown => {
-  if (!isObject(value)) return undefined;
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
-  return descriptor?.enumerable === true && "value" in descriptor
-    ? (descriptor.value as unknown)
+/** All the structural views of a plain value, including both names of a renamed field. */
+const optionFrames = (
+  types: ReadonlyArray<Ast>,
+): ReadonlyArray<Ast> | undefined => {
+  const sides: Ast[] = [];
+  const active = new Set<Ast>();
+  const visit = (type: Ast): boolean => {
+    if (active.has(type)) return false;
+    if (
+      isStructural(type) &&
+      !isSignaturelessObject(type) &&
+      !statesPrototypeName(type)
+    ) {
+      sides.push(...objectSides(type));
+      return true;
+    }
+    if (
+      type.encoding === undefined &&
+      (type._tag === "Suspend" || type._tag === "Union")
+    ) {
+      active.add(type);
+      const known =
+        type._tag === "Suspend" ? visit(type.thunk()) : type.types.every(visit);
+      active.delete(type);
+      return known;
+    }
+    return takesNoObject(type);
+  };
+  return types.every(visit) ? sides : undefined;
+};
+
+/** The native Some has exactly one own field. Rebuilding another wrapper could lose its state. */
+const somePrototype: unknown = Object.getPrototypeOf(Option.some(undefined));
+const ownSome = (value: object): PropertyDescriptor | undefined => {
+  if (
+    Object.getPrototypeOf(value) !== somePrototype ||
+    Reflect.ownKeys(value).length !== 1
+  )
+    return undefined;
+  const payload = Object.getOwnPropertyDescriptor(value, "value");
+  return payload?.enumerable === true && "value" in payload
+    ? payload
     : undefined;
 };
 
+const sourceAt = (types: ReadonlyArray<Ast>): Ast | undefined => {
+  const [first] = types;
+  return first !== undefined && types.every((type) => type === first)
+    ? optionSource(first)
+    : undefined;
+};
+
+// Avoid inspecting values in schemas without an unwrapping codec. Suspensions can only be
+// resolved once the corresponding value is at hand.
+export const mayUnwrapOption = holding(
+  (type) => type._tag === "Suspend" || optionSource(type) !== undefined,
+);
+
 /**
- * Confirm that the strict write retained the prepared payload's fields. A same-shaped
- * transformation can validate strictly and still omit an optional field. For a rename, use
- * the corresponding signatures of the structural link and verify the value actually written.
- * An opaque payload or a layout without structural evidence cannot authorize the exemption.
+ * Remove only unstated own fields inside a visible Some before the strict read. Using that read
+ * also keeps the original member selection at siblings, including siblings that are opaque here.
+ * An unknown alternative may hold the whole value. Keep every field where one can read it.
  */
-const wrotePayload = (ast: Ast, read: unknown, output: unknown): boolean => {
-  if (!isObject(read)) {
-    // With no scalar codec, the value itself is the witness. A scalar codec chooses its own
-    // representation, but still has to write something.
-    return ast.encoding === undefined
-      ? Object.is(read, output)
-      : output !== undefined;
-  }
-  if (ast._tag === "Union" && ast.encoding === undefined)
-    return ast.types.some((member) => wrotePayload(member, read, output));
-  if (
-    ast._tag === "Declaration" &&
-    Option.isOption(read) &&
-    Option.isSome(read)
-  ) {
-    const source = optionSource(ast);
-    return (
-      source !== undefined &&
-      wrotePayload(source, ownValue(read, "value"), output)
-    );
-  }
-  if (
-    !isStructural(ast) ||
-    !isPlainData(read) ||
-    !isObject(output) ||
-    Array.isArray(read) !== Array.isArray(output)
-  )
-    return false;
-  const wire = ast.encoding?.[0]?.to;
-  return keysOf(read).every((key) => {
-    const value = ownValue(read, key);
-    if (value === undefined) return true;
-    const index =
-      ast._tag === "Objects" && wire?._tag === "Objects"
-        ? ast.propertySignatures.findIndex(({ name }) => name === key)
-        : -1;
-    const name =
-      wire?._tag === "Objects"
-        ? (wire.propertySignatures[index]?.name ?? key)
-        : key;
-    const written = ownValue(output, name);
-    return (
-      written !== undefined &&
-      typesAt([ast], key).some((child) => wrotePayload(child, value, written))
-    );
-  });
+export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
+  const active = new Set<object>();
+  const visit = (
+    types: ReadonlyArray<Ast>,
+    value: unknown,
+    inSome: boolean,
+  ): unknown => {
+    if (types.length === 0 || !isObject(value) || active.has(value))
+      return value;
+    active.add(value);
+    const result = rewrite(types, value, inSome);
+    active.delete(value);
+    return result;
+  };
+  const rewrite = (
+    types: ReadonlyArray<Ast>,
+    value: object,
+    inSome: boolean,
+  ): unknown => {
+    const source = sourceAt(types);
+    if (source !== undefined) {
+      const some = ownSome(value);
+      if (some === undefined) return value;
+      const payload: unknown = some.value;
+      const next = visit([source], payload, true);
+      return Object.is(next, payload) ? value : Option.some(next);
+    }
+    const sides = optionFrames(types);
+    if (sides === undefined || !isPlainData(value)) return value;
+    const list = Array.isArray(value);
+    const canStrip =
+      inSome && !list && sides.some(({ _tag }) => _tag === "Objects");
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    let changed = false;
+    for (const key of Reflect.ownKeys(descriptors)) {
+      const descriptor = Reflect.get(descriptors, key) as PropertyDescriptor;
+      if (!descriptor.enumerable) continue;
+      const children = typesAt(sides, key);
+      if (children.length === 0 && canStrip) {
+        Reflect.deleteProperty(descriptors, key);
+        changed = true;
+        continue;
+      }
+      const current: unknown = descriptor.value;
+      const next = visit(children, current, inSome);
+      if (Object.is(next, current)) continue;
+      descriptor.value = next;
+      changed = true;
+    }
+    if (!changed) return value;
+    const copy: object = list
+      ? []
+      : Object.create(Object.getPrototypeOf(value) as object | null);
+    if (list)
+      Object.setPrototypeOf(
+        copy,
+        Object.getPrototypeOf(value) as object | null,
+      );
+    return Object.defineProperties(copy, descriptors);
+  };
+  return visit([ast], input, false);
 };
 
 /**
- * Can the missing read field be left out of a visible Some payload? Inspect only losses the
- * ordinary comparison reported, after a strict schema write has succeeded. The proof follows
- * plain data apart from the native Some wrapper, and only through closed structural views.
+ * Account for a visible Some without using an encoded field named "value" as its wrapper.
+ * Plain fields under structural schemas keep their decoded values through the read. A relaxed
+ * write must hold those names too. A structural rename supplies candidate wire names, but the
+ * actual output must hold the fields there.
  */
-export const unstatedOptionField = (
+export const optionLoss = (
   ast: Ast,
-  given: unknown,
+  input: unknown,
   read: unknown,
   output: unknown,
-  path: Path,
-): boolean => {
-  if (path.length < 2) return false;
-  let types: ReadonlyArray<Ast> = [ast];
-  let inOption = false;
-  for (const [index, key] of path.entries()) {
-    const [type] = types;
-    if (
-      types.length === 1 &&
-      type?._tag === "Declaration" &&
-      key === "value" &&
-      Option.isOption(given) &&
-      Option.isSome(given) &&
-      Option.isOption(read) &&
-      Option.isSome(read)
-    ) {
-      const source = optionSource(type);
-      if (
-        source === undefined ||
-        !isObject(output) ||
-        !wrotePayload(source, ownValue(read, key), output)
-      )
-        return false;
-      // The ordinary comparison indexes its output with the wrapper's own "value" key.
-      // If that is also an object on the wire, it could have stood in for a different lost
-      // field. Keep the original refusal where the two positions cannot be told apart.
-      if (isObject(ownValue(output, key))) return false;
-      inOption = true;
-      types = [source];
-    } else {
-      if (!isObject(given) || !isPlainData(given)) return false;
-      const sides = types.map(closedSides);
-      if (sides.some((side) => side === undefined)) return false;
-      const closed = sides.flatMap((side) => side ?? []);
-      if (closed.some(statesPrototypeName)) return false;
-      const children = typesAt(closed, key);
-      if (children.length === 0)
-        return (
-          inOption &&
-          index === path.length - 1 &&
-          !Array.isArray(given) &&
-          closed.some(({ _tag }) => _tag === "Objects") &&
-          ownValue(given, key) !== undefined
-        );
-      types = [...new Set(children)];
-      output = ownValue(output, key);
+  checkWrite: boolean,
+): ReadonlyArray<Path> => {
+  const lost: Path[] = [];
+  const visit = (
+    types: ReadonlyArray<Ast>,
+    given: unknown,
+    value: unknown,
+    written: unknown,
+    path: Path,
+    inSome: boolean,
+    writing: boolean,
+  ): void => {
+    if (!isObject(given)) return;
+    const source = sourceAt(types);
+    if (source !== undefined) {
+      const some = ownSome(given);
+      if (some === undefined) return;
+      visit(
+        [source],
+        some.value,
+        isObject(value) ? ownSome(value)?.value : undefined,
+        written,
+        [...path, "value"],
+        true,
+        writing,
+      );
+      return;
     }
-    given = ownValue(given, key);
-    read = ownValue(read, key);
-  }
-  return false;
+    const sides = optionFrames(types);
+    if (sides === undefined || !isPlainData(given)) return;
+    for (const key of keysOf(given)) {
+      const children = typesAt(sides, key);
+      if (children.length === 0) continue;
+      const expected = at(given, key);
+      if (expected === undefined) continue;
+      const here = [
+        ...path,
+        Array.isArray(given) ? (arrayIndex(key) ?? key) : key,
+      ];
+      const decoded = at(value, key);
+      // A structural link suggests a wire name. Verify what was actually written there.
+      const wireNames = new Set(
+        sides.flatMap((side) => {
+          if (side._tag !== "Objects") return [];
+          const index = side.propertySignatures.findIndex(
+            ({ name }) => name === key,
+          );
+          if (index < 0) return [];
+          const wire = side.encoding?.[0]?.to;
+          return [
+            wire?._tag === "Objects"
+              ? wire.propertySignatures[index]!.name
+              : key,
+          ];
+        }),
+      );
+      const name = wireNames.size === 1 ? [...wireNames][0]! : key;
+      const descriptor = isObject(written)
+        ? Object.getOwnPropertyDescriptor(written, name)
+        : undefined;
+      const actual: unknown =
+        descriptor?.enumerable === true && "value" in descriptor
+          ? descriptor.value
+          : undefined;
+      const renamed = sides.some((side) => side.encoding !== undefined);
+      const mustWrite = writing || renamed;
+      const omittedNone =
+        sourceAt(children) !== undefined &&
+        Option.isOption(expected) &&
+        Option.isNone(expected);
+      const directScalar =
+        (typeof expected === "string" ||
+          typeof expected === "boolean" ||
+          (typeof expected === "number" && Number.isFinite(expected))) &&
+        children.every(
+          (child) => child.encoding === undefined && takesNoObject(child),
+        );
+      if (
+        inSome &&
+        (decoded === undefined ||
+          (!isObject(expected) && !Object.is(decoded, expected)) ||
+          (mustWrite && !omittedNone && actual === undefined) ||
+          (renamed && directScalar && !Object.is(actual, expected)))
+      ) {
+        lost.push(here);
+        continue;
+      }
+      visit(children, expected, decoded, actual, here, inSome, mustWrite);
+    }
+  };
+  visit([ast], input, read, output, [], false, checkWrite);
+  return lost;
 };
 
 /**
@@ -1457,9 +1552,8 @@ const rebuildChecks = {
  * its fields; a symbol at its root is a key no field states, which a class strips as a struct
  * does. For JSON, the canonical codec of `Schema.ObjectKeyword` also copies only the top-level
  * string fields of an object and the positions of an array. Everywhere else a symbol field or a
- * built-in reaches the writer, which refuses it there. This check does not visit a declaration's
- * type parameters. The missing-field comparison separately uses the visible source of an
- * Option codec to recognize unstated keys in a `Some` payload.
+ * built-in reaches the writer, which refuses it there. Not covered: values inside a declaration's
+ * type parameters, such as a record in an `Option`, which the declaration's own codec reads.
  *
  * The comparison is compiled once per schema and visits only the positions where such a node can
  * be, with one shared path that is copied only for a loss, so an array of rows checks each row
