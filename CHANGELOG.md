@@ -17,8 +17,9 @@
   `{"A":"item"}` at the root, in a field or a list item and under a field its parent renames, and
   renamed fields inside an instance are written under their wire names too. It still refuses where
   the class cannot write the instance whole, as where a field is invalid or the instance holds a
-  field only `Filter` states, and where another member writes the same wire name for another field.
-  The instance is written strictly once rather than twice.
+  field only `Filter` states, and where any other field there, renamed or not, is written under the
+  same wire name, as a field with an encoding default can be. The instance is written strictly once
+  rather than twice.
 - Wait up to eight minutes, not five, for npm to show a published version and its attestations
   before publication verification fails
   ([#288](https://github.com/viell-dev/slop-effect-schema-http/issues/288)). 0.19.0's upload needed

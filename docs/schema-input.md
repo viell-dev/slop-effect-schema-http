@@ -644,11 +644,22 @@ the schema does with it. These are the places where it cannot, and what happens 
 - A class instance that a struct member before its class would strip refuses where its class cannot
   write it whole: where a field is invalid, where the instance holds a field only another member
   states, or where the schema names a field every object has. It also refuses where a renamed
-  field's wire name cannot show that the field was written: where another member renames another
-  field to that name, where the instance holds a key of that name, where the name is an index such
-  as `"0"` or a symbol, or where a member beside the class is another declaration or has a custom
-  transformation or middleware, which could write any name. With the class first, such an instance
-  is written as Effect writes it, as the first item above gives.
+  field's wire name cannot show that the field was written:
+  - where any other field there is written under that name, renamed or not, in any member, because a
+    default or a transformation can write it where the caller gave nothing. With
+    `Renamed = Counted.pipe(encodeKeys({ a: "A" }))` and
+    `Defaulted = Struct({ A: flip(String.pipe(withDecodingDefaultKey(…))) })`,
+    `Union([Defaulted, Renamed])` refuses a `Counted` instance, valid or not;
+  - where the instance holds a key of that name, or the name is an index such as `"0"` or a symbol;
+  - where a member beside the class could write any name: another declaration, middleware, a record
+    whose keys are encoded, or a transformation other than one between two structs of one shape.
+
+  A transformation between two structs with as many fields in the same order, each with the same
+  optionality and the encoded form of the same type, is read by position as renaming each field,
+  whatever its functions do. That reading comes from the schema's shape; it does not show that
+  `Schema.encodeKeys` built it. So beside a hand-written transformation from `{ b }` to `{ B }`,
+  `Renamed` still sends `{"A":"item"}`. With the class first, such an instance is written as Effect
+  writes it, as the first item above gives.
 - Where a schema has a choice between objects, an `Option` given to `Schema.OptionFromNullOr`
   refuses a key its contents hold that their schema does not state, which a schema without such a
   choice leaves out. The comparison that keeps a union there has no schema for the `Option`'s

@@ -880,8 +880,17 @@ const has = (value: unknown, key: PropertyKey): boolean =>
 const at = (value: unknown, key: PropertyKey): unknown =>
   isObject(value) ? value[key] : undefined;
 
-/** A field's name as a struct reads it, and the name a key rename writes it under. */
-type Rename = readonly [read: PropertyKey, written: PropertyKey];
+/** A field's name as a struct reads it, and the name it is written under. */
+type Naming = readonly [read: PropertyKey, written: PropertyKey];
+
+/**
+ * Whether a struct writes a record key only as a value holds it: no index signature has a key schema
+ * with an encoding, which could write a key under any name.
+ */
+const writesHeldKeys = ({ indexSignatures }: SchemaAST.Objects): boolean =>
+  indexSignatures.every(
+    ({ parameter }) => SchemaAST.toEncoded(parameter) === parameter,
+  );
 
 /**
  * Whether a struct renamed to these names states its fields in the order they were renamed. An
@@ -894,42 +903,50 @@ const keepsOrder = ({ propertySignatures }: SchemaAST.Objects): boolean =>
   );
 
 /**
- * What a struct's fields are renamed to through these links, by position. Each link has to lead to a
- * struct of the same shape, onto names that keep their order. Undefined where one does not.
+ * The name each of a struct's fields is written under through these links, by position. Each link
+ * has to lead to a struct of the same shape, onto names that keep their order, and no record key may
+ * be rewritten. Undefined where one does not.
  */
-const renamesAlong = (
+const namesAlong = (
   from: SchemaAST.Objects,
   links: ReadonlyArray<SchemaAST.Link>,
-): ReadonlyArray<Rename> | undefined => {
+): ReadonlyArray<Naming> | undefined => {
+  if (!writesHeldKeys(from)) return undefined;
   let end = from;
   for (const link of links) {
     if (!renamesKeys(end, link)) return undefined;
     end = link.to as SchemaAST.Objects;
     if (!keepsOrder(end)) return undefined;
   }
-  return from.propertySignatures.flatMap(({ name }, index) => {
-    const written = end.propertySignatures[index]!.name;
-    return written === name ? [] : [[name, written] as const];
-  });
+  return from.propertySignatures.map(
+    ({ name }, index) => [name, end.propertySignatures[index]!.name] as const,
+  );
 };
 
-const renamesFound = new WeakMap<Ast, ReadonlyArray<Rename> | null>();
+const namesFound = new WeakMap<Ast, ReadonlyArray<Naming> | null>();
 
 /**
- * The fields one alternative writes under another name than it reads them by, through key renames
- * such as `Schema.encodeKeys` makes on a struct or a class. Empty where it writes each name as it
- * reads it, or writes no object. Undefined where another step could write any name: another
- * transformation, middleware, a declaration that is not a class, or a rename whose fields need not
- * keep their order.
+ * The name each field of one alternative is written under: its own, or the one a key rename such as
+ * `Schema.encodeKeys` gives it on a struct or a class. Every field counts, renamed or not, because
+ * any of them can put a value under its name, as a default or a transformation can where the value
+ * holds nothing. Empty where the alternative writes no object, or writes only keys the value holds.
+ * Undefined where another step could write any name: another transformation, middleware, a
+ * declaration that is not a class, a rename whose fields need not keep their order, or a record
+ * whose keys are encoded.
  */
-const renamesOf = (ast: Ast): ReadonlyArray<Rename> | undefined => {
-  const known = renamesFound.get(ast);
+const namesOf = (ast: Ast): ReadonlyArray<Naming> | undefined => {
+  const known = namesFound.get(ast);
   if (known !== undefined) return known ?? undefined;
-  let found: ReadonlyArray<Rename> | undefined;
+  let found: ReadonlyArray<Naming> | undefined;
   if (ast.encoding === undefined)
-    found = ast._tag === "Declaration" ? undefined : [];
+    found =
+      ast._tag === "Declaration"
+        ? undefined
+        : ast._tag === "Objects"
+          ? namesAlong(ast, [])
+          : [];
   else if (takesNoObject(ast)) found = [];
-  else if (ast._tag === "Objects") found = renamesAlong(ast, ast.encoding);
+  else if (ast._tag === "Objects") found = namesAlong(ast, ast.encoding);
   else {
     // A class writes the struct of its fields, and then what that struct is renamed to.
     const fields = classFields(ast);
@@ -940,20 +957,31 @@ const renamesOf = (ast: Ast): ReadonlyArray<Rename> | undefined => {
     )
       found =
         links.length === 0
-          ? renamesAlong(fields, fields.encoding ?? [])
+          ? namesAlong(fields, fields.encoding ?? [])
           : fields.encoding === undefined
-            ? renamesAlong(fields, links)
+            ? namesAlong(fields, links)
             : undefined;
   }
-  renamesFound.set(ast, found ?? null);
+  namesFound.set(ast, found ?? null);
   return found;
 };
 
-/** The renames of every alternative here, or undefined where one could write any name. */
-const renamesAt = (
+/**
+ * The names every alternative here writes its fields under, or undefined where one could write any
+ * name. Below a parent with a key rename, the parent's encoded side states each field's encoded form
+ * beside the field's own schema, as `Schema.encodeKeys` builds it. That form has no encoding: it only
+ * reads again what the schema wrote and adds no name of its own, so it is not counted.
+ */
+const namesAt = (
   types: ReadonlyArray<Ast>,
-): ReadonlyArray<Rename> | undefined => {
-  const renames: Array<Rename> = [];
+): ReadonlyArray<Naming> | undefined => {
+  const names: Array<Naming> = [];
+  const forms = new Set(
+    types.flatMap((type) => {
+      const form = SchemaAST.toEncoded(type);
+      return form === type ? [] : [form];
+    }),
+  );
   const seen = new Set<Ast>();
   const visit = (ast: Ast): boolean => {
     if (seen.has(ast)) return true;
@@ -962,18 +990,20 @@ const renamesAt = (
       return ast.types.every(visit);
     if (ast.encoding === undefined && ast._tag === "Suspend")
       return visit(ast.thunk());
-    const own = renamesOf(ast);
+    const own = namesOf(ast);
     if (own === undefined) return false;
-    renames.push(...own);
+    names.push(...own);
     return true;
   };
-  return types.every(visit) ? renames : undefined;
+  return types.every((type) => forms.has(type) || visit(type))
+    ? names
+    : undefined;
 };
 
 /**
  * The names a rename here writes each field under where nothing else here can write them: no other
- * field is renamed to the name, and the value holds no key of that name. A list's cells keep their
- * places.
+ * field, renamed or not, in any alternative, is written under the name, and the value holds no key of
+ * that name. A list's cells keep their places.
  */
 const soleRenames = (
   types: ReadonlyArray<Ast>,
@@ -981,18 +1011,19 @@ const soleRenames = (
   keys: ReadonlyArray<PropertyKey>,
 ): ReadonlyMap<PropertyKey, ReadonlyArray<PropertyKey>> => {
   const sole = new Map<PropertyKey, Array<PropertyKey>>();
-  const renames = Array.isArray(given) ? undefined : renamesAt(types);
-  if (renames === undefined) return sole;
+  const names = Array.isArray(given) ? undefined : namesAt(types);
+  if (names === undefined) return sole;
   const held = new Set(keys);
-  for (const [read, written] of renames) {
+  for (const [read, written] of names) {
     if (
+      written === read ||
       held.has(written) ||
-      renames.some(([other, name]) => name === written && other !== read)
+      names.some(([other, name]) => name === written && other !== read)
     )
       continue;
-    const names = sole.get(read);
-    if (names === undefined) sole.set(read, [written]);
-    else if (!names.includes(written)) names.push(written);
+    const found = sole.get(read);
+    if (found === undefined) sole.set(read, [written]);
+    else if (!found.includes(written)) found.push(written);
   }
   return sole;
 };
