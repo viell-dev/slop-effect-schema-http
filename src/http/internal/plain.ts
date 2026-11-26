@@ -82,3 +82,41 @@ export const statesPrototypeName = (ast: SchemaAST.AST): boolean => {
   stated.set(ast, found);
   return found;
 };
+
+const statedAnywhere = new WeakMap<SchemaAST.AST, boolean>();
+
+/**
+ * Whether a schema states a field or a wire name named after an `Object.prototype` member anywhere
+ * in it: at any depth, in a declaration's type parameters too.
+ */
+export const statesPrototypeNameAnywhere = (ast: SchemaAST.AST): boolean => {
+  const known = statedAnywhere.get(ast);
+  if (known !== undefined) return known;
+  const seen = new Set<SchemaAST.AST>();
+  const visit = (node: SchemaAST.AST): boolean => {
+    if (seen.has(node)) return false;
+    seen.add(node);
+    if (node.encoding?.some(({ to }) => visit(to)) === true) return true;
+    switch (node._tag) {
+      case "Objects":
+        return (
+          node.propertySignatures.some(
+            ({ name, type }) => isPrototypeName(name) || visit(type),
+          ) || node.indexSignatures.some(({ type }) => visit(type))
+        );
+      case "Arrays":
+        return node.elements.some(visit) || node.rest.some(visit);
+      case "Union":
+        return node.types.some(visit);
+      case "Suspend":
+        return visit(node.thunk());
+      case "Declaration":
+        return node.typeParameters.some(visit);
+      default:
+        return false;
+    }
+  };
+  const found = visit(ast);
+  statedAnywhere.set(ast, found);
+  return found;
+};

@@ -903,12 +903,21 @@ export const missing = (
   options: {
     /** Whether to report only places that are written under the names they are read by. */
     readonly sameNames?: boolean;
+    /**
+     * Whether a value kept as given has to be written too, as where a strict read kept it and a
+     * loose write could still strip it.
+     */
+    readonly written?: boolean;
   } = {},
   path: Path = [],
   within?: View,
 ): ReadonlyArray<Path> => {
+  if (!isObject(given)) return [];
   // A value kept as given holds every key in it; reading it again could only run its accessors.
-  if (!isObject(given) || given === value) return [];
+  if (given === value)
+    return options.written === true
+      ? unwritten(types, given, output, path, within)
+      : [];
   const view = viewAt(types, given, within);
   const { sides } = view;
   if (!comparable(sides, given)) return [];
@@ -936,6 +945,40 @@ export const missing = (
         view,
       );
     return options.sameNames !== true || types.every(keepsNames) ? [here] : [];
+  });
+};
+
+/**
+ * What a write lost of a value a read kept as given: each key has to be in `output` under the name it
+ * was given by. Under a value that is not plain data, only a key a side states counts, unless its
+ * keys are open there, because a key no member states is left out.
+ */
+const unwritten = (
+  types: ReadonlyArray<Ast>,
+  given: Record<PropertyKey, unknown>,
+  output: unknown,
+  path: Path,
+  within: View | undefined,
+): ReadonlyArray<Path> => {
+  if (given === output) return [];
+  const view = viewAt(types, given, within);
+  const { sides } = view;
+  if (!comparable(sides, given)) return [];
+  const counts =
+    isPlain(given) || leaveKeysOpen(view)
+      ? () => true
+      : (key: PropertyKey) => typesAt(sides, key).length > 0;
+  return keysOf(given, readAsArray(sides)).flatMap((key) => {
+    if (!counts(key) || given[key] === undefined) return [];
+    const here = [
+      ...path,
+      Array.isArray(given) ? (arrayIndex(key) ?? key) : key,
+    ];
+    if (!has(output, key)) return [here];
+    const inner = given[key];
+    return isObject(inner)
+      ? unwritten(heldAt(view, key), inner, at(output, key), here, view)
+      : [];
   });
 };
 

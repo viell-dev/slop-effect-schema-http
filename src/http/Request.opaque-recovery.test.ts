@@ -492,3 +492,56 @@ describe("visible unions beside opaque fields", () => {
       }),
   );
 });
+
+// A key no member states is left out, and inside an `Option` the schema's own reading applies, so
+// the stray key should go as it does without the visible union. The final comparison has no schema
+// for the Option's contents, so it cannot tell that key from one a member states.
+// https://github.com/viell-dev/slop-effect-schema-http/issues/292
+const Owner = Schema.Struct({ owner: Schema.String });
+const Held = Schema.Struct({
+  held: Schema.OptionFromNullOr(Owner),
+  filter: Schema.Union([
+    Owner,
+    Schema.Struct({ owner: Schema.String, limit: Schema.String }),
+  ]),
+});
+const strayHeld = () => ({
+  held: Option.some({ owner: "ada", stray: "x" }),
+  filter: { owner: "grace", limit: "y" },
+});
+
+describe("a stray key inside OptionFromNullOr beside a visible union", () => {
+  it.effect("currently refuses the stray key", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(json(Held, strayHeld()));
+      expect(failure).toBeInstanceOf(Schema.SchemaError);
+      expect(failure.message).toBe(
+        'The schema cannot keep this field with the rest of the value\n  at ["held"]["value"]["stray"]',
+      );
+    }),
+  );
+
+  it.effect.fails("leaves out the stray key and keeps the visible union", () =>
+    Effect.gen(function* () {
+      expect(yield* json(Held, strayHeld())).toEqual({
+        held: { owner: "ada" },
+        filter: { owner: "grace", limit: "y" },
+      });
+    }),
+  );
+
+  it.effect("leaves out the stray key without the visible union", () =>
+    Effect.gen(function* () {
+      const Alone = Schema.Struct({ held: Schema.OptionFromNullOr(Owner) });
+      expect(
+        yield* json(Alone, { held: Option.some({ owner: "ada", stray: "x" }) }),
+      ).toEqual({ held: { owner: "ada" } });
+      expect(
+        yield* json(Held, { ...strayHeld(), held: Option.none() }),
+      ).toEqual({
+        held: null,
+        filter: { owner: "grace", limit: "y" },
+      });
+    }),
+  );
+});

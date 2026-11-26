@@ -226,6 +226,13 @@ so a class instance's own fields do not push a value out of it. Only where no me
 union written as Effect writes it, and a field that drops is refused. Where that write fails too,
 preparation writes what the fields' own readings give and refuses what they lose.
 
+A strict read takes a class instance by its class, but a loose read takes the first member that
+fits, and a struct fits any object. Where the loose read's struct would strip the instance, the
+write takes the strict read instead, if what it writes keeps every field a member states. With
+`class Counted extends Schema.Class<Counted>("Counted")({ a: Schema.String }) { readonly reads = 1 }`
+and a struct `Filter` that states only `limit`, `Union([Filter, Counted])` sends a `Counted`
+instance as `{"a":"item"}` in either order. `reads`, which no member states, is left out.
+
 ## Preservation and selection
 
 ### A value that fits the decoded side is read as decoded
@@ -630,8 +637,15 @@ the schema does with it. These are the places where it cannot, and what happens 
   `Filter` encodes `limit` as `page_size`, `{ filter: { limit: 5 }, sort_by: "a" }` refuses, and so
   it does with `Union([Void, Filter])` in either order in `filter`'s place. Use all-decoded or
   all-encoded names, one per field.
-- A class instance beside a struct member that would strip it refuses rather than being read as the
-  class.
+- A class instance that a struct member before its class would strip refuses where its class cannot
+  write it whole: where a field is invalid, where the instance holds a field only another member
+  states, or where the schema names a field every object has. With the class first, such an instance
+  is written as Effect writes it, as the first item above gives.
+- Where a schema has a choice between objects, an `Option` given to `Schema.OptionFromNullOr`
+  refuses a key its contents hold that their schema does not state, which a schema without such a
+  choice leaves out. The comparison that keeps a union there has no schema for the `Option`'s
+  contents, so it cannot tell such a key from a stated one
+  ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)).
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
   either binding order. Bounded [stacked-union
   recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;

@@ -2657,6 +2657,128 @@ describe("a caller's field under a union", () => {
       }),
     );
 
+    /** A class whose instances hold a member of their own, so none can be written strictly. */
+    class Counted extends Schema.Class<Counted>("Counted")({ a: text }) {
+      readonly reads = 1;
+    }
+    /** A struct that reads any object, and so would strip a `Counted` instance. */
+    const Filter = Schema.Struct({
+      limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+        Schema.withConstructorDefault(Effect.succeed(25)),
+      ),
+    }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+    const counted = () => new Counted({ a: "item" });
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/274
+    it.effect(
+      "writes a class instance its strict read kept through its class, in either order",
+      () =>
+        Effect.gen(function* () {
+          for (const members of [
+            [Filter, Counted],
+            [Counted, Filter],
+          ] as const) {
+            const Either = Schema.Union(members);
+            expect(yield* bodyOf(post(Either), { body: counted() })).toBe(
+              '{"a":"item"}',
+            );
+            expect(
+              yield* bodyOf(post(Schema.Struct({ item: Either })), {
+                body: { item: counted() },
+              }),
+            ).toBe('{"item":{"a":"item"}}');
+            expect(
+              yield* bodyOf(
+                post(Schema.Struct({ o: Schema.Struct({ item: Either }) })),
+                { body: { o: { item: counted() } } },
+              ),
+            ).toBe('{"o":{"item":{"a":"item"}}}');
+            expect(
+              yield* bodyOf(post(Schema.Array(Either)), {
+                body: [counted(), { limit: 5 }],
+              }),
+            ).toBe('[{"a":"item"},{"page_size":"5"}]');
+            expect(
+              yield* bodyOf(
+                post(Schema.Struct({ item: Either, counted: Counted })),
+                {
+                  body: {
+                    item: counted(),
+                    counted: new Counted({ a: "sibling" }),
+                  },
+                },
+              ),
+            ).toBe('{"item":{"a":"item"},"counted":{"a":"sibling"}}');
+            expect(yield* urlOf(queried(Either), { query: counted() })).toBe(
+              "/x?a=item",
+            );
+          }
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/274
+    it.effect(
+      "still refuses a class instance its class member cannot write whole",
+      () =>
+        Effect.gen(function* () {
+          const schema = Schema.Struct({
+            item: Schema.Union([Filter, Counted]),
+          });
+          // Effect's struct would write `{}` for each of these.
+          const invalid = Object.assign(counted(), { a: 5 });
+          expect(
+            yield* schemaFailure(post(schema), { body: { item: invalid } }),
+          ).toContain('["item"]["a"]');
+          // Only `Filter` states `limit`, and the class member does not write it.
+          const holding = Object.assign(counted(), { limit: 5 });
+          expect(
+            yield* schemaFailure(post(schema), { body: { item: holding } }),
+          ).toContain('["item"]["a"]');
+          // An open member beside the class holds the instance's own member too.
+          expect(
+            yield* schemaFailure(
+              post(
+                Schema.Struct({
+                  item: Schema.Union([
+                    Schema.Struct({ a: text }),
+                    Schema.Unknown,
+                  ]),
+                }),
+              ),
+              { body: { item: counted() } },
+            ),
+          ).toContain('["item"]["reads"]');
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/274
+    it.effect(
+      "leaves plain data and a class with no member of its own as they were",
+      () =>
+        Effect.gen(function* () {
+          class Bare extends Schema.Class<Bare>("Bare")({ a: text }) {}
+          for (const members of [
+            [Filter, Bare],
+            [Bare, Filter],
+          ] as const)
+            expect(
+              yield* bodyOf(
+                post(Schema.Struct({ item: Schema.Union(members) })),
+                { body: { item: new Bare({ a: "item" }) } },
+              ),
+            ).toBe('{"item":{"a":"item"}}');
+          const schema = Schema.Struct({
+            item: Schema.Union([Filter, Counted]),
+          });
+          expect(
+            yield* bodyOf(post(schema), { body: { item: { a: "item" } } }),
+          ).toBe('{"item":{"a":"item"}}');
+          expect(yield* bodyOf(post(schema), { body: { item: {} } })).toBe(
+            '{"item":{"page_size":"25"}}',
+          );
+        }),
+    );
+
     /** The #250 value, in a class instance, which is not plain data. */
     class Dated {
       readonly title = "a";

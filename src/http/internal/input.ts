@@ -1,6 +1,10 @@
 import { Effect, Result, Schema, SchemaAST, SchemaIssue } from "effect";
 import * as Excess from "./excess.js";
-import { isPlainData, statesPrototypeName } from "./plain.js";
+import {
+  isPlainData,
+  statesPrototypeName,
+  statesPrototypeNameAnywhere,
+} from "./plain.js";
 import { guardVoids } from "./void-member.js";
 import {
   declinedByVoid,
@@ -994,12 +998,16 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   const strictWriter =
     guarded === codec.ast ? write : Schema.encodeEffect(guardedCodec);
   const exact = toDecoded(contract, Excess.strict);
+  /** A strict read written strictly, or the value it read where only the write failed. */
+  type Kept = { readonly written: Written<A> } | { readonly read: S["Type"] };
   const kept = (input: Input<S>, options: SchemaAST.ParseOptions) =>
     Effect.flatMap(exact(input, options), (value) =>
-      Effect.map(strictWriter(value, Excess.strict), (output): Written<A> => ({
-        output,
-        lost: losses(input, value, output),
-      })),
+      Effect.match(strictWriter(value, Excess.strict), {
+        onSuccess: (output): Kept => ({
+          written: { output, lost: losses(input, value, output) },
+        }),
+        onFailure: (): Kept => ({ read: value }),
+      }),
     );
   const accountedReading = decodedReading(contract);
   // The root is accounted for where its value is plain data and its schema names nothing every
@@ -1070,11 +1078,23 @@ const readerForCodec = <S extends Schema.Top, A, R>(
         return Effect.catch(loose, () => relaxed);
       },
     );
-  /** Read a value accounting for what that loses, write it, and compare the result with what went in. */
-  const compared = (input: Input<S>, given: unknown) =>
+  /**
+   * Read a value accounting for what that loses, or take a strict read that stripped nothing, write
+   * it, and compare the result with what went in.
+   */
+  const compared = (
+    input: Input<S>,
+    given: unknown,
+    strictly?: { readonly read: S["Type"] },
+  ) =>
     Effect.suspend(() =>
       Effect.map(
-        Effect.flatMap(readDecoded(input, given), sendRead),
+        Effect.flatMap(
+          strictly === undefined
+            ? readDecoded(input, given)
+            : Effect.succeed<Decoded<S["Type"]>>(whole(strictly.read)),
+          sendRead,
+        ),
         ({
           output,
           strict,
@@ -1082,11 +1102,14 @@ const readerForCodec = <S extends Schema.Top, A, R>(
           read: { value, lost: lostByRead, refused },
         }): Written<A> => {
           // A field more than one comparison reports is named once.
+          const isHeld = (path: Excess.Path) =>
+            !readsNothing(given, value, path);
           const lost = causing(
             mergePaths(
-              Excess.missing([ast], given, value, output).filter(
-                (path) => !readsNothing(given, value, path),
-              ),
+              // What a strict read kept as given, only what was written can say it holds.
+              Excess.missing([ast], given, value, output, {
+                written: strictly !== undefined,
+              }).filter(isHeld),
               losses(input, value, output),
               lostByRead,
             ),
@@ -1121,13 +1144,47 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     const seen = (
       given === input ? input : Excess.exposed([ast], input)
     ) as Input<S>;
-    const attempt = (options: SchemaAST.ParseOptions) =>
-      given === input
-        ? kept(input, options)
-        : Effect.catch(kept(given as Input<S>, options), () =>
-            kept(seen, options),
-          );
-    return Effect.catch(attempt(Excess.strict), () => compared(input, given));
+    const attempt = (
+      options: SchemaAST.ParseOptions,
+    ): Effect.Effect<Kept, Schema.SchemaError, R | S["DecodingServices"]> => {
+      if (given === input) return kept(input, options);
+      const second = kept(seen, options);
+      return Effect.matchEffect(kept(given as Input<S>, options), {
+        onFailure: () => second,
+        // The first strict read stands where the second does not write strictly either.
+        onSuccess: (first) =>
+          "written" in first
+            ? Effect.succeed(first)
+            : Effect.orElseSucceed(
+                Effect.filterOrFail(second, (next) => "written" in next),
+                () => first,
+              ),
+      });
+    };
+    return Effect.matchEffect(attempt(Excess.strict), {
+      onFailure: () => compared(input, given),
+      onSuccess: (strict) => {
+        if ("written" in strict) return Effect.succeed(strict.written);
+        const loosely = compared(input, given);
+        // A strict read that passed stripped nothing, but a loose read can take an earlier member
+        // that strips a value that is not plain data, as a class instance is. Where that is
+        // refused, the loose write takes the strict read instead, if it keeps every field. A strict
+        // read counts a field a value inherits as a key, so where the schema names a field every
+        // object has, the read would guess what Effect 4.0.7 and 4.1.4 read differently.
+        if (statesPrototypeNameAnywhere(ast)) return loosely;
+        return Effect.flatMap(Effect.result(loosely), (result) =>
+          result._tag === "Success" && result.success.lost.length === 0
+            ? Effect.succeed(result.success)
+            : Effect.catch(
+                Effect.filterOrFail(
+                  compared(input, given, strict),
+                  ({ lost }) => lost.length === 0,
+                ),
+                () => Effect.fromResult(result),
+              ),
+        );
+      },
+    });
   };
 };
 
