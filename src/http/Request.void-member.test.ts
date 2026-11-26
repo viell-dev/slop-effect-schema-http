@@ -1,6 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Option, Schema, SchemaGetter } from "effect";
-import { bodyOf, schemaFailure, Tenant, urlOf } from "../../test/request.js";
+import {
+  bodyOf,
+  linesOf,
+  schemaFailure,
+  Tenant,
+  urlOf,
+} from "../../test/request.js";
 import * as Body from "./Body.js";
 import * as Request from "./Request.js";
 
@@ -53,6 +59,436 @@ const hiddenFilterCell = (page_size: string) =>
   Object.defineProperty([], 0, { value: { page_size } });
 
 describe("request preparation beside Void", () => {
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("refuses a fieldless oneOf beside Void in either order", () =>
+    Effect.gen(function* () {
+      const ambiguous = "Expected exactly one member to match";
+      for (const [member, inputs] of [
+        [Filter, [{}, { x: undefined }, { extra: true }]],
+        [Schema.Struct({}), [{}, { x: undefined }, []]],
+        [Schema.Array(Schema.FiniteFromString), [[]]],
+      ] as const) {
+        for (const members of [
+          [member, Schema.Void],
+          [Schema.Void, member],
+        ] as const) {
+          const schema = Schema.Union(members, { mode: "oneOf" });
+          const path = Request.get("").pipe(Request.path(schema, () => "/p"));
+          for (const input of inputs) {
+            expect
+              .soft(yield* outcomes(schema, input), JSON.stringify(input))
+              .toEqual(["refused", "refused"]);
+          }
+          expect
+            .soft(yield* outcomes(schema, undefined))
+            .toEqual(["undefined", "null"]);
+          expect
+            .soft(yield* outcomes(schema, null))
+            .toEqual(["undefined", "null"]);
+          for (const prepared of [
+            Request.compile(post(schema), { body: inputs[0] }),
+            Request.compile(path, { path: inputs[0] }),
+          ]) {
+            const result = yield* Effect.result(prepared);
+            expect
+              .soft(
+                result._tag === "Failure" &&
+                  Schema.isSchemaError(result.failure) &&
+                  result.failure.message,
+              )
+              .toBe(ambiguous);
+          }
+        }
+      }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "keeps the oneOf ambiguity through grouped and suspended Void",
+    () =>
+      Effect.gen(function* () {
+        for (const empty of [
+          Schema.NullOr(Schema.Void),
+          Schema.suspend(() => Schema.Void),
+          Schema.NullOr(Schema.suspend(() => Schema.Void)),
+        ]) {
+          for (const members of [
+            [Filter, empty],
+            [empty, Filter],
+          ] as const) {
+            const schema = Schema.Union(members, { mode: "oneOf" });
+            expect(yield* outcomes(schema, {})).toEqual(["refused", "refused"]);
+            expect(yield* outcomes(schema, { limit: 5 })).toEqual([
+              '{"page_size":"5"}',
+              '{"page_size":"5"}',
+            ]);
+          }
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("refuses fieldless oneOf values without Void in either order", () =>
+    Effect.gen(function* () {
+      const first = Schema.Struct({
+        a: Schema.optionalKey(Schema.String).pipe(
+          Schema.withConstructorDefault(Effect.succeed("x")),
+        ),
+      });
+      const second = Schema.Struct({ b: Schema.optionalKey(Schema.String) });
+      for (const members of [
+        [first, second],
+        [second, first],
+      ] as const) {
+        const schema = Schema.Union(members, { mode: "oneOf" });
+        const request = post(schema);
+        const path = Request.get("").pipe(Request.path(schema, () => "/p"));
+        for (const extra of [{}, { extra: true }, { a: undefined }]) {
+          const input = extra as Request.Input<typeof schema>;
+          expect
+            .soft(yield* schemaFailure(request, { body: input }))
+            .toBe("Expected exactly one member to match");
+          expect
+            .soft(yield* schemaFailure(path, { path: input }))
+            .toBe("Expected exactly one member to match");
+        }
+        expect(yield* bodyOf(request, { body: { b: "y" } })).toBe('{"b":"y"}');
+        expect(yield* bodyOf(post(Schema.Union(members)), { body: {} })).toBe(
+          members[0] === first ? '{"a":"x"}' : "{}",
+        );
+      }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "refuses a three-member oneOf before and after reading suspended Void",
+    () =>
+      Effect.gen(function* () {
+        const other = Schema.Struct({ b: Schema.optionalKey(Schema.String) });
+        for (const order of ["last", "first"] as const) {
+          const empty = Schema.suspend(() => Schema.Void);
+          const members =
+            order === "last"
+              ? ([Filter, other, empty] as const)
+              : ([empty, Filter, other] as const);
+          const request = post(Schema.Union(members, { mode: "oneOf" }));
+          const ambiguous = "Expected exactly one member to match";
+          expect
+            .soft(yield* schemaFailure(request, { body: {} }))
+            .toBe(ambiguous);
+          expect(yield* bodyOf(request, { body: undefined })).toBe("null");
+          expect
+            .soft(yield* schemaFailure(request, { body: {} }))
+            .toBe(ambiguous);
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("keeps internal input reporting out of request refusals", () =>
+    Effect.gen(function* () {
+      const login = post(
+        Schema.Struct({
+          password: Schema.String.check(Schema.isMinLength(20)),
+          filter: Schema.Union([Filter, Schema.Void], { mode: "oneOf" }),
+        }),
+      );
+      const password = "too-short-secret";
+      const message = yield* schemaFailure(login, {
+        body: { password, filter: {} },
+      });
+      expect
+        .soft(message)
+        .toBe(
+          'Expected a value with a length of at least 20\n  at ["password"]',
+        );
+      expect.soft(message).not.toContain("got");
+      expect.soft(message).not.toContain(password);
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "names the ambiguous field at its full path in mixed-side input",
+    () =>
+      Effect.gen(function* () {
+        for (const members of [
+          [Filter, Schema.Void],
+          [Schema.Void, Filter],
+        ] as const) {
+          const request = post(
+            Schema.Struct({
+              a: Schema.FiniteFromString,
+              b: Schema.FiniteFromString,
+              f: Schema.Struct({ g: Schema.Union(members, { mode: "oneOf" }) }),
+              g: Schema.optionalKey(Schema.Struct({})),
+            }),
+          );
+          for (const decoy of [{}, { g: {} }]) {
+            const message = yield* schemaFailure(request, {
+              body: { a: "5", b: 6, f: { g: {} }, ...decoy },
+            });
+            expect
+              .soft(message)
+              .toBe('Expected exactly one member to match\n  at ["f"]["g"]');
+            expect.soft(message).not.toContain("got");
+            expect.soft(message).not.toContain("the input");
+          }
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("keeps populated values for oneOf and first fit for anyOf", () =>
+    Effect.gen(function* () {
+      for (const members of [
+        [Filter, Schema.Void],
+        [Schema.Void, Filter],
+      ] as const) {
+        const schema = Schema.Union(members, { mode: "oneOf" });
+        for (const input of [{ limit: 5 }, { page_size: "05" }])
+          expect(yield* outcomes(schema, input)).toEqual([
+            '{"page_size":"5"}',
+            '{"page_size":"5"}',
+          ]);
+        expect(yield* outcomes(Schema.Union(members), {})).toEqual(
+          members[0] === Filter
+            ? ['{"page_size":"25"}', '{"page_size":"25"}']
+            : ["undefined", "null"],
+        );
+      }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("refuses the ambiguous field in a struct and in a class", () =>
+    Effect.gen(function* () {
+      for (const members of [
+        [Filter, Schema.Void],
+        [Schema.Void, Filter],
+      ] as const) {
+        const filter = Schema.Union(members, { mode: "oneOf" });
+        class Search extends Schema.Class<Search>("Search")({ filter }) {}
+        for (const schema of [Schema.Struct({ filter }), Search]) {
+          const request = post(schema);
+          const result = yield* Effect.result(
+            Request.compile(request, { body: { filter: {} } }),
+          );
+          expect
+            .soft(
+              result._tag === "Failure" &&
+                Schema.isSchemaError(result.failure) &&
+                result.failure.message,
+            )
+            .toBe('Expected exactly one member to match\n  at ["filter"]');
+          expect(
+            yield* bodyOf(request, { body: { filter: { limit: 5 } } }),
+          ).toBe('{"filter":{"page_size":"5"}}');
+        }
+      }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "refuses ambiguous query and header groups before group validation",
+    () =>
+      Effect.gen(function* () {
+        const other = Schema.Struct({ b: Schema.optionalKey(Schema.String) });
+        for (const members of [
+          [Filter, Schema.Void],
+          [Schema.Void, Filter],
+          [Filter, other],
+          [other, Filter],
+        ] as const) {
+          const schema = Schema.Union(members, { mode: "oneOf" });
+          // The public group types require every member to encode a field record or pairs.
+          const group = schema as unknown as typeof Filter;
+          const query = Request.get("/x").pipe(Request.query(group));
+          const headers = Request.get("/x").pipe(Request.headers(group));
+          for (const result of [
+            yield* Effect.result(Request.compile(query, { query: {} })),
+            yield* Effect.result(Request.compile(headers, { headers: {} })),
+          ]) {
+            expect
+              .soft(
+                result._tag === "Failure" &&
+                  Schema.isSchemaError(result.failure) &&
+                  result.failure.message,
+              )
+              .toBe("Expected exactly one member to match");
+          }
+          expect(yield* urlOf(query, { query: { limit: 5 } })).toBe(
+            "/x?page_size=5",
+          );
+          expect(yield* linesOf(headers, { headers: { limit: 5 } })).toEqual([
+            ["page_size", "5"],
+          ]);
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "refuses fieldless oneOf through enclosing unions and list positions",
+    () =>
+      Effect.gen(function* () {
+        const message = "Expected exactly one member to match";
+        for (const members of [
+          [Filter, Schema.Void],
+          [Schema.Void, Filter],
+        ] as const) {
+          const union = Schema.Union(members, { mode: "oneOf" });
+          for (const wrapped of [
+            Schema.optional(union),
+            Schema.NullOr(union),
+            Schema.UndefinedOr(union),
+            Schema.Union([union, Schema.String]),
+            Schema.Union([Schema.String, union]),
+            Schema.suspend(() => Schema.NullOr(union)),
+          ]) {
+            const record = post(Schema.Struct({ f: wrapped }));
+            const list = post(Schema.Array(wrapped));
+            for (const f of [
+              {},
+              { extra: "synthetic-unused" },
+              { limit: undefined },
+            ]) {
+              const input = f as Request.Input<typeof wrapped>;
+              expect(yield* schemaFailure(record, { body: { f: input } })).toBe(
+                message + '\n  at ["f"]',
+              );
+              expect(
+                yield* schemaFailure(list, { body: [{ limit: 5 }, input] }),
+              ).toBe(message + "\n  at [1]");
+            }
+            for (const f of [{ limit: 5 }, { page_size: "05" }]) {
+              expect(yield* bodyOf(record, { body: { f } })).toBe(
+                '{"f":{"page_size":"5"}}',
+              );
+              expect(yield* bodyOf(list, { body: [f] })).toBe(
+                '[{"page_size":"5"}]',
+              );
+            }
+          }
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("still takes a successful enclosing anyOf member", () =>
+    Effect.gen(function* () {
+      const f = Schema.Union([Filter, Schema.Void], { mode: "oneOf" });
+      const ambiguous = Schema.Struct({ f, n: Schema.Finite });
+      const keeping = Schema.Struct({
+        f: Schema.Unknown,
+        n: Schema.FiniteFromString,
+      });
+      for (const members of [
+        [ambiguous, keeping],
+        [keeping, ambiguous],
+      ] as const) {
+        const request = post(Schema.Union(members));
+        expect(yield* bodyOf(request, { body: { f: {}, n: "05" } })).toBe(
+          members[0] === ambiguous ? '{"f":{},"n":5}' : '{"f":{},"n":"5"}',
+        );
+      }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "reports the diagnostic ambiguity beside a valid encoded sibling",
+    () =>
+      Effect.gen(function* () {
+        const f = Schema.optional(
+          Schema.Union([Filter, Schema.Void], { mode: "oneOf" }),
+        );
+        const request = post(
+          Schema.Struct({ count: Schema.FiniteFromString, f }).pipe(
+            Schema.encodeKeys({ count: "count_text" }),
+          ),
+        );
+        expect(
+          yield* schemaFailure(request, {
+            body: { count_text: "05", f: { extra: "synthetic-unused" } },
+          } as never),
+        ).toBe('Expected exactly one member to match\n  at ["f"]');
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "names the ambiguous field in nested query and header bindings",
+    () =>
+      Effect.gen(function* () {
+        const a = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+        const b = Schema.Struct({ b: Schema.optionalKey(Schema.String) });
+        for (const members of [
+          [a, b],
+          [b, a],
+        ] as const) {
+          const union = Schema.Union(members, { mode: "oneOf" });
+          const group = Schema.Struct({
+            f: Schema.optional(union),
+          }) as unknown as typeof Filter;
+          const query = Request.get("/x").pipe(Request.query(group));
+          const headers = Request.get("/x").pipe(Request.headers(group));
+          for (const refusal of [
+            schemaFailure(query, {
+              query: { f: { extra: "synthetic-unused" } },
+            } as never),
+            schemaFailure(headers, {
+              headers: { f: { extra: "synthetic-unused" } },
+            } as never),
+          ]) {
+            expect(yield* refusal).toBe(
+              'Expected exactly one member to match\n  at ["f"]',
+            );
+          }
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("counts matches on the side the reader reached", () =>
+    Effect.gen(function* () {
+      const empty = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+      const required = Schema.Struct({ c: Schema.String });
+      const encodedOnly = Schema.Struct({
+        marker: Schema.optionalKey(Schema.String),
+      }).pipe(
+        Schema.decodeTo(required, {
+          decode: SchemaGetter.transform(() => ({ c: "decoded" })),
+          encode: SchemaGetter.transform(() => ({})),
+        }),
+      );
+      for (const members of [
+        [empty, encodedOnly],
+        [encodedOnly, empty],
+      ] as const) {
+        // The constructor sees only the optional-field struct match; no encoded read is needed.
+        expect(
+          yield* bodyOf(post(Schema.Union(members, { mode: "oneOf" })), {
+            body: {},
+          }),
+        ).toBe("{}");
+      }
+      for (const members of [
+        [encodedOnly, encodedOnly.pipe(Schema.brand("Alternate"))],
+        [encodedOnly.pipe(Schema.brand("Alternate")), encodedOnly],
+      ] as const) {
+        // Neither constructor accepts {}; the encoded reader finds two matches.
+        const request = post(Schema.Union(members, { mode: "oneOf" }));
+        expect(yield* schemaFailure(request, { body: {} })).toBe(
+          "Expected exactly one member to match",
+        );
+      }
+    }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
   it.effect(
     "refuses unencodable JSON metadata in both Void orders and at each placement",

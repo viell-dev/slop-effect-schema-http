@@ -91,6 +91,7 @@ describe("annotated whole-union recovery", () => {
         const readers = Inputs.reorderedReaders(annotated);
         expect(readers).toHaveLength(1);
         const error = yield* Effect.flip(readers[0]!(0 as never));
+        if (error._tag !== "SchemaError") throw error;
         expect(error.issue._tag).toBe("AnyOf");
         if (error.issue._tag === "AnyOf") {
           expect(error.issue.ast.annotations).toBe(metadata);

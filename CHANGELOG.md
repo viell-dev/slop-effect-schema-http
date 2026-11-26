@@ -8,6 +8,12 @@
   as `x:a` ends it early, so the server reads the field `x` with the value `a: b`. `fetch` and
   `node:http` already keep these off the wire. The library itself still passes them on. This is
   documentation only.
+- **Breaking:** refuse a plain object or list that a `oneOf` read finds matches multiple members
+  after unstated and undefined-valued keys are left out
+  ([#276](https://github.com/viell-dev/slop-effect-schema-http/issues/276)). For example, `{}` now
+  fails with `Expected exactly one member to match` beside Void and an optional-field struct, or
+  beside two optional-field structs, even if one has a constructor default. Supply a value only the
+  intended member accepts, or use the default `anyOf` mode for first fit.
 - Write a class instance through its class beside a struct that would strip it
   ([#274](https://github.com/viell-dev/slop-effect-schema-http/issues/274)). Under
   `Schema.Union([Filter, Counted])`, where `Filter` is a struct and `Counted` a `Schema.Class` whose

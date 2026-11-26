@@ -226,7 +226,12 @@ and literal tags as the installed Effect does, before any member runs. Nothing i
 output. A structural encoding failure remains that member's `SchemaError` if no other member can
 write the value without dropping a supplied field. Normalization removes undefined-valued keys and
 keeps the keys an empty struct or open schema holds, as above. This contributes no names to query or
-header group shape. With no defined field or cell, the read keeps member order.
+header group shape. With no defined field or cell, an any-of read keeps member order. A one-of read
+that finds a fieldless plain object or list ambiguous keeps the refusal, in any member order.
+Retrying individual members would bypass the union's match check and could let a constructor default
+decide which member wins. Preparation carries the ambiguity as a typed failure, using the match
+count on the schema side the reader reached. The caller sees Effect's ambiguity message at the
+value's path, without the input value.
 
 The decoder a later route reads with keeps the Void guard too, so a Void cannot stand in for a
 reading that keeps the value's fields. A query or header binding reports lost input fields before
