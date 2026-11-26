@@ -43,9 +43,9 @@
   also refuse a same-tag payload when no member holds every stated field, even without another
   strict failure. Remove the keys that prevent the strict attempt, or bind the intended union member
   directly.
-- **Breaking:** a visible `Some` leaves out a field stated only by a member ruled out by a
-  literal discriminator such as `kind` or `version`, as a bare payload does. This used to refuse
-  naming that field. Validate the intended variant explicitly if you require that refusal.
+- **Breaking:** a visible `Some` leaves out a field stated only by a member ruled out by a literal
+  discriminator such as `kind` or `version`, as a bare payload does. This used to refuse naming that
+  field. Validate the intended variant explicitly if you require that refusal.
 - A refusal can name different fields. When the strict attempt on a cleaned `Some` fails, the
   original reading supplies the diagnostic.
 - **Breaking:** a wire name such as `page_size` inside a nested `Some` can now be refused at
