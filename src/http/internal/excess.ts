@@ -734,7 +734,7 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
   ): unknown => {
     if (types.length === 0 || !isObject(value)) return value;
     // The encoding's "value" field belongs to the payload, never to the Option wrapper.
-    if (sourceAt(types) !== undefined && Option.isOption(value)) return value;
+    if (Option.isOption(value)) return value;
     const view = viewAt(types, value, within);
     const { sides } = view;
     const hidden = unlisted(sides, value);
@@ -1094,7 +1094,7 @@ const optionalCopyOf = (source: Ast, payload: Ast): boolean =>
  * Keep the source itself for comparison, since it also states the payload's wire names.
  * Check the getter as well: a custom link between the same schemas can replace the payload.
  */
-const optionSource = (ast: Ast): Ast | undefined => {
+const findOptionSource = (ast: Ast): Ast | undefined => {
   if (
     ast._tag !== "Declaration" ||
     (
@@ -1129,6 +1129,15 @@ const optionSource = (ast: Ast): Ast | undefined => {
   return find(to);
 };
 
+const optionSources = new WeakMap<Ast, Ast | null>();
+const optionSource = (ast: Ast): Ast | undefined => {
+  const known = optionSources.get(ast);
+  if (known !== undefined) return known ?? undefined;
+  const source = findOptionSource(ast);
+  optionSources.set(ast, source ?? null);
+  return source;
+};
+
 // OptionFromOptionalKey and its relatives can omit a wire key required on the decoded side.
 const isOptionFrame = (ast: Ast): boolean =>
   isStructural(ast) ||
@@ -1141,6 +1150,20 @@ const plainClassFrame = (ast: Ast): Ast | undefined =>
     ? classFields(ast)
     : undefined;
 
+/** Classify the schema here once. Which union members survive still depends on the input. */
+const optionFrames = new WeakMap<Ast, Ast | null>();
+const optionFrame = (type: Ast): Ast | undefined => {
+  const known = optionFrames.get(type);
+  if (known !== undefined) return known ?? undefined;
+  const frame = plainClassFrame(type) ?? type;
+  const eligible =
+    isOptionFrame(frame) &&
+    !isSignaturelessObject(frame) &&
+    !statesPrototypeName(frame);
+  optionFrames.set(type, eligible ? frame : null);
+  return eligible ? frame : undefined;
+};
+
 /** Structural alternatives left by the same literal-tag rule as an ordinary field. */
 const structuralFrames = (
   types: ReadonlyArray<Ast>,
@@ -1150,12 +1173,8 @@ const structuralFrames = (
   const active = new Set<Ast>();
   const visit = (type: Ast, retained: boolean): boolean => {
     if (active.has(type)) return false;
-    const frame = plainClassFrame(type) ?? type;
-    if (
-      isOptionFrame(frame) &&
-      !isSignaturelessObject(frame) &&
-      !statesPrototypeName(frame)
-    ) {
+    const frame = optionFrame(type);
+    if (frame !== undefined) {
       if (retained) frames.push(frame);
       return true;
     }
@@ -1238,8 +1257,7 @@ const sourceAt = (types: ReadonlyArray<Ast>): Ast | undefined => {
   return types.every(visit) ? source : undefined;
 };
 
-/** Find codecs under visible structure without invoking suspension thunks at binding time. */
-export const mayUnwrapOption = (ast: Ast): boolean => {
+const canUnwrapOption = (ast: Ast): boolean => {
   if (optionSource(ast) !== undefined) return true;
   if (ast._tag === "Suspend") return ast.encoding === undefined;
   const fields = plainClassFrame(ast);
@@ -1249,6 +1267,17 @@ export const mayUnwrapOption = (ast: Ast): boolean => {
       (ast._tag === "Union" && ast.encoding === undefined)) &&
     partsOf(ast).some(mayUnwrapOption)
   );
+};
+
+const unwrappingOptions = new WeakMap<Ast, boolean>();
+
+/** Find codecs under visible structure without invoking suspension thunks at binding time. */
+export const mayUnwrapOption = (ast: Ast): boolean => {
+  const known = unwrappingOptions.get(ast);
+  if (known !== undefined) return known;
+  const found = canUnwrapOption(ast);
+  unwrappingOptions.set(ast, found);
+  return found;
 };
 
 /**
@@ -1263,7 +1292,12 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
     value: unknown,
     inSome: boolean,
   ): unknown => {
-    if (types.length === 0 || !isObject(value) || active.has(value))
+    if (
+      types.length === 0 ||
+      !isObject(value) ||
+      active.has(value) ||
+      (!inSome && !types.some(mayUnwrapOption))
+    )
       return value;
     active.add(value);
     const result = rewrite(types, value, inSome);
@@ -1275,10 +1309,10 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
     value: Record<PropertyKey, unknown>,
     inSome: boolean,
   ): unknown => {
-    const source = sourceAt(types);
-    if (source !== undefined) {
+    if (Option.isOption(value)) {
+      const source = sourceAt(types);
       const some = ownSome(value);
-      if (some === undefined) return value;
+      if (source === undefined || some === undefined) return value;
       const payload: unknown = some.value;
       const next = visit([source], payload, true);
       return Object.is(next, payload) ? value : Option.some(next);
@@ -1320,6 +1354,32 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
   return visit([ast], input, false);
 };
 
+/** Whether a value is `null` or an object or list with no defined field or cell. */
+export const holdsNothing = (value: unknown): boolean =>
+  value === null || (isObject(value) && !hasDefinedFields(value));
+
+/** Possible wire names for one field and whether another decoded name can write there too. */
+const optionWireNames = (sides: ReadonlyArray<Ast>, key: PropertyKey) => {
+  const names = new Set<PropertyKey>();
+  const otherNames = new Set<PropertyKey>();
+  for (const side of sides) {
+    if (side._tag !== "Objects") continue;
+    // A key codec can write a name that the key's current spelling cannot establish.
+    if (!writesHeldKeys(side)) return undefined;
+    const wire = side.encoding?.[0]?.to;
+    if (wire?._tag === "Objects" && (!keepsOrder(side) || !keepsOrder(wire)))
+      return undefined;
+    side.propertySignatures.forEach(({ name }, index) => {
+      const written =
+        wire?._tag === "Objects" ? wire.propertySignatures[index]!.name : name;
+      (name === key ? names : otherNames).add(written);
+    });
+    if (side.indexSignatures.length > 0) names.add(key);
+  }
+  if (names.size === 0) names.add(key);
+  return { names, otherNames };
+};
+
 /**
  * Account for a visible Some without using an encoded field named "value" as its wrapper.
  * Plain fields under structural schemas keep their decoded values through the read. A relaxed
@@ -1344,7 +1404,12 @@ export const optionLoss = (
     inSome: boolean,
     writing: boolean,
   ): void => {
-    if (!isObject(given) || active.has(given)) return;
+    if (
+      !isObject(given) ||
+      active.has(given) ||
+      (!inSome && !types.some(mayUnwrapOption))
+    )
+      return;
     active.add(given);
     compare(types, given, value, written, path, inSome, writing);
     active.delete(given);
@@ -1358,10 +1423,10 @@ export const optionLoss = (
     inSome: boolean,
     writing: boolean,
   ): void => {
-    const source = sourceAt(types);
-    if (source !== undefined) {
+    if (Option.isOption(given)) {
+      const source = sourceAt(types);
       const some = ownSome(given);
-      if (some === undefined) return;
+      if (source === undefined || some === undefined) return;
       visit(
         [source],
         some.value,
@@ -1386,32 +1451,36 @@ export const optionLoss = (
         Array.isArray(given) ? (arrayIndex(key) ?? key) : key,
       ];
       const decoded = at(value, key);
-      // A structural link suggests a wire name. Verify what was actually written there.
-      const wireNames = new Set(
-        sides.flatMap((side) => {
-          if (side._tag !== "Objects") return [];
-          const index = side.propertySignatures.findIndex(
-            ({ name }) => name === key,
-          );
-          if (index < 0) return [];
-          const wire = side.encoding?.[0]?.to;
-          return [
-            wire?._tag === "Objects"
-              ? wire.propertySignatures[index]!.name
-              : key,
-          ];
-        }),
-      );
-      // A loose write could drop a field the read held. A structural link may do so even on the
-      // strict route, since the encoder can be a caller's transformation with the shape of a rename.
-      const renamed = sides.some((side) => side.encoding !== undefined);
-      const mustWrite = writing || renamed;
+      // Void can read an empty value as undefined and still hold its field.
+      if (
+        decoded === undefined &&
+        isObject(value) &&
+        key in value &&
+        holdsNothing(expected)
+      )
+        continue;
+      // Strict writes do not strip excess properties. A link can also transform the value, and
+      // where its names cannot be paired we have no evidence about which field it wrote.
+      const wire = writing ? optionWireNames(sides, key) : undefined;
+      const mustWrite = wire !== undefined;
+      const outputs =
+        wire === undefined
+          ? [undefined]
+          : [...wire.names].map((name): unknown => {
+              const descriptor = isObject(written)
+                ? Object.getOwnPropertyDescriptor(written, name)
+                : undefined;
+              return descriptor?.enumerable === true && "value" in descriptor
+                ? descriptor.value
+                : undefined;
+            });
       // Unwrapping None can omit the wire field entirely.
       const omittedNone =
-        sourceAt(children) !== undefined &&
         Option.isOption(expected) &&
-        Option.isNone(expected);
-      // Compare scalar values directly only when no candidate child encodes them differently.
+        Option.isNone(expected) &&
+        sourceAt(children) !== undefined;
+      // Value equality can distinguish an unchanged scalar from another field under its wire
+      // name. A field codec with its own encoding may legitimately change that scalar.
       const directScalar =
         (typeof expected === "string" ||
           typeof expected === "boolean" ||
@@ -1419,15 +1488,9 @@ export const optionLoss = (
         children.every(
           (child) => child.encoding === undefined && takesNoObject(child),
         );
-      const names = wireNames.size === 0 ? [key] : [...wireNames];
-      const outputs = names.map((name): unknown => {
-        const descriptor = isObject(written)
-          ? Object.getOwnPropertyDescriptor(written, name)
-          : undefined;
-        return descriptor?.enumerable === true && "value" in descriptor
-          ? descriptor.value
-          : undefined;
-      });
+      const collides =
+        wire !== undefined &&
+        [...wire.names].some((name) => wire.otherNames.has(name));
       if (
         inSome &&
         (decoded === undefined ||
@@ -1435,7 +1498,7 @@ export const optionLoss = (
           (mustWrite &&
             !omittedNone &&
             outputs.every((actual) => actual === undefined)) ||
-          (renamed &&
+          (collides &&
             directScalar &&
             !outputs.some((actual) => Object.is(actual, expected))))
       ) {

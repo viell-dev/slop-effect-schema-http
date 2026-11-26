@@ -33,12 +33,21 @@
 - **Breaking:** keep a visible payload's own `value` separate from the `Some` wrapper
   ([#299](https://github.com/viell-dev/slop-effect-schema-http/issues/299)). For example,
   `Some({ value: { a: "inner" }, a: "outer" })` keeps `value.a` as `"inner"` where a union member
-  states it. Pass the desired value under its declared payload field.
+  states it. An opaque or ambiguous unwrapping position now refuses the collision at the overlapping
+  path where it used to send a replacement. Remove the unstated outer key or supply the encoded
+  value at the Option's position.
 - **Breaking:** preserve a stated payload field such as `limit` where a narrower choice used to drop
   it in a tagged, nested or list payload
   ([#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)). If an unrelated strict
-  failure forces a relaxed route that loses the field, preparation can now refuse naming it. Remove
-  the keys that prevent the strict attempt, or bind the intended union member directly.
+  failure forces a relaxed route that loses the field, preparation can now refuse naming it. It can
+  also refuse a same-tag payload when no member holds every stated field, even without another
+  strict failure. Remove the keys that prevent the strict attempt, or bind the intended union member
+  directly.
+- **Breaking:** a key stated only by a member ruled out by a literal tag, such as `kind` or
+  `version`, is left out of a visible `Some` payload as it is for a bare field. This used to refuse
+  naming the key. Validate the intended variant explicitly if you require that refusal.
+- A refusal can name different fields. When the strict attempt on a cleaned `Some` fails, the
+  original reading supplies the diagnostic.
 - **Breaking:** a wire name such as `page_size` inside a nested `Some` can now be refused at
   `["held"]["value"]["inner"]["value"]["page_size"]` where it was silently dropped. Give the decoded
   name `limit` inside the `Some`, or supply the encoded value at the Option's position.
