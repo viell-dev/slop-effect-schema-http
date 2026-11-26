@@ -47,24 +47,19 @@ const ownValueAt = (
  */
 const locate = (
   issue: SchemaIssue.Issue,
-  input: unknown,
-  caller: unknown,
-  normalised: () => unknown,
+  fieldlessAt: (path: ReadonlyArray<PropertyKey>) => boolean,
   path: ReadonlyArray<PropertyKey>,
 ): FieldlessOneOf | "invalid" | undefined => {
   switch (issue._tag) {
     case "Pointer":
-      return locate(issue.issue, input, caller, normalised, [
-        ...path,
-        ...issue.path,
-      ]);
+      return locate(issue.issue, fieldlessAt, [...path, ...issue.path]);
     case "Encoding":
     case "Filter":
-      return locate(issue.issue, input, caller, normalised, path);
+      return locate(issue.issue, fieldlessAt, path);
     case "Composite": {
       let ambiguity: FieldlessOneOf | undefined;
       for (const member of issue.issues) {
-        const found = locate(member, input, caller, normalised, path);
+        const found = locate(member, fieldlessAt, path);
         if (found === "invalid") return found;
         ambiguity ??= found;
       }
@@ -72,7 +67,7 @@ const locate = (
     }
     case "AnyOf": {
       for (const member of issue.issues) {
-        const found = locate(member, input, caller, normalised, path);
+        const found = locate(member, fieldlessAt, path);
         if (found !== undefined && found !== "invalid")
           return issue.ast.types.length === 1 ||
             issue.ast.options?.mode === "oneOf" ||
@@ -86,9 +81,7 @@ const locate = (
       return undefined;
     case "OneOf":
       if (
-        isFieldless(ownValueAt(input, path)) &&
-        !hasNamedArrayContent(ownValueAt(caller, path)) &&
-        isFieldless(ownValueAt(normalised(), path)) &&
+        fieldlessAt(path) &&
         (issue.input === undefined || isFieldless(issue.input))
       )
         return new FieldlessOneOf({
@@ -102,16 +95,18 @@ const locate = (
   }
 };
 
-const hasNamedArrayContent = (value: unknown): boolean =>
-  Array.isArray(value) && extraArrayField(value, value.length) !== undefined;
-
 export const readFailure = (
   failure: Schema.SchemaError,
   input: unknown,
-  caller: unknown,
   normalised: () => unknown,
 ): ReadFailure => {
-  const found = locate(failure.issue, input, caller, normalised, []);
+  const found = locate(
+    failure.issue,
+    (path) =>
+      isFieldless(ownValueAt(input, path)) &&
+      isFieldless(ownValueAt(normalised(), path)),
+    [],
+  );
   return found === undefined || found === "invalid" ? failure : found;
 };
 
@@ -143,19 +138,25 @@ export const matchRead = <A, B, C, E, E2, R, R2, R3>(
   );
 
 /** The public issue carries only the ambiguous path and match information, without input. */
+export const publicAmbiguity = (
+  failure: FieldlessOneOf,
+  options?: SchemaAST.ParseOptions,
+): Schema.SchemaError => {
+  const issue = new SchemaIssue.OneOf(failure.ast, failure.matches, undefined, {
+    ...options,
+    reportInput: false,
+  });
+  return new Schema.SchemaError(
+    failure.path.length === 0
+      ? issue
+      : new SchemaIssue.Pointer(failure.path, issue),
+  );
+};
+
 export const publicRead = <A, R>(
   read: Effect.Effect<A, ReadFailure, R>,
   options?: SchemaAST.ParseOptions,
 ): Effect.Effect<A, Schema.SchemaError, R> =>
-  Effect.mapError(read, (error) => {
-    if (error._tag === "SchemaError") return error;
-    const issue = new SchemaIssue.OneOf(error.ast, error.matches, undefined, {
-      ...options,
-      reportInput: false,
-    });
-    return new Schema.SchemaError(
-      error.path.length === 0
-        ? issue
-        : new SchemaIssue.Pointer(error.path, issue),
-    );
-  });
+  Effect.mapError(read, (error) =>
+    error._tag === "SchemaError" ? error : publicAmbiguity(error, options),
+  );

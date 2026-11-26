@@ -3,6 +3,7 @@ import {
   attemptRead,
   FieldlessOneOf,
   matchRead,
+  publicAmbiguity,
   publicRead,
   readFailure,
   type ReadFailure,
@@ -88,6 +89,8 @@ export type Input<S extends Schema.Top> = EitherSide<
 interface Decoded<A> {
   readonly value: A;
   readonly lost: ReadonlyArray<Excess.Path>;
+  /** The refusal to report if the enclosing alternative cannot write the fields it read. */
+  readonly ambiguity?: FieldlessOneOf | undefined;
   /** Where a constructor lost fields, and what kept the decoder from reading them instead. */
   readonly refused?: ReadonlyArray<Refused> | undefined;
   /** What Effect reads in its place, for a write that can only be relaxed. */
@@ -221,10 +224,11 @@ const chooseReading = (
     let failure: Schema.SchemaError | undefined;
     let ambiguity: FieldlessOneOf | undefined;
     for (const reading of readings) {
-      const result = yield* Effect.result(reading);
+      const result = yield* anyOf
+        ? Effect.result(reading)
+        : attemptRead(reading);
       if (result._tag === "Failure") {
         if (result.failure._tag === "FieldlessOneOf") {
-          if (!anyOf) return yield* result.failure;
           ambiguity ??= result.failure;
         } else if (!keepMost || failure === undefined) {
           failure = result.failure;
@@ -233,7 +237,9 @@ const chooseReading = (
         result.success.lost.length === 0 ||
         (!keepMost && ambiguity === undefined)
       ) {
-        return result.success;
+        return ambiguity === undefined
+          ? result.success
+          : afterAmbiguity(result.success, ambiguity);
       } else if (most === undefined || losesLess(result.success, most)) {
         most = result.success;
       }
@@ -324,7 +330,16 @@ const causing = (
 /** A route's failure where the constructor's own result stands instead. */
 const noRoute = new Schema.SchemaError(new SchemaIssue.InvalidValue({}));
 
-/** Only a complete reading of an enclosing choice can supersede an ambiguous alternative. */
+/** Keep the failure in case writing the alternative fails. */
+const afterAmbiguity = (
+  read: Decoded<unknown>,
+  ambiguity: FieldlessOneOf,
+): Decoded<unknown> => ({
+  ...read,
+  ambiguity: read.ambiguity ?? ambiguity,
+});
+
+/** Only a complete reading can supersede the ambiguity. */
 const keepWholeAlternative = (
   failure: FieldlessOneOf,
   alternative: () => Effect.Effect<Decoded<unknown>, ReadFailure, unknown>,
@@ -336,18 +351,10 @@ const keepWholeAlternative = (
       () => noRoute,
     ),
     () => Effect.fail(failure),
-  ).pipe(
-    Effect.map((read): Decoded<unknown> =>
-      read.forRelaxedWrite === undefined
-        ? read
-        : {
-            ...read,
-            forRelaxedWrite: recoverRead(read.forRelaxedWrite, () =>
-              Effect.fail(failure),
-            ),
-          },
-    ),
-  );
+  ).pipe(Effect.map((read) => afterAmbiguity(read, failure)));
+
+const atField = (name: PropertyKey, failure: FieldlessOneOf) =>
+  new FieldlessOneOf({ ...failure, path: [name, ...failure.path] });
 
 /** Whether what the caller gave is plain data at each step to a field, so the field is theirs. */
 const plainAlong = (caller: unknown) => {
@@ -426,7 +433,7 @@ const decodedReading = <S extends Schema.Top>(
     caller: unknown,
   ): ReadFailure =>
     canBeAmbiguous
-      ? readFailure(failure, input, caller, () =>
+      ? readFailure(failure, input, () =>
           Excess.normalised([contract.ast], caller),
         )
       : failure;
@@ -514,6 +521,7 @@ const decodedReading = <S extends Schema.Top>(
     ) as never;
     const lost: Array<Excess.Path> = [];
     const refused: Array<Refused> = [];
+    let ambiguity: FieldlessOneOf | undefined;
     for (const { name, type } of Excess.fieldsOf(contract.ast)) {
       if (fields[name] === undefined) continue;
       // A checked value is plain data, so its fields are its own data.
@@ -527,14 +535,10 @@ const decodedReading = <S extends Schema.Top>(
           at: [...at, name],
         }),
         "FieldlessOneOf",
-        (failure) =>
-          Effect.fail(
-            new FieldlessOneOf({
-              ...failure,
-              path: [name, ...failure.path],
-            }),
-          ),
+        (failure) => Effect.fail(atField(name, failure)),
       );
+      if (ambiguity === undefined && field.ambiguity !== undefined)
+        ambiguity = atField(name, field.ambiguity);
       output[name] = field.value;
       fieldParts[name] = field.value;
       read.push(name);
@@ -560,7 +564,7 @@ const decodedReading = <S extends Schema.Top>(
       : make(output, parseOptions, input);
     if (given !== undefined)
       lost.push(...unkept(input, withoutFields(given, read), value, false));
-    return { value, lost, refused };
+    return { value, lost, refused, ambiguity };
   });
   const byMember = (
     input: object,
@@ -677,11 +681,7 @@ const decodedReading = <S extends Schema.Top>(
             : constructed && Excess.choosesMemberResolved(contract.ast)
               ? Effect.fail(failure)
               : Effect.map(
-                  stripped.length === 0 && given !== input
-                    ? recoverRead(decode(given, parseOptions, input), () =>
-                        decode(input, parseOptions),
-                      )
-                    : decode(input, parseOptions),
+                  decode(input, parseOptions),
                   (value): Decoded<unknown> => ({
                     value,
                     lost: mergePaths(stripped, leftOut(input, given, value)),
@@ -903,6 +903,7 @@ const fromPart = (
 export interface Written<A> {
   readonly output: A;
   readonly lost: ReadonlyArray<Excess.Path>;
+  readonly ambiguity?: FieldlessOneOf | undefined;
   /**
    * The fields in `lost` that only the write lost, after the first member that could not write the
    * value gave way to one that strips them, and that member's failure.
@@ -1122,21 +1123,25 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   // A custom writer is the caller's own, except that it knows no guard.
   const strictWriter =
     guarded === codec.ast ? write : Schema.encodeEffect(guardedCodec);
-  const exact = decodeInput(contract, Excess.strict);
+  const exact = decodedReading(contract, { options: Excess.strict });
   /** A value a strict read took as it was, and why it cannot be written strictly. */
   interface Unwritable {
-    readonly read: S["Type"];
+    readonly read: Decoded<S["Type"]>;
     readonly failure: Schema.SchemaError;
   }
   /** A strict read written strictly, or the value it read where only the write failed. */
   type Kept = { readonly written: Written<A> } | Unwritable;
   const kept = (input: Input<S>, options: SchemaAST.ParseOptions) =>
-    Effect.flatMap(exact(input, options), (value) =>
-      Effect.match(strictWriter(value, Excess.strict), {
+    Effect.flatMap(exact(input, { parseOptions: options }), (read) =>
+      Effect.match(strictWriter(read.value, Excess.strict), {
         onSuccess: (output): Kept => ({
-          written: { output, lost: losses(input, value, output) },
+          written: {
+            output,
+            lost: losses(input, read.value, output),
+            ambiguity: read.ambiguity,
+          },
         }),
-        onFailure: (failure): Kept => ({ read: value, failure }),
+        onFailure: (failure): Kept => ({ read, failure }),
       }),
     );
   const accountedReading = decodedReading(contract);
@@ -1201,7 +1206,10 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       strict,
       read,
     }));
-    if (read.forRelaxedWrite === undefined) return loose;
+    const exhausted = (failure: Schema.SchemaError) =>
+      Effect.fail(read.ambiguity ?? failure);
+    if (read.forRelaxedWrite === undefined)
+      return recoverRead(loose, exhausted);
     const relaxed = Effect.flatMap(
       read.forRelaxedWrite as Effect.Effect<
         typeof read,
@@ -1210,7 +1218,10 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       >,
       sendRead,
     );
-    return Effect.catch(loose, () => relaxed);
+    return recoverRead(
+      Effect.catch(loose, () => relaxed),
+      exhausted,
+    );
   };
   /**
    * Read a value accounting for what that loses, or take a strict read that stripped nothing, write
@@ -1227,12 +1238,12 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       Effect.map(
         strictly === undefined
           ? Effect.flatMap(readDecoded(from, given), sendRead)
-          : sendLoosely(whole(strictly.read), strictly.failure),
+          : sendLoosely(strictly.read, strictly.failure),
         ({
           output,
           strict,
           writers,
-          read: { value, lost: lostByRead, refused },
+          read: { value, lost: lostByRead, refused, ambiguity },
         }): Written<A> => {
           // A field more than one comparison reports is named once.
           const isHeld = (path: Excess.Path) =>
@@ -1252,12 +1263,13 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             strict === undefined || writers === undefined
               ? []
               : droppedBy(guarded, { given, value, caller: input }, writers);
-          if (dropped.length === 0) return { output, lost };
+          if (dropped.length === 0) return { output, lost, ambiguity };
           const paths = dropped.map(({ path }) => path);
           const failure = writeFailure(ast, dropped);
           return {
             output,
             lost: mergePaths(lost, paths),
+            ambiguity,
             ...(failure !== undefined && {
               unwritten: { lost: paths, failure },
             }),
@@ -1430,9 +1442,10 @@ export const refuseLost = (
 };
 
 /** Bring a value to the schema's decoded side and write it, with nothing else to hold what it loses. */
-export const encoder = <S extends Schema.Top, A, R>(
+const encodeWith = <S extends Schema.Top, A, R, B, E, R2>(
   contract: S,
   codec: Schema.ConstraintCodec<S["Type"], A, unknown, R>,
+  finish: (value: A) => Effect.Effect<B, E, R2>,
   canonicalJson = false,
 ) => {
   if (
@@ -1446,13 +1459,34 @@ export const encoder = <S extends Schema.Top, A, R>(
       guarded === codec.ast ? codec : Schema.make<typeof codec>(guarded),
     );
     return (input: Input<S>) =>
-      publicRead(Effect.flatMap(decoded(input), write));
+      Effect.flatMap(publicRead(Effect.flatMap(decoded(input), write)), finish);
   }
   const read = readerForCodec(contract, codec, undefined, canonicalJson);
-  return (
-    input: Input<S>,
-  ): Effect.Effect<A, Schema.SchemaError, R | S["DecodingServices"]> =>
-    Effect.flatMap(publicRead(read(input)), ({ output, lost, unwritten }) =>
-      Effect.as(refuseLost(contract, lost, undefined, unwritten), output),
+  return (input: Input<S>) =>
+    Effect.flatMap(
+      publicRead(read(input)),
+      ({ output, lost, unwritten, ambiguity }) =>
+        Effect.flatMap(
+          refuseLost(contract, lost, undefined, unwritten),
+          (): Effect.Effect<B, E | Schema.SchemaError, R2> =>
+            ambiguity === undefined
+              ? finish(output)
+              : Effect.mapError(finish(output), () =>
+                  publicAmbiguity(ambiguity),
+                ),
+        ),
     );
 };
+
+/** Read either schema side and write it, with nothing else to hold what the reading loses. */
+export const encoder = <S extends Schema.Top, A, R>(
+  contract: S,
+  codec: Schema.ConstraintCodec<S["Type"], A, unknown, R>,
+) => encodeWith(contract, codec, (value: A) => Effect.succeed(value));
+
+/** Write canonical JSON, preserving the read failure if the enclosing alternative cannot write. */
+export const jsonEncoder = <S extends Schema.Top, A, R, B, E, R2>(
+  contract: S,
+  codec: Schema.ConstraintCodec<S["Type"], A, unknown, R>,
+  finish: (value: A) => Effect.Effect<B, E, R2>,
+) => encodeWith(contract, codec, finish, true);

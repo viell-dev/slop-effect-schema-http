@@ -813,6 +813,123 @@ describe("request preparation beside Void", () => {
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/276
   it.effect(
+    "retains the ambiguity when the alternative cannot write JSON",
+    () =>
+      Effect.gen(function* () {
+        const n = Schema.FiniteFromString;
+        const keeping = Schema.Struct({ f: Schema.Unknown, n, m: n });
+        for (const shape of [Schema.Struct({}), Schema.Unknown]) {
+          const one = Schema.Union([Schema.Void, shape], { mode: "oneOf" });
+          for (const f of [one, Schema.optional(one)]) {
+            const ambiguous = Schema.Struct({ f, n, m: n });
+            for (const order of [
+              [ambiguous, keeping],
+              [keeping, ambiguous],
+            ] as const)
+              for (const list of [[undefined], Array<undefined>(1)])
+                expect(
+                  yield* schemaFailure(post(Schema.Union(order)), {
+                    body: { f: list, n: "5", m: 6 },
+                  }),
+                ).toBe('Expected exactly one member to match\n  at ["f"]');
+          }
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("keeps an exposed field beside an opaque neighbour", () =>
+    Effect.gen(function* () {
+      const one = Schema.Union([Filter, Schema.Void], { mode: "oneOf" });
+      const o = Schema.Option(Schema.Struct({ a: Schema.String }));
+      const request = post(Schema.Struct({ o, f: one }));
+      const f = Object.defineProperty({}, "limit", { value: 5 });
+      expect(
+        yield* bodyOf(request, {
+          body: { f, o: Option.some({ a: "x", extra: 1 }) },
+        }),
+      ).toBe('{"o":{"_tag":"Some","value":{"a":"x"}},"f":{"page_size":"5"}}');
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "treats an explicitly undefined field as empty during a direct read",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Union([Schema.Unknown, Schema.Void], {
+          mode: "oneOf",
+        });
+        const decode = Inputs.toDecoded(schema);
+        const failure = yield* Effect.flip(decode({ limit: undefined }));
+        expect(failure.message).toBe("Expected exactly one member to match");
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "keeps a strict ambiguity without repeating constructor defaults",
+    () =>
+      Effect.gen(function* () {
+        let calls = 0;
+        const a = Schema.Struct({
+          a: Schema.optionalKey(Schema.String).pipe(
+            Schema.withConstructorDefault(
+              Effect.sync(() => {
+                calls++;
+                return "x";
+              }),
+            ),
+          ),
+        });
+        const b = Schema.Struct({ b: Schema.optionalKey(Schema.String) });
+        const one = Schema.Union([a, b], { mode: "oneOf" });
+        expect(yield* schemaFailure(post(one), { body: {} })).toBe(
+          "Expected exactly one member to match",
+        );
+        expect(calls).toBe(1);
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect("cannot evade encoded ambiguity by dropping an aliased field", () =>
+    Effect.gen(function* () {
+      const coded = (code: string) =>
+        Schema.Struct({ marker: Schema.optionalKey(Schema.String) }).pipe(
+          Schema.decodeTo(Schema.Struct({ code: Schema.Literal(code) }), {
+            decode: SchemaGetter.transform(() => ({ code })),
+            encode: SchemaGetter.transform(() => ({})),
+          }),
+        );
+      const a = coded("first");
+      const b = coded("second");
+      const f = Schema.optionalKey(Schema.Union([a, b], { mode: "oneOf" }));
+      const request = post(
+        Schema.Struct({ f }).pipe(Schema.encodeKeys({ f: "wire" })),
+      );
+      expect(yield* schemaFailure(request, { body: { wire: {} } })).toBe(
+        'Expected exactly one member to match\n  at ["wire"]',
+      );
+
+      const defaulting = Schema.Struct({
+        a: Schema.optionalKey(Schema.String).pipe(
+          Schema.withConstructorDefault(Effect.succeed("x")),
+        ),
+      });
+      const mixed = post(
+        Schema.Struct({
+          f: Schema.Union([a, defaulting], { mode: "oneOf" }),
+          note: Schema.optionalKey(Schema.String),
+        }).pipe(Schema.encodeKeys({ note: "wire" })),
+      );
+      expect(
+        yield* schemaFailure(mixed, { body: { f: {}, wire: "supplied" } }),
+      ).toBe('Expected exactly one member to match\n  at ["f"]');
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
     "retains the list item's ambiguity when a relaxed path write fails",
     () =>
       Effect.gen(function* () {

@@ -430,10 +430,8 @@ export const jsonSchema = <S extends Schema.Top>(
   Inputs.Input<S>
 > => {
   const codec = Schema.toCodecJson(contract);
-  const encode = Inputs.encoder(contract, codec, true);
   return make({
-    encode: (value: Inputs.Input<S>) =>
-      Effect.flatMap(encode(value), json.encode),
+    encode: Inputs.jsonEncoder(contract, codec, json.encode),
     decode: json.pipe(schema(codec)).decode,
     mediaType: json.mediaType,
   });

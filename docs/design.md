@@ -232,8 +232,9 @@ A fieldless plain object or list that matches multiple members of a `oneOf` fail
 either member order. Retrying those members individually would bypass the match check and could let
 a constructor default decide which member wins. A constructor reading of the field can still succeed
 when ambiguity occurs only on its encoded side. Within an enclosing `anyOf`, another member can read
-the whole value if it keeps every supplied field. If no member can do that, preparation carries the
-ambiguity as a typed failure and reports Effect's message at the value's path, omitting the value.
+the whole value if it keeps every supplied field and its result can be written. If no member can do
+that, preparation carries the ambiguity as a typed failure and reports Effect's message at the
+value's path, omitting the value.
 
 The decoder a later route reads with keeps the Void guard too, so a Void cannot stand in for a
 reading that keeps the value's fields. A query or header binding reports lost input fields before
