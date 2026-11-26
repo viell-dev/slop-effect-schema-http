@@ -23,6 +23,11 @@ export interface RawOptions {
    * the header lines it has, and `Host` when it has none, and its body bytes after them.
    */
   readonly framing?: boolean;
+  /**
+   * `false` adds no `Host` either, so a request that declares none goes out without one. Default:
+   * `true`, since HTTP/1.1 requires one.
+   */
+  readonly host?: boolean;
   /** The protocol on the request line. Default: `HTTP/1.1`. */
   readonly protocol?: string;
 }

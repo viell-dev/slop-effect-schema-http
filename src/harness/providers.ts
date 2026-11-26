@@ -88,20 +88,20 @@ const nullBodyStatuses: ReadonlySet<number> = new Set([
 
 /**
  * The lines to send: the request's own, after the `Host` HTTP/1.1 requires and followed by the
- * body's type and length, each added only when the request declares none. Node adds no default
+ * body's type and length, each added only when the request declares none, and `Host` only when
+ * `host` is given. Node adds no default
  * headers to raw header lines, and a socket adds nothing at all.
  */
 const withFraming = (
   lines: Transport.Lines,
-  host: string,
+  host: string | undefined,
   bytes: Uint8Array | undefined,
   contentType: string | undefined,
 ): Transport.Lines => {
-  const outgoing: Array<readonly [string, string]> = lines.some(
-    ([name]) => name.toLowerCase() === "host",
-  )
-    ? [...lines]
-    : [["host", host], ...lines];
+  const outgoing: Array<readonly [string, string]> =
+    host === undefined || lines.some(([name]) => name.toLowerCase() === "host")
+      ? [...lines]
+      : [["host", host], ...lines];
   if (
     contentType !== undefined &&
     !outgoing.some(([name]) => name.toLowerCase() === "content-type")
@@ -328,7 +328,8 @@ const readFromSocket = (
  * - **Header lines.** `Transport.headerLines`, as `name: value`, with the lines `withFraming` adds
  *   and nothing else: no `Connection`, `User-Agent` or trace headers, since those come from
  *   `HttpClient.make` and `node:http`. With `framing: false` it adds `Host` alone, so a request that
- *   stopped its automatic `Content-Length` goes out without one, and a body goes out unframed.
+ *   stopped its automatic `Content-Length` goes out without one, and a body goes out unframed. With
+ *   `host: false` it does not add `Host` either, so a request without one goes out without one.
  * - **Nothing is refused.** A CR or LF in a method, target, name or value is written like any other
  *   character, so it can end the line it is on. Standard providers refuse these; this one exists
  *   to show what the library passes on, and a real provider that writes bytes must not copy that.
@@ -339,7 +340,11 @@ const readFromSocket = (
  */
 export const rawClient = (
   origin: string,
-  { framing = true, protocol = "HTTP/1.1" }: RawOptions = {},
+  {
+    framing = true,
+    host: addHost = true,
+    protocol = "HTTP/1.1",
+  }: RawOptions = {},
 ): HttpClient.HttpClient => {
   const { host, hostname, port } = new URL(origin);
   return HttpClient.makeWith<
@@ -359,7 +364,7 @@ export const rawClient = (
             ),
             ...withFraming(
               lines,
-              host,
+              addHost ? host : undefined,
               framing ? bytes : undefined,
               framing ? contentType : undefined,
             ).map(([name, value]) => headerLineBytes(`${name}: ${value}\r\n`)),
