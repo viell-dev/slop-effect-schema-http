@@ -733,8 +733,8 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     also: ReadonlyArray<Ast> = [],
   ): unknown => {
     if (types.length === 0 || !isObject(value)) return value;
-    // The encoding's "value" field belongs to the payload, never to the Option wrapper.
-    if (Option.isOption(value)) return value;
+    // At an Option boundary, a wire field called "value" belongs to the payload.
+    if (Option.isOption(value) && statesOption(types)) return value;
     const view = viewAt(types, value, within);
     const { sides } = view;
     const hidden = unlisted(sides, value);
@@ -1087,6 +1087,28 @@ const optionalCopyOf = (source: Ast, payload: Ast): boolean =>
         Object.is(value, Reflect.get(payload, key))),
   );
 
+/** A schema for a native Option, including codecs whose payload is opaque here. */
+const isOptionDeclaration = (ast: Ast): ast is SchemaAST.Declaration =>
+  ast._tag === "Declaration" &&
+  (ast.annotations?.["representation"] as { readonly id?: string } | undefined)
+    ?.id === "effect/schema/Option";
+
+/** Whether a type can read a native Option as an Option at this position. */
+const statesOption = (types: ReadonlyArray<Ast>): boolean => {
+  const seen = new Set<Ast>();
+  const visit = (type: Ast): boolean => {
+    if (isOptionDeclaration(type)) return true;
+    if (seen.has(type)) return false;
+    seen.add(type);
+    return (
+      (type._tag === "Union" && type.types.some(visit)) ||
+      (type._tag === "Suspend" && visit(type.thunk())) ||
+      type.encoding?.some(({ to }) => visit(to)) === true
+    );
+  };
+  return types.some(visit);
+};
+
 /**
  * The schema of a native Some's payload where the source of its single encoding link exposes
  * that same payload directly. Effect's OptionFrom… codecs add nullish or optional cases around
@@ -1096,11 +1118,7 @@ const optionalCopyOf = (source: Ast, payload: Ast): boolean =>
  */
 const findOptionSource = (ast: Ast): Ast | undefined => {
   if (
-    ast._tag !== "Declaration" ||
-    (
-      ast.annotations?.["representation"] as
-        { readonly id?: string } | undefined
-    )?.id !== "effect/schema/Option" ||
+    !isOptionDeclaration(ast) ||
     ast.typeParameters.length !== 1 ||
     ast.encoding?.length !== 1
   )
@@ -1463,17 +1481,6 @@ export const optionLoss = (
       // where its names cannot be paired we have no evidence about which field it wrote.
       const wire = writing ? optionWireNames(sides, key) : undefined;
       const mustWrite = wire !== undefined;
-      const outputs =
-        wire === undefined
-          ? [undefined]
-          : [...wire.names].map((name): unknown => {
-              const descriptor = isObject(written)
-                ? Object.getOwnPropertyDescriptor(written, name)
-                : undefined;
-              return descriptor?.enumerable === true && "value" in descriptor
-                ? descriptor.value
-                : undefined;
-            });
       // Unwrapping None can omit the wire field entirely.
       const omittedNone =
         Option.isOption(expected) &&
@@ -1488,19 +1495,30 @@ export const optionLoss = (
         children.every(
           (child) => child.encoding === undefined && takesNoObject(child),
         );
-      const collides =
-        wire !== undefined &&
-        [...wire.names].some((name) => wire.otherNames.has(name));
+      const outputs =
+        wire === undefined
+          ? [undefined]
+          : [...wire.names].map((name): unknown => {
+              const descriptor = isObject(written)
+                ? Object.getOwnPropertyDescriptor(written, name)
+                : undefined;
+              const actual: unknown =
+                descriptor?.enumerable === true && "value" in descriptor
+                  ? descriptor.value
+                  : undefined;
+              return directScalar &&
+                wire.otherNames.has(name) &&
+                !Object.is(actual, expected)
+                ? undefined
+                : actual;
+            });
       if (
         inSome &&
         (decoded === undefined ||
           (!isObject(expected) && !Object.is(decoded, expected)) ||
           (mustWrite &&
             !omittedNone &&
-            outputs.every((actual) => actual === undefined)) ||
-          (collides &&
-            directScalar &&
-            !outputs.some((actual) => Object.is(actual, expected))))
+            outputs.every((actual) => actual === undefined)))
       ) {
         lost.push(here);
         continue;

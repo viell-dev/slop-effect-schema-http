@@ -1453,3 +1453,51 @@ it.effect(
       }
     }),
 );
+
+it.effect(
+  "checks the payload on either strict attempt after removing a stray key",
+  () =>
+    Effect.gen(function* () {
+      const Payload = Schema.Struct({
+        ...Owner.fields,
+        limit: Schema.optionalKey(Schema.String),
+      }).check(
+        Schema.makeFilter((value) => {
+          // Simulate a schema callback that changes the parsed copy before the writer sees it.
+          Reflect.deleteProperty(value, "limit");
+          return true;
+        }),
+      );
+      const root = Schema.Struct({
+        held: Schema.OptionFromNullOr(Payload),
+        explicit: Schema.optional(Schema.Undefined),
+        filter: Filter,
+      });
+      const input = { held: Option.some({ ...stray, limit: "l" }), filter };
+      // The first strict input omits undefined keys. This check requires the second input,
+      // which exposes the original field.
+      const requiresExplicit = root.check(
+        Schema.makeFilter((value) => Object.hasOwn(value, "explicit")),
+      );
+      for (const attempt of [
+        json(root, input),
+        json(requiresExplicit, { ...input, explicit: undefined }),
+      ]) {
+        const failure = yield* Effect.flip(attempt);
+        expect(failure.message).toContain('["held"]["value"]["limit"]');
+      }
+    }),
+);
+
+it.effect(
+  "keeps struct reading when the caller supplies a Some as the object",
+  () =>
+    Effect.gen(function* () {
+      const schema = Schema.Struct({ value: Filter });
+      const value = Option.some({ ...stray, limit: "l" });
+      if (!Option.isSome(value)) throw new Error("expected Some");
+      expect(yield* json(schema, value)).toEqual({
+        value: { ...owner, limit: "l" },
+      });
+    }),
+);
