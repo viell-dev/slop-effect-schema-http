@@ -1,6 +1,6 @@
 import { Effect, Schema, SchemaAST, SchemaIssue, SchemaParser } from "effect";
 import { candidates } from "./candidates.js";
-import { classFields } from "./excess.js";
+import { classFields, isOptionDeclaration } from "./excess.js";
 import { isPlainData, statesPrototypeName } from "./plain.js";
 import { stageRefuses } from "./primitive.js";
 
@@ -260,10 +260,10 @@ function mapSame<A>(items: readonly A[], map: (item: A) => A): readonly A[] {
  *
  * @remarks
  * Each union pre-selects and orders its members by the installed Effect's rules, so it writes what
- * the plain writer writes and runs the same member code. It follows a suspended schema when it is
- * written, and a class into the struct it writes, and stays out of other declarations. A transformation or middleware on a
- * union itself makes Effect choose again on a transformed copy, which no caller field can be traced
- * to; that choice is noted against the copy and so remains the schema's own.
+ * the plain writer writes when it can keep the whole value. It follows suspensions when written,
+ * classes into their structs, and Option declarations into their payloads. A transformation or
+ * middleware on a union itself makes Effect choose again on a transformed copy. That choice is
+ * noted against the copy and remains the schema's own.
  */
 export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
   const cache = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
@@ -286,11 +286,13 @@ export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
         ast.context,
       );
     }
+    const option: boolean = isOptionDeclaration(ast);
     if (
       ast._tag !== "Objects" &&
       ast._tag !== "Arrays" &&
       ast._tag !== "Union" &&
-      classFields(ast) === undefined
+      classFields(ast) === undefined &&
+      !option
     )
       return ast;
     const encoding =
@@ -301,11 +303,15 @@ export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
           ? link
           : new SchemaAST.Link(target, link.transformation);
       });
-    if (ast._tag === "Declaration")
-      return encoding === ast.encoding
+    if (ast._tag === "Declaration") {
+      // Effect parses the native Some's payload before applying the codec's encoding links.
+      const typeParameters = option
+        ? mapSame(ast.typeParameters, visit)
+        : ast.typeParameters;
+      return encoding === ast.encoding && typeParameters === ast.typeParameters
         ? ast
         : new SchemaAST.Declaration(
-            ast.typeParameters,
+            typeParameters,
             ast.run,
             ast.annotations,
             ast.checks,
@@ -314,6 +320,7 @@ export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
             ast.encodingChecks,
             ast.encodingRun,
           );
+    }
     if (ast._tag === "Objects") {
       const properties = mapSame(ast.propertySignatures, (property) => {
         const type = visit(property.type);
