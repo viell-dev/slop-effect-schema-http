@@ -336,3 +336,39 @@ it.effect(
       expect(modes).toEqual(["strict:false", "strict:true"]);
     }),
 );
+
+it.effect(
+  "preserves Effect's reading of an opaque input copied during normalization",
+  () =>
+    Effect.gen(function* () {
+      class Opaque {
+        get limit() {
+          return undefined;
+        }
+      }
+      for (const f of [
+        new Opaque(),
+        Object.defineProperty({}, "extra", {
+          get: () => 1,
+          enumerable: true,
+        }),
+      ]) {
+        for (const members of [
+          [Filter, Schema.Void],
+          [Schema.Void, Filter],
+        ]) {
+          const request = post(Schema.Struct({ f: oneOf(...members) }));
+          expect(yield* outcome(request, { f })).toBe(
+            members[0] === Filter
+              ? 'sent {"f":{"page_size":"25"}}'
+              : 'sent {"f":null}',
+          );
+        }
+      }
+      expect(
+        yield* outcome(post(Schema.Struct({ f: oneOf(Adef, B) })), {
+          f: new Map(),
+        }),
+      ).toBe('sent {"f":{"a":"x"}}');
+    }),
+);

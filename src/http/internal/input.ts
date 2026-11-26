@@ -2,6 +2,7 @@ import { Effect, Result, Schema, SchemaAST, SchemaIssue } from "effect";
 import {
   attemptRead,
   FieldlessOneOf,
+  hasPlainWitness,
   matchRead,
   publicAmbiguity,
   publicRead,
@@ -441,11 +442,14 @@ const decodedReading = <S extends Schema.Top>(
   {
     options,
     part = false,
+    witness,
   }: {
     /** Options for every parse. */
     readonly options?: SchemaAST.ParseOptions | undefined;
     /** Whether the value is a field of one read field by field. */
     readonly part?: boolean;
+    /** Whether the original input was plain at a path in this read's view. */
+    readonly witness?: ((path: Excess.Path) => boolean) | undefined;
   } = {},
 ) => {
   // A Void never takes what it would erase, on any route.
@@ -462,8 +466,14 @@ const decodedReading = <S extends Schema.Top>(
     caller: unknown,
   ): ReadFailure =>
     canBeAmbiguous
-      ? readFailure(failure, input, () =>
-          Excess.normalised([contract.ast], caller),
+      ? readFailure(
+          failure,
+          input,
+          () => Excess.normalised([contract.ast], caller),
+          caller === input
+            ? witness
+            : (path) =>
+                hasPlainWitness(caller, path) && (witness?.(path) ?? true),
         )
       : failure;
   // A class's own constructor, which a guarded schema has not, reads nothing as no fields.
@@ -566,6 +576,7 @@ const decodedReading = <S extends Schema.Top>(
                 given: checked ? sliceOf(given, name) : undefined,
                 parts,
                 at: [...at, name],
+                witness: witness && ((path) => witness([name, ...path])),
               }),
               "FieldlessOneOf",
               (failure) => Effect.fail(atField(name, failure)),
@@ -576,9 +587,9 @@ const decodedReading = <S extends Schema.Top>(
       fieldParts[name] = field.value;
       read.push(name);
       for (const path of field.lost) lost.push([name, ...path]);
-      for (const { at, holders } of field.refused ?? [])
+      for (const { at: fieldPath, holders } of field.refused ?? [])
         refused.push({
-          at: [name, ...at],
+          at: [name, ...fieldPath],
           holders: holders.map((path) => [name, ...path]),
         });
     }
@@ -616,6 +627,7 @@ const decodedReading = <S extends Schema.Top>(
               given,
               parts,
               at,
+              witness,
             }),
           ),
           given !== undefined,
@@ -655,7 +667,9 @@ const decodedReading = <S extends Schema.Top>(
         const [name] = failure.path;
         const field = Array.isArray(input)
           ? undefined
-          : Excess.fieldsOf(contract.ast).find((part) => part.name === name);
+          : Excess.fieldsOf(contract.ast).find(
+              ({ name: fieldName }) => fieldName === name,
+            );
         const value = field && sliceOf(input, field.name);
         // An encoded-only name or a container position has no fieldwise reader here.
         if (field === undefined || value === undefined)
@@ -668,6 +682,7 @@ const decodedReading = <S extends Schema.Top>(
             given: undefined,
             parts: undefined,
             at: [field.name],
+            witness: witness && ((path) => witness([field.name, ...path])),
           }),
           {
             onFailure: (own) =>
@@ -946,12 +961,14 @@ const fromPart = (
     readonly parts: PartsRead | undefined;
     /** Where the part is. */
     readonly at: Excess.Path;
+    readonly witness: ((path: Excess.Path) => boolean) | undefined;
   },
 ): Effect.Effect<Decoded<unknown>, ReadFailure, unknown> => {
-  const { options, part, given, parts, at } = reading;
+  const { options, part, given, parts, at, witness } = reading;
   const read = decodedReading(Schema.make<Schema.Top>(ast), {
     options,
     part,
+    witness,
   });
   if (given === undefined || parts === undefined) return read(value, { given });
   // Routes meet the same part again and again, so it runs its schema's own effects once.
@@ -1200,7 +1217,13 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   // A custom writer is the caller's own, except that it knows no guard.
   const strictWriter =
     guarded === codec.ast ? write : Schema.encodeEffect(guardedCodec);
-  const exact = decodedReading(contract, { options: Excess.strict });
+  const readOriginal = decodedReading(contract);
+  const readingFrom = (input: Input<S>, caller: Input<S>) =>
+    caller === input
+      ? readOriginal
+      : decodedReading(contract, {
+          witness: (path) => hasPlainWitness(caller, path),
+        });
   /** A value a strict read took as it was, and why it cannot be written strictly. */
   interface Unwritable {
     readonly read: Decoded<S["Type"]>;
@@ -1208,25 +1231,31 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   }
   /** A strict read written strictly, or the value it read where only the write failed. */
   type Kept = { readonly written: Written<A> } | Unwritable;
-  const kept = (input: Input<S>, options: SchemaAST.ParseOptions) =>
-    Effect.flatMap(exact(input, { parseOptions: options }), (read) =>
-      Effect.match(strictWriter(read.value, Excess.strict), {
-        onSuccess: (output): Kept => ({
-          written: {
-            output,
-            lost: losses(input, read.value, output),
-            ambiguity: read.ambiguity,
-          },
+  const kept = (
+    input: Input<S>,
+    options: SchemaAST.ParseOptions,
+    caller = input,
+  ) => {
+    return Effect.flatMap(
+      readingFrom(input, caller)(input, { parseOptions: options }),
+      (read) =>
+        Effect.match(strictWriter(read.value, Excess.strict), {
+          onSuccess: (output): Kept => ({
+            written: {
+              output,
+              lost: losses(input, read.value, output),
+              ambiguity: read.ambiguity,
+            },
+          }),
+          onFailure: (failure): Kept => ({ read, failure }),
         }),
-        onFailure: (failure): Kept => ({ read, failure }),
-      }),
     );
-  const accountedReading = decodedReading(contract);
+  };
   // The root is accounted for where its value is plain data and its schema names nothing every
   // object has; its parts are then each checked as they are. The schema is asked on the first read,
   // so building an encoder runs no suspended schema.
-  const readDecoded = (input: Input<S>, given: unknown) =>
-    accountedReading(input, {
+  const readDecoded = (input: Input<S>, given: unknown, caller: Input<S>) =>
+    readingFrom(input, caller)(input, {
       given: accountable(input, ast) ? given : undefined,
     });
   // A custom writer is the caller's own. Only the schema's own writer can note its members.
@@ -1321,7 +1350,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     Effect.suspend(() =>
       Effect.map(
         strictly === undefined
-          ? Effect.flatMap(readDecoded(from, given), sendRead)
+          ? Effect.flatMap(readDecoded(from, given, input), sendRead)
           : sendLoosely(strictly.read, strictly.failure),
         ({
           output,
@@ -1373,8 +1402,8 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       options: SchemaAST.ParseOptions,
     ): Effect.Effect<Kept, ReadFailure, R | S["DecodingServices"]> => {
       if (given === input) return kept(input, options);
-      const second = kept(seen, options);
-      return matchRead(kept(given as Input<S>, options), {
+      const second = kept(seen, options, input);
+      return matchRead(kept(given as Input<S>, options, input), {
         onFailure: () => second,
         // The first strict read stands where the second does not write strictly either.
         onSuccess: (first) =>
