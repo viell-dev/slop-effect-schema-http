@@ -1141,6 +1141,60 @@ const ownValue = (value: unknown, key: PropertyKey): unknown => {
 };
 
 /**
+ * Confirm that the strict write retained the prepared payload's fields. A same-shaped
+ * transformation can validate strictly and still omit an optional field. For a rename, use
+ * the corresponding signatures of the structural link and verify the value actually written.
+ * An opaque payload or a layout without structural evidence cannot authorize the exemption.
+ */
+const wrotePayload = (ast: Ast, read: unknown, output: unknown): boolean => {
+  if (!isObject(read)) {
+    // With no scalar codec, the value itself is the witness. A scalar codec chooses its own
+    // representation, but still has to write something.
+    return ast.encoding === undefined
+      ? Object.is(read, output)
+      : output !== undefined;
+  }
+  if (ast._tag === "Union" && ast.encoding === undefined)
+    return ast.types.some((member) => wrotePayload(member, read, output));
+  if (
+    ast._tag === "Declaration" &&
+    Option.isOption(read) &&
+    Option.isSome(read)
+  ) {
+    const source = optionSource(ast);
+    return (
+      source !== undefined &&
+      wrotePayload(source, ownValue(read, "value"), output)
+    );
+  }
+  if (
+    !isStructural(ast) ||
+    !isPlainData(read) ||
+    !isObject(output) ||
+    Array.isArray(read) !== Array.isArray(output)
+  )
+    return false;
+  const wire = ast.encoding?.[0]?.to;
+  return keysOf(read).every((key) => {
+    const value = ownValue(read, key);
+    if (value === undefined) return true;
+    const index =
+      ast._tag === "Objects" && wire?._tag === "Objects"
+        ? ast.propertySignatures.findIndex(({ name }) => name === key)
+        : -1;
+    const name =
+      wire?._tag === "Objects"
+        ? (wire.propertySignatures[index]?.name ?? key)
+        : key;
+    const written = ownValue(output, name);
+    return (
+      written !== undefined &&
+      typesAt([ast], key).some((child) => wrotePayload(child, value, written))
+    );
+  });
+};
+
+/**
  * Can the missing read field be left out of a visible Some payload? Inspect only losses the
  * ordinary comparison reported, after a strict schema write has succeeded. The proof follows
  * plain data apart from the native Some wrapper, and only through closed structural views.
@@ -1167,7 +1221,12 @@ export const unstatedOptionField = (
       Option.isSome(read)
     ) {
       const source = optionSource(type);
-      if (source === undefined || !isObject(output)) return false;
+      if (
+        source === undefined ||
+        !isObject(output) ||
+        !wrotePayload(source, ownValue(read, key), output)
+      )
+        return false;
       // The ordinary comparison indexes its output with the wrapper's own "value" key.
       // If that is also an object on the wire, it could have stood in for a different lost
       // field. Keep the original refusal where the two positions cannot be told apart.
