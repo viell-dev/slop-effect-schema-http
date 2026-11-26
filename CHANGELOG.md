@@ -12,9 +12,13 @@
   ([#274](https://github.com/viell-dev/slop-effect-schema-http/issues/274)). Under
   `Schema.Union([Filter, Counted])`, where `Filter` is a struct and `Counted` a `Schema.Class` whose
   instances hold a member of their own, a `Counted` instance refused with `SchemaError` and now
-  sends `{"a":"item"}`, as it already did with `Counted` first. It still refuses where the class
-  cannot write the instance whole, as where a field is invalid or the instance holds a field only
-  `Filter` states.
+  sends `{"a":"item"}`, as it already did with `Counted` first. So does a class with renamed fields:
+  under `Schema.Union([Filter, Counted.pipe(Schema.encodeKeys({ a: "A" }))])` the instance sends
+  `{"A":"item"}` at the root, in a field or a list item and under a field its parent renames, and
+  renamed fields inside an instance are written under their wire names too. It still refuses where
+  the class cannot write the instance whole, as where a field is invalid or the instance holds a
+  field only `Filter` states, and where another member writes the same wire name for another field.
+  The instance is written strictly once rather than twice.
 - Wait up to eight minutes, not five, for npm to show a published version and its attestations
   before publication verification fails
   ([#288](https://github.com/viell-dev/slop-effect-schema-http/issues/288)). 0.19.0's upload needed
