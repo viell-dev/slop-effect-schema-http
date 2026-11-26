@@ -377,6 +377,19 @@ bytes with `HttpBodyError`. With `InvalidRequest`, a query writer refuses an obj
 or a list of text, such as a number. The stated member's codec writes such values for the wire when
 it takes the value itself.
 
+### A fieldless value must match exactly one member under oneOf
+
+With `mode: "oneOf"`, if a read finds that a fieldless plain object or list matches multiple
+members, request preparation fails with `Expected exactly one member to match`. Unstated and
+undefined-valued keys are left out when deciding what the value holds. Non-enumerable object fields
+do not count unless normalization brings them out as keys. For example, two structs with only
+optional fields can both read `{}`, even if constructing one would fill a default. That input fails
+in either member order, including inside an optional field, a list or another union. The failure
+names the ambiguous value's path and omits the input. The constructor counts matches on the decoded
+side. The encoded side counts its own matches if preparation reaches that reader. A successful
+decoded reading needs no extra check for encoded-only matches. The default `anyOf` mode still takes
+the first successful member.
+
 ### Void takes only an empty value
 
 Built-in `Schema.Void` ordinarily accepts any value and returns `undefined`. Here it takes only
@@ -386,9 +399,9 @@ field, and a list with a defined own cell or a defined named field of its own ar
 object field that is not enumerable does not count, because no writer sends one: under
 `Schema.Unknown` alone such an object is written as `{}`.
 
-- In a union of any mode, also grouped or suspended, a member that keeps the value reads it. So
-  `Union([Void, String])` sends `"hello"` as given, and a union of Void and an empty struct keeps
-  the object in either order.
+- A member that keeps a supplied value can read it beside Void. So `Union([Void, String])` sends
+  `"hello"` as given, and a union of Void and an empty struct keeps a populated object in either
+  order.
 - Anywhere else, as a Void of its own, in a field or in a union with no member that keeps the value,
   the request is refused with `Expected void`. `Union([Void, Struct({ a: String })])` refuses
   `"hello"` this way.
@@ -398,9 +411,10 @@ can see the Void. Inside an `Option` or another opaque declaration it is the sch
 
 A key no member states is left out first, as under a struct, so an object with no other key holds
 nothing. Under `Union([Void, Struct({ a: String })])`, `{ b: 1 }` therefore sends `null`, with no
-error. If the structural member cannot encode a value, such as JSON metadata containing a `Date`
-under `Schema.Unknown`, preparation fails with that member's `SchemaError` unless another member can
-write the value without dropping a supplied field, as
+error. Under `oneOf`, Void and a struct with only optional fields both match an empty object, so the
+usual fieldless ambiguity rule applies. If the structural member cannot encode a value, such as JSON
+metadata containing a `Date` under `Schema.Unknown`, preparation fails with that member's
+`SchemaError` unless another member can write the value without dropping a supplied field, as
 [below](#a-field-no-member-can-keep-is-an-error) describes.
 
 If an object member maps decoded `limit` to encoded `page_size`, either order with Void prepares
