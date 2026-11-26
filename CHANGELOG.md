@@ -36,6 +36,17 @@
   states it. An opaque or ambiguous unwrapping position now refuses the collision at the overlapping
   path where it used to send a replacement. Remove the unstated outer key or supply the encoded
   value at the Option's position.
+- **Breaking:** an opaque or ambiguous Option position can now refuse an unstated payload key when
+  the payload schema states a field called `value`, even if the previous body kept `value` intact.
+  This includes configured `OptionFromOptionalNullOr` and a native `Some` supplied as a struct
+  beside an Option alternative. Remove the unstated key, rename the payload's `value` field, or use
+  a visible `OptionFromNullOr`. For the struct case, supply a plain object.
+- Preserve wider members inside Options on a loose write
+  ([#308](https://github.com/viell-dev/slop-effect-schema-http/issues/308)). A class instance
+  elsewhere in the body can force a loose write. The payload writer can now keep wider fields in
+  nested Options, renamed payloads, and configured `OptionFromOptionalNullOr` codecs. A union member
+  that writes one field under another's name no longer wins those cases. Requests that previously
+  refused or sent a narrowed body can now send the full payload.
 - **Breaking:** preserve a stated payload field such as `limit` where a narrower choice used to drop
   it in a tagged, nested or list payload
   ([#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)). If an unrelated strict

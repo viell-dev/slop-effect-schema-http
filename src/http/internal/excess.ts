@@ -923,11 +923,12 @@ const keepsOrder = ({ propertySignatures }: SchemaAST.Objects): boolean =>
 const namesAlong = (
   from: SchemaAST.Objects,
   links: ReadonlyArray<SchemaAST.Link>,
+  allowsOptionalWireKey?: (type: Ast) => boolean,
 ): ReadonlyArray<Naming> | undefined => {
   if (!writesHeldKeys(from)) return undefined;
   let end = from;
   for (const link of links) {
-    if (!renamesKeys(end, link)) return undefined;
+    if (!renamesKeys(end, link, allowsOptionalWireKey)) return undefined;
     end = link.to as SchemaAST.Objects;
     if (!keepsOrder(end)) return undefined;
   }
@@ -1088,12 +1089,12 @@ const optionalCopyOf = (source: Ast, payload: Ast): boolean =>
   );
 
 /** A schema for a native Option, including codecs whose payload is opaque here. */
-const isOptionDeclaration = (ast: Ast): ast is SchemaAST.Declaration =>
+export const isOptionDeclaration = (ast: Ast): ast is SchemaAST.Declaration =>
   ast._tag === "Declaration" &&
   (ast.annotations?.["representation"] as { readonly id?: string } | undefined)
     ?.id === "effect/schema/Option";
 
-/** Whether a type can read a native Option as an Option at this position. */
+/** Whether any alternative declares a native Option at this position. */
 const statesOption = (types: ReadonlyArray<Ast>): boolean => {
   const seen = new Set<Ast>();
   const visit = (type: Ast): boolean => {
@@ -1246,15 +1247,29 @@ const ownSome = (value: object): PropertyDescriptor | undefined => {
     : undefined;
 };
 
-/** One unwrapping codec, possibly beside scalars that cannot read the Some. */
-const sourceAt = (types: ReadonlyArray<Ast>): Ast | undefined => {
+/**
+ * One unwrapping codec, possibly beside scalars that cannot read the Some. For a decoded-only
+ * comparison, Option declarations can instead agree on the same payload schema.
+ */
+const sourceAt = (
+  types: ReadonlyArray<Ast>,
+  { decodedOnly = false }: { readonly decodedOnly?: boolean } = {},
+): Ast | undefined => {
   const active = new Set<Ast>();
   let option: Ast | undefined;
   let source: Ast | undefined;
   const visit = (type: Ast): boolean => {
-    const payload = optionSource(type);
+    const payload =
+      decodedOnly && isOptionDeclaration(type)
+        ? type.typeParameters[0]
+        : optionSource(type);
     if (payload !== undefined) {
-      if (option !== undefined && option !== type) return false;
+      if (
+        option !== undefined &&
+        option !== type &&
+        (!decodedOnly || source !== payload)
+      )
+        return false;
       option = type;
       source = payload;
       return true;
@@ -1275,26 +1290,32 @@ const sourceAt = (types: ReadonlyArray<Ast>): Ast | undefined => {
   return types.every(visit) ? source : undefined;
 };
 
-const canUnwrapOption = (ast: Ast): boolean => {
-  if (optionSource(ast) !== undefined) return true;
-  if (ast._tag === "Suspend") return ast.encoding === undefined;
-  const fields = plainClassFrame(ast);
-  if (fields !== undefined) return mayUnwrapOption(fields);
-  return (
-    (isOptionFrame(ast) ||
-      (ast._tag === "Union" && ast.encoding === undefined)) &&
-    partsOf(ast).some(mayUnwrapOption)
-  );
-};
-
 const unwrappingOptions = new WeakMap<Ast, boolean>();
+const allOptions = new WeakMap<Ast, boolean>();
 
-/** Find codecs under visible structure without invoking suspension thunks at binding time. */
-export const mayUnwrapOption = (ast: Ast): boolean => {
-  const known = unwrappingOptions.get(ast);
+/** Find Option declarations under visible structure without resolving suspensions at binding time. */
+export const mayUnwrapOption = (
+  ast: Ast,
+  { decodedOnly = false }: { readonly decodedOnly?: boolean } = {},
+): boolean => {
+  const cache = decodedOnly ? allOptions : unwrappingOptions;
+  const known = cache.get(ast);
   if (known !== undefined) return known;
-  const found = canUnwrapOption(ast);
-  unwrappingOptions.set(ast, found);
+  const visit = (type: Ast) => mayUnwrapOption(type, { decodedOnly });
+  let found = decodedOnly
+    ? isOptionDeclaration(ast)
+    : optionSource(ast) !== undefined;
+  if (ast._tag === "Suspend") found = ast.encoding === undefined;
+  if (!found) {
+    const fields = plainClassFrame(ast);
+    found =
+      fields !== undefined
+        ? visit(fields)
+        : (isOptionFrame(ast) ||
+            (ast._tag === "Union" && ast.encoding === undefined)) &&
+          partsOf(ast).some(visit);
+  }
+  cache.set(ast, found);
   return found;
 };
 
@@ -1314,7 +1335,7 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
       types.length === 0 ||
       !isObject(value) ||
       active.has(value) ||
-      (!inSome && !types.some(mayUnwrapOption))
+      (!inSome && !types.some((type) => mayUnwrapOption(type)))
     )
       return value;
     active.add(value);
@@ -1382,16 +1403,16 @@ const optionWireNames = (sides: ReadonlyArray<Ast>, key: PropertyKey) => {
   const otherNames = new Set<PropertyKey>();
   for (const side of sides) {
     if (side._tag !== "Objects") continue;
-    // A key codec can write a name that the key's current spelling cannot establish.
-    if (!writesHeldKeys(side)) return undefined;
-    const wire = side.encoding?.[0]?.to;
-    if (wire?._tag === "Objects" && (!keepsOrder(side) || !keepsOrder(wire)))
-      return undefined;
-    side.propertySignatures.forEach(({ name }, index) => {
-      const written =
-        wire?._tag === "Objects" ? wire.propertySignatures[index]!.name : name;
+    const links = side.encoding ?? [];
+    if (links.length > 0 && !keepsOrder(side)) return undefined;
+    const pairs = namesAlong(
+      side,
+      links,
+      (type) => optionSource(type) !== undefined,
+    );
+    if (pairs === undefined) return undefined;
+    for (const [name, written] of pairs)
       (name === key ? names : otherNames).add(written);
-    });
     if (side.indexSignatures.length > 0) names.add(key);
   }
   if (names.size === 0) names.add(key);
@@ -1413,23 +1434,29 @@ export const optionLoss = (
 ): ReadonlyArray<Path> => {
   const lost: Path[] = [];
   const active = new Set<object>();
+  interface Position {
+    readonly path: Path;
+    readonly inSome: boolean;
+    readonly writing: boolean;
+  }
   const visit = (
     types: ReadonlyArray<Ast>,
     given: unknown,
     value: unknown,
     written: unknown,
-    path: Path,
-    inSome: boolean,
-    writing: boolean,
+    position: Position,
   ): void => {
     if (
       !isObject(given) ||
       active.has(given) ||
-      (!inSome && !types.some(mayUnwrapOption))
+      (!position.inSome &&
+        !types.some((type) =>
+          mayUnwrapOption(type, { decodedOnly: checkWrite }),
+        ))
     )
       return;
     active.add(given);
-    compare(types, given, value, written, path, inSome, writing);
+    compare(types, given, value, written, position);
     active.delete(given);
   };
   const compare = (
@@ -1437,12 +1464,15 @@ export const optionLoss = (
     given: Record<PropertyKey, unknown>,
     value: unknown,
     written: unknown,
-    path: Path,
-    inSome: boolean,
-    writing: boolean,
+    { path, inSome, writing }: Position,
   ): void => {
     if (Option.isOption(given)) {
-      const source = sourceAt(types);
+      const unwrapped = sourceAt(types);
+      // A loose write can follow a read that already narrowed a configured Option's payload.
+      // The type parameter states decoded fields even if the wire payload cannot be paired.
+      const source =
+        unwrapped ??
+        (checkWrite ? sourceAt(types, { decodedOnly: true }) : undefined);
       const some = ownSome(given);
       if (source === undefined || some === undefined) return;
       visit(
@@ -1450,9 +1480,11 @@ export const optionLoss = (
         some.value,
         isObject(value) ? ownSome(value)?.value : undefined,
         written,
-        [...path, "value"],
-        true,
-        writing,
+        {
+          path: [...path, "value"],
+          inSome: true,
+          writing: writing && unwrapped !== undefined,
+        },
       );
       return;
     }
@@ -1533,7 +1565,11 @@ export const optionLoss = (
           outputs.some((item) => item !== undefined)
         )
           continue;
-        visit(children, expected, decoded, actual, here, inSome, mustWrite);
+        visit(children, expected, decoded, actual, {
+          path: here,
+          inSome,
+          writing: mustWrite,
+        });
         if (lost.length === before) {
           firstLoss = undefined;
           break;
@@ -1544,7 +1580,11 @@ export const optionLoss = (
       if (firstLoss !== undefined) lost.push(...firstLoss);
     }
   };
-  visit([ast], input, read, output, [], false, checkWrite);
+  visit([ast], input, read, output, {
+    path: [],
+    inSome: false,
+    writing: checkWrite,
+  });
   return lost;
 };
 

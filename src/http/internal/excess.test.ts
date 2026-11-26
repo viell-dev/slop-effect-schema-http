@@ -981,3 +981,72 @@ it("uses another written name when only one candidate shares its name", () => {
     Excess.optionLoss(schema.ast, value, value, { CODE: "ABC" }, true),
   ).toEqual([]);
 });
+
+it("accounts for each list cell when a loose Option write omits it", () => {
+  const schema = Schema.OptionFromNullOr(Schema.Array(Schema.String));
+  const input = Option.some(["given"]);
+  expect(Excess.optionLoss(schema.ast, input, input, ["given"], true)).toEqual(
+    [],
+  );
+  expect(Excess.optionLoss(schema.ast, input, input, [], true)).toEqual([
+    ["value", 0],
+  ]);
+});
+
+it("accepts the key a record retains beside a renamed alternative", () => {
+  const renamed = Schema.Struct({ a: text }).pipe(
+    Schema.encodeKeys({ a: "A" }),
+  );
+  const record = Schema.Record(Schema.String, Schema.String);
+  const schema = Schema.OptionFromNullOr(Schema.Union([renamed, record]));
+  const input = Option.some({ a: "given" });
+  expect(
+    Excess.optionLoss(schema.ast, input, input, { a: "given" }, true),
+  ).toEqual([]);
+});
+
+it("distinguishes a missing null from an empty value held as undefined", () => {
+  const schema = Schema.OptionFromNullOr(
+    Schema.Struct({
+      x: Schema.optionalKey(Schema.Union([Schema.Null, Schema.Void])),
+    }),
+  );
+  const input = Option.some({ x: null });
+  expect(
+    Excess.optionLoss(schema.ast, input, Option.some({}), {}, false),
+  ).toEqual([["value", "x"]]);
+  expect(
+    Excess.optionLoss(
+      schema.ast,
+      input,
+      Option.some({ x: undefined }),
+      {},
+      false,
+    ),
+  ).toEqual([]);
+});
+
+it("recognizes a native Option across suspension, encoding and recursive alternatives", () => {
+  const Struct = Schema.Struct({ value: Schema.Struct({ a: text }) });
+  const option = Schema.Option(Schema.Number);
+  const suspended = Schema.suspend(() => option);
+  const encoded = option.pipe(
+    Schema.decodeTo(
+      Struct,
+      SchemaTransformation.transform({
+        decode: () => ({ value: { a: "canonical" } }),
+        encode: () => Option.none<number>(),
+      }),
+    ),
+  );
+  const recursive: SchemaAST.Suspend = new SchemaAST.Suspend(() => recursive);
+  const input = Option.some({ a: "a", stray: "x" });
+
+  for (const ast of [
+    Schema.Union([suspended, Struct]).ast,
+    encoded.ast,
+    new SchemaAST.Union([recursive, option.ast, Struct.ast], undefined),
+  ]) {
+    expect(Excess.normalised([ast], input)).toBe(input);
+  }
+});

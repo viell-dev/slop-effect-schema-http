@@ -922,7 +922,7 @@ it.effect("retains fields an open payload alternative can hold", () =>
   }),
 );
 
-it.effect("refuses a repaired input when an unrelated strict write fails", () =>
+it.effect("retries the original when a strict write fails", () =>
   Effect.gen(function* () {
     const extra = Schema.Struct({ a: Schema.String, b: Schema.String });
     const Encoded = Schema.Struct({ a: Schema.String });
@@ -956,15 +956,144 @@ it.effect("refuses a repaired input when an unrelated strict write fails", () =>
       held: Schema.OptionFromNullOr(Filter),
       codec,
     });
-    const lost = yield* Effect.flip(
-      json(withWiderPayload, {
-        held: Option.some({ ...owner, limit: "l" }),
+    const wider = { ...owner, limit: "l" };
+    expect(
+      yield* json(withWiderPayload, {
+        held: Option.some(wider),
         codec: supplied,
       }),
-    );
-    expect(lost.message).toContain('["held"]["value"]["limit"]');
+    ).toEqual({ held: wider, codec: { a: "a" } });
   }),
 );
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/308
+describe("loose writes inside Some", () => {
+  class Counted extends Schema.Class<Counted>("Counted")({ a: Schema.String }) {
+    readonly reads = 1;
+  }
+  const who = new Counted({ a: "item" });
+  const writtenWho = { a: "item" };
+  const wide = { ...owner, limit: "l" };
+
+  it.effect(
+    "keeps a wider field and its narrow control below an index rename",
+    () =>
+      Effect.gen(function* () {
+        const payload = Schema.Struct({ a: Schema.String, f: Filter }).pipe(
+          Schema.encodeKeys({ a: "0" }),
+        );
+        const schema = Schema.Struct({
+          held: Schema.OptionFromNullOr(payload),
+          who: Counted,
+        });
+        for (const f of [wide, owner]) {
+          expect(
+            yield* json(schema, { held: Option.some({ a: "x", f }), who }),
+          ).toEqual({
+            held: { "0": "x", f },
+            who: writtenWho,
+          });
+        }
+        const renamedRoot = Schema.Struct({
+          a: Schema.String,
+          held: Schema.OptionFromNullOr(Filter),
+          who: Counted,
+        }).pipe(Schema.encodeKeys({ a: "0" }));
+        expect(
+          yield* json(renamedRoot, { a: "x", held: Option.some(wide), who }),
+        ).toEqual({
+          "0": "x",
+          held: wide,
+          who: writtenWho,
+        });
+      }),
+  );
+
+  it.effect(
+    "follows the inner codec through an outer Some's decoded projection",
+    () =>
+      Effect.gen(function* () {
+        const payload = Schema.Struct({
+          a: Schema.String,
+          inner: Schema.OptionFromNullOr(Filter),
+        }).pipe(Schema.encodeKeys({ a: "0" }));
+        const schema = Schema.Struct({
+          held: Schema.OptionFromNullOr(payload),
+          who: Counted,
+        });
+        expect(
+          yield* json(schema, {
+            held: Option.some({ a: "x", inner: Option.some(wide) }),
+            who,
+          }),
+        ).toEqual({ held: { "0": "x", inner: wide }, who: writtenWho });
+      }),
+  );
+
+  it.effect("keeps the wider field with either configured None encoding", () =>
+    Effect.gen(function* () {
+      for (const onNoneEncoding of [null, undefined]) {
+        const schema = Schema.Struct({
+          held: Schema.OptionFromOptionalNullOr(Filter, { onNoneEncoding }),
+          who: Counted,
+        });
+        expect(yield* json(schema, { held: Option.some(wide), who })).toEqual({
+          held: wide,
+          who: writtenWho,
+        });
+      }
+    }),
+  );
+
+  it.effect(
+    "keeps both object and transformed scalar values at crossing wire names",
+    () =>
+      Effect.gen(function* () {
+        const object = Schema.Struct({ n: Schema.String });
+        for (const [field, x, y, writtenX, writtenY] of [
+          [object, { n: "X" }, { n: "Y" }, { n: "X" }, { n: "Y" }],
+          [Schema.FiniteFromString, 5, 7, "5", "7"],
+        ] as const) {
+          const narrow = Schema.Struct({ id: Schema.String, y: field }).pipe(
+            Schema.encodeKeys({ y: "x" }),
+          );
+          const wider = Schema.Struct({
+            id: Schema.String,
+            y: field,
+            x: field,
+          });
+          const schema = Schema.Struct({
+            held: Schema.OptionFromNullOr(Schema.Union([narrow, wider])),
+            who: Counted,
+          });
+          expect(
+            yield* json(schema, { held: Option.some({ id: "1", x, y }), who }),
+          ).toEqual({
+            held: { id: "1", x: writtenX, y: writtenY },
+            who: writtenWho,
+          });
+        }
+      }),
+  );
+
+  it.effect("keeps a configured tagged payload wide after a loose read", () =>
+    Effect.gen(function* () {
+      const tagged = Schema.Union([
+        Schema.TaggedStruct("A", Owner.fields),
+        Schema.TaggedStruct("A", Wide.fields),
+      ]);
+      const schema = Schema.Struct({
+        held: Schema.OptionFromOptionalNullOr(tagged, { onNoneEncoding: null }),
+        who: Counted,
+      });
+      const payload = { _tag: "A" as const, ...wide };
+      expect(yield* json(schema, { held: Option.some(payload), who })).toEqual({
+        held: payload,
+        who: writtenWho,
+      });
+    }),
+  );
+});
 
 it.effect(
   "keeps the original loss diagnostic when the writer is supplied separately",
@@ -1390,6 +1519,12 @@ it.effect("refuses wrapper collisions at opaque Option positions", () =>
         schema.ast._tag === "Union" ? { held, a: "a" } : { held };
       const failure = yield* Effect.flip(json(schema, supplied));
       expect(failure.message).toContain('["held"]["value"]["a"]');
+      const unstated = {
+        ...supplied,
+        held: Option.some({ value, stray: "x" }),
+      };
+      const refused = yield* Effect.flip(json(schema, unstated));
+      expect(refused.message).toContain('["held"]["value"]["stray"]');
       const control = { ...supplied, held: Option.some({ value }) };
       const expected =
         schema.ast._tag === "Union"

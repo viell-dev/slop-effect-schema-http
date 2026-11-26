@@ -576,7 +576,10 @@ including renamed structs and plain inputs to a stated class. A scalar, null or 
 alternative that cannot read the `Some` does not make the codec ambiguous. Before the whole strict
 read and write, preparation leaves out keys neither side of any remaining member states. A member
 ruled out by a literal tag states nothing, just as for an ordinary field. If the strict attempt
-fails, preparation uses the original input and checks for missing visible fields.
+fails, preparation uses the original input and checks for missing visible fields. If the whole write
+has to run loosely, unions the writer reaches through the Option's payload schema can try a member
+that keeps the whole value first. This includes a nested `Some` and a payload below a key renamed to
+an index-like name such as `"0"`.
 
 Use decoded names inside a `Some`. For a payload that writes `limit` as `page_size`, pass
 `Some({ limit: "5" })`. To supply the wire name, pass the encoded value `{ page_size: "5" }` at the
@@ -663,15 +666,12 @@ the schema does with it. These are the places where it cannot, and what happens 
   `Union([Note, Title])` drops `meta` from a class instance.
 - A name every object has, such as `toString` or `__proto__`, is read as Effect reads it. A field
   given under both its names sends one of them where its wire name is such a name.
-- A `Some` payload can retain the earlier reading where the Option writer is opaque or custom, the
-  position has competing object-reading alternatives or unwrapping codecs, or the input traverses a
-  class instance or another value outside plain data. This includes
-  `Schema.OptionFromOptionalNullOr` with `onNoneEncoding: null` or `undefined`, and
-  `OptionFromNullOr(Schema.Option(Union))` at the inner Option. A relaxed read can drop a field that
-  a wider member states ([#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)),
-  and a stray key can still cause a refusal
-  ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)). Choose the intended
-  member directly or validate and supply the encoded representation.
+- A relaxed read can still take a narrower member inside an opaque or ambiguous `Some` payload, for
+  example when a stray key defeats the strict read and competing codecs hide the payload. A loose
+  write can select a wider member for data that reaches it through an Option declaration. Data
+  already narrowed by the read, a class instance, or a custom writer can remain outside that
+  recovery. Choose the intended member directly or validate and supply the encoded representation
+  ([#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)).
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
   recovery's value is not checked against what it was given: a `Schema.catchDecoding` record beside
   a list member can take a list whose cells hold a key the list member does not state, and what it
@@ -695,7 +695,12 @@ the schema does with it. These are the places where it cannot, and what happens 
   under `value`. Preparation can refuse at that path
   ([#299](https://github.com/viell-dev/slop-effect-schema-http/issues/299)). Remove the unstated
   outer key, choose the intended member directly, or supply the encoded representation.
-
+- A stray key can also cause a refusal at an opaque Option position where the payload schema states
+  a field called `value`, even if the given `value` would have been sent intact. This includes a
+  configured `OptionFromOptionalNullOr` and a native `Some` supplied as an object beside a competing
+  Option alternative. Remove the unstated key, rename the payload's `value` field, supply a plain
+  object to the struct, or use an unambiguous `OptionFromNullOr` where appropriate
+  ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)).
 - Inside a value with the union-wide reading, as [A list stays a list](#a-list-stays-a-list) gives,
   a list beside a record refuses a cell key the list member does not state, and an index-keyed
   object beside a list member refuses the key the list states. Leave out keys the list member does

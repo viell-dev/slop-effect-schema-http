@@ -211,10 +211,16 @@ Only the whole strict read and write can use the copy. If that attempt fails wit
 the ordinary reader starts from the caller's input. This keeps the ordinary reader's treatment of
 opaque neighbours. The wrapper's `value` adds a step to the caller's path. On the wire the payload
 occupies the Option's position. Even at an opaque Option position, preparation does not use a wire
-field called `value` to rewrite the wrapper. The relaxed route checks which visible payload fields
-the read held. After a loose write it also checks what was written under candidate wire names where
-their positions and key schemas let it pair the names. A value that Void reads as nothing in place
-still holds its field.
+field called `value` to rewrite the wrapper. This can cause a refusal where an opaque payload states
+`value` and the input has an unstated key, or where a struct beside an Option alternative would have
+read a native `Some` as an ordinary object.
+
+The loose writer follows the native Option declaration into its type parameter and encoded side.
+Every union it reaches can try a member that holds the whole payload, including beneath an
+index-like rename whose field names cannot be paired by position. The relaxed route still checks
+what the read held. Output comparison uses candidate wire names where they can be paired. An
+unpairable rename by itself supplies no output evidence. The writer's selection still applies there.
+A value that Void reads as nothing in place still holds its field.
 
 The second rule: an empty struct, an open schema without a check, or, for a value that is not a
 list, an empty class keeps every key of the value it reads, at every depth, as an alternative of its
