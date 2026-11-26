@@ -231,7 +231,11 @@ fits, and a struct fits any object. Where the loose read's struct would strip th
 write takes the strict read instead, if what it writes keeps every field a member states. With
 `class Counted extends Schema.Class<Counted>("Counted")({ a: Schema.String }) { readonly reads = 1 }`
 and a struct `Filter` that states only `limit`, `Union([Filter, Counted])` sends a `Counted`
-instance as `{"a":"item"}` in either order. `reads`, which no member states, is left out.
+instance as `{"a":"item"}` in either order. `reads`, which no member states, is left out. A field
+that `Schema.encodeKeys` renames, on the class or on a struct inside the instance, is kept under the
+name it is written as, so `Union([Filter, Counted.pipe(Schema.encodeKeys({ a: "A" }))])` sends
+`{"A":"item"}`. That name shows the field was written only where nothing else there can write it, as
+the [active limits](#active-limits-and-recovery) give.
 
 ## Preservation and selection
 
@@ -639,7 +643,11 @@ the schema does with it. These are the places where it cannot, and what happens 
   all-encoded names, one per field.
 - A class instance that a struct member before its class would strip refuses where its class cannot
   write it whole: where a field is invalid, where the instance holds a field only another member
-  states, or where the schema names a field every object has. With the class first, such an instance
+  states, or where the schema names a field every object has. It also refuses where a renamed
+  field's wire name cannot show that the field was written: where another member renames another
+  field to that name, where the instance holds a key of that name, where the name is an index such
+  as `"0"` or a symbol, or where a member beside the class is another declaration or has a custom
+  transformation or middleware, which could write any name. With the class first, such an instance
   is written as Effect writes it, as the first item above gives.
 - Where a schema has a choice between objects, an `Option` given to `Schema.OptionFromNullOr`
   refuses a key its contents hold that their schema does not state, which a schema without such a

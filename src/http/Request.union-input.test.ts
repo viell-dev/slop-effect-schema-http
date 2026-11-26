@@ -2779,6 +2779,140 @@ describe("a caller's field under a union", () => {
         }),
     );
 
+    /** `Counted` writing its field as `A`. */
+    const Renamed = Counted.pipe(Schema.encodeKeys({ a: "A" }));
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/274
+    it.effect(
+      "writes a class instance with a renamed field through its class, in either order",
+      () =>
+        Effect.gen(function* () {
+          for (const members of [
+            [Filter, Renamed],
+            [Renamed, Filter],
+          ] as const) {
+            const Either = Schema.Union(members);
+            expect(yield* bodyOf(post(Either), { body: counted() })).toBe(
+              '{"A":"item"}',
+            );
+            expect(
+              yield* bodyOf(post(Schema.Struct({ item: Either })), {
+                body: { item: counted() },
+              }),
+            ).toBe('{"item":{"A":"item"}}');
+            expect(
+              yield* bodyOf(post(Schema.Array(Either)), {
+                body: [counted(), { limit: 5 }],
+              }),
+            ).toBe('[{"A":"item"},{"page_size":"5"}]');
+            // A renamed field above the instance.
+            expect(
+              yield* bodyOf(
+                post(
+                  Schema.Struct({ item: Either }).pipe(
+                    Schema.encodeKeys({ item: "the_item" }),
+                  ),
+                ),
+                { body: { item: counted() } },
+              ),
+            ).toBe('{"the_item":{"A":"item"}}');
+            expect(yield* urlOf(queried(Either), { query: counted() })).toBe(
+              "/x?A=item",
+            );
+          }
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/274
+    it.effect(
+      "writes renamed fields inside a class instance through its class, in either order",
+      () =>
+        Effect.gen(function* () {
+          class Outer extends Schema.Class<Outer>("Outer")({
+            inner: Renamed,
+            listed: Schema.Array(Schema.Union([Renamed, Filter])),
+            b: text,
+          }) {
+            readonly reads = 2;
+          }
+          const RenamedOuter = Outer.pipe(
+            Schema.encodeKeys({ inner: "Inner" }),
+          );
+          class Fielded extends Schema.Class<Fielded>("Fielded")({
+            a: text,
+            f: Schema.Struct({ x: text }).pipe(Schema.encodeKeys({ x: "X" })),
+          }) {
+            readonly reads = 3;
+          }
+          const outer = () =>
+            new Outer({ inner: counted(), listed: [counted()], b: "b" });
+          for (const members of [
+            [Filter, RenamedOuter],
+            [RenamedOuter, Filter],
+          ] as const)
+            expect(
+              yield* bodyOf(post(Schema.Union(members)), { body: outer() }),
+            ).toBe('{"Inner":{"A":"item"},"listed":[{"A":"item"}],"b":"b"}');
+          for (const members of [
+            [Filter, Fielded],
+            [Fielded, Filter],
+          ] as const)
+            expect(
+              yield* bodyOf(
+                post(Schema.Struct({ item: Schema.Union(members) })),
+                {
+                  body: { item: new Fielded({ a: "item", f: { x: "x" } }) },
+                },
+              ),
+            ).toBe('{"item":{"a":"item","f":{"X":"x"}}}');
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/274
+    it.effect(
+      "still refuses a class instance with a renamed field its class cannot write whole",
+      () =>
+        Effect.gen(function* () {
+          const schema = Schema.Struct({
+            item: Schema.Union([Filter, Renamed]),
+          });
+          const invalid = Object.assign(counted(), { a: 5 });
+          expect(
+            yield* schemaFailure(post(schema), { body: { item: invalid } }),
+          ).toContain('["item"]["a"]');
+          // Only `Filter` states `limit`, and the class member does not write it.
+          const holding = Object.assign(counted(), { limit: 5 });
+          expect(
+            yield* schemaFailure(post(schema), { body: { item: holding } }),
+          ).toContain('["item"]["a"]');
+          expect(
+            yield* schemaFailure(post(Schema.Array(schema)), {
+              body: [{ item: holding }],
+            }),
+          ).toContain('[0]["item"]["a"]');
+          // The instance's own `A` would go where the class writes `a`.
+          const holdingWire = Object.assign(counted(), { A: "wire" });
+          expect(
+            yield* schemaFailure(post(schema), { body: { item: holdingWire } }),
+          ).toContain('["item"]["A"]');
+          // Under a wire name another member writes for another field, the class's write cannot say
+          // which field it holds.
+          const Aliased = Schema.Struct({
+            limit: Schema.optionalKey(text),
+          }).pipe(Schema.encodeKeys({ limit: "A" }));
+          for (const item of [
+            counted(),
+            Object.assign(counted(), { limit: "5" }),
+          ])
+            expect(
+              yield* schemaFailure(
+                post(Schema.Struct({ item: Schema.Union([Aliased, Renamed]) })),
+                { body: { item } },
+              ),
+            ).toContain('["item"]["a"]');
+        }),
+    );
+
     /** The #250 value, in a class instance, which is not plain data. */
     class Dated {
       readonly title = "a";
