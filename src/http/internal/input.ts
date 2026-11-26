@@ -1399,7 +1399,19 @@ const readerForCodec = <S extends Schema.Top, A, R>(
               // What a strict read kept as given, only what was written can say it holds.
               Excess.missing([ast], given, value, output, {
                 written: strictly !== undefined,
-              }).filter(isHeld),
+              }).filter(
+                (path) =>
+                  isHeld(path) &&
+                  (strict !== undefined ||
+                    custom !== undefined ||
+                    !Excess.unstatedOptionField(
+                      ast,
+                      given,
+                      value,
+                      output,
+                      path,
+                    )),
+              ),
               losses(input, value, output),
               lostByRead,
             ),

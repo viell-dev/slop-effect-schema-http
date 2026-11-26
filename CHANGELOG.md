@@ -23,6 +23,12 @@
   ([#310](https://github.com/viell-dev/slop-effect-schema-http/issues/310)).
 - Prepare an all-undefined field the same way when an opaque neighbour has an unstated key
   ([#307](https://github.com/viell-dev/slop-effect-schema-http/issues/307)).
+- Leave out unstated keys in a plain `Some` payload whose Effect Option codec exposes it on the
+  encoded side ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)). A stray
+  key under `Schema.OptionFromNullOr` beside a visible union previously refused the body. It now
+  sends the stated fields when the strict write succeeds. A field the payload's schema states can
+  still cause a refusal if the read loses it.
+
 - Write a class instance through its class beside a struct that would strip it
   ([#274](https://github.com/viell-dev/slop-effect-schema-http/issues/274)). Under
   `Schema.Union([Filter, Counted])`, where `Filter` is a struct and `Counted` a `Schema.Class` whose
