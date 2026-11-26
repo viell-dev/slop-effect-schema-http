@@ -561,3 +561,180 @@ describe("normalising visible Some payloads", () => {
     expect(Excess.normalisedOptions(schema.ast, input)).toBe(input);
   });
 });
+
+describe("boundaries of a visible Some payload", () => {
+  const Struct = Schema.Struct({ a: Schema.String });
+  const input = Option.some({ a: "a", stray: "x" });
+
+  it("requires matching payload bodies even with an actual Effect unwrapping getter", () => {
+    const option = Schema.OptionFromOptionalKey(Struct).ast;
+    if (option._tag !== "Declaration" || option.encoding === undefined)
+      throw new Error("expected an unwrapping declaration");
+    for (const source of [
+      Schema.optionalKey(
+        Schema.Struct({ a: Schema.String, stray: Schema.String }),
+      ),
+      Schema.optionalKey(Struct.annotate({ description: "other source" })),
+      Schema.optionalKey(Struct.check(Schema.makeFilter(() => true))),
+      Schema.optionalKey(
+        Schema.StructWithRest(Struct, [
+          Schema.Record(Schema.String, Schema.String),
+        ]),
+      ),
+    ]) {
+      const declaration = new SchemaAST.Declaration(
+        option.typeParameters,
+        option.run,
+        option.annotations,
+        option.checks,
+        [new SchemaAST.Link(source.ast, option.encoding[0].transformation)],
+      );
+      expect(Excess.normalisedOptions(declaration, input)).toBe(input);
+    }
+  });
+
+  it("keeps two object alternatives even when one is the Option's exact wire projection", () => {
+    const option = Schema.OptionFromNullOr(Struct);
+    const schema = Schema.Union([option, Schema.toEncoded(option)]);
+    expect(Excess.normalisedOptions(schema.ast, input)).toBe(input);
+  });
+
+  it("does not follow an input cycle during normalization or loss comparison", () => {
+    interface Node {
+      a: string;
+      next: Node;
+    }
+    const Node = Schema.suspend((): Schema.Codec<Node> =>
+      Schema.Struct({ a: Schema.String, next: Node }),
+    );
+    const option = Schema.OptionFromNullOr(Node);
+    const payload = { a: "a" } as Node;
+    payload.next = payload;
+    const some = Option.some(payload);
+    expect(Excess.normalisedOptions(option.ast, some)).toBe(some);
+    expect(Excess.optionLoss(option.ast, some, some, payload, true)).toEqual(
+      [],
+    );
+  });
+
+  it("does not follow a schema cycle at the same value", () => {
+    const recursive: SchemaAST.Suspend = new SchemaAST.Suspend(() => recursive);
+    expect(Excess.normalisedOptions(recursive, input)).toBe(input);
+    expect(Excess.normalisedOptions(recursive, { a: "a" })).toEqual({ a: "a" });
+  });
+
+  it("reports an object payload field lost by the read even if the wire name exists", () => {
+    const option = Schema.OptionFromNullOr(
+      Schema.Struct({ nested: Schema.Unknown }),
+    );
+    const nested = { x: "x" };
+    expect(
+      Excess.optionLoss(
+        option.ast,
+        Option.some({ nested }),
+        Option.some({}),
+        { nested },
+        false,
+      ),
+    ).toEqual([["value", "nested"]]);
+  });
+
+  it("leaves a suspension under an opaque codec unresolved at binding time", () => {
+    let resolved = false;
+    const suspended = Schema.suspend(() => {
+      resolved = true;
+      return Schema.OptionFromNullOr(Struct);
+    });
+    expect(Excess.mayUnwrapOption(Schema.Option(suspended).ast)).toBe(false);
+    expect(Excess.mayUnwrapOption(suspended.ast)).toBe(true);
+    expect(resolved).toBe(false);
+  });
+});
+
+describe("accounting for written Some fields", () => {
+  const Owner = Schema.Struct({ owner: Schema.String });
+
+  it("leaves unrelated fields and non-plain payloads to their own reading", () => {
+    const schema = Schema.Struct({
+      bare: Owner,
+      held: Schema.OptionFromNullOr(
+        Schema.Struct({
+          ...Owner.fields,
+          limit: Schema.optionalKey(Schema.String),
+        }),
+      ),
+    });
+    const held = Option.some({ owner: "a" });
+    const output = { held: { owner: "a" } };
+    const assertKept = (given: unknown) =>
+      expect(
+        Excess.optionLoss(schema.ast, given, { held }, output, true),
+      ).toEqual([]);
+    assertKept({ bare: { owner: "b" }, held });
+    assertKept({
+      held: Option.some({ owner: "a", limit: undefined, stray: "x" }),
+    });
+    assertKept({ held: { value: { owner: "b" } } });
+    assertKept({
+      held: Option.some(
+        Object.assign(Object.create({ inherited: true }) as object, {
+          owner: "b",
+        }),
+      ),
+    });
+  });
+
+  it("allows None to omit a wire key and a codec to change a scalar's representation", () => {
+    const schema = Schema.OptionFromNullOr(
+      Schema.Struct({
+        option: Schema.OptionFromOptionalKey(Schema.String),
+        size: Schema.NumberFromString,
+        owner: Schema.String,
+      }).pipe(Schema.encodeKeys({ size: "SIZE" })),
+    );
+    const input = Option.some({ option: Option.none(), size: 5, owner: "a" });
+    expect(
+      Excess.optionLoss(
+        schema.ast,
+        input,
+        input,
+        { SIZE: "5", owner: "a" },
+        false,
+      ),
+    ).toEqual([]);
+    expect(
+      Excess.optionLoss(schema.ast, input, input, { SIZE: "5" }, false),
+    ).toEqual([["value", "owner"]]);
+  });
+
+  it("keeps a list's null prototype when copying a cell's payload", () => {
+    const schema = Schema.OptionFromNullOr(Schema.Array(Owner));
+    const list = [{ owner: "a", stray: "x" }];
+    Object.setPrototypeOf(list, null);
+    const result = Excess.normalisedOptions(schema.ast, Option.some(list));
+    if (!Option.isOption(result) || !Option.isSome(result))
+      throw new Error("expected Some");
+    expect(Object.getPrototypeOf(result.value as object)).toBeNull();
+    expect(Object.getOwnPropertyDescriptor(result.value, "0")?.value).toEqual({
+      owner: "a",
+    });
+  });
+
+  it("leaves alternative unwrapping codecs and middleware to their own reading", () => {
+    const input = Option.some({ owner: "a", stray: "x" });
+    const schema = Schema.Union([
+      Schema.OptionFromNullOr(Owner),
+      Schema.OptionFromNullOr(
+        Schema.Struct({ owner: Schema.String, stray: Schema.String }),
+      ),
+    ]);
+    expect(Excess.normalisedOptions(schema.ast, input)).toBe(input);
+    const union = Schema.Union([
+      Owner,
+      Schema.Struct({ limit: Schema.String }),
+    ]).pipe(Schema.middlewareEncoding((effect) => effect));
+    expect(
+      Excess.normalisedOptions(Schema.OptionFromNullOr(union).ast, input),
+    ).toBe(input);
+  });
+});
