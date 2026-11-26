@@ -383,13 +383,20 @@ With `mode: "oneOf"`, if a read finds that a fieldless plain object or list matc
 members, request preparation fails with `Expected exactly one member to match`. Unstated and
 undefined-valued keys are left out when deciding what the value holds. Non-enumerable object fields
 do not count unless normalization brings them out as keys. For example, two structs with only
-optional fields can both read `{}`, even if constructing one would fill a default. That input fails
-in either member order, including inside an optional field, a list or another union. The failure
-names the ambiguous value's path and omits the input. The constructor counts matches on the decoded
-side. The encoded side counts its own matches if preparation reaches that reader. A successful
-decoded reading needs no extra check for encoded-only matches. An enclosing union can still read the
-whole value successfully through another member, including on the encoded side. The default `anyOf`
-mode takes the first successful member.
+optional fields can both read `{}`, even if constructing one would fill a default. Either member
+order produces the same ambiguity. An enclosing `anyOf` can still use another member that reads the
+whole value without losing fields. If no member can, the failure names the ambiguous value's path
+and omits the input. This also applies within an optional field, a list, or a query or header group
+that receives an empty record because it was omitted or stacked with another binding.
+
+A field whose decoded side succeeds does not need a second match check on its encoded side.
+Preparation can use the field's constructor when a whole struct's decode finds encoded-side
+ambiguity there. Lists and records read as a whole, so when they require the encoded side, that
+side's matches decide the result.
+
+A refusal at this stage is a `SchemaError`. If you handled an `InvalidRequest` or `HttpBodyError`
+for one of these inputs, handle the schema failure too. It occurs before the writer checks the
+output.
 
 ### Void takes only an empty value
 

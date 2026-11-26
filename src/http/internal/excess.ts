@@ -1473,8 +1473,17 @@ export const choosing = holding(
 );
 
 /** Whether a read could report a visible oneOf, including one in an unresolved suspension. */
-export const mayHaveOneOf = holding(
+const couldReportOneOf = holding(
   (ast) =>
     ast._tag === "Suspend" ||
     (ast._tag === "Union" && ast.options?.mode === "oneOf"),
 );
+
+const possibleOneOfs = new WeakMap<Ast, boolean>();
+
+export const mayHaveOneOf = (ast: Ast): boolean => {
+  let possible = possibleOneOfs.get(ast);
+  if (possible === undefined)
+    possibleOneOfs.set(ast, (possible = couldReportOneOf(ast)));
+  return possible;
+};
