@@ -210,8 +210,11 @@ member ruled out by its literal tag supplies no names, and an open alternative c
 Only the whole strict read and write can use the copy. If that attempt fails with a schema error,
 the ordinary reader starts from the caller's input. This keeps the ordinary reader's treatment of
 opaque neighbours. The wrapper's `value` adds a step to the caller's path. On the wire the payload
-occupies the Option's position. The relaxed route checks visible payload fields at those paths and
-looks at what was actually written under candidate wire names.
+occupies the Option's position. Even at an opaque Option position, preparation does not use a wire
+field called `value` to rewrite the wrapper. The relaxed route checks which visible payload fields
+the read held. After a loose write it also checks what was written under candidate wire names where
+their positions and key schemas let it pair the names. A value that Void reads as nothing in place
+still holds its field.
 
 The second rule: an empty struct, an open schema without a check, or, for a value that is not a
 list, an empty class keeps every key of the value it reads, at every depth, as an alternative of its

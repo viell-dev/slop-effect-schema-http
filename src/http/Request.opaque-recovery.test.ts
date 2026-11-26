@@ -1,5 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schema, SchemaTransformation } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  Option,
+  Schema,
+  SchemaTransformation,
+} from "effect";
 import * as Body from "./Body.js";
 import * as Inputs from "./internal/input.js";
 import * as Request from "./Request.js";
@@ -669,7 +676,7 @@ describe("a stray key inside an Option with a visible encoded object", () => {
   );
 
   it.effect(
-    "keeps the refusal when a structural link writes away a supplied field",
+    "lets a structural transformation decide what its payload writes strictly",
     () =>
       Effect.gen(function* () {
         const Decoded = Schema.Struct({
@@ -696,10 +703,11 @@ describe("a stray key inside an Option with a visible encoded object", () => {
             held: Schema.OptionFromNullOr(Payload),
             filter: Filter,
           });
-          const failure = yield* Effect.flip(
-            json(schema, { held: Option.some(stray), filter }),
-          );
-          expect(failure.message).toContain('["held"]["value"]["owner"]');
+          for (const payload of [owner, stray]) {
+            expect(
+              yield* json(schema, { held: Option.some(payload), filter }),
+            ).toEqual({ held: replacement, filter });
+          }
         }
       }),
   );
@@ -1260,5 +1268,188 @@ it.effect(
       });
       expect(result.lost).toEqual([]);
       expect(result.output.held).toEqual({ _tag: "A", child: undefined });
+    }),
+);
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/292
+it.effect("keeps schema-written payloads beside an opaque neighbour", () =>
+  Effect.gen(function* () {
+    const other = Schema.Option(Schema.Struct({ x: Schema.String }));
+    const neighbour = Option.some({ x: "x", extra: "e" });
+    const output = { other: { _tag: "Some", value: { x: "x" } }, filter };
+    const Code = Schema.Struct({ code: Schema.String });
+    const Upper = Code.pipe(
+      Schema.encodeTo(
+        Code,
+        SchemaTransformation.transform({
+          decode: ({ code }) => ({ code: code.toLowerCase() }),
+          encode: ({ code }) => ({ code: code.toUpperCase() }),
+        }),
+      ),
+    );
+    const Indexed = Schema.Struct({ a: Schema.String, b: Schema.String }).pipe(
+      Schema.encodeKeys({ b: "0" }),
+    );
+    const Ack = Schema.Struct({
+      owner: Schema.String,
+      ack: Schema.optionalKey(Schema.Union([Schema.Void, A])),
+    });
+    const check = <S extends Schema.Top>(
+      schema: S,
+      value: typeof schema.Type,
+      held: unknown,
+    ) => {
+      const root = Schema.Struct({
+        held: Schema.OptionFromNullOr(schema),
+        other,
+        filter: Filter,
+      });
+      return Effect.map(
+        json(root, { held: Option.some(value), other: neighbour, filter }),
+        (body) => expect(body).toEqual({ held, ...output }),
+      );
+    };
+    yield* check(Upper, { code: "abc" }, { code: "ABC" });
+    yield* check(Indexed, { a: "1", b: "2" }, { "0": "2", a: "1" });
+    for (const ack of [{}, null])
+      yield* check(Ack, { owner: "a", ack } as typeof Ack.Type, {
+        owner: "a",
+        ack: null,
+      });
+  }),
+);
+
+it.effect("lets a record key codec supply wire names on a loose write", () =>
+  Effect.gen(function* () {
+    const Key = Schema.String.pipe(
+      Schema.encodeTo(
+        Schema.String,
+        SchemaTransformation.transform({
+          decode: (key) => key.toLowerCase(),
+          encode: (key) => key.toUpperCase(),
+        }),
+      ),
+    );
+    const codec = A.pipe(
+      Schema.decodeTo(
+        AB,
+        SchemaTransformation.transform({
+          decode: ({ a }) => ({ a, b: "default" }),
+          encode: (value) => value,
+        }),
+      ),
+    );
+    const schema = Schema.Struct({
+      held: Schema.OptionFromNullOr(Schema.Record(Key, Schema.String)),
+      codec,
+    });
+    expect(
+      yield* json(schema, {
+        held: Option.some({ abc: "1" }),
+        codec: { a: "a", b: "b" },
+      }),
+    ).toEqual({ held: { ABC: "1" }, codec: { a: "a" } });
+  }),
+);
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/299
+it.effect("refuses wrapper collisions at opaque Option positions", () =>
+  Effect.gen(function* () {
+    const payload = Schema.Union([
+      Schema.Struct({ value: A }),
+      Schema.Struct({ c: Schema.String }),
+    ]);
+    const value = { a: "inner" };
+    const held = Option.some({ value, a: "outer" });
+    const plain = Schema.OptionFromNullOr(payload);
+    const withA = Schema.Struct({ held: plain, a: Schema.String });
+    const withB = Schema.Struct({
+      held: Schema.OptionFromNullOr(payload),
+      b: Schema.String,
+    });
+    for (const schema of [
+      Schema.Struct({
+        held: Schema.OptionFromOptionalNullOr(payload, {
+          onNoneEncoding: null,
+        }),
+      }),
+      Schema.Struct({
+        held: Schema.OptionFromOptionalNullOr(payload, {
+          onNoneEncoding: undefined,
+        }),
+      }),
+      Schema.Struct({
+        held: Schema.Union([plain, Schema.Struct({ z: Schema.String })]),
+      }),
+      Schema.Struct({
+        held: Schema.Union([plain, Schema.OptionFromUndefinedOr(payload)]),
+      }),
+      Schema.Union([withA, withB]),
+    ]) {
+      const supplied =
+        schema.ast._tag === "Union" ? { held, a: "a" } : { held };
+      const failure = yield* Effect.flip(json(schema, supplied));
+      expect(failure.message).toContain('["held"]["value"]["a"]');
+      const control = { ...supplied, held: Option.some({ value }) };
+      const expected =
+        schema.ast._tag === "Union"
+          ? { held: { value }, a: "a" }
+          : { held: { value } };
+      expect(yield* json(schema, control)).toEqual(expected);
+    }
+  }),
+);
+
+it.effect("keeps encoded input at an unwrapping Option position readable", () =>
+  Effect.gen(function* () {
+    const root = Schema.OptionFromNullOr(Filter);
+    const value = { ...owner, limit: "l" };
+    const encoded = { ...value, stray: "x" };
+    expect(yield* json(root, encoded)).toEqual(value);
+  }),
+);
+
+it.effect("propagates a defect from the strict attempt on a cleaned Some", () =>
+  Effect.gen(function* () {
+    const defect = new Error("payload check defect");
+    let checks = 0;
+    const payload = Owner.check(
+      Schema.makeFilter(() => {
+        if (++checks === 1) throw defect;
+        return true;
+      }),
+    );
+    const schema = Schema.Struct({
+      held: Schema.OptionFromNullOr(payload),
+      filter: Filter,
+    });
+    const result = yield* Effect.exit(
+      json(schema, { held: Option.some(stray), filter }),
+    );
+    expect(Exit.isFailure(result) && Cause.hasDies(result.cause)).toBe(true);
+    expect(checks).toBe(1);
+  }),
+);
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/305
+it.effect(
+  "refuses a same-tag payload when no member can keep its stated field",
+  () =>
+    Effect.gen(function* () {
+      const Narrow = Schema.TaggedStruct("A", Owner.fields);
+      const NeedsCursor = Schema.TaggedStruct("A", {
+        ...Wide.fields,
+        cursor: Schema.String,
+      });
+      const schema = Schema.Struct({
+        held: Schema.OptionFromNullOr(Schema.Union([Narrow, NeedsCursor])),
+      });
+      const wide = { _tag: "A" as const, ...owner, limit: "l" };
+      for (const payload of [wide, { ...wide, stray: "x" }]) {
+        const failure = yield* Effect.flip(
+          json(schema, { held: Option.some(payload) }),
+        );
+        expect(failure.message).toContain('["held"]["value"]["limit"]');
+      }
     }),
 );

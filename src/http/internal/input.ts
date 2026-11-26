@@ -1092,10 +1092,6 @@ const valueAt = (value: unknown, path: Excess.Path): unknown =>
     value,
   );
 
-/** Whether a value is `null` or an object or list with no defined field or cell. */
-const holdsNothing = (value: unknown): boolean =>
-  value === null || (isKeyed(value) && !Excess.hasDefinedFields(value));
-
 /** Whether a value has a key, whatever it holds there. */
 const holdsKey = (value: unknown, path: Excess.Path): boolean => {
   const holder = valueAt(value, path.slice(0, -1));
@@ -1107,7 +1103,8 @@ const readsNothing = (
   given: unknown,
   value: unknown,
   path: Excess.Path,
-): boolean => holdsNothing(valueAt(given, path)) && holdsKey(value, path);
+): boolean =>
+  Excess.holdsNothing(valueAt(given, path)) && holdsKey(value, path);
 
 /** Losses from separate checks, each listing a path once. A single list is returned as it is. */
 const mergePaths = (
@@ -1265,32 +1262,6 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   }
   /** A strict read written strictly, or the value it read where only the write failed. */
   type Kept = { readonly written: Written<A> } | Unwritable;
-  const kept = (
-    input: Input<S>,
-    options: SchemaAST.ParseOptions,
-    caller: Input<S>,
-    changed: boolean,
-  ) => {
-    return Effect.flatMap(
-      readingFrom(input, caller)(input, { parseOptions: options }),
-      (read) =>
-        Effect.match(strictWriter(read.value, Excess.strict), {
-          onSuccess: (output): Kept => ({
-            written: {
-              output,
-              lost: mergePaths(
-                losses(input, read.value, output),
-                changed
-                  ? Excess.optionLoss(ast, input, read.value, output, false)
-                  : [],
-              ),
-              ambiguity: read.ambiguity,
-            },
-          }),
-          onFailure: (failure): Kept => ({ read, failure }),
-        }),
-    );
-  };
   // The root is accounted for where its value is plain data and its schema names nothing every
   // object has; its parts are then each checked as they are. The schema is asked on the first read,
   // so building an encoder runs no suspended schema.
@@ -1450,6 +1421,27 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     const seen = (
       given === cleaned ? cleaned : Excess.exposed([ast], cleaned)
     ) as Input<S>;
+    const kept = (from: Input<S>) => {
+      return Effect.flatMap(
+        readingFrom(from, input)(from, { parseOptions: Excess.strict }),
+        (read) =>
+          Effect.match(strictWriter(read.value, Excess.strict), {
+            onSuccess: (output): Kept => ({
+              written: {
+                output,
+                lost: mergePaths(
+                  losses(from, read.value, output),
+                  changed
+                    ? Excess.optionLoss(ast, from, read.value, output, false)
+                    : [],
+                ),
+                ambiguity: read.ambiguity,
+              },
+            }),
+            onFailure: (failure): Kept => ({ read, failure }),
+          }),
+      );
+    };
     // A strict pass refuses keys Effect strips. Where its ambiguity rests on another reading having
     // failed, that reading may have failed on such a key alone, so the pass ends as any strict
     // failure does and the reading below decides.
@@ -1467,12 +1459,14 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             : failure,
         ),
       );
-    const attempt = (
-      options: SchemaAST.ParseOptions,
-    ): Effect.Effect<Kept, ReadFailure, R | S["DecodingServices"]> => {
-      if (given === cleaned) return strictly(kept(cleaned, options, input, changed));
-      const second = recoverExposed(kept(seen, options, input, changed));
-      return matchRead(strictly(kept(given as Input<S>, options, input, changed)), {
+    const attempt = (): Effect.Effect<
+      Kept,
+      ReadFailure,
+      R | S["DecodingServices"]
+    > => {
+      if (given === cleaned) return strictly(kept(cleaned));
+      const second = recoverExposed(kept(seen));
+      return matchRead(strictly(kept(given as Input<S>)), {
         // The exposed value is not read after a provisional ambiguity: read strictly, its
         // undefined-valued keys make members fail, and the one left would be chosen.
         onFailure: (failure) =>
@@ -1495,13 +1489,13 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     };
     // A cleaned payload can be used only by the strict read and write.
     if (changed)
-      return Effect.flatMap(attempt(Excess.strict), (result) =>
+      return Effect.flatMap(attempt(), (result) =>
         "written" in result
           ? Effect.succeed(result.written)
           : Effect.fail(result.failure),
       );
     const loose = () => compared(input, given);
-    return matchRead(attempt(Excess.strict), {
+    return matchRead(attempt(), {
       onFailure: () =>
         canonicalJson && given !== input
           ? recoverRead(loose(), (failure) =>

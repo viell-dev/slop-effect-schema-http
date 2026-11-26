@@ -808,11 +808,11 @@ describe("accounting for written Some fields", () => {
         input,
         input,
         { SIZE: "5", owner: "a" },
-        false,
+        true,
       ),
     ).toEqual([]);
     expect(
-      Excess.optionLoss(schema.ast, input, input, { owner: "a" }, false),
+      Excess.optionLoss(schema.ast, input, input, { owner: "a" }, true),
     ).toEqual([["value", "size"]]);
   });
 
@@ -846,4 +846,80 @@ describe("accounting for written Some fields", () => {
       Excess.normalisedOptions(Schema.OptionFromNullOr(union).ast, input),
     ).toBe(input);
   });
+});
+
+it("keeps an object unchanged at an array-only payload position", () => {
+  const schema = Schema.OptionFromNullOr(Schema.Array(Schema.String));
+  const input = Option.some({ stray: "x" });
+  expect(Excess.normalisedOptions(schema.ast, input)).toBe(input);
+});
+
+it("leaves a union with its own encoding opaque to the Option pre-pass", () => {
+  const union = Schema.Union([
+    Schema.OptionFromNullOr(Either),
+    Schema.String,
+  ]).pipe(Schema.middlewareEncoding((effect) => effect));
+  expect(Excess.mayUnwrapOption(union.ast)).toBe(false);
+});
+
+it("requires a constructor before using a class declaration's fields", () => {
+  class Item extends Schema.Class<Item>("Item")({
+    held: Schema.OptionFromNullOr(Either),
+  }) {}
+  const ast = Item.ast;
+  if (ast._tag !== "Declaration") throw new Error("expected class declaration");
+  const typeWithoutConstructor = new SchemaAST.Declaration(
+    ast.typeParameters,
+    ast.run,
+    { ...ast.annotations, "~constructor": undefined },
+    ast.checks,
+    ast.encoding,
+  );
+  const input = { held: Option.some({ a: "a", stray: "x" }) };
+  expect(Excess.normalisedOptions(typeWithoutConstructor, input)).toBe(input);
+  expect(Excess.mayUnwrapOption(typeWithoutConstructor)).toBe(false);
+});
+
+it("allows None to omit a field only where a visible codec unwraps it", () => {
+  const schema = Schema.OptionFromNullOr(
+    Schema.Struct({
+      visible: Schema.OptionFromOptionalKey(Schema.String),
+      opaque: Schema.Option(Schema.String),
+    }),
+  );
+  const input = Option.some({ visible: Option.none(), opaque: Option.none() });
+  expect(Excess.optionLoss(schema.ast, input, input, {}, true)).toEqual([
+    ["value", "opaque"],
+  ]);
+});
+
+it("requires a single written candidate to hold every child", () => {
+  const child = Schema.Struct({ a: Schema.String, b: Schema.String });
+  const first = Schema.Struct({ kid: child });
+  const second = first.pipe(Schema.encodeKeys({ kid: "child" }));
+  const schema = Schema.OptionFromNullOr(Schema.Union([first, second]));
+  const value = { a: "a", b: "b" };
+  const some = Option.some({ kid: value });
+  const lost = (output: unknown) =>
+    Excess.optionLoss(schema.ast, some, some, output, true);
+
+  expect(lost({ child: { a: "a" } })).toEqual([["value", "kid", "b"]]);
+  expect(lost({ kid: { a: "a" }, child: value })).toEqual([]);
+  expect(lost({ kid: { a: "a" }, child: { b: "b" } })).toEqual([
+    ["value", "kid", "b"],
+  ]);
+});
+
+it("distinguishes a scalar from another field that can write its wire name", () => {
+  const first = Schema.Struct({ limit: Schema.String }).pipe(
+    Schema.encodeKeys({ limit: "page_size" }),
+  );
+  const second = Schema.Struct({ page_size: Schema.String });
+  const schema = Schema.OptionFromNullOr(Schema.Union([first, second]));
+  const some = Option.some({ limit: "caller" });
+  const output = { page_size: "other" };
+  expect(Excess.optionLoss(schema.ast, some, some, output, true)).toEqual([
+    ["value", "limit"],
+  ]);
+  expect(Excess.optionLoss(schema.ast, some, some, output, false)).toEqual([]);
 });

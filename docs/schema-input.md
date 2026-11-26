@@ -101,8 +101,7 @@ schema](#an-opaque-value-is-the-schema-s-own-reading) expose their fields. Insid
 such as text that holds JSON, a `Map` or a `Schema.Option` payload, the schema's own reading
 applies. To choose a union member for certain, bind that member directly.
 
-[Limits](#active-limits-and-recovery) lists where the rule stops. Each is a decision, recorded with
-its reason, not a defect waiting for a fix.
+[Limits](#active-limits-and-recovery) describes where the rule stops and links the relevant issues.
 
 ### Array normalization preserves positions
 
@@ -667,9 +666,11 @@ the schema does with it. These are the places where it cannot, and what happens 
 - A `Some` payload can retain the earlier reading where the Option writer is opaque or custom, the
   position has competing object-reading alternatives or unwrapping codecs, or the input traverses a
   class instance or another value outside plain data. This includes
-  `Schema.OptionFromOptionalNullOr` with `onNoneEncoding: null` or `undefined`. In those cases a
-  payload field named `value` can still be confused with the wrapper, a relaxed read can drop a
-  field that a wider member states, and a stray key can still cause a refusal. Choose the intended
+  `Schema.OptionFromOptionalNullOr` with `onNoneEncoding: null` or `undefined`, and
+  `OptionFromNullOr(Schema.Option(Union))` at the inner Option. A relaxed read can drop a field that
+  a wider member states ([#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)),
+  and a stray key can still cause a refusal
+  ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)). Choose the intended
   member directly or validate and supply the encoded representation.
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
   recovery's value is not checked against what it was given: a `Schema.catchDecoding` record beside
@@ -689,6 +690,11 @@ the schema does with it. These are the places where it cannot, and what happens 
   are the server's, not a caller's input.
 
 **A refusal another reading might have avoided.** These never lose a field:
+
+- At an opaque or ambiguous unwrapping Option position, a payload field can overlap a wire path
+  under `value`. Preparation can refuse at that path
+  ([#299](https://github.com/viell-dev/slop-effect-schema-http/issues/299)). Remove the unstated
+  outer key, choose the intended member directly, or supply the encoded representation.
 
 - Inside a value with the union-wide reading, as [A list stays a list](#a-list-stays-a-list) gives,
   a list beside a record refuses a cell key the list member does not state, and an index-keyed
