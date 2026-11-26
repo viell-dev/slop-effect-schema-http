@@ -285,11 +285,13 @@ describe(`nested encoded input aliases (${lane.name})`, () => {
         const text = yield* operation
           .execute({ path: { filter: { page_size: "many" } } })
           .pipe(Effect.provide(lane.fetchClient), Effect.flip);
-        const boolean = yield* operation
-          // Deliberate runtime-negative input, beyond either schema side's type.
-          // @ts-expect-error Encoded numeric text cannot be boolean.
-          .execute({ path: { filter: { page_size: false } } })
-          .pipe(Effect.provide(lane.fetchClient), Effect.flip);
+        const boolean = yield* (
+          operation
+            // Deliberate runtime-negative input, beyond either schema side's type.
+            // @ts-expect-error Encoded numeric text cannot be boolean.
+            .execute({ path: { filter: { page_size: false } } })
+            .pipe(Effect.provide(lane.fetchClient), Effect.flip)
+        );
         expect(Schema.isSchemaError(text)).toBe(true);
         expect(Schema.isSchemaError(boolean)).toBe(true);
         expect(yield* backend.ledger).toEqual([]);
@@ -310,11 +312,13 @@ describe(`nested encoded input aliases (${lane.name})`, () => {
         const text = yield* operation
           .execute({ body: { filter: { page_size: "many" } } })
           .pipe(Effect.provide(lane.fetchClient), Effect.flip);
-        const boolean = yield* operation
-          // Deliberate runtime-negative input, beyond either schema side's type.
-          // @ts-expect-error Encoded numeric text cannot be boolean.
-          .execute({ body: { filter: { page_size: false } } })
-          .pipe(Effect.provide(lane.fetchClient), Effect.flip);
+        const boolean = yield* (
+          operation
+            // Deliberate runtime-negative input, beyond either schema side's type.
+            // @ts-expect-error Encoded numeric text cannot be boolean.
+            .execute({ body: { filter: { page_size: false } } })
+            .pipe(Effect.provide(lane.fetchClient), Effect.flip)
+        );
         expect(Schema.isSchemaError(text)).toBe(true);
         expect(Schema.isSchemaError(boolean)).toBe(true);
         expect(yield* backend.ledger).toEqual([]);

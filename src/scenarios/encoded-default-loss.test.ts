@@ -69,11 +69,13 @@ describe(`encoded aliases and optional constructor defaults (${lane.name})`, () 
           const text = yield* operation
             .execute({ query: { page_size: "many" } })
             .pipe(Effect.provide(lane.fetchClient), outcome);
-          const nil = yield* operation
-            // Deliberate runtime-negative input: null is outside either schema side.
-            // @ts-expect-error The encoded alias requires a string, including in a union.
-            .execute({ query: { page_size: null } })
-            .pipe(Effect.provide(lane.fetchClient), outcome);
+          const nil = yield* (
+            operation
+              // Deliberate runtime-negative input: null is outside either schema side.
+              // @ts-expect-error The encoded alias requires a string, including in a union.
+              .execute({ query: { page_size: null } })
+              .pipe(Effect.provide(lane.fetchClient), outcome)
+          );
           const ledger = yield* backend.ledger;
           expectOutcomes({
             text,
@@ -99,11 +101,13 @@ describe(`encoded aliases and optional constructor defaults (${lane.name})`, () 
           const text = yield* operation
             .execute({ headers: { page_size: "many" } })
             .pipe(Effect.provide(lane.fetchClient), outcome);
-          const nil = yield* operation
-            // Deliberate runtime-negative input: a header schema still validates null.
-            // @ts-expect-error The encoded alias requires a string, including in a union.
-            .execute({ headers: { page_size: null } })
-            .pipe(Effect.provide(lane.fetchClient), outcome);
+          const nil = yield* (
+            operation
+              // Deliberate runtime-negative input: a header schema still validates null.
+              // @ts-expect-error The encoded alias requires a string, including in a union.
+              .execute({ headers: { page_size: null } })
+              .pipe(Effect.provide(lane.fetchClient), outcome)
+          );
           const ledger = yield* backend.ledger;
           expectOutcomes({
             text,
