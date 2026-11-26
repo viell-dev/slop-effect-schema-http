@@ -2816,6 +2816,17 @@ describe("a caller's field under a union", () => {
                 { body: { item: counted() } },
               ),
             ).toBe('{"the_item":{"A":"item"}}');
+            // A renamed sibling: the parent's encoded side states the union's encoded form too.
+            expect(
+              yield* bodyOf(
+                post(
+                  Schema.Struct({ item: Either, b: text }).pipe(
+                    Schema.encodeKeys({ b: "B" }),
+                  ),
+                ),
+                { body: { item: counted(), b: "b" } },
+              ),
+            ).toBe('{"item":{"A":"item"},"B":"b"}');
             expect(yield* urlOf(queried(Either), { query: counted() })).toBe(
               "/x?A=item",
             );
@@ -2910,6 +2921,113 @@ describe("a caller's field under a union", () => {
                 { body: { item } },
               ),
             ).toContain('["item"]["a"]');
+        }),
+    );
+
+    /** A struct whose own field `A` is written with a value it makes where the caller gave none. */
+    const Defaulted = Schema.Struct({
+      A: Schema.flip(
+        text.pipe(Schema.withDecodingDefaultKey(Effect.succeed("made"))),
+      ),
+    });
+    const Fields = Schema.Struct({ A: Schema.optionalKey(text) });
+    /** A transformation between structs of one shape that writes `A` whatever it is given. */
+    const Making = Fields.pipe(
+      Schema.decodeTo(
+        Fields,
+        SchemaTransformation.transform({
+          decode: (fields: typeof Fields.Type) => fields,
+          encode: (): typeof Fields.Type => ({ A: "made" }),
+        }),
+      ),
+    );
+    /** A `Counted` instance whose field the class cannot write. */
+    const invalid = () => Object.assign(counted(), { a: 5 });
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/274
+    it.effect(
+      "refuses a class instance whose wire name another member writes from a field of its own",
+      () =>
+        Effect.gen(function* () {
+          for (const Writing of [Defaulted, Making]) {
+            const Either = Schema.Union([Writing, Renamed]);
+            // `{"A":"made"}` would show the class kept `a` though it wrote nothing. The class can
+            // write a valid instance, but `A` cannot say which member wrote it.
+            for (const body of [invalid(), counted()])
+              expect(yield* schemaFailure(post(Either), { body })).toContain(
+                'at ["a"]',
+              );
+            expect(
+              yield* schemaFailure(post(Schema.Struct({ item: Either })), {
+                body: { item: invalid() },
+              }),
+            ).toContain('at ["item"]["a"]');
+            expect(
+              yield* schemaFailure(
+                post(
+                  Schema.Struct({ item: Either }).pipe(
+                    Schema.encodeKeys({ item: "Item" }),
+                  ),
+                ),
+                { body: { item: invalid() } },
+              ),
+            ).toContain('at ["item"]["a"]');
+            expect(
+              yield* schemaFailure(post(Schema.Array(Either)), {
+                body: [invalid()],
+              }),
+            ).toContain('at [0]["a"]');
+            expect(
+              yield* schemaFailure(post(Schema.Record(Schema.String, Either)), {
+                body: { one: invalid() },
+              }),
+            ).toContain('at ["one"]["a"]');
+            expect(
+              yield* schemaFailure(
+                post(
+                  Schema.Union([
+                    Writing,
+                    Renamed,
+                    Schema.Struct({ q: Schema.optionalKey(text) }),
+                  ]),
+                ),
+                { body: invalid() },
+              ),
+            ).toContain('at ["a"]');
+            expect(
+              yield* schemaFailure(queried(Either), { query: invalid() }),
+            ).toContain('at ["a"]');
+            expect(
+              yield* schemaFailure(
+                Request.get("/x").pipe(Request.headers(Either)),
+                { headers: invalid() },
+              ),
+            ).toContain('at ["a"]');
+          }
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/274
+    it.effect(
+      "writes a class instance beside a transformation between structs of one shape that writes other names",
+      () =>
+        Effect.gen(function* () {
+          // Read by position as renaming `b` to `B`, whatever its functions do.
+          const Upper = Schema.Struct({ B: Schema.optionalKey(text) }).pipe(
+            Schema.decodeTo(
+              Schema.Struct({ b: Schema.optionalKey(text) }),
+              SchemaTransformation.transform({
+                decode: ({ B }) => (B === undefined ? {} : { b: B }),
+                encode: ({ b }) =>
+                  b === undefined ? {} : { B: b.toUpperCase() },
+              }),
+            ),
+          );
+          expect(
+            yield* bodyOf(post(Schema.Union([Upper, Renamed])), {
+              body: counted(),
+            }),
+          ).toBe('{"A":"item"}');
         }),
     );
 
