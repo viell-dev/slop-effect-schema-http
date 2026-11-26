@@ -929,8 +929,8 @@ export const wireCases = {
     }),
   ),
   "59": [
-    refused(
-      "currently a class instance beside a struct that would strip it is refused even with a class-valued sibling",
+    sent(
+      "a class instance beside a struct that would strip it is written through its class, beside a class-valued sibling",
       json(
         Schema.Struct({
           item: Schema.Union([Filter, Counted]),
@@ -941,8 +941,7 @@ export const wireCases = {
           counted: new Counted({ a: "sibling" }),
         }),
       ),
-      "SchemaError",
-      '["item"]["a"]',
+      post('{"item":{"a":"item"},"counted":{"a":"sibling"}}'),
     ),
     sent(
       "Effect constructs the holder with the defaulted struct member before preparation",
@@ -959,13 +958,12 @@ export const wireCases = {
       }),
       post('{"item":{"page_size":"25"}}'),
     ),
-    refused(
-      "currently a struct field refuses a Counted instance beside Filter",
+    sent(
+      "a struct field writes a Counted instance beside Filter through its class",
       json(Schema.Struct({ item: Schema.Union([Filter, Counted]) }), () => ({
         item: new Counted({ a: "item" }),
       })),
-      "SchemaError",
-      '["item"]["a"]',
+      post('{"item":{"a":"item"}}'),
     ),
     sent(
       "a later open member does not take a class value the first member holds",

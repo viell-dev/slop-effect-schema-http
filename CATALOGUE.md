@@ -4749,14 +4749,15 @@ through its same-origin proxy and imports the packed package.
   its place refuses, even when the sibling can keep the input. Status: tested.
 - **EXT-59** Effect constructs the holder's `item` as `{ limit: 25 }` before preparation, and
   the request sends `{"item":{"page_size":"25"}}`. The constructor check distinguishes this from
-  preparing a struct containing the original `Counted` instance. That struct refuses at
-  `["item"]["a"]` with or without a class-valued sibling, even though the class member can write
-  the value. The loose writer still keeps the class member over a later open member. All four
-  cases agree with 0.18.0. [#274, item 1](https://github.com/viell-dev/slop-effect-schema-http/issues/274).
-  Status: defect.
+  preparing a struct containing the original `Counted` instance. Since
+  [#293](https://github.com/viell-dev/slop-effect-schema-http/pull/293), that struct writes the
+  instance through `Counted`, with or without a class-valued sibling; 0.18.0 and 0.19.0 refused at
+  `["item"]["a"]`. The loose writer still keeps the class member over a later open member. A class
+  whose field is renamed still refuses with `Filter` first, which #274 keeps open; it is not pinned
+  here. Status: tested.
   - `[EXT-59] Effect constructs the holder with the defaulted struct member before preparation`
-  - `[EXT-59] currently a struct field refuses a Counted instance beside Filter`
-  - `[EXT-59] currently a class instance beside a struct that would strip it is refused even with a class-valued sibling`
+  - `[EXT-59] a struct field writes a Counted instance beside Filter through its class`
+  - `[EXT-59] a class instance beside a struct that would strip it is written through its class, beside a class-valued sibling`
   - `[EXT-59] a later open member does not take a class value the first member holds`
 - **EXT-60** [#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261). Open JSON
   records and ObjectKeyword refuse Map, Date and URL before rebuilding away their content, at the
@@ -4781,7 +4782,7 @@ through its same-origin proxy and imports the packed package.
   beside a record uses its list member both inside a class's JSON field and in a path union
   that also has a class alternative. Status: tested.
 - **EXT-64** The [built request probe](./src/app/wire.html) repeats all 63 EXT-57–63 cases,
-  including the EXT-59 refusal pins. Lane: app. Status: tested.
+  including EXT-59's class-instance writes. Lane: app. Status: tested.
 
 ### Node baseline at published 0.18.0
 
@@ -4805,9 +4806,9 @@ The table counts only EXT-57–63. TypeScript assignability is checked separatel
 
 ### Retained mismatches on the 0.19 pin
 
-The current pins for EXT-30j, EXT-49o/r and EXT-59 are linked from their catalogue entries. They
+The current pins for EXT-30j and EXT-49o/r are linked from their catalogue entries. They
 distinguish a wrong refusal, order-dependent output, and incorrect diagnostics from losing a
-supplied value. EXT-35j/o/t pin documented input limits. The original assertions at suite commit
+supplied value. EXT-59's pins became ordinary tests with #293. EXT-35j/o/t pin documented input limits. The original assertions at suite commit
 `208ed44` failed in 11 cases on the first Node run at `96e5163`, with the same case titles failing
 as in the historical standalone Node run below. The initial log is
 `artifacts/new-pin-initial-node.log`.
