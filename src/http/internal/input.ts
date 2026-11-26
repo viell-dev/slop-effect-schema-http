@@ -998,15 +998,20 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   const strictWriter =
     guarded === codec.ast ? write : Schema.encodeEffect(guardedCodec);
   const exact = toDecoded(contract, Excess.strict);
+  /** A value a strict read took as it was, and why it cannot be written strictly. */
+  interface Unwritable {
+    readonly read: S["Type"];
+    readonly failure: Schema.SchemaError;
+  }
   /** A strict read written strictly, or the value it read where only the write failed. */
-  type Kept = { readonly written: Written<A> } | { readonly read: S["Type"] };
+  type Kept = { readonly written: Written<A> } | Unwritable;
   const kept = (input: Input<S>, options: SchemaAST.ParseOptions) =>
     Effect.flatMap(exact(input, options), (value) =>
       Effect.match(strictWriter(value, Excess.strict), {
         onSuccess: (output): Kept => ({
           written: { output, lost: losses(input, value, output) },
         }),
-        onFailure: (): Kept => ({ read: value }),
+        onFailure: (failure): Kept => ({ read: value, failure }),
       }),
     );
   const accountedReading = decodedReading(contract);
@@ -1046,55 +1051,53 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       (output) => ({ output, writers }),
     );
   };
-  /** The read and what it wrote, strictly or else loosely. */
-  const sendRead = (
-    read: Decoded<S["Type"]>,
-  ): Effect.Effect<
+  type SentRead = Effect.Effect<
     Sent & { readonly read: Decoded<S["Type"]> },
     Schema.SchemaError,
     R | S["DecodingServices"]
-  > =>
+  >;
+  /** The read and what it wrote, strictly or else loosely. */
+  const sendRead = (read: Decoded<S["Type"]>): SentRead =>
     Effect.catch(
       Effect.map(
         strictWriter(read.value, Excess.strict),
         (output): Sent & { readonly read: typeof read } => ({ output, read }),
       ),
-      (strict) => {
-        // Relax excess-property handling while keeping any Void guard on the writer.
-        const loose = Effect.map(looseWrite(read.value), (sent) => ({
-          ...sent,
-          strict,
-          read,
-        }));
-        if (read.forRelaxedWrite === undefined) return loose;
-        const relaxed = Effect.flatMap(
-          read.forRelaxedWrite as Effect.Effect<
-            typeof read,
-            Schema.SchemaError,
-            S["DecodingServices"]
-          >,
-          sendRead,
-        );
-        return Effect.catch(loose, () => relaxed);
-      },
+      (strict) => sendLoosely(read, strict),
     );
+  /** What a read wrote loosely, once its strict write failed with `strict`. */
+  const sendLoosely = (
+    read: Decoded<S["Type"]>,
+    strict: Schema.SchemaError,
+  ): SentRead => {
+    // Relax excess-property handling while keeping any Void guard on the writer.
+    const loose = Effect.map(looseWrite(read.value), (sent) => ({
+      ...sent,
+      strict,
+      read,
+    }));
+    if (read.forRelaxedWrite === undefined) return loose;
+    const relaxed = Effect.flatMap(
+      read.forRelaxedWrite as Effect.Effect<
+        typeof read,
+        Schema.SchemaError,
+        S["DecodingServices"]
+      >,
+      sendRead,
+    );
+    return Effect.catch(loose, () => relaxed);
+  };
   /**
    * Read a value accounting for what that loses, or take a strict read that stripped nothing, write
-   * it, and compare the result with what went in.
+   * it, and compare the result with what went in. A strict read's value is written loosely, as its
+   * strict write already failed.
    */
-  const compared = (
-    input: Input<S>,
-    given: unknown,
-    strictly?: { readonly read: S["Type"] },
-  ) =>
+  const compared = (input: Input<S>, given: unknown, strictly?: Unwritable) =>
     Effect.suspend(() =>
       Effect.map(
-        Effect.flatMap(
-          strictly === undefined
-            ? readDecoded(input, given)
-            : Effect.succeed<Decoded<S["Type"]>>(whole(strictly.read)),
-          sendRead,
-        ),
+        strictly === undefined
+          ? Effect.flatMap(readDecoded(input, given), sendRead)
+          : sendLoosely(whole(strictly.read), strictly.failure),
         ({
           output,
           strict,
