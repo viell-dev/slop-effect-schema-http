@@ -11,7 +11,8 @@ export async function verifyRegistry(
     fetch = globalThis.fetch,
     sleep = setTimeout,
     now = () => performance.now(),
-    timeoutMs = 300_000,
+    // npm took up to 250 s to show a published version, then attestations later still (#288).
+    timeoutMs = 480_000,
     intervalMs = 5_000,
   } = {},
 ) {
