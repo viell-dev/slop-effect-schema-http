@@ -96,9 +96,9 @@ encoded value --> decode --> decoded -> encode --> wire
 
 **What the library promises.** For a value it can see, a field the caller gave is kept, or the
 request is refused. It can see plain objects, lists, tuples, classes and unions of those, at any
-depth. Inside an opaque value, which is text that holds JSON, a `Map`, an `Option` or any other
-declaration, the schema's own reading applies, and nothing is refused for what happens there. To
-choose a union member for certain, bind that member directly.
+depth, including plain `Some` payloads exposed by codecs such as `Schema.OptionFromNullOr`. Inside
+an opaque value, such as text that holds JSON, a `Map` or a `Schema.Option` payload, the schema's
+own reading applies. To choose a union member for certain, bind that member directly.
 
 [Limits](#active-limits-and-recovery) lists where the rule stops. Each is a decision, recorded with
 its reason, not a defect waiting for a fix.
@@ -563,15 +563,15 @@ pairs before the schema reads the group again. Arrays of repeated values are als
 
 A value is opaque when neither side of its schema states an object for it: text given as text, and
 what a `Schema.ReadonlyMap`, a `Schema.Option` or a declaration with no struct behind it holds.
-Nothing here can reach inside, so nothing is refused for what happens there, and a union in one
-reads as Effect reads it. Either side counts, so an object given to a field that holds JSON is not
-opaque, and nor is the value in `Schema.OptionFromNullOr`, whose encoded side states it: a union
-there keeps or refuses as any other does. A strict read of a whole value does pass through an opaque
-one, because Effect has no way to stop it at one part. So beside a choice the library can see, a
-wider member inside can still win. A stray key inside fails that read, and what the library can see
-is then read as Effect reads it and compared, so a field a wider member could hold can be refused. A
-direct closed struct can recover some such nested losses through its later routes, as [Recovery
-beside an opaque value](#recovery-beside-an-opaque-value) describes.
+Their contents read as Effect reads them. A whole strict read still passes through an opaque value,
+so beside a visible choice a wider member inside that value can win. A stray key in those opaque
+contents can fail that read and make preparation fall back to Effect's first fit. The [recovery
+routes](#recovery-beside-an-opaque-value) account for the visible fields.
+
+Codecs such as `Schema.OptionFromNullOr` expose a plain `Some` payload on the encoded side. An
+unstated key in that payload is left out before member selection. Every member's decoded and encoded
+names count as stated. A union in the payload keeps the caller's fields or the request is refused. A
+field named `value` in the payload is an ordinary field of the payload.
 
 ### The reading of Effect is tested, not checked at run time
 
@@ -701,10 +701,10 @@ the schema does with it. These are the places where it cannot, and what happens 
   `Schema.encodeKeys` built it. So beside a hand-written transformation from `{ b }` to `{ B }`,
   `Renamed` still sends `{"A":"item"}`. With the class first, such an instance is written as Effect
   writes it, as the first item above gives.
-- For an Effect `Option` codec that unwraps a plain `Some` payload to a declared object, such as
-  `Schema.OptionFromNullOr`, a strict write can leave out keys that neither side of any member
-  states when the output retains the prepared fields. A stated field lost from those contents can
-  still cause a refusal. Opaque `Schema.Option` contents read as Effect reads them.
+- A stray key inside a `Some` can still contribute to a refusal where a surrounding schema leaves
+  the payload opaque, a custom Option encoder can replace it, or an unrelated failure prevents
+  preparation from preserving the fields it would send without that key. This includes
+  `Schema.OptionFromOptionalNullOr` with `onNoneEncoding: null` or `undefined`.
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
   either binding order. Bounded [stacked-union
   recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;

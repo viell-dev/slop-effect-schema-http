@@ -199,6 +199,14 @@ empty struct keeps a caller's object whole, Effect's parser reads that object, a
 keys once more and whether it has each stated field. 0.18.0 made the same calls wherever it had
 nothing to strip, and the calls in all are fewer than 0.18.0's.
 
+A native `Some` whose codec writes the payload directly, such as `Schema.OptionFromNullOr`, exposes
+the payload's declared fields. Along plain structural parents, preparation removes a key from a copy
+of that payload only when every known member leaves it unstated on both sides. An open or unknown
+alternative can hold the key. Only the whole strict read and write can use the copy, so nested
+unions and opaque siblings take the same routes they take without the stray key. The wrapper's
+`value` step belongs to the caller's path and consumes no step in the wire path. If the relaxed
+route is needed for other input, account for visible payload fields at their own paths.
+
 The second rule: an empty struct, an open schema without a check, or, for a value that is not a
 list, an empty class keeps every key of the value it reads, at every depth, as an alternative of its
 own and not as one end of a codec. Beside a member that states fields, it is the member that keeps
