@@ -440,7 +440,13 @@ describe("normalising visible Some payloads", () => {
         throw new Error("read an accessor");
       },
     });
+    const customPrototype = Option.some(extra);
+    Object.setPrototypeOf(
+      customPrototype,
+      Object.create(Object.getPrototypeOf(customPrototype) as object) as object,
+    );
     for (const input of [
+      customPrototype,
       Option.some(access),
       Option.some({ ...extra, toString: "x" }),
       Object.assign(Option.some(extra), { note: "keep" }),
@@ -785,6 +791,9 @@ describe("accounting for written Some fields", () => {
     });
     assertKept({ held: { value: { owner: "b" } } });
     assertKept({
+      held: Object.assign(Option.some({ owner: "b" }), { note: "keep" }),
+    });
+    assertKept({
       held: Option.some(
         Object.assign(Object.create({ inherited: true }) as object, {
           owner: "b",
@@ -922,4 +931,53 @@ it("distinguishes a scalar from another field that can write its wire name", () 
     ["value", "limit"],
   ]);
   expect(Excess.optionLoss(schema.ast, some, some, output, false)).toEqual([]);
+});
+
+it("lets a scalar codec change its representation at a shared wire name", () => {
+  const first = Schema.Struct({ limit: Schema.NumberFromString }).pipe(
+    Schema.encodeKeys({ limit: "page_size" }),
+  );
+  const second = Schema.Struct({ page_size: Schema.String });
+  const schema = Schema.OptionFromNullOr(Schema.Union([first, second]));
+  const input = Option.some({ limit: 5 });
+  expect(
+    Excess.optionLoss(schema.ast, input, input, { page_size: "5" }, true),
+  ).toEqual([]);
+});
+
+it("does not pair a reordered wire name by position after a loose write", () => {
+  const field = Schema.optionalKey(Schema.String);
+  const payload = Schema.Struct({ a: field, b: field }).pipe(
+    Schema.encodeKeys({ b: "0" }),
+  );
+  const schema = Schema.OptionFromNullOr(payload);
+  const input = Option.some({ b: "2" });
+  expect(
+    Excess.optionLoss(schema.ast, input, input, { "0": "2" }, true),
+  ).toEqual([]);
+});
+
+it("uses another written name when only one candidate shares its name", () => {
+  const first = Schema.Struct({ code: Schema.String }).pipe(
+    Schema.encodeTo(
+      Schema.Struct({ CODE: Schema.String }),
+      SchemaTransformation.transform({
+        decode: ({ CODE }) => ({ code: CODE.toLowerCase() }),
+        encode: ({ code }) => ({ CODE: code.toUpperCase() }),
+      }),
+    ),
+  );
+  const other = Schema.Struct({ alias: Schema.String }).pipe(
+    Schema.encodeKeys({ alias: "code" }),
+  );
+  const payload = Schema.Union([
+    first,
+    Schema.Struct({ code: Schema.String }),
+    other,
+  ]);
+  const schema = Schema.OptionFromNullOr(payload);
+  const value = Option.some({ code: "abc" });
+  expect(
+    Excess.optionLoss(schema.ast, value, value, { CODE: "ABC" }, true),
+  ).toEqual([]);
 });
