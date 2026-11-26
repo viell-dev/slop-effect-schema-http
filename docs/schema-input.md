@@ -385,9 +385,10 @@ undefined-valued keys are left out when deciding what the value holds. Non-enume
 do not count unless normalization brings them out as keys. For example, two structs with only
 optional fields can both read `{}`, even if constructing one would fill a default. Either member
 order produces the same ambiguity. An enclosing `anyOf` can still use another member that reads the
-whole value without losing fields. If no member can, the failure names the ambiguous value's path
-and omits the input. This also applies within an optional field, a list, or a query or header group
-that receives an empty record because it was omitted or stacked with another binding.
+whole value without losing fields and its result can be written. If no member can, the failure names
+the ambiguous value's path and omits the input. This also applies within an optional field, a list,
+or a query or header group that receives an empty record because it was omitted or stacked with
+another binding.
 
 A field whose decoded side succeeds does not need a second match check on its encoded side.
 Preparation can use the field's constructor when a whole struct's decode finds encoded-side
@@ -395,8 +396,8 @@ ambiguity there. Lists and records read as a whole, so when they require the enc
 side's matches decide the result.
 
 A refusal at this stage is a `SchemaError`. If you handled an `InvalidRequest` or `HttpBodyError`
-for one of these inputs, handle the schema failure too. It occurs before the writer checks the
-output.
+for one of these inputs, handle the schema failure too. Preparation can stop before it reaches the
+writer, or retain the ambiguity if the enclosing alternative fails to write.
 
 ### Void takes only an empty value
 
