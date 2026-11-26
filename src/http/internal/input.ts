@@ -204,42 +204,30 @@ const losesLess = (
 };
 
 /**
- * Try readings in their existing order. An ambiguous member is still a failed alternative when
- * reading distinct members of an enclosing union. Switching routes for the ambiguous member
- * itself would bypass its match check.
+ * Try readings in their existing order. An ambiguous reading stops selection rather than
+ * letting a later reading send a different output.
  */
 const chooseReading = (
   readings: ReadonlyArray<
     Effect.Effect<Decoded<unknown>, ReadFailure, unknown>
   >,
-  {
-    keepMost,
-    distinctMembers = false,
-  }: {
-    readonly keepMost: boolean;
-    readonly distinctMembers?: boolean;
-  },
+  keepMost: boolean,
 ) =>
   Effect.gen(function* () {
     let most: Decoded<unknown> | undefined;
     let failure: Schema.SchemaError | undefined;
-    let ambiguity: FieldlessOneOf | undefined;
     for (const reading of readings) {
       const result = yield* Effect.result(reading);
       if (result._tag === "Failure") {
-        if (result.failure._tag === "FieldlessOneOf") {
-          if (!distinctMembers) return yield* result.failure;
-          ambiguity ??= result.failure;
-        } else if (!keepMost || failure === undefined) {
-          failure = result.failure;
-        }
+        if (result.failure._tag === "FieldlessOneOf")
+          return yield* result.failure;
+        if (!keepMost || failure === undefined) failure = result.failure;
       } else if (!keepMost || result.success.lost.length === 0) {
         return result.success;
       } else if (most === undefined || losesLess(result.success, most)) {
         most = result.success;
       }
     }
-    if (ambiguity !== undefined) return yield* ambiguity;
     return most ?? (yield* Effect.fail(failure!));
   });
 
@@ -330,16 +318,25 @@ const enclosingAlternative = (
   failure: FieldlessOneOf,
   alternative: () => Effect.Effect<Decoded<unknown>, ReadFailure, unknown>,
 ) =>
-  failure.withinUnion !== true
-    ? Effect.fail(failure)
-    : recoverRead(
-        Effect.filterOrFail(
-          alternative(),
-          ({ lost }) => lost.length === 0,
-          () => noRoute,
-        ),
-        () => Effect.fail(failure),
-      );
+  recoverRead(
+    Effect.filterOrFail(
+      alternative(),
+      ({ lost }) => lost.length === 0,
+      () => noRoute,
+    ),
+    () => Effect.fail(failure),
+  ).pipe(
+    Effect.map((read): Decoded<unknown> =>
+      read.forRelaxedWrite === undefined
+        ? read
+        : {
+            ...read,
+            forRelaxedWrite: recoverRead(read.forRelaxedWrite, () =>
+              Effect.fail(failure),
+            ),
+          },
+    ),
+  );
 
 /** Whether what the caller gave is plain data at each step to a field, so the field is theirs. */
 const plainAlong = (caller: unknown) => {
@@ -367,6 +364,7 @@ type PartsRead = Map<
     readonly value: unknown;
     readonly given: unknown;
     readonly part: boolean;
+    readonly member: boolean;
     readonly result: Result.Result<Decoded<unknown>, ReadFailure>;
   }>
 >;
@@ -401,11 +399,14 @@ const decodedReading = <S extends Schema.Top>(
   {
     options,
     part = false,
+    member = false,
   }: {
     /** Options for every parse. */
     readonly options?: SchemaAST.ParseOptions | undefined;
     /** Whether the value is a field of one read field by field. */
     readonly part?: boolean;
+    /** Whether this is one candidate of a failed enclosing union. */
+    readonly member?: boolean;
   } = {},
 ) => {
   // A Void never takes what it would erase, on any route.
@@ -473,6 +474,7 @@ const decodedReading = <S extends Schema.Top>(
     parseOptions?: SchemaAST.ParseOptions,
     parts?: PartsRead,
     at: Excess.Path = [],
+    ambiguity?: FieldlessOneOf,
   ) {
     const output: Record<PropertyKey, unknown> = { ...input };
     // A field need not be a key, as an accessor on a class is not, so it comes from `input`.
@@ -488,7 +490,7 @@ const decodedReading = <S extends Schema.Top>(
       if (fields[name] === undefined) continue;
       // A checked value is plain data, so its fields are its own data.
       const checked = given !== undefined && accountable(fields[name], type);
-      const field = yield* Effect.mapError(
+      const field = yield* Effect.catchTag(
         fromPart(type, fields[name], {
           options: parseOptions,
           part: true,
@@ -496,11 +498,18 @@ const decodedReading = <S extends Schema.Top>(
           parts,
           at: [...at, name],
         }),
+        "FieldlessOneOf",
         (failure) =>
-          failure._tag === "SchemaError"
-            ? failure
-            : new FieldlessOneOf({ ...failure, path: [name, ...failure.path] }),
+          ambiguity !== undefined
+            ? Effect.succeed(undefined)
+            : Effect.fail(
+                new FieldlessOneOf({
+                  ...failure,
+                  path: [name, ...failure.path],
+                }),
+              ),
       );
+      if (field === undefined) continue;
       output[name] = field.value;
       fieldParts[name] = field.value;
       read.push(name);
@@ -511,6 +520,7 @@ const decodedReading = <S extends Schema.Top>(
           holders: holders.map((path) => [name, ...path]),
         });
     }
+    if (ambiguity !== undefined) return yield* ambiguity;
     // The constructor runs again over each part's result. Strictly, a union there keeps the member
     // the part was read by instead of taking an earlier one that strips it; loosely, as Effect would.
     // A part that was not checked does not turn that off for the others.
@@ -537,22 +547,42 @@ const decodedReading = <S extends Schema.Top>(
   ) =>
     contract.ast._tag === "Union" && contract.ast.types.length > 0
       ? chooseReading(
-          contract.ast.types.map((member) =>
-            fromPart(member, input, {
+          contract.ast.types.map((candidate) =>
+            fromPart(candidate, input, {
               options: parseOptions,
               part,
+              member: true,
               given,
               parts,
               at,
             }),
           ),
-          { keepMost: given !== undefined, distinctMembers: true },
+          given !== undefined,
         )
       : // A copy of a list is an object keyed by its indexes, which a record or struct could take, and
         // one of a built-in holds none of its content, so a Void could take it.
         Array.isArray(input) || contract.ast._tag === "Void"
         ? Effect.fail(failure)
         : byField(input, given, parseOptions, parts, at);
+  /**
+   * A sibling can independently disqualify a member. Read its fields once on the existing
+   * fieldwise route, then stop before construction if the ambiguity is still the only failure.
+   */
+  const checkMemberFields = (
+    ambiguity: FieldlessOneOf,
+    input: unknown,
+    given: unknown,
+    parseOptions?: SchemaAST.ParseOptions,
+    parts?: PartsRead,
+    at?: Excess.Path,
+  ) =>
+    member &&
+    ambiguity.path.length > 0 &&
+    isKeyed(input) &&
+    !Array.isArray(input)
+      ? byField(input, given, parseOptions, parts, at, ambiguity)
+      : Effect.fail(ambiguity);
+
   /** Whether a struct could keep every given name by reading its fields, which have decoded names. */
   const couldKeepByField = (given: unknown) => {
     if (contract.ast._tag === "Union" || !isKeyed(given)) return true;
@@ -570,11 +600,11 @@ const decodedReading = <S extends Schema.Top>(
       onSuccess: (value) => Effect.succeed(whole(value)),
       onFailure: (failure) =>
         failure._tag === "FieldlessOneOf"
-          ? enclosingAlternative(failure, () =>
-              isKeyed(input)
-                ? byMember(input, noRoute, undefined, parseOptions)
-                : Effect.fail(noRoute),
-            )
+          ? failure.withinUnion && isKeyed(input)
+            ? enclosingAlternative(failure, () =>
+                byMember(input, noRoute, undefined, parseOptions),
+              )
+            : Effect.fail(failure)
           : isKeyed(input)
             ? byMember(input, failure, undefined, parseOptions)
             : Effect.fail(failure),
@@ -634,7 +664,10 @@ const decodedReading = <S extends Schema.Top>(
         ? byMember(input, failure, given, parseOptions, parts, at)
         : Effect.fail(failure);
     return Effect.matchEffect(decodedStrictly(input, given, parseOptions), {
-      onFailure: (ambiguity) => enclosingAlternative(ambiguity, fields),
+      onFailure: (ambiguity) =>
+        ambiguity.withinUnion
+          ? enclosingAlternative(ambiguity, fields)
+          : checkMemberFields(ambiguity, input, given, parseOptions, parts, at),
       onSuccess: ({ read, stripped, refused = failure }) => {
         // A loose read can take another union member than a strict one and strip its names unseen.
         const loose =
@@ -664,11 +697,11 @@ const decodedReading = <S extends Schema.Top>(
             // Unlike the strict read, a loose one can take a member that strips names unseen.
             forRelaxedWrite: Excess.choosesMemberResolved(contract.ast)
               ? fieldwise
-              : chooseReading(routes, { keepMost: false }),
+              : chooseReading(routes, false),
           });
         // After a constructor every field means what it meant to that, so the route that keeps most
         // can be taken. Otherwise a field both sides could hold can mean something else to each.
-        return chooseReading(routes, { keepMost: constructed });
+        return chooseReading(routes, constructed);
       },
     });
   };
@@ -763,11 +796,13 @@ const decodedReading = <S extends Schema.Top>(
       },
       onFailure: (failure) =>
         failure._tag === "FieldlessOneOf"
-          ? enclosingAlternative(failure, () =>
-              given === undefined
-                ? unaccounted(input, parseOptions)
-                : accounted(input, given, noRoute, parts, at, parseOptions),
-            )
+          ? failure.withinUnion
+            ? enclosingAlternative(failure, () =>
+                given === undefined
+                  ? unaccounted(input, parseOptions)
+                  : accounted(input, given, noRoute, parts, at, parseOptions),
+              )
+            : checkMemberFields(failure, input, given, parseOptions, parts, at)
           : given === undefined
             ? recoverRead(unaccounted(input, parseOptions), () =>
                 Effect.fail(failure),
@@ -826,6 +861,8 @@ const fromPart = (
     readonly options: SchemaAST.ParseOptions | undefined;
     /** Whether the value is a field of one read field by field. */
     readonly part: boolean;
+    /** A candidate reading may fail for a sibling of an ambiguous field. */
+    readonly member?: boolean;
     /** The normalised input at this place, where what the reading loses is accounted for. */
     readonly given: unknown;
     /** The parts read so far, for a reading that is accounted for. */
@@ -834,8 +871,12 @@ const fromPart = (
     readonly at: Excess.Path;
   },
 ): Effect.Effect<Decoded<unknown>, ReadFailure, unknown> => {
-  const { options, part, given, parts, at } = reading;
-  const read = decodedReading(Schema.make<Schema.Top>(ast), { options, part });
+  const { options, part, member = false, given, parts, at } = reading;
+  const read = decodedReading(Schema.make<Schema.Top>(ast), {
+    options,
+    part,
+    member,
+  });
   if (given === undefined || parts === undefined) return read(value, { given });
   // Routes meet the same part again and again, so it runs its schema's own effects once.
   return Effect.suspend(() => {
@@ -846,13 +887,14 @@ const fromPart = (
         Object.is(entry.value, value) &&
         samePath(entry.at, at) &&
         Object.is(entry.given, given) &&
-        entry.part === part,
+        entry.part === part &&
+        entry.member === member,
     );
     if (before !== undefined) return Effect.fromResult(before.result);
     return Effect.flatMap(
       Effect.result(read(value, { given, parts, at })),
       (result) => {
-        known.push({ at, value, given, part, result });
+        known.push({ at, value, given, part, member, result });
         return Effect.fromResult(result);
       },
     );
