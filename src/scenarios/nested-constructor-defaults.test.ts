@@ -213,13 +213,15 @@ describe(`nested constructor defaults (${lane.name})`, () => {
                 path: profile({ filter: { page_size: "many" } }, inputShape),
               })
               .pipe(Effect.provide(lane.fetchClient), outcome);
-            const nil = yield* operation
-              // Deliberate runtime-negative input: null fits neither side of the finite codec.
-              .execute({
-                // @ts-expect-error The encoded alias requires text.
-                path: profile({ filter: { page_size: null } }, inputShape),
-              })
-              .pipe(Effect.provide(lane.fetchClient), outcome);
+            const nil = yield* (
+              operation
+                // Deliberate runtime-negative input: null fits neither side of the finite codec.
+                .execute({
+                  // @ts-expect-error The encoded alias requires text.
+                  path: profile({ filter: { page_size: null } }, inputShape),
+                })
+                .pipe(Effect.provide(lane.fetchClient), outcome)
+            );
             results.push({ shape: inputShape, text, nil });
           }
           expectOutcomes({
@@ -254,13 +256,15 @@ describe(`nested constructor defaults (${lane.name})`, () => {
                 body: profile({ filter: { page_size: "many" } }, inputShape),
               })
               .pipe(Effect.provide(lane.fetchClient), outcome);
-            const nil = yield* operation
-              // Deliberate runtime-negative input, retained independently of string validation.
-              .execute({
-                // @ts-expect-error The encoded alias requires text.
-                body: profile({ filter: { page_size: null } }, inputShape),
-              })
-              .pipe(Effect.provide(lane.fetchClient), outcome);
+            const nil = yield* (
+              operation
+                // Deliberate runtime-negative input, retained independently of string validation.
+                .execute({
+                  // @ts-expect-error The encoded alias requires text.
+                  body: profile({ filter: { page_size: null } }, inputShape),
+                })
+                .pipe(Effect.provide(lane.fetchClient), outcome)
+            );
             results.push({ shape: inputShape, text, nil });
           }
           expectOutcomes({

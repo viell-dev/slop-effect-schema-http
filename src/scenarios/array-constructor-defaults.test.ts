@@ -934,10 +934,12 @@ describe(`array constructor defaults (${lane.name})`, () => {
         expect(controls).toHaveLength(2);
         for (const entry of controls)
           wire(entry, "/x", '[{"page_size":"2"},{"page_size":"5"}]');
-        const mixed = yield* operation
-          // @ts-expect-error Whole-side array typing excludes this deliberate runtime mixed-side probe.
-          .execute({ body: [{ limit: 2 }, { page_size: "05" }] })
-          .pipe(Effect.provide(lane.fetchClient), result);
+        const mixed = yield* (
+          operation
+            // @ts-expect-error Whole-side array typing excludes this deliberate runtime mixed-side probe.
+            .execute({ body: [{ limit: 2 }, { page_size: "05" }] })
+            .pipe(Effect.provide(lane.fetchClient), result)
+        );
         expect({ mixed, count: (yield* backend.ledger).length }).toMatchObject({
           mixed: { error: { _tag: "SchemaError" } },
           count: 2,
