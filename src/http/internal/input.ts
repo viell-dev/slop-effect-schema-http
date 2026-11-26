@@ -16,6 +16,7 @@ import {
   statesPrototypeNameAnywhere,
 } from "./plain.js";
 import { guardVoids } from "./void-member.js";
+import { isBodyWriteError, isWriterError } from "./writer-error.js";
 import {
   declinedByVoid,
   type Dropped,
@@ -209,22 +210,26 @@ const losesLess = (
 };
 
 /**
- * Try readings in their existing order. Within an anyOf, an ambiguous member gives way only to
- * a member that reads the whole value. Retrying the same reading cannot settle the ambiguity.
+ * Try readings in their existing order. An enclosing union can skip an ambiguous alternative
+ * if another member reads the whole value. A oneOf then counts the remaining complete reads.
  */
 const chooseReading = (
   readings: ReadonlyArray<
     Effect.Effect<Decoded<unknown>, ReadFailure, unknown>
   >,
   keepMost: boolean,
-  anyOf = false,
+  enclosingUnion?: SchemaAST.Union,
+  countReaders = false,
 ) =>
   Effect.gen(function* () {
     let most: Decoded<unknown> | undefined;
     let failure: Schema.SchemaError | undefined;
     let ambiguity: FieldlessOneOf | undefined;
-    for (const reading of readings) {
-      const result = yield* anyOf
+    let first: Decoded<unknown> | undefined;
+    let complete: Decoded<unknown> | undefined;
+    const matches: Array<SchemaAST.AST> = [];
+    for (const [index, reading] of readings.entries()) {
+      const result = yield* enclosingUnion
         ? Effect.result(reading)
         : attemptRead(reading);
       if (result._tag === "Failure") {
@@ -237,14 +242,30 @@ const chooseReading = (
         result.success.lost.length === 0 ||
         (!keepMost && ambiguity === undefined)
       ) {
-        return ambiguity === undefined
-          ? result.success
-          : afterAmbiguity(result.success, ambiguity);
+        if (!countReaders)
+          return ambiguity === undefined
+            ? result.success
+            : afterAmbiguity(result.success, ambiguity);
+        first ??= result.success;
+        if (result.success.lost.length === 0) {
+          complete ??= result.success;
+          matches.push(enclosingUnion!.types[index]!);
+        }
       } else if (most === undefined || losesLess(result.success, most)) {
         most = result.success;
       }
     }
-    if (ambiguity !== undefined) return yield* ambiguity;
+    if (ambiguity !== undefined) {
+      if (matches.length > 1)
+        return yield* new FieldlessOneOf({
+          path: [],
+          ast: enclosingUnion!,
+          matches,
+        });
+      if (complete !== undefined) return afterAmbiguity(complete, ambiguity);
+      return yield* ambiguity;
+    }
+    if (first !== undefined) return first;
     return most ?? (yield* Effect.fail(failure!));
   });
 
@@ -353,6 +374,10 @@ const keepWholeAlternative = (
     () => Effect.fail(failure),
   ).pipe(Effect.map((read) => afterAmbiguity(read, failure)));
 
+/** A writer's own failure stands when it points outside the ambiguous position. */
+const failsAtAmbiguity = (ambiguity: FieldlessOneOf, path: Excess.Path) =>
+  ambiguity.path.every((key, index) => path[index] === key);
+
 const atField = (name: PropertyKey, failure: FieldlessOneOf) =>
   new FieldlessOneOf({ ...failure, path: [name, ...failure.path] });
 
@@ -427,6 +452,10 @@ const decodedReading = <S extends Schema.Top>(
   const guarded = guardVoids(contract.ast);
   const schema = guarded === contract.ast ? contract : Schema.make<S>(guarded);
   const canBeAmbiguous = Excess.mayHaveOneOf(guarded);
+  const enclosingOneOf =
+    contract.ast._tag === "Union" &&
+    contract.ast.options?.mode === "oneOf" &&
+    contract.ast.types.some(Excess.mayHaveOneOf);
   const classify = (
     failure: Schema.SchemaError,
     input: unknown,
@@ -510,6 +539,7 @@ const decodedReading = <S extends Schema.Top>(
     parseOptions?: SchemaAST.ParseOptions,
     parts?: PartsRead,
     at: Excess.Path = [],
+    known?: { readonly name: PropertyKey; readonly field: Decoded<unknown> },
   ) {
     const output: Record<PropertyKey, unknown> = { ...input };
     // A field need not be a key, as an accessor on a class is not, so it comes from `input`.
@@ -526,17 +556,20 @@ const decodedReading = <S extends Schema.Top>(
       if (fields[name] === undefined) continue;
       // A checked value is plain data, so its fields are its own data.
       const checked = given !== undefined && accountable(fields[name], type);
-      const field = yield* Effect.catchTag(
-        fromPart(type, fields[name], {
-          options: parseOptions,
-          part: true,
-          given: checked ? sliceOf(given, name) : undefined,
-          parts,
-          at: [...at, name],
-        }),
-        "FieldlessOneOf",
-        (failure) => Effect.fail(atField(name, failure)),
-      );
+      const field =
+        known?.name === name
+          ? known.field
+          : yield* Effect.catchTag(
+              fromPart(type, fields[name], {
+                options: parseOptions,
+                part: true,
+                given: checked ? sliceOf(given, name) : undefined,
+                parts,
+                at: [...at, name],
+              }),
+              "FieldlessOneOf",
+              (failure) => Effect.fail(atField(name, failure)),
+            );
       if (ambiguity === undefined && field.ambiguity !== undefined)
         ambiguity = atField(name, field.ambiguity);
       output[name] = field.value;
@@ -586,7 +619,8 @@ const decodedReading = <S extends Schema.Top>(
             }),
           ),
           given !== undefined,
-          contract.ast.options?.mode !== "oneOf",
+          contract.ast,
+          enclosingOneOf,
         )
       : // A copy of a list is an object keyed by its indexes, which a record or struct could take, and
         // one of a built-in holds none of its content, so a Void could take it.
@@ -608,16 +642,51 @@ const decodedReading = <S extends Schema.Top>(
   ): Effect.Effect<Decoded<unknown>, ReadFailure, unknown> =>
     Effect.matchEffect(decode(input, parseOptions), {
       onSuccess: (value) => Effect.succeed(whole(value)),
-      onFailure: (failure) =>
-        failure._tag === "FieldlessOneOf"
-          ? (failure.insideAnyOf || failure.path.length > 0) && isKeyed(input)
-            ? keepWholeAlternative(failure, () =>
-                byMember(input, noRoute, undefined, parseOptions),
-              )
-            : Effect.fail(failure)
-          : isKeyed(input)
-            ? byMember(input, failure, undefined, parseOptions)
-            : Effect.fail(failure),
+      onFailure: (failure) => {
+        if (!isKeyed(input)) return Effect.fail(failure);
+        if (failure._tag !== "FieldlessOneOf")
+          return byMember(input, failure, undefined, parseOptions);
+        if (!failure.insideUnion && failure.path.length === 0)
+          return Effect.fail(failure);
+        const retry = () => byMember(input, noRoute, undefined, parseOptions);
+        const carry = (read: Decoded<unknown>) => afterAmbiguity(read, failure);
+        // Each alternative reads the whole value and can rediscover the ambiguity.
+        if (contract.ast._tag === "Union") return Effect.map(retry(), carry);
+        const [name] = failure.path;
+        const field = Array.isArray(input)
+          ? undefined
+          : Excess.fieldsOf(contract.ast).find((part) => part.name === name);
+        const value = field && sliceOf(input, field.name);
+        // An encoded-only name or a container position has no fieldwise reader here.
+        if (field === undefined || value === undefined)
+          return keepWholeAlternative(failure, retry);
+        // Let the named field settle its own ambiguity before another field can fail the retry.
+        return Effect.matchEffect(
+          fromPart(field.type, value, {
+            options: parseOptions,
+            part: true,
+            given: undefined,
+            parts: undefined,
+            at: [field.name],
+          }),
+          {
+            onFailure: (own) =>
+              Effect.fail(
+                own._tag === "FieldlessOneOf"
+                  ? atField(field.name, own)
+                  : failure,
+              ),
+            onSuccess: (read) =>
+              Effect.map(
+                byField(input, undefined, parseOptions, undefined, [], {
+                  name: field.name,
+                  field: read,
+                }),
+                carry,
+              ),
+          },
+        );
+      },
     });
   /**
    * The decoder's strict read of what was given, or of the input where a key set to `undefined` makes
@@ -668,7 +737,7 @@ const decodedReading = <S extends Schema.Top>(
         : Effect.fail(failure);
     return Effect.matchEffect(decodedStrictly(input, given, parseOptions), {
       onFailure: (ambiguity) =>
-        ambiguity.insideAnyOf || ambiguity.path.length > 0
+        ambiguity.insideUnion || ambiguity.path.length > 0
           ? keepWholeAlternative(ambiguity, fields)
           : Effect.fail(ambiguity),
       onSuccess: ({ read, stripped, refused = failure }) => {
@@ -805,7 +874,7 @@ const decodedReading = <S extends Schema.Top>(
       },
       onFailure: (failure) =>
         failure._tag === "FieldlessOneOf"
-          ? failure.insideAnyOf
+          ? failure.insideUnion
             ? keepWholeAlternative(failure, () =>
                 given === undefined
                   ? unaccounted(input, parseOptions)
@@ -1215,7 +1284,14 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       read,
     }));
     const exhausted = (failure: Schema.SchemaError) =>
-      Effect.fail(read.ambiguity ?? failure);
+      Effect.fail(
+        read.ambiguity !== undefined &&
+          namedPaths(failure.issue).every((path) =>
+            failsAtAmbiguity(read.ambiguity!, path),
+          )
+          ? read.ambiguity
+          : failure,
+      );
     if (read.forRelaxedWrite === undefined)
       return recoverRead(loose, exhausted);
     const relaxed = Effect.flatMap(
@@ -1479,9 +1555,15 @@ const encodeWith = <S extends Schema.Top, A, R, B, E, R2>(
           (): Effect.Effect<B, E | Schema.SchemaError, R2> =>
             ambiguity === undefined
               ? finish(output)
-              : Effect.mapError(finish(output), () =>
-                  publicAmbiguity(ambiguity),
-                ),
+              : Effect.mapError(finish(output), (failure) => {
+                  const cause =
+                    failure instanceof Error ? failure.cause : undefined;
+                  return isWriterError(cause) &&
+                    isBodyWriteError(cause) &&
+                    failsAtAmbiguity(ambiguity, cause.path)
+                    ? publicAmbiguity(ambiguity)
+                    : failure;
+                }),
         ),
     );
 };
