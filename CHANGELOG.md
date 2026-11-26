@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Write a class instance through its class beside a struct that would strip it
+  ([#274](https://github.com/viell-dev/slop-effect-schema-http/issues/274)). Under
+  `Schema.Union([Filter, Counted])`, where `Filter` is a struct and `Counted` a `Schema.Class` whose
+  instances hold a member of their own, a `Counted` instance refused with `SchemaError` and now
+  sends `{"a":"item"}`, as it already did with `Counted` first. It still refuses where the class
+  cannot write the instance whole, as where a field is invalid or the instance holds a field only
+  `Filter` states.
 - Wait up to eight minutes, not five, for npm to show a published version and its attestations
   before publication verification fails
   ([#288](https://github.com/viell-dev/slop-effect-schema-http/issues/288)). 0.19.0's upload needed
