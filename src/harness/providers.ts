@@ -89,8 +89,8 @@ const nullBodyStatuses: ReadonlySet<number> = new Set([
 /**
  * The lines to send: the request's own, after the `Host` HTTP/1.1 requires and followed by the
  * body's type and length, each added only when the request declares none, and `Host` only when
- * `host` is given. Node adds no default
- * headers to raw header lines, and a socket adds nothing at all.
+ * `host` is given. Node adds no default headers to raw header lines, and a socket adds nothing at
+ * all.
  */
 const withFraming = (
   lines: Transport.Lines,

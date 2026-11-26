@@ -184,7 +184,8 @@ describe("hostile request heads", () => {
 
           // A colon in a name ends the name instead: the line is a field `x` with the value `a: b`,
           // which the routes see. The library passes the name on as written, and its transport
-          // guide asks providers that write bytes to refuse CR and LF only.
+          // guide asks providers that write bytes to refuse CR and LF only:
+          // https://github.com/viell-dev/slop-effect-schema-http/issues/302.
           const colon = yield* refused(at.pipe(Request.setHeader("x:a", "b")));
           expect(colon.wire[0]!.head).toContain("\r\nx:a: b\r\n");
           expect(values(only(colon).seen.headers, "x")).toEqual(["a: b"]);
