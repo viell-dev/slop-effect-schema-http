@@ -480,6 +480,42 @@ describe("request preparation beside Void", () => {
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/276
   it.effect(
+    "refuses instead of switching a fieldwise read to a different output",
+    () =>
+      Effect.gen(function* () {
+        const n = Schema.FiniteFromString;
+        const m = Schema.FiniteFromString;
+        const f = Schema.Union([Filter, Schema.Void], { mode: "oneOf" });
+        const ambiguous = Schema.Struct({ f, n, m });
+        const keeping = Schema.Struct({ f: Schema.Unknown, n, m });
+        const body = { f: {}, n: "5", m: 6 };
+        const first = post(Schema.Union([ambiguous, keeping]));
+        const last = post(Schema.Union([keeping, ambiguous]));
+        expect(yield* schemaFailure(first, { body })).toBe(
+          'Expected exactly one member to match\n  at ["f"]',
+        );
+        expect(yield* bodyOf(last, { body })).toBe('{"f":{},"n":"5","m":"6"}');
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "retains the list item's ambiguity when a relaxed path write fails",
+    () =>
+      Effect.gen(function* () {
+        const item = Schema.Union([Filter, Schema.Unknown], { mode: "oneOf" });
+        const path = Request.get("").pipe(
+          Request.path(Schema.Array(Schema.optional(item)), () => "/p"),
+        );
+        const filter = Object.defineProperty({}, "limit", { value: 5 });
+        expect(yield* schemaFailure(path, { path: [filter] })).toBe(
+          "Expected exactly one member to match\n  at [0]",
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
     "reports the diagnostic ambiguity beside a valid encoded sibling",
     () =>
       Effect.gen(function* () {
