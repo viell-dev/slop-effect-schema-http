@@ -230,11 +230,12 @@ header group shape.
 
 A fieldless plain object or list that matches multiple members of a `oneOf` fails that read, in
 either member order. Retrying those members individually would bypass the match check and could let
-a constructor default decide which member wins. A constructor reading of the field can still succeed
-when ambiguity occurs only on its encoded side. Within an enclosing `anyOf`, another member can read
-the whole value if it keeps every supplied field and its result can be written. If no member can do
-that, preparation carries the ambiguity as a typed failure and reports Effect's message at the
-value's path, omitting the value.
+a constructor default decide which member wins. If the whole struct's decoder reports ambiguity at a
+named field, the field's own reading can settle it before a sibling's failure affects the fieldwise
+route. In an enclosing `anyOf` or `oneOf`, an ambiguous member counts as a failed read. `anyOf`
+takes the first complete reading and `oneOf` requires exactly one. When none can read the value,
+preparation reports the original ambiguity at its path and omits the input. Effect's writer still
+selects its own member. A writer failure outside the ambiguous position keeps its own diagnostic.
 
 The decoder a later route reads with keeps the Void guard too, so a Void cannot stand in for a
 reading that keeps the value's fields. A query or header binding reports lost input fields before

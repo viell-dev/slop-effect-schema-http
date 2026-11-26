@@ -384,20 +384,25 @@ members, request preparation fails with `Expected exactly one member to match`. 
 undefined-valued keys are left out when deciding what the value holds. Non-enumerable object fields
 do not count unless normalization brings them out as keys. For example, two structs with only
 optional fields can both read `{}`, even if constructing one would fill a default. Either member
-order produces the same ambiguity. An enclosing `anyOf` can still use another member that reads the
-whole value without losing fields and its result can be written. If no member can, the failure names
-the ambiguous value's path and omits the input. This also applies within an optional field, a list,
-or a query or header group that receives an empty record because it was omitted or stacked with
-another binding.
+order produces the same ambiguity. An enclosing union treats that member as a failed read. An
+enclosing `anyOf` takes the first complete reading. An enclosing `oneOf` needs exactly one complete
+reading. If none reads the value, the failure names the ambiguous path and omits the input. This
+applies within optional fields, lists, and query or header groups that receive an empty record
+because the group was omitted or stacked with another binding.
 
-A field whose decoded side succeeds does not need a second match check on its encoded side.
-Preparation can use the field's constructor when a whole struct's decode finds encoded-side
-ambiguity there. Lists and records read as a whole, so when they require the encoded side, that
-side's matches decide the result.
+When a whole struct's decoder reports ambiguity at a named field, preparation can read the field on
+its decoded side. If that succeeds, another field's failure does not make the first field ambiguous.
+Lists and records read as a whole, so their encoded-side matches decide the result when preparation
+needs that side.
 
-A refusal at this stage is a `SchemaError`. If you handled an `InvalidRequest` or `HttpBodyError`
-for one of these inputs, handle the schema failure too. Preparation can stop before it reaches the
-writer, or retain the ambiguity if the enclosing alternative fails to write.
+The writer still makes its own choice. For example, suppose only member `K` reads
+`{ f: {}, n: "5" }` and returns `{ f: {}, n: 5 }`. If member `M` can write that result with a number
+and `K` writes it with a string, `anyOf[M,K]` sends `{"f":{},"n":5}` and `anyOf[K,M]` sends
+`{"f":{},"n":"5"}`.
+
+An ambiguity is a `SchemaError`. If you handled an `InvalidRequest` or `HttpBodyError` for one of
+these inputs, handle the schema failure too. A writer failure at or below the ambiguous position can
+retain the ambiguity. A writer failure elsewhere keeps its own diagnostic.
 
 ### Void takes only an empty value
 
@@ -420,8 +425,9 @@ can see the Void. Inside an `Option` or another opaque declaration it is the sch
 
 A key no member states is left out first, as under a struct, so an object with no other key holds
 nothing. Under `Union([Void, Struct({ a: String })])`, `{ b: 1 }` therefore sends `null`, with no
-error. Under `oneOf`, Void and a struct with only optional fields both match an empty object, so the
-usual fieldless ambiguity rule applies. If the structural member cannot encode a value, such as JSON
+error. A union with only Void members refuses a defined extra key with `Expected void`. Under
+`oneOf`, Void and a struct with only optional fields both match an empty object, so the usual
+fieldless ambiguity rule applies. If the structural member cannot encode a value, such as JSON
 metadata containing a `Date` under `Schema.Unknown`, preparation fails with that member's
 `SchemaError` unless another member can write the value without dropping a supplied field, as
 [below](#a-field-no-member-can-keep-is-an-error) describes.

@@ -10,12 +10,13 @@ import { hasDefinedFields } from "./excess.js";
 import { isPlainData } from "./plain.js";
 import { extraArrayField } from "./writer-error.js";
 
+/** A fieldless ambiguity, or an enclosing oneOf left with multiple complete readers. */
 export class FieldlessOneOf extends Data.TaggedError("FieldlessOneOf")<{
   readonly path: ReadonlyArray<PropertyKey>;
   readonly ast: SchemaAST.Union;
   readonly matches: ReadonlyArray<SchemaAST.AST>;
   /** The enclosing union failed as a whole. Another alternative can fit on the other side. */
-  readonly insideAnyOf?: true;
+  readonly insideUnion?: true;
 }> {}
 
 export type ReadFailure = Schema.SchemaError | FieldlessOneOf;
@@ -69,11 +70,9 @@ const locate = (
       for (const member of issue.issues) {
         const found = locate(member, fieldlessAt, path);
         if (found !== undefined && found !== "invalid")
-          return issue.ast.types.length === 1 ||
-            issue.ast.options?.mode === "oneOf" ||
-            found.insideAnyOf
+          return issue.ast.types.length === 1 || found.insideUnion
             ? found
-            : new FieldlessOneOf({ ...found, insideAnyOf: true });
+            : new FieldlessOneOf({ ...found, insideUnion: true });
       }
       return "invalid";
     }
