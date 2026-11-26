@@ -13,10 +13,11 @@
   with `Expected exactly one member to match` beside Void and an optional-field struct, or beside
   two optional-field structs, even if one has a constructor default. An enclosing `anyOf` or `oneOf`
   can read the whole input through a different member. In these cases, the wire can now contain `{}`
-  or `[]` where 0.19.0 sent a defaulted object or `null`. The writer still makes its own member
-  choice. Supply a value only the intended member accepts, or use `anyOf` for first fit. Ambiguity
-  can raise `SchemaError` where callers previously handled `InvalidRequest` or `HttpBodyError`,
-  including for an omitted or stacked query or header group.
+  or `[]` where 0.19.0 sent a defaulted object or `null`, or a field containing `{}` where 0.19.0
+  omitted it. The writer still makes its own member choice. An enclosing `oneOf` can also refuse at
+  the root if its writer finds multiple matches. Supply a value only the intended member accepts, or
+  use `anyOf` for first fit. Ambiguity can raise `SchemaError` where callers previously handled
+  `InvalidRequest` or `HttpBodyError`, including for an omitted or stacked query or header group.
 - Prepare an all-undefined field the same way when an opaque neighbour has an unstated key
   ([#307](https://github.com/viell-dev/slop-effect-schema-http/issues/307)).
 - Write a class instance through its class beside a struct that would strip it

@@ -6,7 +6,8 @@ import * as Body from "./Body.js";
 import * as Request from "./Request.js";
 import { FieldlessOneOf, readFailure } from "./internal/ambiguity.js";
 import * as Excess from "./internal/excess.js";
-import { reader, toDecoded } from "./internal/input.js";
+import { jsonEncoder, reader, toDecoded } from "./internal/input.js";
+import { WriterError } from "./internal/writer-error.js";
 
 const post = <S extends Schema.Top>(schema: S) =>
   Request.post("/x").pipe(Request.body(Body.jsonSchema(schema)));
@@ -215,6 +216,29 @@ describe("field reads beside an opaque neighbour", () => {
 });
 
 describe("write failures beside a readable field", () => {
+  it.effect(
+    "keeps the ambiguity when the only complete reader fails to write that field",
+    () =>
+      Effect.gen(function* () {
+        // Both whole reads stop at a sibling before reaching f. The memberwise read discovers f's
+        // ambiguity and must carry it through the successful read of K.
+        const M = Schema.Struct({ a: F, b: F, f: oneOf(Adef, B) });
+        const K = Schema.Struct({ a: F, b: F, f: Schema.Unknown });
+        const contract = oneOf(M, K);
+        const writerFailure = new Schema.SchemaError(
+          new SchemaIssue.Pointer(
+            ["f"],
+            new SchemaIssue.InvalidValue({ message: "writer refused" }),
+          ),
+        );
+        const write = reader(contract, () => Effect.fail(writerFailure));
+        const refused = yield* Effect.flip(write({ a: "5", b: 6, f: {} }));
+        expect(refused.message).toBe(
+          'Expected exactly one member to match\n  at ["f"]',
+        );
+      }),
+  );
+
   // K reads the whole value. JSON cannot write d, whichever member reads it, and K bound alone
   // says so. The refusal should name d, not the ambiguity of a member that did not read.
   it.effect("names the field the writer refused", () =>
@@ -545,5 +569,210 @@ it.effect(
       expect(refusal.message).toBe(
         'Expected exactly one member to match\n  at ["wire"]',
       );
+    }),
+);
+
+// Reads {} only on its encoded side and writes it back as {}.
+const EncodedOnly = Schema.Struct({}).pipe(
+  Schema.decodeTo(Schema.Literal("encoded"), {
+    decode: SchemaGetter.transform(() => "encoded" as const),
+    encode: SchemaGetter.transform(() => ({})),
+  }),
+);
+const Opaque = Schema.Option(Schema.Struct({ a: S }));
+const clean = () => Option.some({ a: "x" });
+// `extra` is a key the Option's schema does not state. Effect strips it; a strict pass refuses it.
+const stray = () => Option.some({ a: "x", extra: 1 });
+const some = '{"_tag":"Some","value":{"a":"x"}}';
+
+describe("an enclosing reader beside an opaque neighbour's stray key", () => {
+  // U is ambiguous for {}, so it does not read. The other member of the enclosing union reads {}
+  // on its encoded side. A key the neighbour's schema does not state must not change that, in
+  // either field order.
+  for (const [name, members] of [
+    ["Filter beside Void", [Filter, Schema.Void]],
+    ["two optional-field structs", [Adef, B]],
+  ] as const) {
+    const U = oneOf(...members);
+    for (const [label, enclosing] of [
+      ["anyOf, ambiguous member first", Schema.Union([U, EncodedOnly])],
+      ["anyOf, ambiguous member last", Schema.Union([EncodedOnly, U])],
+      ["oneOf, ambiguous member first", oneOf(U, EncodedOnly)],
+      ["oneOf, ambiguous member last", oneOf(EncodedOnly, U)],
+    ] as const)
+      it.effect(`reads f through the other member, ${name}, ${label}`, () =>
+        Effect.gen(function* () {
+          expect(
+            yield* outcome(post(Schema.Struct({ f: enclosing })), { f: {} }),
+          ).toBe('sent {"f":{}}');
+          for (const neighbour of [clean, stray]) {
+            expect(
+              yield* outcome(post(Schema.Struct({ f: enclosing, o: Opaque })), {
+                f: {},
+                o: neighbour(),
+              }),
+              `f declared first, ${neighbour === stray ? "stray key" : "clean"}`,
+            ).toBe(`sent {"f":{},"o":${some}}`);
+            expect(
+              yield* outcome(post(Schema.Struct({ o: Opaque, f: enclosing })), {
+                o: neighbour(),
+                f: {},
+              }),
+              `f declared last, ${neighbour === stray ? "stray key" : "clean"}`,
+            ).toBe(`sent {"o":${some},"f":{}}`);
+          }
+        }),
+      );
+
+    // The enclosing union is the whole value. M holds the ambiguous field. K reads the value, and
+    // both members state the opaque neighbour after f.
+    for (const [scene, M, K, body] of [
+      [
+        "K fits only the encoded side",
+        Schema.Struct({ f: U, n: Schema.Finite, o: Opaque }),
+        Schema.Struct({ f: Schema.Unknown, n: F, o: Opaque }),
+        (o: unknown) => ({ f: {}, n: "5", o }),
+      ],
+      [
+        "mixed-side siblings",
+        Schema.Struct({ f: U, a: F, b: F, o: Opaque }),
+        Schema.Struct({ f: Schema.Unknown, a: F, b: F, o: Opaque }),
+        (o: unknown) => ({ f: {}, a: "5", b: 6, o }),
+      ],
+      [
+        "decoded siblings",
+        Schema.Struct({ f: U, a: F, o: Opaque }),
+        Schema.Struct({ f: Schema.Unknown, a: F, o: Opaque }),
+        (o: unknown) => ({ f: {}, a: 5, o }),
+      ],
+    ] as const)
+      it.effect(
+        `gives the whole value the same result beside a stray key, ${name}, ${scene}`,
+        () =>
+          Effect.gen(function* () {
+            for (const contract of [
+              Schema.Union([M, K]),
+              Schema.Union([K, M]),
+              oneOf(M, K),
+              oneOf(K, M),
+            ]) {
+              const beside = yield* outcome(post(contract), body(clean()));
+              expect(yield* outcome(post(contract), body(stray()))).toBe(
+                beside,
+              );
+            }
+          }),
+      );
+  }
+
+  // An undefined-valued key is left out when deciding what f holds, so { zz: undefined } is {}.
+  // U is ambiguous for it and does not read; K is the one reader, and only K can write {}.
+  it.effect(
+    "does not count an ambiguous member as a reader of an undefined-valued key",
+    () =>
+      Effect.gen(function* () {
+        const U = oneOf(Filter, Schema.Void, B);
+        const enclosing = oneOf(U, Schema.Struct({}));
+        const contract = Schema.Struct({ f: enclosing, o: Opaque });
+        for (const f of [() => ({}), () => ({ zz: undefined })])
+          for (const neighbour of [clean, stray])
+            expect(
+              yield* outcome(post(contract), { f: f(), o: neighbour() }),
+            ).toBe(`sent {"f":{},"o":${some}}`);
+      }),
+  );
+
+  it.effect(
+    "retries a loose read on the normalized field before counting readers",
+    () =>
+      Effect.gen(function* () {
+        const U = oneOf(Adef, B);
+        for (const f of [oneOf(U, EncodedOnly), oneOf(EncodedOnly, U)]) {
+          expect(
+            yield* outcome(post(Schema.Struct({ f, o: Opaque })), {
+              f: { a: undefined },
+              o: stray(),
+            }),
+          ).toBe(`sent {"f":{},"o":${some}}`);
+        }
+      }),
+  );
+
+  it.effect(
+    "uses the normalized reading when an exposed key would let Void read",
+    () =>
+      Effect.gen(function* () {
+        const M = Schema.Struct({ f: oneOf(Filter, Schema.Void), a: F, b: F });
+        const K = Schema.Struct({ f: Schema.Struct({}), a: F, b: F });
+        for (const schema of [oneOf(M, K), oneOf(K, M)]) {
+          expect(
+            yield* outcome(post(schema), { f: { a: undefined }, a: "5", b: 6 }),
+          ).toBe('sent {"f":{},"a":"5","b":"6"}');
+        }
+      }),
+  );
+
+  it.effect(
+    "reuses the field reading that settled the whole decoder's ambiguity",
+    () =>
+      Effect.gen(function* () {
+        let defaults = 0;
+        const defaulted = Schema.Struct({
+          a: Schema.optionalKey(S).pipe(
+            Schema.withConstructorDefault(
+              Effect.sync(() => {
+                defaults++;
+                return "x";
+              }),
+            ),
+          ),
+        });
+        // n needs decoding. The whole decoder finds two encoded matches at f, while
+        // the field's constructor can take the defaulted member on its own.
+        const schema = Schema.Struct({
+          n: F,
+          f: oneOf(defaulted, EncodedOnly),
+        });
+        expect(yield* outcome(post(schema), { n: "5", f: {} })).toBe(
+          'sent {"n":"5","f":{"a":"x"}}',
+        );
+        expect(defaults).toBe(1);
+      }),
+  );
+});
+
+it.effect("preserves a final writer error that has no body position", () =>
+  Effect.gen(function* () {
+    const contract = Schema.Struct({
+      f: Schema.Union([oneOf(Adef, B), EncodedOnly]),
+    });
+    const failure = new Error("the final writer refused", {
+      cause: new WriterError("the writer supplied no body position"),
+    });
+    const encode = jsonEncoder(contract, contract, () => Effect.fail(failure));
+    expect(yield* Effect.flip(encode({ f: {} }))).toBe(failure);
+  }),
+);
+
+it.effect(
+  "keeps a fieldless refusal when an exposed key would let Void read",
+  () =>
+    Effect.gen(function* () {
+      for (const members of [
+        [Filter, Schema.Void],
+        [Schema.Void, Filter],
+      ] as const) {
+        const union = oneOf(...members);
+        const optional = post(Schema.Struct({ f: Schema.optional(union) }));
+        const renamed = post(
+          Schema.Struct({ f: union }).pipe(Schema.encodeKeys({ f: "wire" })),
+        );
+        expect(yield* outcome(optional, { f: { a: undefined } })).toBe(
+          'SchemaError: Expected exactly one member to match\n  at ["f"]',
+        );
+        expect(yield* outcome(renamed, { wire: { a: undefined } })).toBe(
+          'SchemaError: Expected exactly one member to match\n  at ["wire"]',
+        );
+      }
     }),
 );

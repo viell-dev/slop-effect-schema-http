@@ -398,7 +398,15 @@ needs that side.
 The writer still makes its own choice. For example, suppose only member `K` reads
 `{ f: {}, n: "5" }` and returns `{ f: {}, n: 5 }`. If member `M` can write that result with a number
 and `K` writes it with a string, `anyOf[M,K]` sends `{"f":{},"n":5}` and `anyOf[K,M]` sends
-`{"f":{},"n":"5"}`.
+`{"f":{},"n":"5"}`. An enclosing `oneOf` can refuse at the root if its writer finds multiple
+matches.
+
+When preparation has to read some fields on each schema side, reassembling the fields can still
+count an ambiguous inner member in an enclosing `oneOf`. For example, a field with an
+undefined-valued key can fail at the enclosing union when that union holds both an optional
+struct/Void `oneOf` and an empty struct. The order of an enclosing `anyOf` can still matter for an
+undefined-valued key beside an opaque sibling with an unstated key, when the other member reads only
+on its encoded side.
 
 An ambiguity is a `SchemaError`. If you handled an `InvalidRequest` or `HttpBodyError` for one of
 these inputs, handle the schema failure too. A writer failure at or below the ambiguous position can

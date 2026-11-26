@@ -1,5 +1,6 @@
 import { Effect, Result, Schema, SchemaAST, SchemaIssue } from "effect";
 import {
+  afterAlternative,
   attemptRead,
   FieldlessOneOf,
   hasPlainWitness,
@@ -264,7 +265,11 @@ const chooseReading = (
           matches,
         });
       if (complete !== undefined) return afterAmbiguity(complete, ambiguity);
-      return yield* ambiguity;
+      return yield* failure === undefined &&
+      most === undefined &&
+      first === undefined
+        ? ambiguity
+        : afterAlternative(ambiguity);
     }
     if (first !== undefined) return first;
     return most ?? (yield* Effect.fail(failure!));
@@ -352,6 +357,9 @@ const causing = (
 /** A route's failure where the constructor's own result stands instead. */
 const noRoute = new Schema.SchemaError(new SchemaIssue.InvalidValue({}));
 
+/** A strict pass's ambiguity that only the reading after it can settle. */
+const provisional = new Schema.SchemaError(new SchemaIssue.InvalidValue({}));
+
 /** Keep the failure in case writing the alternative fails. */
 const afterAmbiguity = (
   read: Decoded<unknown>,
@@ -372,8 +380,17 @@ const keepWholeAlternative = (
       ({ lost }) => lost.length === 0,
       () => noRoute,
     ),
-    () => Effect.fail(failure),
+    () => Effect.fail(afterAlternative(failure)),
   ).pipe(Effect.map((read) => afterAmbiguity(read, failure)));
+
+/** The exposed spelling can change which members make up an enclosing oneOf's count. */
+const changedAtAmbiguity = (
+  failure: FieldlessOneOf,
+  given: unknown,
+  exposed: unknown,
+) =>
+  failure.matches.some(Excess.mayHaveOneOf) &&
+  valueAt(given, failure.path) !== valueAt(exposed, failure.path);
 
 /** A writer's own failure stands when it points outside the ambiguous position. */
 const failsAtAmbiguity = (ambiguity: FieldlessOneOf, path: Excess.Path) =>
@@ -689,7 +706,7 @@ const decodedReading = <S extends Schema.Top>(
               Effect.fail(
                 own._tag === "FieldlessOneOf"
                   ? atField(field.name, own)
-                  : failure,
+                  : afterAlternative(failure),
               ),
             onSuccess: (read) =>
               Effect.map(
@@ -759,6 +776,14 @@ const decodedReading = <S extends Schema.Top>(
         // A loose read can take another union member than a strict one and strip its names unseen.
         // If only an opaque neighbour kept the strict decoder from reading, retry a failed loose
         // read without undefined keys before deciding the encoded side cannot take the value.
+        // An enclosing oneOf can also miscount on the raw spelling, so retry that count.
+        const retryNormalised = (failure: ReadFailure) =>
+          failure._tag === "FieldlessOneOf" &&
+          !changedAtAmbiguity(failure, given, input)
+            ? Effect.fail(failure)
+            : recoverRead(decode(given, parseOptions, input), () =>
+                Effect.fail(failure),
+              );
         const loose =
           stripped === undefined
             ? read === undefined
@@ -768,11 +793,7 @@ const decodedReading = <S extends Schema.Top>(
               ? Effect.fail(failure)
               : Effect.map(
                   stripped.length === 0 && given !== input
-                    ? recoverRead(decode(input, parseOptions), (rawFailure) =>
-                        recoverRead(decode(given, parseOptions, input), () =>
-                          Effect.fail(rawFailure),
-                        ),
-                      )
+                    ? Effect.catch(decode(input, parseOptions), retryNormalised)
                     : decode(input, parseOptions),
                   (value): Decoded<unknown> => ({
                     value,
@@ -1294,11 +1315,12 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   >;
   /** The read and what it wrote, strictly or else loosely. */
   const sendRead = (read: Decoded<S["Type"]>): SentRead =>
-    Effect.catch(
+    Effect.catchTag(
       Effect.map(
         strictWriter(read.value, Excess.strict),
         (output): Sent & { readonly read: typeof read } => ({ output, read }),
       ),
+      "SchemaError",
       (strict) => sendLoosely(read, strict),
     );
   /** What a read wrote loosely, once its strict write failed with `strict`. */
@@ -1332,7 +1354,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       sendRead,
     );
     return recoverRead(
-      Effect.catch(loose, () => relaxed),
+      Effect.catchTag(loose, "SchemaError", () => relaxed),
       exhausted,
     );
   };
@@ -1398,16 +1420,38 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     const seen = (
       given === input ? input : Excess.exposed([ast], input)
     ) as Input<S>;
+    // A strict pass refuses keys Effect strips. Where its ambiguity rests on another reading having
+    // failed, that reading may have failed on such a key alone, so the pass ends as any strict
+    // failure does and the reading below decides.
+    const strictly = (
+      read: Effect.Effect<Kept, ReadFailure, R | S["DecodingServices"]>,
+    ) =>
+      Effect.catchTag(read, "FieldlessOneOf", (failure) =>
+        Effect.fail(failure.afterAlternative ? provisional : failure),
+      );
+    const recoverExposed = (read: ReturnType<typeof kept>) =>
+      Effect.catchTag(read, "FieldlessOneOf", (failure) =>
+        Effect.fail(
+          failure.afterAlternative || changedAtAmbiguity(failure, given, seen)
+            ? provisional
+            : failure,
+        ),
+      );
     const attempt = (
       options: SchemaAST.ParseOptions,
     ): Effect.Effect<Kept, ReadFailure, R | S["DecodingServices"]> => {
-      if (given === input) return kept(input, options);
-      const second = kept(seen, options, input);
-      return matchRead(kept(given as Input<S>, options, input), {
-        onFailure: () => second,
-        // The first strict read stands where the second does not write strictly either.
+      if (given === input) return strictly(kept(input, options));
+      const second = recoverExposed(kept(seen, options, input));
+      return matchRead(strictly(kept(given as Input<S>, options, input)), {
+        // The exposed value is not read after a provisional ambiguity: read strictly, its
+        // undefined-valued keys make members fail, and the one left would be chosen.
+        onFailure: (failure) =>
+          failure === provisional ? Effect.fail(failure) : second,
+        // Keep the normalized read if it settled an ambiguity. The exposed input could make a
+        // member of the ambiguous union fail on an undefined-valued key and admit the other.
+        // Otherwise the first read stands where the second does not write strictly either.
         onSuccess: (first) =>
-          "written" in first
+          "written" in first || first.read.ambiguity !== undefined
             ? Effect.succeed(first)
             : recoverRead(
                 Effect.filterOrFail(
