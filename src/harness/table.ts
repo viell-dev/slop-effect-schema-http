@@ -23,6 +23,8 @@ export interface OpenOptions {
   readonly cors?: boolean;
   /** A fixed HTTPS port, where the browser was told to use HTTP/3. */
   readonly httpsPort?: number;
+  /** Override Warded Server's head size limit. The plain listener uses Hyper's default. */
+  readonly headBytes?: number;
 }
 
 const control = (path: string, init?: RequestInit) =>

@@ -13,7 +13,7 @@ use std::{
 use tokio::{net::TcpListener, task::JoinSet};
 use tower::service_fn;
 use warded_server::{
-    Params, Server, Tls,
+    Limits, Params, Server, Tls,
     axum::{
         self,
         body::Body,
@@ -38,6 +38,8 @@ pub struct Definition {
     /// A fixed port for the HTTPS listener, for a browser that was started to use HTTP/3 there.
     #[serde(default)]
     https_port: u16,
+    /// Override the server's head limit for tests of larger router limits.
+    head_bytes: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,7 +156,12 @@ impl Table {
         });
 
         let local = |port| SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let mut limits = Limits::default();
+        if let Some(head_bytes) = definition.head_bytes {
+            limits.head_bytes = head_bytes;
+        }
         let server = Server::new(tls.clone())
+            .limits(limits)
             .https(local(definition.https_port))
             .serve_http(local(0))
             .bind()
