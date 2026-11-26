@@ -493,55 +493,158 @@ describe("visible unions beside opaque fields", () => {
   );
 });
 
-// A key no member states is left out, and inside an `Option` the schema's own reading applies, so
-// the stray key should go as it does without the visible union. The final comparison has no schema
-// for the Option's contents, so it cannot tell that key from one a member states.
 // https://github.com/viell-dev/slop-effect-schema-http/issues/292
 const Owner = Schema.Struct({ owner: Schema.String });
+const Wide = Schema.Struct({ owner: Schema.String, limit: Schema.String });
+const Filter = Schema.Union([Owner, Wide]);
 const Held = Schema.Struct({
   held: Schema.OptionFromNullOr(Owner),
-  filter: Schema.Union([
-    Owner,
-    Schema.Struct({ owner: Schema.String, limit: Schema.String }),
-  ]),
+  filter: Filter,
 });
-const strayHeld = () => ({
-  held: Option.some({ owner: "ada", stray: "x" }),
-  filter: { owner: "grace", limit: "y" },
-});
+const filter = { owner: "grace", limit: "y" };
+const owner = { owner: "ada" };
+const stray = { ...owner, stray: "x" };
 
-describe("a stray key inside OptionFromNullOr beside a visible union", () => {
-  it.effect("currently refuses the stray key", () =>
+describe("a stray key inside an Option with a visible encoded object", () => {
+  it.effect("leaves out the stray key and keeps the visible union", () =>
     Effect.gen(function* () {
-      const failure = yield* Effect.flip(json(Held, strayHeld()));
-      expect(failure).toBeInstanceOf(Schema.SchemaError);
-      expect(failure.message).toBe(
-        'The schema cannot keep this field with the rest of the value\n  at ["held"]["value"]["stray"]',
-      );
-    }),
-  );
-
-  it.effect.fails("leaves out the stray key and keeps the visible union", () =>
-    Effect.gen(function* () {
-      expect(yield* json(Held, strayHeld())).toEqual({
-        held: { owner: "ada" },
-        filter: { owner: "grace", limit: "y" },
+      expect(yield* json(Held, { held: Option.some(stray), filter })).toEqual({
+        held: owner,
+        filter,
       });
     }),
   );
 
-  it.effect("leaves out the stray key without the visible union", () =>
+  it.effect(
+    "also sends without the visible union, without the stray key, or with None",
+    () =>
+      Effect.gen(function* () {
+        const Alone = Schema.Struct({ held: Schema.OptionFromNullOr(Owner) });
+        expect(yield* json(Alone, { held: Option.some(stray) })).toEqual({
+          held: owner,
+        });
+        expect(yield* json(Held, { held: Option.some(owner), filter })).toEqual(
+          { held: owner, filter },
+        );
+        expect(yield* json(Held, { held: Option.none(), filter })).toEqual({
+          held: null,
+          filter,
+        });
+      }),
+  );
+
+  it.effect("leaves out a stray key inside a Some in a struct and list", () =>
     Effect.gen(function* () {
-      const Alone = Schema.Struct({ held: Schema.OptionFromNullOr(Owner) });
+      const Nested = Schema.Struct({
+        items: Schema.Array(
+          Schema.Struct({ held: Schema.OptionFromNullOr(Owner) }),
+        ),
+        filter: Filter,
+      });
       expect(
-        yield* json(Alone, { held: Option.some({ owner: "ada", stray: "x" }) }),
-      ).toEqual({ held: { owner: "ada" } });
-      expect(
-        yield* json(Held, { ...strayHeld(), held: Option.none() }),
+        yield* json(Nested, { items: [{ held: Option.some(stray) }], filter }),
       ).toEqual({
-        held: null,
-        filter: { owner: "grace", limit: "y" },
+        items: [{ held: owner }],
+        filter,
       });
     }),
+  );
+
+  it.effect(
+    "leaves out a stray key but still recognizes a declared wire name",
+    () =>
+      Effect.gen(function* () {
+        const Renamed = Schema.Struct({
+          held: Schema.OptionFromNullOr(
+            Owner.pipe(Schema.encodeKeys({ owner: "OWNER" })),
+          ),
+          filter: Filter,
+        });
+        expect(
+          yield* json(Renamed, { held: Option.some(stray), filter }),
+        ).toEqual({
+          held: { OWNER: "ada" },
+          filter,
+        });
+        const mixed = { ...stray, OWNER: "wire" };
+        const failure = yield* Effect.flip(
+          json(Renamed, { held: Option.some(mixed), filter }),
+        );
+        expect(failure.message).toContain('["held"]["value"]["OWNER"]');
+        expect(failure.message).not.toContain('["stray"]');
+      }),
+  );
+
+  it.effect(
+    "leaves out a key neither union member states, in both orders",
+    () =>
+      Effect.gen(function* () {
+        const wider = { ...owner, limit: "z" };
+        for (const contents of [Filter, Schema.Union([Wide, Owner])]) {
+          const schema = Schema.Struct({
+            held: Schema.OptionFromNullOr(contents),
+          });
+          expect(yield* json(schema, { held: Option.some(stray) })).toEqual({
+            held: owner,
+          });
+        }
+        const NarrowFirst = Schema.Struct({
+          held: Schema.OptionFromNullOr(Filter),
+        });
+        const WideFirst = Schema.Struct({
+          held: Schema.OptionFromNullOr(Schema.Union([Wide, Owner])),
+        });
+        const value = { held: Option.some({ ...wider, stray: "x" }) };
+        const failure = yield* Effect.flip(json(NarrowFirst, value));
+        expect(failure.message).toContain('["held"]["value"]["limit"]');
+        expect(failure.message).not.toContain('["stray"]');
+        expect(yield* json(WideFirst, value)).toEqual({ held: wider });
+      }),
+  );
+
+  it.effect(
+    "uses the same comparison for Effect's other unwrapping Option codecs",
+    () =>
+      Effect.gen(function* () {
+        for (const [held, none] of [
+          [Schema.OptionFromUndefinedOr(Owner), { held: null, filter }],
+          [Schema.OptionFromNullishOr(Owner), { held: null, filter }],
+          [Schema.OptionFromOptionalKey(Owner), { filter }],
+          [Schema.OptionFromOptional(Owner), { filter }],
+          [Schema.OptionFromOptionalNullOr(Owner), { filter }],
+        ] as const) {
+          const schema = Schema.Struct({ held, filter: Filter });
+          expect(
+            yield* json(schema, { held: Option.some(stray), filter }),
+          ).toEqual({ held: owner, filter });
+          expect(yield* json(schema, { held: Option.none(), filter })).toEqual(
+            none,
+          );
+        }
+      }),
+  );
+
+  it.effect(
+    "writes a root Some as query and header fields when its encoded record fits",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.OptionFromOptionalKey(
+          Schema.Union([Wide, Owner]),
+        );
+        const value = Option.some({ ...stray, limit: "z" });
+        const request = Request.get("/x").pipe(
+          Request.query(schema),
+          Request.headers(schema),
+        );
+        const result = yield* Request.compile(request, {
+          query: value,
+          headers: value,
+        });
+        expect(result.request.url).toBe("/x?owner=ada&limit=z");
+        expect(result.headerLines).toEqual([
+          ["owner", "ada"],
+          ["limit", "z"],
+        ]);
+      }),
   );
 });

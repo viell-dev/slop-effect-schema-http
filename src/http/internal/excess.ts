@@ -1,5 +1,6 @@
-import { Equal, Schema, SchemaAST, SchemaIssue } from "effect";
+import { Equal, Option, Schema, SchemaAST, SchemaIssue } from "effect";
 import { stateOf } from "./object-brand.js";
+import { isPlainData, statesPrototypeName } from "./plain.js";
 import { extraArrayField } from "./writer-error.js";
 import { stageRefuses } from "./primitive.js";
 
@@ -1059,6 +1060,134 @@ const keepsNames = (ast: Ast): boolean =>
 const comparable = (sides: ReadonlyArray<Ast>, value: object): boolean =>
   isPlain(value) || sides.some(({ _tag }) => _tag === "Objects");
 
+/** The closed structural sides used to establish that no member states a key. */
+const closedSides = (ast: Ast): ReadonlyArray<Ast> | undefined => {
+  if (takesNoObject(ast)) return [];
+  if (ast._tag === "Union" && ast.encoding === undefined) {
+    const members = ast.types.map(closedSides);
+    return members.every((member) => member !== undefined)
+      ? members.flat()
+      : undefined;
+  }
+  return isStructural(ast) && !isSignaturelessObject(ast)
+    ? objectSides(ast)
+    : undefined;
+};
+
+/**
+ * The schema of a native Some's payload where the source of its single encoding link exposes
+ * that same payload directly. Effect's OptionFrom… codecs add nullish or optional cases around
+ * the source and use its decoded projection as the Option declaration's only type parameter.
+ * Keep the source itself for comparison, since it also states the payload's wire names.
+ */
+const optionSource = (ast: Ast): Ast | undefined => {
+  if (
+    ast._tag !== "Declaration" ||
+    SchemaAST.resolveAt<{ readonly id: string }>("representation")(ast)?.id !==
+      "effect/schema/Option" ||
+    ast.typeParameters.length !== 1 ||
+    ast.encoding?.length !== 1 ||
+    ast.encoding[0].transformation._tag !== "Transformation"
+  )
+    return undefined;
+  const payload = ast.typeParameters[0]!;
+  const find = (source: Ast): Ast | undefined => {
+    const decoded = SchemaAST.toType(source);
+    // OptionFromOptionalKey also copies its source with an optional key context.
+    const matches =
+      decoded === payload ||
+      (SchemaAST.isOptional(source) &&
+        decoded.checks === payload.checks &&
+        decoded.annotations === payload.annotations &&
+        ((decoded._tag === "Objects" &&
+          payload._tag === "Objects" &&
+          decoded.propertySignatures === payload.propertySignatures &&
+          decoded.indexSignatures === payload.indexSignatures) ||
+          (decoded._tag === "Union" &&
+            payload._tag === "Union" &&
+            decoded.types === payload.types &&
+            decoded.options === payload.options)));
+    if (matches)
+      return closedSides(source)?.some(({ _tag }) => _tag === "Objects")
+        ? source
+        : undefined;
+    if (source._tag !== "Union" || source.encoding !== undefined)
+      return undefined;
+    const content = source.types.filter(
+      (member) => member._tag !== "Null" && member._tag !== "Undefined",
+    );
+    return content.length === 1 ? find(content[0]!) : undefined;
+  };
+  return find(ast.encoding[0].to);
+};
+
+/** An own enumerable data property, without running a getter to find its value. */
+const ownValue = (value: unknown, key: PropertyKey): unknown => {
+  if (!isObject(value)) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor?.enumerable === true && "value" in descriptor
+    ? (descriptor.value as unknown)
+    : undefined;
+};
+
+/**
+ * Can the missing read field be left out of a visible Some payload? Inspect only losses the
+ * ordinary comparison reported, after a strict schema write has succeeded. The proof follows
+ * plain data apart from the native Some wrapper, and only through closed structural views.
+ */
+export const unstatedOptionField = (
+  ast: Ast,
+  given: unknown,
+  read: unknown,
+  output: unknown,
+  path: Path,
+): boolean => {
+  if (path.length < 2) return false;
+  let types: ReadonlyArray<Ast> = [ast];
+  let inOption = false;
+  for (const [index, key] of path.entries()) {
+    const [type] = types;
+    if (
+      types.length === 1 &&
+      type?._tag === "Declaration" &&
+      key === "value" &&
+      Option.isOption(given) &&
+      Option.isSome(given) &&
+      Option.isOption(read) &&
+      Option.isSome(read)
+    ) {
+      const source = optionSource(type);
+      if (source === undefined || !isObject(output)) return false;
+      // The ordinary comparison indexes its output with the wrapper's own "value" key.
+      // If that is also an object on the wire, it could have stood in for a different lost
+      // field. Keep the original refusal where the two positions cannot be told apart.
+      if (isObject(ownValue(output, key))) return false;
+      inOption = true;
+      types = [source];
+    } else {
+      if (!isObject(given) || !isPlainData(given)) return false;
+      const sides = types.map(closedSides);
+      if (sides.some((side) => side === undefined)) return false;
+      const closed = sides.flatMap((side) => side ?? []);
+      if (closed.some(statesPrototypeName)) return false;
+      const children = typesAt(closed, key);
+      if (children.length === 0)
+        return (
+          inOption &&
+          index === path.length - 1 &&
+          !Array.isArray(given) &&
+          closed.some(({ _tag }) => _tag === "Objects") &&
+          ownValue(given, key) !== undefined
+        );
+      types = [...new Set(children)];
+      output = ownValue(output, key);
+    }
+    given = ownValue(given, key);
+    read = ownValue(read, key);
+  }
+  return false;
+};
+
 /**
  * What a read lost from `given`, a {@link normalised} value, by comparing it with what came out. A
  * field has to be in the decoded value or in what was written. Under a name a member decodes, what
@@ -1259,8 +1388,9 @@ const rebuildChecks = {
  * its fields; a symbol at its root is a key no field states, which a class strips as a struct
  * does. For JSON, the canonical codec of `Schema.ObjectKeyword` also copies only the top-level
  * string fields of an object and the positions of an array. Everywhere else a symbol field or a
- * built-in reaches the writer, which refuses it there. Not covered: values inside a declaration's
- * type parameters, such as a record in an `Option`, which the declaration's own codec reads.
+ * built-in reaches the writer, which refuses it there. This check does not visit a declaration's
+ * type parameters. The missing-field comparison separately uses the visible source of an
+ * Option codec to recognize unstated keys in a `Some` payload.
  *
  * The comparison is compiled once per schema and visits only the positions where such a node can
  * be, with one shared path that is copied only for a loss, so an array of rows checks each row

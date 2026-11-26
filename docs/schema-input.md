@@ -701,11 +701,10 @@ the schema does with it. These are the places where it cannot, and what happens 
   `Schema.encodeKeys` built it. So beside a hand-written transformation from `{ b }` to `{ B }`,
   `Renamed` still sends `{"A":"item"}`. With the class first, such an instance is written as Effect
   writes it, as the first item above gives.
-- Where a schema has a choice between objects, an `Option` given to `Schema.OptionFromNullOr`
-  refuses a key its contents hold that their schema does not state, which a schema without such a
-  choice leaves out. The comparison that keeps a union there has no schema for the `Option`'s
-  contents, so it cannot tell such a key from a stated one
-  ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)).
+- For an Effect `Option` codec whose encoded side exposes the payload, such as
+  `Schema.OptionFromNullOr`, a successful strict write can leave out keys in plain `Some` contents
+  that neither side of any member states. A stated field lost from those contents can still cause a
+  refusal. Opaque `Schema.Option` contents read as Effect reads them.
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
   either binding order. Bounded [stacked-union
   recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;
