@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Tell the author of a provider that writes bytes to refuse a header name that is not a token, and a
+  NUL in a header value, as well as a carriage return or line feed
+  ([#302](https://github.com/viell-dev/slop-effect-schema-http/issues/302)). A colon in a name such
+  as `x:a` ends it early, so the server reads the field `x` with the value `a: b`. `fetch` and
+  `node:http` already keep these off the wire. The library itself still passes them on. This is
+  documentation only.
 - Write a class instance through its class beside a struct that would strip it
   ([#274](https://github.com/viell-dev/slop-effect-schema-http/issues/274)). Under
   `Schema.Union([Filter, Counted])`, where `Filter` is a struct and `Counted` a `Schema.Class` whose
