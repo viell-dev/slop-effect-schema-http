@@ -1471,3 +1471,10 @@ export const choosesMemberResolved = (root: Ast): boolean => {
 export const choosing = holding(
   (ast) => isMemberChoice(ast) || isSideChoice(ast),
 );
+
+/** Whether a read could report a visible oneOf, including one in an unresolved suspension. */
+export const mayHaveOneOf = holding(
+  (ast) =>
+    ast._tag === "Suspend" ||
+    (ast._tag === "Union" && ast.options?.mode === "oneOf"),
+);
