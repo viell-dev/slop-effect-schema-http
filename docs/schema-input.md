@@ -701,10 +701,10 @@ the schema does with it. These are the places where it cannot, and what happens 
   `Schema.encodeKeys` built it. So beside a hand-written transformation from `{ b }` to `{ B }`,
   `Renamed` still sends `{"A":"item"}`. With the class first, such an instance is written as Effect
   writes it, as the first item above gives.
-- For an Effect `Option` codec whose encoded side exposes the payload, such as
-  `Schema.OptionFromNullOr`, a successful strict write can leave out keys in plain `Some` contents
-  that neither side of any member states. A stated field lost from those contents can still cause a
-  refusal. Opaque `Schema.Option` contents read as Effect reads them.
+- For an Effect `Option` codec that unwraps a plain `Some` payload to a declared object, such as
+  `Schema.OptionFromNullOr`, a strict write can leave out keys that neither side of any member
+  states when the output retains the prepared fields. A stated field lost from those contents can
+  still cause a refusal. Opaque `Schema.Option` contents read as Effect reads them.
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
   either binding order. Bounded [stacked-union
   recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;

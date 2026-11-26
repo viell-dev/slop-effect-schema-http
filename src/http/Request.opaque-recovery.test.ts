@@ -671,4 +671,34 @@ describe("a stray key inside an Option with a visible encoded object", () => {
         expect(failure.message).toContain('["held"]["value"]["stray"]');
       }),
   );
+
+  it.effect(
+    "keeps the refusal when a structural link writes away a supplied field",
+    () =>
+      Effect.gen(function* () {
+        const Decoded = Schema.Struct({
+          owner: Schema.optionalKey(Schema.String),
+        });
+        const Encoded = Schema.Struct({
+          OWNER: Schema.optionalKey(Schema.String),
+        });
+        const Payload = Encoded.pipe(
+          Schema.decodeTo(
+            Decoded,
+            SchemaTransformation.transform({
+              decode: (wire) => ({ owner: wire.OWNER }),
+              encode: () => ({}),
+            }),
+          ),
+        );
+        const schema = Schema.Struct({
+          held: Schema.OptionFromNullOr(Payload),
+          filter: Filter,
+        });
+        const failure = yield* Effect.flip(
+          json(schema, { held: Option.some(stray), filter }),
+        );
+        expect(failure.message).toContain('["held"]["value"]["stray"]');
+      }),
+  );
 });
