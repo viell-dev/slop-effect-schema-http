@@ -972,6 +972,44 @@ describe("request preparation beside Void", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/276
+  it.effect(
+    "does not retry fieldwise after a loose whole read finds ambiguity",
+    () =>
+      Effect.gen(function* () {
+        const first = Schema.Struct({
+          marker: Schema.optionalKey(Schema.String),
+        }).pipe(
+          Schema.decodeTo(Schema.Struct({ code: Schema.Literal("strict") }), {
+            decode: SchemaGetter.transform(() => ({ code: "strict" as const })),
+            encode: SchemaGetter.transform(() => ({})),
+          }),
+        );
+        const second = Schema.declareConstructor<object>()(
+          [],
+          () => (value, ast, options) =>
+            options.onExcessProperty !== "error" &&
+            typeof value === "object" &&
+            value !== null &&
+            Reflect.ownKeys(value).length === 0
+              ? Effect.succeed(value)
+              : Effect.fail(new SchemaIssue.InvalidType(ast, value, options)),
+        ).pipe(
+          Schema.decodeTo(Schema.Struct({ code: Schema.Literal("loose") }), {
+            decode: SchemaGetter.transform(() => ({ code: "loose" as const })),
+            encode: SchemaGetter.transform(() => ({})),
+          }),
+        );
+        const o = Schema.Option(Schema.Struct({ a: Schema.String }));
+        const f = Schema.Union([first, second], { mode: "oneOf" });
+        const request = post(Schema.Struct({ o, f }));
+        const body = { o: Option.some({ a: "x", extra: 1 }), f: {} };
+        expect(yield* schemaFailure(request, { body })).toBe(
+          'Expected exactly one member to match\n  at ["f"]',
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/276
   it.effect("cannot evade encoded ambiguity by dropping an aliased field", () =>
     Effect.gen(function* () {
       const coded = (code: string) =>
