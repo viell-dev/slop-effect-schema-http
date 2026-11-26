@@ -1249,6 +1249,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   // A custom writer is the caller's own, except that it knows no guard.
   const strictWriter =
     guarded === codec.ast ? write : Schema.encodeEffect(guardedCodec);
+  // Only the built-in writer establishes how the codec exposes a Some on the wire.
   const visibleOptions = custom === undefined && Excess.mayUnwrapOption(ast);
   const readOriginal = decodedReading(contract);
   const readingFrom = (input: Input<S>, caller: Input<S>) =>
@@ -1439,12 +1440,10 @@ const readerForCodec = <S extends Schema.Top, A, R>(
         },
       ),
     );
-  return (
+  const reading = (
     input: Input<S>,
+    cleaned: Input<S>,
   ): Effect.Effect<Written<A>, ReadFailure, R | S["DecodingServices"]> => {
-    const cleaned = visibleOptions
-      ? (Excess.normalisedOptions(ast, input) as Input<S>)
-      : input;
     const changed = cleaned !== input;
     const given = Excess.normalised([ast], cleaned);
     // A strict read cannot see a field outside a value's keys, so it may not fall back on `input`.
@@ -1539,6 +1538,15 @@ const readerForCodec = <S extends Schema.Top, A, R>(
         });
       },
     });
+  };
+  return (input: Input<S>) => {
+    const cleaned = visibleOptions
+      ? (Excess.normalisedOptions(ast, input) as Input<S>)
+      : input;
+    if (cleaned === input) return reading(input, input);
+    // A typed failure from the strict attempt may come from an opaque neighbour. Only the
+    // caller's original input may use the ordinary reader and its relaxed route.
+    return recoverRead(reading(input, cleaned), () => reading(input, input));
   };
 };
 

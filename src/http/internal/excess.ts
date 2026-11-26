@@ -1063,21 +1063,17 @@ const comparable = (sides: ReadonlyArray<Ast>, value: object): boolean =>
   isPlain(value) || sides.some(({ _tag }) => _tag === "Objects");
 
 /**
- * OptionFromOptionalKey copies the payload node with optional key context. A matching structural
- * node has the same children, checks and annotations. No other change in shape is enough.
+ * OptionFromOptionalKey changes the node's key context. Compare the whole AST body so a
+ * custom codec that reuses Effect's getter cannot substitute a different source.
  */
 const optionalCopyOf = (source: Ast, payload: Ast): boolean =>
   SchemaAST.isOptional(source) &&
-  source.checks === payload.checks &&
-  source.annotations === payload.annotations &&
-  ((source._tag === "Objects" &&
-    payload._tag === "Objects" &&
-    source.propertySignatures === payload.propertySignatures &&
-    source.indexSignatures === payload.indexSignatures) ||
-    (source._tag === "Union" &&
-      payload._tag === "Union" &&
-      source.types === payload.types &&
-      source.options === payload.options));
+  Object.getPrototypeOf(source) === Object.getPrototypeOf(payload) &&
+  Object.keys(source).length === Object.keys(payload).length &&
+  Object.entries(source).every(
+    ([key, value]) =>
+      key === "context" || (Object.hasOwn(payload, key) && Object.is(value, Reflect.get(payload, key))),
+  );
 
 /**
  * The schema of a native Some's payload where the source of its single encoding link exposes
@@ -1121,20 +1117,27 @@ const optionSource = (ast: Ast): Ast | undefined => {
   return find(to);
 };
 
-/** All the structural views of a plain value, including both names of a renamed field. */
-const optionFrames = (
+/** Structural alternatives left by the same literal-tag rule as an ordinary field. */
+const structuralFrames = (
   types: ReadonlyArray<Ast>,
+  value: Record<PropertyKey, unknown>,
 ): ReadonlyArray<Ast> | undefined => {
-  const sides: Ast[] = [];
+  const frames: Ast[] = [];
   const active = new Set<Ast>();
   const visit = (type: Ast): boolean => {
     if (active.has(type)) return false;
+    const fields =
+      isStatedClass(type) &&
+      typeof type.annotations?.["~constructor"] === "function"
+        ? classFields(type)
+        : undefined;
+    const frame = fields ?? type;
     if (
-      isStructural(type) &&
-      !isSignaturelessObject(type) &&
-      !statesPrototypeName(type)
+      isStructural(frame) &&
+      !isSignaturelessObject(frame) &&
+      !statesPrototypeName(frame)
     ) {
-      sides.push(...objectSides(type));
+      frames.push(frame);
       return true;
     }
     if (
@@ -1143,14 +1146,33 @@ const optionFrames = (
     ) {
       active.add(type);
       const known =
-        type._tag === "Suspend" ? visit(type.thunk()) : type.types.every(visit);
+        type._tag === "Suspend"
+          ? visit(type.thunk())
+          : type.types.every((member) => ruledOut(member, value) || visit(member));
       active.delete(type);
       return known;
     }
     return takesNoObject(type);
   };
-  return types.every(visit) ? sides : undefined;
+  return types.every(visit) ? frames : undefined;
 };
+
+/**
+ * Include names from either side. Where a rename leaves a name intact, its encoded field is a
+ * projection of the decoded field and supplies no independent alternative at that position.
+ */
+const frameTypesAt = (frames: ReadonlyArray<Ast>, key: PropertyKey): Ast[] =>
+  frames.flatMap((frame) => {
+    const types = [...typesAt([frame], key)];
+    const wire = frame.encoding?.[0]?.to;
+    if (frame._tag === "Objects" && wire?._tag === "Objects") {
+      wire.propertySignatures.forEach(({ name, type }, index) => {
+        if (name === key && frame.propertySignatures[index]!.name !== key)
+          types.push(type);
+      });
+    }
+    return types;
+  });
 
 /** The native Some has exactly one own field. Rebuilding another wrapper could lose its state. */
 const somePrototype: unknown = Object.getPrototypeOf(Option.some(undefined));
@@ -1166,17 +1188,40 @@ const ownSome = (value: object): PropertyDescriptor | undefined => {
     : undefined;
 };
 
+/** One unwrapping codec, possibly beside scalars that cannot read the Some. */
 const sourceAt = (types: ReadonlyArray<Ast>): Ast | undefined => {
-  const [first] = types;
-  return first !== undefined && types.every((type) => type === first)
-    ? optionSource(first)
-    : undefined;
+  const active = new Set<Ast>();
+  let option: Ast | undefined;
+  let source: Ast | undefined;
+  const visit = (type: Ast): boolean => {
+    const payload = optionSource(type);
+    if (payload !== undefined) {
+      if (option !== undefined && option !== type) return false;
+      option = type;
+      source = payload;
+      return true;
+    }
+    if (
+      type.encoding === undefined &&
+      (type._tag === "Union" || type._tag === "Suspend")
+    ) {
+      if (active.has(type)) return false;
+      active.add(type);
+      const known =
+        type._tag === "Union" ? type.types.every(visit) : visit(type.thunk());
+      active.delete(type);
+      return known;
+    }
+    return takesNoObject(type);
+  };
+  return types.every(visit) ? source : undefined;
 };
 
-// Avoid inspecting values in schemas without an unwrapping codec. Suspensions can only be
-// resolved once the corresponding value is at hand.
+// A suspension can hide a codec. Leave its thunk alone until a value reaches that position.
 export const mayUnwrapOption = holding(
-  (type) => type._tag === "Suspend" || optionSource(type) !== undefined,
+  (type) =>
+    (type._tag === "Suspend" && type.encoding === undefined) ||
+    optionSource(type) !== undefined,
 );
 
 /**
@@ -1200,7 +1245,7 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
   };
   const rewrite = (
     types: ReadonlyArray<Ast>,
-    value: object,
+    value: Record<PropertyKey, unknown>,
     inSome: boolean,
   ): unknown => {
     const source = sourceAt(types);
@@ -1211,8 +1256,9 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
       const next = visit([source], payload, true);
       return Object.is(next, payload) ? value : Option.some(next);
     }
-    const sides = optionFrames(types);
-    if (sides === undefined || !isPlainData(value)) return value;
+    if (!isPlainData(value)) return value;
+    const sides = structuralFrames(types, value);
+    if (sides === undefined) return value;
     const list = Array.isArray(value);
     const canStrip =
       inSome && !list && sides.some(({ _tag }) => _tag === "Objects");
@@ -1221,7 +1267,7 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
     for (const key of Reflect.ownKeys(descriptors)) {
       const descriptor = Reflect.get(descriptors, key) as PropertyDescriptor;
       if (!descriptor.enumerable) continue;
-      const children = typesAt(sides, key);
+      const children = frameTypesAt(sides, key);
       if (children.length === 0 && canStrip) {
         Reflect.deleteProperty(descriptors, key);
         changed = true;
@@ -1261,6 +1307,7 @@ export const optionLoss = (
   checkWrite: boolean,
 ): ReadonlyArray<Path> => {
   const lost: Path[] = [];
+  const active = new Set<object>();
   const visit = (
     types: ReadonlyArray<Ast>,
     given: unknown,
@@ -1270,7 +1317,20 @@ export const optionLoss = (
     inSome: boolean,
     writing: boolean,
   ): void => {
-    if (!isObject(given)) return;
+    if (!isObject(given) || active.has(given)) return;
+    active.add(given);
+    compare(types, given, value, written, path, inSome, writing);
+    active.delete(given);
+  };
+  const compare = (
+    types: ReadonlyArray<Ast>,
+    given: Record<PropertyKey, unknown>,
+    value: unknown,
+    written: unknown,
+    path: Path,
+    inSome: boolean,
+    writing: boolean,
+  ): void => {
     const source = sourceAt(types);
     if (source !== undefined) {
       const some = ownSome(given);
@@ -1286,10 +1346,11 @@ export const optionLoss = (
       );
       return;
     }
-    const sides = optionFrames(types);
-    if (sides === undefined || !isPlainData(given)) return;
+    if (!isPlainData(given)) return;
+    const sides = structuralFrames(types, given);
+    if (sides === undefined) return;
     for (const key of keysOf(given)) {
-      const children = typesAt(sides, key);
+      const children = frameTypesAt(sides, key);
       if (children.length === 0) continue;
       const expected = at(given, key);
       if (expected === undefined) continue;
@@ -1314,20 +1375,16 @@ export const optionLoss = (
           ];
         }),
       );
-      const name = wireNames.size === 1 ? [...wireNames][0]! : key;
-      const descriptor = isObject(written)
-        ? Object.getOwnPropertyDescriptor(written, name)
-        : undefined;
-      const actual: unknown =
-        descriptor?.enumerable === true && "value" in descriptor
-          ? descriptor.value
-          : undefined;
+      // A loose write could drop a field the read held. A structural link may do so even on the
+      // strict route, since the encoder can be a caller's transformation with the shape of a rename.
       const renamed = sides.some((side) => side.encoding !== undefined);
       const mustWrite = writing || renamed;
+      // Unwrapping None can omit the wire field entirely.
       const omittedNone =
         sourceAt(children) !== undefined &&
         Option.isOption(expected) &&
         Option.isNone(expected);
+      // Compare scalar values directly only when no candidate child encodes them differently.
       const directScalar =
         (typeof expected === "string" ||
           typeof expected === "boolean" ||
@@ -1335,17 +1392,40 @@ export const optionLoss = (
         children.every(
           (child) => child.encoding === undefined && takesNoObject(child),
         );
+      const names = wireNames.size === 0 ? [key] : [...wireNames];
+      const outputs = names.map((name): unknown => {
+        const descriptor = isObject(written)
+          ? Object.getOwnPropertyDescriptor(written, name)
+          : undefined;
+        return descriptor?.enumerable === true && "value" in descriptor
+          ? descriptor.value
+          : undefined;
+      });
       if (
         inSome &&
         (decoded === undefined ||
           (!isObject(expected) && !Object.is(decoded, expected)) ||
-          (mustWrite && !omittedNone && actual === undefined) ||
-          (renamed && directScalar && !Object.is(actual, expected)))
+          (mustWrite && !omittedNone && outputs.every((actual) => actual === undefined)) ||
+          (renamed && directScalar && !outputs.some((actual) => Object.is(actual, expected))))
       ) {
         lost.push(here);
         continue;
       }
-      visit(children, expected, decoded, actual, here, inSome, mustWrite);
+      // All descendants must be present under one candidate name. Do not join fields across names.
+      const before = lost.length;
+      let firstLoss: Path[] | undefined;
+      for (const actual of outputs) {
+        if (outputs.length > 1 && actual === undefined && outputs.some((item) => item !== undefined))
+          continue;
+        visit(children, expected, decoded, actual, here, inSome, mustWrite);
+        if (lost.length === before) {
+          firstLoss = undefined;
+          break;
+        }
+        firstLoss ??= lost.slice(before);
+        lost.length = before;
+      }
+      if (firstLoss !== undefined) lost.push(...firstLoss);
     }
   };
   visit([ast], input, read, output, [], false, checkWrite);
