@@ -72,6 +72,7 @@ Tests that need Node itself live in `*.node.test.ts` files, and tests that need 
 | [`methods.test.ts`](./src/scenarios/methods.test.ts)             | Method helpers and method names against Warded's method conditions   |
 | [`headers.test.ts`](./src/scenarios/headers.test.ts)             | Header declarations and automatic headers against header conditions  |
 | [`negotiation.test.ts`](./src/scenarios/negotiation.test.ts)     | Automatic `Accept` and declared languages against offer sets         |
+| [`limits.test.ts`](./src/scenarios/limits.test.ts)               | Path captures and negotiation field boundaries                       |
 | [`transport.test.ts`](./src/scenarios/transport.test.ts)         | Version, transport security and host                                 |
 | [`selection.test.ts`](./src/scenarios/selection.test.ts)         | Variants against ordered routes, fallthrough, fallbacks and errors   |
 | [`raw.node.test.ts`](./src/scenarios/raw.node.test.ts)           | Requests only the raw provider sends                                 |
