@@ -968,6 +968,12 @@ it.effect("retries the original when a strict write fails", () =>
   }),
 );
 
+/** A built-in codec behind encoding middleware, which the writer follows to its unwrapping link. */
+const caught = <S extends Schema.Top>(payload: S) =>
+  Schema.OptionFromNullOr(payload).pipe(
+    Schema.catchEncoding(() => Effect.succeedSome(null)),
+  );
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/308
 describe("loose writes inside Some", () => {
   class Counted extends Schema.Class<Counted>("Counted")({ a: Schema.String }) {
@@ -998,10 +1004,6 @@ describe("loose writes inside Some", () => {
           encode: (value) => ({ v: Option.getOrNull(value) }),
         }),
       ),
-    );
-  const caught = <S extends Schema.Top>(payload: S) =>
-    Schema.OptionFromNullOr(payload).pipe(
-      Schema.catchEncoding(() => Effect.succeedSome(null)),
     );
 
   it.effect(
@@ -2281,7 +2283,7 @@ const fromUndefined = <S extends Schema.Top>(payload: S) =>
   );
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/334
-describe("a hand-written codec that unwraps a Some keeps or refuses its payload's fields", () => {
+describe("a codec only the writer follows keeps or refuses its payload's fields", () => {
   const TaggedOwner = Schema.TaggedStruct("A", Owner.fields);
   const TaggedWide = Schema.TaggedStruct("A", Wide.fields);
   const Tagged = Schema.Union([TaggedOwner, TaggedWide]);
@@ -2289,18 +2291,19 @@ describe("a hand-written codec that unwraps a Some keeps or refuses its payload'
   const withStray = { ...wide, stray: "x" };
   const ownerOnly = (value: typeof Owner.Type) => ({ owner: value.owner });
 
-  type Held = Schema.Codec<unknown, unknown>;
+  type Codec = Schema.Codec<unknown, unknown>;
+  type Fields = Readonly<Record<string, Codec>>;
   interface Position {
-    readonly held: Held;
+    readonly held: Codec;
     readonly give: (payload: object) => unknown;
     readonly sent: (payload: object) => unknown;
     readonly limit: string;
   }
   /** A same-tag union, a list of unions, and a union inside another Some, each held by a codec. */
   const positions = (held: {
-    readonly tagged: Held;
-    readonly list: Held;
-    readonly inner: Held;
+    readonly tagged: Codec;
+    readonly list: Codec;
+    readonly inner: Codec;
   }): ReadonlyArray<Position> => [
     {
       held: held.tagged,
@@ -2321,19 +2324,36 @@ describe("a hand-written codec that unwraps a Some keeps or refuses its payload'
       limit: '["held"]["value"]["inner"]["value"]["limit"]',
     },
   ];
-  const through = (codec: (payload: Held) => Held, wideFirst = false) => {
+  const through = (
+    codec: (payload: Codec) => Codec,
+    {
+      wideFirst = false,
+      wideFields = Wide.fields,
+    }: {
+      readonly wideFirst?: boolean;
+      /** The fields of the member that states `limit`. */
+      readonly wideFields?: Fields;
+    } = {},
+  ) => {
     const order = <A, B>(narrow: A, wider: B) =>
       wideFirst ? ([wider, narrow] as const) : ([narrow, wider] as const);
-    const choice = Schema.Union(order(Owner, Wide));
+    const choice = Schema.Union(order(Owner, Schema.Struct(wideFields)));
     return positions({
-      tagged: codec(Schema.Union(order(TaggedOwner, TaggedWide))),
+      tagged: codec(
+        Schema.Union(order(TaggedOwner, Schema.TaggedStruct("A", wideFields))),
+      ),
       list: codec(Schema.Array(choice)),
       inner: codec(choice),
     });
   };
-  const codecs = [fromNull, fromUndefined] as const;
+  // A built-in codec behind middleware is followed only by the writer, as a hand-written one is.
+  const codecs = [fromNull, fromUndefined, caught] as const;
   const send = ({ held, give }: Position, payload: object) =>
     json(Schema.Struct({ held }), { held: give(payload) } as never);
+  /** A same-tag Some holding a stray key beside `limit` and the given fields. */
+  const strayTagged = (fields: object) => ({
+    held: Option.some({ _tag: "A", ...withStray, ...fields }),
+  });
 
   it.effect(
     "refuses a stated field a stray key costs, as a direct union does",
@@ -2356,6 +2376,52 @@ describe("a hand-written codec that unwraps a Some keeps or refuses its payload'
       }),
   );
 
+  // Nothing in the codec's own Some has to be unstated: the relaxed read is checked wherever it
+  // follows a failed strict attempt, as it is for OptionFromNullOr.
+  it.effect(
+    "refuses a stated field the read lost whatever made the strict attempt fail",
+    () =>
+      Effect.gen(function* () {
+        const defaulted = Schema.String.pipe(
+          Schema.withConstructorDefault(Effect.succeed("d")),
+        );
+        const triggers = [
+          // A stray key only in a sibling Schema.Option.
+          {
+            wideFields: Wide.fields,
+            given: wide,
+            o: Option.some({ ...owner, zz: "z" }),
+          },
+          // A value the wider member refuses.
+          {
+            wideFields: { ...Owner.fields, limit: Schema.Number },
+            given: { ...owner, limit: "not a number" },
+            o: Option.none(),
+          },
+          // A field the wider member defaults only on construction, left out.
+          {
+            wideFields: { ...Wide.fields, extra: defaulted },
+            given: wide,
+            o: Option.none(),
+          },
+        ];
+        for (const codec of [...codecs, Schema.OptionFromNullOr])
+          for (const { wideFields, given, o } of triggers)
+            for (const position of through(codec, { wideFields })) {
+              const failure = yield* Effect.flip(
+                json(
+                  Schema.Struct({
+                    held: position.held,
+                    o: Schema.Option(Owner),
+                  }),
+                  { held: position.give(given), o } as never,
+                ),
+              );
+              expect(failure.message).toContain(position.limit);
+            }
+      }),
+  );
+
   it.effect("keeps every stated field the read keeps", () =>
     Effect.gen(function* () {
       for (const codec of codecs) {
@@ -2367,13 +2433,117 @@ describe("a hand-written codec that unwraps a Some keeps or refuses its payload'
             held: position.sent(owner),
           });
         }
-        // With the wider member first, the read keeps `limit` and leaves out only the stray key.
-        for (const position of through(codec, true))
+        // With the wider member first, the read keeps `limit` and leaves out only the stray key,
+        // in the codec's own Some or in a sibling's.
+        for (const position of through(codec, { wideFirst: true })) {
           expect(yield* send(position, withStray)).toEqual({
             held: position.sent(wide),
           });
+          expect(
+            yield* json(
+              Schema.Struct({ held: position.held, o: Schema.Option(Owner) }),
+              {
+                held: position.give(wide),
+                o: Option.some({ ...owner, zz: "z" }),
+              } as never,
+            ),
+          ).toEqual({
+            held: position.sent(wide),
+            o: { _tag: "Some", value: owner },
+          });
+        }
       }
     }),
+  );
+
+  // The JSON codec gives a payload with a JSON form of its own, such as a Date or a BigInt, and a
+  // suspended payload, a schema of their own on the wire, where preparation cannot find the payload
+  // as it finds it for the built-in codec. So nothing leaves a key out of that Some either.
+  it.effect(
+    "reads the JSON codec of a built-in codec that rebuilds its payload as it reads a hand-written one",
+    () =>
+      Effect.gen(function* () {
+        const when = new Date(0);
+        const dated = { given: { when }, sent: { when: when.toISOString() } };
+        const payloads = (
+          wideFirst: boolean,
+        ): ReadonlyArray<{
+          readonly schema: Codec;
+          readonly given: object;
+          readonly sent: object;
+        }> => {
+          const union = (extra: Fields) => {
+            const members = [
+              Schema.TaggedStruct("A", { ...Owner.fields, ...extra }),
+              Schema.TaggedStruct("A", { ...Wide.fields, ...extra }),
+            ] as const;
+            return Schema.Union(wideFirst ? [members[1], members[0]] : members);
+          };
+          const Dated = union({ when: Schema.Date });
+          const Counted = union({ count: Schema.BigInt });
+          const Suspended = Schema.suspend(() => union({}));
+          return [
+            {
+              schema: Schema.Struct({
+                held: Schema.toCodecJson(Schema.OptionFromNullOr(Dated)),
+              }),
+              ...dated,
+            },
+            {
+              schema: Schema.Struct({
+                held: Schema.toCodecJson(
+                  Schema.OptionFromOptionalNullOr(Dated, {
+                    onNoneEncoding: null,
+                  }),
+                ),
+              }),
+              ...dated,
+            },
+            {
+              schema: Schema.toCodecJson(
+                Schema.Struct({ held: Schema.OptionFromNullOr(Dated) }),
+              ),
+              ...dated,
+            },
+            {
+              schema: Schema.Struct({
+                held: Schema.toCodecJson(Schema.OptionFromNullOr(Counted)),
+              }),
+              given: { count: 5n },
+              sent: { count: "5" },
+            },
+            {
+              schema: Schema.Struct({
+                held: Schema.toCodecJson(Schema.OptionFromNullOr(Suspended)),
+              }),
+              given: {},
+              sent: {},
+            },
+          ];
+        };
+        for (const { schema, given } of payloads(false)) {
+          const failure = yield* Effect.flip(
+            json(schema, strayTagged(given) as never),
+          );
+          expect(failure.message).toContain('["held"]["value"]["limit"]');
+          expect(failure.message).not.toContain("stray");
+        }
+        for (const { schema, given, sent } of payloads(true))
+          expect(yield* json(schema, strayTagged(given) as never)).toEqual({
+            held: { _tag: "A", ...wide, ...sent },
+          });
+        // The built-in codec itself leaves the stray key out and keeps `limit`.
+        const Dated = Schema.Union([
+          Schema.TaggedStruct("A", { ...Owner.fields, when: Schema.Date }),
+          Schema.TaggedStruct("A", { ...Wide.fields, when: Schema.Date }),
+        ]);
+        expect(
+          yield* json(
+            Schema.Struct({ held: Schema.OptionFromNullOr(Dated) }),
+            strayTagged(dated.given) as never,
+          ),
+        ).toEqual({ held: { _tag: "A", ...wide, ...dated.sent } });
+      }),
   );
 
   it.effect(
@@ -2443,11 +2613,29 @@ describe("a hand-written codec that unwraps a Some keeps or refuses its payload'
   );
 
   const inside = [Schema.OptionFromNullOr(Filter), fromNull(Filter)].map(
-    (inner) => Schema.Struct({ held: fromNull(Schema.Struct({ inner })) }),
+    (inner) =>
+      Schema.Struct({
+        held: fromNull(Schema.Struct({ inner })),
+        o: Schema.Option(Owner),
+      }),
   );
-  const nested = {
-    held: Option.some({ inner: Option.some(withStray) }),
-  } as never;
+  // A stray key in the inner Some, or only in a sibling Schema.Option, defeats the strict read.
+  const nested = [
+    [
+      {
+        held: Option.some({ inner: Option.some(withStray) }),
+        o: Option.none(),
+      },
+      { _tag: "None" },
+    ],
+    [
+      {
+        held: Option.some({ inner: Option.some(wide) }),
+        o: Option.some({ ...owner, zz: "z" }),
+      },
+      { _tag: "Some", value: owner },
+    ],
+  ] as const;
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/347
   it.effect(
@@ -2455,9 +2643,11 @@ describe("a hand-written codec that unwraps a Some keeps or refuses its payload'
     () =>
       Effect.gen(function* () {
         for (const schema of inside)
-          expect(yield* json(schema, nested)).toEqual({
-            held: { inner: owner },
-          });
+          for (const [given, o] of nested)
+            expect(yield* json(schema, given as never)).toEqual({
+              held: { inner: owner },
+              o,
+            });
       }),
   );
 
@@ -2467,14 +2657,15 @@ describe("a hand-written codec that unwraps a Some keeps or refuses its payload'
     () =>
       Effect.gen(function* () {
         for (const schema of inside)
-          yield* Effect.match(json(schema, nested), {
-            onSuccess: (body) =>
-              expect(body).toEqual({ held: { inner: wide } }),
-            onFailure: (failure) =>
-              expect(failure.message).toContain(
-                '["held"]["value"]["inner"]["value"]["limit"]',
-              ),
-          });
+          for (const [given, o] of nested)
+            yield* Effect.match(json(schema, given as never), {
+              onSuccess: (body) =>
+                expect(body).toEqual({ held: { inner: wide }, o }),
+              onFailure: (failure) =>
+                expect(failure.message).toContain(
+                  '["held"]["value"]["inner"]["value"]["limit"]',
+                ),
+            });
       }),
   );
 });

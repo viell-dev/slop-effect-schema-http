@@ -594,12 +594,22 @@ that keeps the whole value first. This includes a nested `Some` and a payload be
 an index-like name such as `"0"`. A plain transformation can expose the same payload schema directly
 or in a single-field struct for loose writing.
 
-A hand-written codec that unwraps a `Some`, or a built-in one behind middleware, has no key left out
-of the `Some`, because preparation cannot tell what its encoder writes. A key no member of its
-payload states then makes the strict attempt fail, and the relaxed read that follows is checked
-against what the caller gave: under a direct union, a same-tag union or a list, and inside a `Some`
-that a built-in codec reads. A stated field it lost is refused, naming the field. What the encoder
-writes from the read is its own: one that writes only `owner` sends only `owner`.
+Some codecs that unwrap a `Some` are followed only by the writer: a hand-written codec, a built-in
+one behind middleware, and an explicit `Schema.toCodecJson` of a built-in codec where it rebuilds
+the payload, as it does for a payload with a `Date` or `BigInt` field or a suspended payload.
+Preparation cannot tell what such a codec's encoder writes, so it leaves no key out of its `Some`,
+and a key no member of the payload states makes the strict attempt fail. Wherever the strict attempt
+fails, for that or another reason, such as a stray key in a sibling `Schema.Option` or a `limit` the
+wider member refuses, the relaxed read that follows is checked against what the caller gave: under a
+direct union, a same-tag union or a list, and inside a `Some` that a built-in codec reads. A stated
+field it lost is refused, naming the field. This needs the codec to be the only Option schema at its
+position, or to share its payload schema with the codecs beside it, as the limits below say. What
+the encoder writes from the read is its own: one that writes only `owner` sends only `owner`.
+`Body.jsonSchema` applies `Schema.toCodecJson` itself, so give it the built-in codec rather than its
+JSON form. Declare a hand-written codec's decoded side as `Schema.Option(Schema.toType(payload))`:
+over a payload with a renamed field, `Schema.Option(payload)` gives the codec two different payload
+types, which TypeScript rejects (TS2322), and at run time the payload is encoded twice, so `limit`
+can go with no error.
 
 Use decoded names inside a `Some` that an unwrapping codec reads. For a payload that writes `limit`
 as `page_size`, pass `Some({ limit: "5" })`. To supply the wire name, pass the encoded value
@@ -705,23 +715,25 @@ the schema does with it. These are the places where it cannot, and what happens 
   codecs competing at one position when they share one payload schema, or, for a payload without an
   encoding of its own, the optional copy `OptionFromOptionalKey` makes of it. Beside
   `OptionFromOptionalKey`, a payload with its own encoding, such as a renamed struct or a class,
-  stays opaque and can lose `limit` there. Codecs competing with different payload schemas could
-  each write the `Some`, so there a relaxed read can still take a narrower member when a stray key
-  defeats the strict read: a same-tag union, a list of unions or a union inside another `Some` can
-  lose `limit`, and a direct union refuses. A configured codec, alone or in a pair with one payload
-  schema, inside another `Some` can lose a field the same way where the strict attempt fails for
-  another reason, such as a record member beside the union or a wire name given in the payload. A
-  loose write can select a wider member through an unwrapping codec. Data already narrowed by the
-  read, a class instance, or a custom writer can fall outside that recovery. Let
+  stays opaque and can lose `limit` there. Codecs competing with different payload schemas, built-in
+  or hand-written, or beside a `Schema.Option` alternative, could each write the `Some`, so there a
+  relaxed read can still take a narrower member when a stray key defeats the strict read: a same-tag
+  union, a list of unions or a union inside another `Some` can lose `limit`, and a direct union
+  refuses. A configured codec, alone or in a pair with one payload schema, inside another `Some` can
+  lose a field the same way where the strict attempt fails for another reason, such as a record
+  member beside the union or a wire name given in the payload. A loose write can select a wider
+  member through an unwrapping codec. Data already narrowed by the read, a class instance, or a
+  custom writer can fall outside that recovery. Let
   `Choice = Union([Struct({ owner: String }), Struct({ owner: String, limit: String })])`. Inside
   another `Some`, `Union([OptionFromNullOr(Choice), Struct({ z: String })])` can lose `limit` on a
   loose write even without a stray key. Choose the intended member directly or validate and supply
   the encoded representation
   ([#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312)).
-- Inside a `Some` that a hand-written codec reads, a nested Option codec, built-in or hand-written,
-  can lose `limit` where its own `Some` also holds a key no member states. The check after the
-  relaxed read follows the outer codec's decoded payload, where the nested codec reads as an opaque
-  `Schema.Option`. Leave unstated keys out of the inner `Some`, or use a built-in outer codec
+- Inside a `Some` that a hand-written codec, or another codec only the writer follows, reads, a
+  nested Option codec, built-in or hand-written, can lose `limit` wherever the strict attempt fails:
+  beside a key no member states in its own `Some`, and with none there, as where a sibling
+  `Schema.Option` holds one. The check after the relaxed read follows the outer codec's decoded
+  payload, where the nested codec reads as an opaque `Schema.Option`. Use a built-in outer codec
   ([#347](https://github.com/viell-dev/slop-effect-schema-http/issues/347)).
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
   guard for native Options follows visible schema nodes into the encoded side of Option codecs,
@@ -799,15 +811,18 @@ the schema does with it. These are the places where it cannot, and what happens 
   forces the original reading. If a narrower member on that route would lose a stated field,
   preparation can refuse at that field. Remove undeclared keys from the value blocking the strict
   attempt, or bind the member you intend to use.
-- Beside a key no member states in a `Some` that a hand-written codec reads, a stated field that a
-  built-in codec would keep is refused, because preparation cannot leave the key out without knowing
-  what the encoder writes. With `Choice` as above, `Some({ owner, limit, stray })` refuses at
-  `limit` under a same-tag union, a list of `Choice` or a `Choice` inside another `Some`
+- Beside a key no member states in a `Some` that a codec only the writer follows reads, such as a
+  hand-written one, a stated field that a built-in codec would keep is refused, because preparation
+  cannot leave the key out without knowing what the encoder writes. With `Choice` as above,
+  `Some({ owner, limit, stray })` refuses at `limit` under a same-tag union, a list of `Choice` or a
+  `Choice` inside another `Some`
   ([#334](https://github.com/viell-dev/slop-effect-schema-http/issues/334)). Under `Choice` itself,
   a struct holding it, or such a codec beside a scalar or another codec, the refusal also names the
   unstated key, and `Some({ owner, stray })` refuses at `stray`
   ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)). Leave unstated keys out
-  of the `Some`, or use a built-in codec such as `OptionFromNullOr`.
+  of the `Some`, or use a built-in codec such as `OptionFromNullOr`, without middleware or an
+  explicit `Schema.toCodecJson`. Where something else makes the strict attempt fail, such as a stray
+  key in a sibling `Schema.Option`, `OptionFromNullOr` refuses the field too.
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
   either binding order. Bounded [stacked-union
   recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;
