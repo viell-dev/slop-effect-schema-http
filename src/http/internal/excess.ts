@@ -1267,6 +1267,10 @@ const unwrappingLink = (
     : undefined;
 };
 
+/** The wire side of a built-in codec that unwraps a native Option. */
+export const unwrapsNativeOption = (ast: Ast): boolean =>
+  unwrappingLink(ast, true, true) !== undefined;
+
 const onlyContent = (ast: Ast, allowEncoding = false): Ast | undefined => {
   if (ast._tag !== "Union" || (!allowEncoding && ast.encoding !== undefined))
     return undefined;

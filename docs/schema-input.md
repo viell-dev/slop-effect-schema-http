@@ -594,10 +594,14 @@ or in a single-field struct for loose writing.
 
 Use decoded names inside a `Some` that an unwrapping codec reads. For a payload that writes `limit`
 as `page_size`, pass `Some({ limit: "5" })`. To supply the wire name, pass the encoded value
-`{ page_size: "5" }` at the Option's position. A field called `value` inside the payload belongs to
-the payload. `Schema.Option(X)` uses Effect's own reading and member selection for its contents on
-every write route. Effect can read X's encoded names and values from a `Some` at runtime, though the
-typed input expects decoded contents. A narrower member can drop a payload field without a refusal.
+`{ page_size: "5" }` at the Option's position. If the decoded payload fails validation, the
+unwrapping codec's encoded struct will refuse the native wrapper. The error can point into
+`["value"]`, which is where the caller gave the payload. If an encoded sibling makes the whole
+encoded read take the wrapper as a struct, use the decoded sibling value or supply the encoded
+payload directly. A field called `value` inside the payload belongs to the payload.
+`Schema.Option(X)` uses Effect's own reading and member selection on every write route. Effect can
+read X's encoded names and values from a `Some` at runtime, though the typed input expects decoded
+contents. A narrower member can drop a payload field without a refusal.
 
 ### The reading of Effect is tested, not checked at run time
 
@@ -694,11 +698,6 @@ the schema does with it. These are the places where it cannot, and what happens 
   loose write even without a stray key. Choose the intended member directly or validate and supply
   the encoded representation
   ([#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312)).
-- After an invalid `Some` fails the decoded read, preparation can read the wrapper itself as an
-  encoded struct whose fields are all optional. With
-  `OptionFromNullOr(Struct({ a: optionalKey(String), b: optionalKey(String) }))`,
-  `Some({ a: 5, b: "kept?" })` can write `{}`. Validate the payload before wrapping it
-  ([#309](https://github.com/viell-dev/slop-effect-schema-http/issues/309)).
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
   recovery's value is not checked against what it was given: a `Schema.catchDecoding` record beside
   a list member can take a list whose cells hold a key the list member does not state, and what it

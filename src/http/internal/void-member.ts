@@ -1,12 +1,21 @@
 import {
   Effect,
+  Option,
   Predicate,
   Schema,
   SchemaAST,
   SchemaIssue,
   SchemaParser,
+  SchemaTransformation,
 } from "effect";
-import { classFields, hasDefinedFields, hasHiddenContent } from "./excess.js";
+import {
+  classFields,
+  hasDefinedFields,
+  hasHiddenContent,
+  unwrapsNativeOption,
+} from "./excess.js";
+import { isPlainData } from "./plain.js";
+import { replaceEncoding } from "./schema-ast.js";
 import { extraArrayField } from "./writer-error.js";
 
 const jsonVoid = Schema.toCodecJson(Schema.Void).ast.encoding?.[0];
@@ -28,7 +37,7 @@ const holdsSomething = (value: unknown): boolean =>
       hasHiddenContent(value)
     : value !== undefined && value !== null;
 
-const guard = (member: SchemaAST.Void) => {
+const guardVoid = (member: SchemaAST.Void) => {
   // Declaration.flip swaps checks to the opposite side. Delegate to the original type parser
   // so checks still run on Void's result in both directions.
   const parse = SchemaParser.decodeUnknownEffect(
@@ -65,6 +74,106 @@ function mapSame<A>(items: readonly A[], map: (item: A) => A): readonly A[] {
 }
 
 const guardedVoids = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
+const guardedReads = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
+const guardedOptionSources = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
+
+const unwrappedInput = Schema.makeFilter(
+  (value) =>
+    !Option.isOption(value) || "Expected a payload without an Option wrapper",
+);
+
+interface ClosedPayload {
+  readonly fields: ReadonlyArray<PropertyKey>;
+  readonly takesEmpty: boolean;
+}
+
+/** The declared fields and empty-object behavior of a closed, untransformed payload. */
+const closedPayload = (ast: SchemaAST.AST): ClosedPayload | undefined => {
+  if (ast.encoding !== undefined || ast.checks !== undefined) return undefined;
+  if (ast._tag === "Union" && ast.options?.mode !== "oneOf") {
+    const fields: PropertyKey[] = [];
+    let takesEmpty = false;
+    for (const member of ast.types) {
+      if (member._tag === "Null" || member._tag === "Undefined") continue;
+      const shape = closedPayload(member);
+      if (shape === undefined) return undefined;
+      fields.push(...shape.fields);
+      takesEmpty ||= shape.takesEmpty;
+    }
+    return { fields, takesEmpty };
+  }
+  if (
+    ast._tag !== "Objects" ||
+    ast.encodingChecks !== undefined ||
+    ast.propertySignatures.length === 0 ||
+    ast.indexSignatures.length > 0 ||
+    ast.propertySignatures.some(
+      ({ name, type }) =>
+        name === "_tag" ||
+        name === "value" ||
+        type.encoding !== undefined ||
+        type.context?.constructorDefault !== undefined,
+    )
+  )
+    return undefined;
+  return {
+    fields: ast.propertySignatures.map(({ name }) => name),
+    takesEmpty: ast.propertySignatures.every(({ type }) =>
+      SchemaAST.isOptional(type),
+    ),
+  };
+};
+
+/** Where the old relaxed read obtained an empty payload without losing a declared field. */
+const readFieldlessPayload = (
+  ast: SchemaAST.Declaration,
+  source: SchemaAST.AST,
+  guarded: SchemaAST.AST,
+): SchemaAST.AST => {
+  const decoded = closedPayload(ast.typeParameters[0]!);
+  const encoded = closedPayload(source);
+  if (!decoded?.takesEmpty || !encoded?.takesEmpty) return guarded;
+  const fields = new Set([...decoded.fields, ...encoded.fields]);
+  const usePayload = SchemaTransformation.transformEffect({
+    decode: (input: unknown, options) => {
+      if (
+        options.onExcessProperty !== "error" &&
+        Option.isOption(input) &&
+        Option.isSome(input)
+      ) {
+        const payload: unknown = input.value;
+        if (
+          typeof payload === "object" &&
+          payload !== null &&
+          !Array.isArray(payload) &&
+          isPlainData(payload) &&
+          !Reflect.ownKeys(payload).some((key) => fields.has(key))
+        )
+          return Effect.succeed(payload);
+      }
+      return Effect.succeed(input);
+    },
+    encode: (input: unknown) => Effect.succeed(input),
+  });
+  return SchemaAST.decodeTo(Schema.Unknown.ast, guarded, usePayload);
+};
+
+/** The encoded reading reached the wrapper check and had no independent parse failure. */
+export const refusedOptionSource = (issue: SchemaIssue.Issue): boolean => {
+  switch (issue._tag) {
+    case "Filter":
+      return issue.filter === unwrappedInput;
+    case "Pointer":
+    case "Encoding":
+      return refusedOptionSource(issue.issue);
+    case "Composite":
+      return issue.issues.every(refusedOptionSource);
+    case "AnyOf":
+      return issue.issues.some(refusedOptionSource);
+    default:
+      return false;
+  }
+};
 
 /**
  * A schema whose every visible Void declines what it would erase: any value but `undefined`, `null`
@@ -77,43 +186,72 @@ const guardedVoids = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
  * Effect builds a class from fields its struct has read, without reading them again, so the struct
  * it is built from can stand in. Any other declaration is opaque.
  */
-export const guardVoids = (root: SchemaAST.AST): SchemaAST.AST => {
-  const visit = (ast: SchemaAST.AST): SchemaAST.AST => {
-    const known = guardedVoids.get(ast);
+export const guardVoids = (root: SchemaAST.AST): SchemaAST.AST =>
+  guard(root, false);
+
+/** Also stop a native Option from being read as an unwrapping codec's encoded struct. */
+export const guardReading = (root: SchemaAST.AST): SchemaAST.AST =>
+  guard(root, true);
+
+const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
+  const visit = (ast: SchemaAST.AST, optionSource = false): SchemaAST.AST => {
+    const cache = optionSource
+      ? guardedOptionSources
+      : reading
+        ? guardedReads
+        : guardedVoids;
+    const known = cache.get(ast);
     if (known !== undefined) return known;
-    const result = rewrite(ast);
-    guardedVoids.set(ast, result);
+    const result = rewrite(ast, optionSource);
+    cache.set(ast, result);
     return result;
   };
-  const rewrite = (ast: SchemaAST.AST): SchemaAST.AST => {
-    if (isPlainVoid(ast)) return guard(ast);
-    if (ast._tag === "Suspend") {
+  const rewrite = (
+    ast: SchemaAST.AST,
+    optionSource: boolean,
+  ): SchemaAST.AST => {
+    if (!reading && isPlainVoid(ast)) return guardVoid(ast);
+    const struct = ast._tag === "Objects";
+    const list = ast._tag === "Arrays";
+    const union = ast._tag === "Union";
+    const suspended = ast._tag === "Suspend";
+    const isClass = classFields(ast) !== undefined;
+    if (!reading && !struct && !list && !union && !suspended && !isClass)
+      return ast;
+    const unwraps = reading && unwrapsNativeOption(ast);
+    const last = ast.encoding?.at(-1);
+    const encoding =
+      (reading || !suspended) && ast.encoding
+        ? mapSame(ast.encoding, (link) => {
+            let target = visit(
+              link.to,
+              link === last && (optionSource || unwraps),
+            );
+            if (
+              unwraps &&
+              ast._tag === "Declaration" &&
+              ast.encoding?.length === 1
+            )
+              target = readFieldlessPayload(ast, link.to, target);
+            return target === link.to
+              ? link
+              : new SchemaAST.Link(target, link.transformation);
+          })
+        : ast.encoding;
+    // Only the wire-most node at this position reads the wrapper as supplied.
+    const raw = optionSource && ast.encoding === undefined;
+    if (suspended) {
       // Follow a suspended schema only when it is read, so a recursive one stays finite.
       let target: SchemaAST.AST | undefined;
       return new SchemaAST.Suspend(
-        () => (target ??= visit(ast.thunk())),
+        () => (target ??= visit(ast.thunk(), raw)),
         ast.annotations,
         undefined,
-        ast.encoding,
+        encoding,
         ast.context,
       );
     }
-    if (
-      ast._tag !== "Objects" &&
-      ast._tag !== "Arrays" &&
-      ast._tag !== "Union" &&
-      classFields(ast) === undefined
-    )
-      return ast;
-    const encoding =
-      ast.encoding &&
-      mapSame(ast.encoding, (link) => {
-        const target = visit(link.to);
-        return target === link.to
-          ? link
-          : new SchemaAST.Link(target, link.transformation);
-      });
-    if (ast._tag === "Declaration")
+    if (ast._tag === "Declaration" && isClass)
       return encoding === ast.encoding
         ? ast
         : new SchemaAST.Declaration(
@@ -128,7 +266,7 @@ export const guardVoids = (root: SchemaAST.AST): SchemaAST.AST => {
             ast.encodingChecks,
             ast.encodingRun,
           );
-    if (ast._tag === "Objects") {
+    if (struct) {
       const properties = mapSame(ast.propertySignatures, (property) => {
         const type = visit(property.type);
         return type === property.type
@@ -141,7 +279,8 @@ export const guardVoids = (root: SchemaAST.AST): SchemaAST.AST => {
           ? index
           : new SchemaAST.IndexSignature(index.parameter, type);
       });
-      return encoding === ast.encoding &&
+      return !raw &&
+        encoding === ast.encoding &&
         properties === ast.propertySignatures &&
         indexes === ast.indexSignatures
         ? ast
@@ -152,12 +291,14 @@ export const guardVoids = (root: SchemaAST.AST): SchemaAST.AST => {
             ast.checks,
             encoding,
             ast.context,
-            ast.encodingChecks,
+            raw
+              ? [...(ast.encodingChecks ?? []), unwrappedInput]
+              : ast.encodingChecks,
           );
     }
-    if (ast._tag === "Arrays") {
-      const elements = mapSame(ast.elements, visit);
-      const rest = mapSame(ast.rest, visit);
+    if (list) {
+      const elements = mapSame(ast.elements, (element) => visit(element));
+      const rest = mapSame(ast.rest, (element) => visit(element));
       return encoding === ast.encoding &&
         elements === ast.elements &&
         rest === ast.rest
@@ -173,8 +314,11 @@ export const guardVoids = (root: SchemaAST.AST): SchemaAST.AST => {
             ast.encodingChecks,
           );
     }
-    if (ast._tag !== "Union") return ast;
-    const members = mapSame(ast.types, visit);
+    if (!union) return replaceEncoding(ast, encoding);
+    const hasOption = reading && ast.types.some(unwrapsNativeOption);
+    const members = mapSame(ast.types, (member) =>
+      visit(member, raw || hasOption),
+    );
     return encoding === ast.encoding && members === ast.types
       ? ast
       : new SchemaAST.Union(
