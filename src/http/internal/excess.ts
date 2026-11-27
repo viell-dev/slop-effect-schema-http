@@ -740,8 +740,10 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     also: ReadonlyArray<Ast> = [],
   ): unknown => {
     if (types.length === 0 || !isObject(value)) return value;
-    // At an Option boundary, a wire field called "value" belongs to the payload.
-    if (Option.isOption(value) && statesOption(types)) return value;
+    // At an Option boundary, a wire field called "value" belongs to the payload. Below a written
+    // name, the field's decoded side can state the Option that its wire projection drops.
+    if (Option.isOption(value) && (statesOption(types) || statesOption(also)))
+      return value;
     const view = viewAt(types, value, within);
     const { sides } = view;
     const hidden = unlisted(sides, value);
