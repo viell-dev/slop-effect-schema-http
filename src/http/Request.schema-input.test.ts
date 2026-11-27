@@ -6,6 +6,7 @@ import {
   Option,
   Schema,
   SchemaGetter,
+  SchemaIssue,
   SchemaTransformation,
 } from "effect";
 import {
@@ -2350,6 +2351,13 @@ const bindings = (schema: Schema.Top) =>
       ),
   ] as const;
 
+/** The library's message for a field it cannot keep, where nothing more is known. */
+const generic = (at: string) =>
+  `The schema cannot keep this field with the rest of the value\n  at ${at}`;
+
+/** An author's message that quotes the value it refuses. */
+const rejected = (value: string) => `Rejected ${value}`;
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/275
 describe("a refusal says why it cannot keep a field", () => {
   const Filter = Schema.Struct({
@@ -2404,6 +2412,48 @@ describe("a refusal says why it cannot keep a field", () => {
   );
 
   it.effect(
+    "runs no schema step again to say why a wire-named value is refused",
+    () =>
+      Effect.gen(function* () {
+        let reads = 0;
+        let lastRead = Infinity;
+        // A sibling whose decoder has an effect of its own, which fails after `lastRead` reads.
+        const side = Schema.String.pipe(
+          Schema.decodeTo(Schema.Number, {
+            decode: SchemaGetter.transformEffect((value: string) =>
+              Effect.suspend(() =>
+                ++reads > lastRead
+                  ? Effect.die("read again")
+                  : Effect.succeed(Number(value)),
+              ),
+            ),
+            encode: SchemaGetter.transform(String),
+          }),
+        );
+        const schema = Schema.Struct({
+          limit: Schema.FiniteFromString,
+          side,
+        }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+        for (const refuse of bindings(schema)) {
+          reads = 0;
+          lastRead = Infinity;
+          const value = { page_size: "many", side: "42" };
+          expect(yield* refuse(value)).toBe(
+            'Expected a finite number\n  at ["page_size"]',
+          );
+          // The routes before the refusal read the sibling three times, as 0.19.0 does, and the
+          // message comes from what they observed.
+          expect(reads).toBe(3);
+          reads = 0;
+          lastRead = 3;
+          expect(yield* refuse(value)).toBe(
+            'Expected a finite number\n  at ["page_size"]',
+          );
+        }
+      }),
+  );
+
+  it.effect(
     "gives the decoded side's own error for a decoded-named value",
     () =>
       Effect.gen(function* () {
@@ -2415,29 +2465,32 @@ describe("a refusal says why it cannot keep a field", () => {
   );
 
   it.effect(
-    "leaves out a renamed field the other side's error does not explain",
+    "still names a renamed field beside another's error where no reading kept it",
     () =>
       Effect.gen(function* () {
         const Two = Schema.Struct({
           a: Schema.optionalKey(Schema.String),
           b: Schema.optionalKey(Schema.String),
         }).pipe(Schema.encodeKeys({ a: "A", b: "B" }));
-        // `A` is valid on the encoded side, which only `B` keeps from reading.
+        // Each value here would be kept once the other is corrected, but no reading that refused it
+        // read it, so it is named with the generic message.
         expect(
           yield* schemaFailure(posted(Two), {
             body: { A: "x", B: 5 },
           } as never),
-        ).toBe('Expected string\n  at ["B"]');
+        ).toBe(`${generic('["A"]')}\nExpected string\n  at ["B"]`);
         expect(
           yield* schemaFailure(posted(Two), {
             body: { a: 5, b: "x" },
           } as never),
-        ).toBe('Expected string\n  at ["a"]');
+        ).toBe(`Expected string\n  at ["a"]\n${generic('["b"]')}`);
         expect(
           yield* schemaFailure(posted(Schema.Array(Filter)), {
             body: [{ limit: 5 }, { limit: "x" }],
           } as never),
-        ).toBe('Expected number\n  at [1]["limit"]');
+        ).toBe(
+          `${generic('[0]["limit"]')}\nExpected number\n  at [1]["limit"]`,
+        );
         // Names from both sides in one object have no more specific cause.
         expect(
           yield* schemaFailure(posted(Two), {
@@ -2507,10 +2560,11 @@ describe("a refusal says why it cannot keep a field", () => {
     }),
   );
 
-  it.effect("names no value the caller gave", () =>
+  it.effect("adds no value the caller gave", () =>
     Effect.gen(function* () {
       const secret = "s3cret-value";
       const record = Schema.Record(Schema.String, Schema.String);
+      // The required field's error comes from a read that kept its input, as Effect's `got …` shows.
       for (const [schema, body] of [
         [Filter, { page_size: secret }],
         [Filter, { limit: secret }],
@@ -2524,7 +2578,43 @@ describe("a refusal says why it cannot keep a field", () => {
           { body: body as never },
         );
         expect(message).not.toContain(secret);
+        expect(message).not.toContain("got");
       }
+    }),
+  );
+
+  it.effect("shows a message the schema's author wrote as written", () =>
+    Effect.gen(function* () {
+      const secret = "s3cret-value";
+      // As on any other schema failure, an author's message can quote the value it refuses.
+      const Checked = Schema.String.check(
+        Schema.makeFilter((value) => value.startsWith("ok") || rejected(value)),
+      );
+      const Quoting = Schema.String.pipe(
+        Schema.decodeTo(Schema.Number, {
+          decode: SchemaGetter.transformEffect((value: string) =>
+            Effect.fail(
+              new SchemaIssue.InvalidValue({ message: rejected(value) }),
+            ),
+          ),
+          encode: SchemaGetter.transform(String),
+        }),
+      );
+      for (const [schema, key] of [
+        // An ordinary schema failure.
+        [Schema.Struct({ note: Checked }), "note"],
+        // A wire-named value the decoded side would lose, which the encoded side refuses.
+        [
+          Schema.Struct({ limit: Schema.optionalKey(Quoting) }).pipe(
+            Schema.encodeKeys({ limit: "page_size" }),
+          ),
+          "page_size",
+        ],
+      ] as const)
+        for (const refuse of bindings(schema))
+          expect(yield* refuse({ [key]: secret })).toBe(
+            `${rejected(secret)}\n  at ["${key}"]`,
+          );
     }),
   );
 });

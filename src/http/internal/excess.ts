@@ -2224,7 +2224,8 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
 
 /**
  * Why a field cannot be kept, where more is known than that it is lost: an issue rooted at `at`,
- * which holds no value the caller gave.
+ * which stores no value the caller gave. A message the schema's author wrote is kept as written, as
+ * on any other schema failure, even where it quotes the value.
  *
  * @remarks
  * A `names` or a `place` issue says why the field at `at` itself is lost: it is given under both of
@@ -2291,7 +2292,8 @@ function contentNotHeld(
 
 /**
  * An issue as Effect builds it without `reportInput`: the same messages and paths, without the value
- * a parse with that option keeps on each node and its messages then show.
+ * a parse with that option keeps on each node and Effect's own messages then show, as `got …`. The
+ * annotations stay, so a message the schema's author wrote reads as written.
  */
 const withoutInput = (issue: SchemaIssue.Issue): SchemaIssue.Issue => {
   switch (issue._tag) {
@@ -2348,6 +2350,30 @@ export const nameCauses = (
     return naming === undefined
       ? []
       : [{ at: path, kind: "names", issue: givenTwice(naming) } as const];
+  });
+
+/**
+ * The fields lost at these paths that a reading of `given` read after all: the caller gave a renamed
+ * field under one of its names only, and what the reading made of the object holding it, `value`,
+ * holds the field under its other name. A comparison by name finds such a field lost, though the
+ * reading read it.
+ */
+export const readUnderOtherName = (
+  types: ReadonlyArray<Ast>,
+  given: unknown,
+  value: unknown,
+  paths: ReadonlyArray<Path>,
+): ReadonlyArray<Path> =>
+  paths.filter((path) => {
+    const found = renamedAt(types, given, path);
+    if (found === undefined) return false;
+    const [read, written] = found.naming;
+    const other = path.at(-1) === read ? written : read;
+    if (found.holds(other)) return false;
+    const holder = path
+      .slice(0, -1)
+      .reduce<unknown>((inner, key) => at(inner, key), value);
+    return has(holder, other);
   });
 
 /**
@@ -2438,6 +2464,25 @@ interface Entry {
 const declinesAsVoid = (issue: SchemaIssue.Issue): boolean =>
   issue._tag === "InvalidType" && issue.ast._tag === "Void";
 
+/**
+ * Whether a strict read's issue reports nothing but keys it does not state, so that a loose read,
+ * which strips them, takes the value. Such a union member does not say why the union refuses.
+ */
+const onlyExcess = (issue: SchemaIssue.Issue): boolean => {
+  switch (issue._tag) {
+    case "UnexpectedKey":
+      return true;
+    case "Pointer":
+      return onlyExcess(issue.issue);
+    case "Composite":
+      return issue.issues.every(onlyExcess);
+    case "AnyOf":
+      return issue.issues.some(onlyExcess);
+    default:
+      return false;
+  }
+};
+
 /** What the caller gave around a failure, so its parts are named as the caller named them. */
 interface Caller {
   /**
@@ -2506,6 +2551,12 @@ const asGivenAt = (
  * each under the names the caller gave. A union member's own failure stays, and a key the reading
  * does not state and a key the caller gave reported as missing do not say why the field is lost. A
  * Void declining what it would erase says why only where no other member was tried.
+ *
+ * @remarks
+ * `asLoose` reads a strict read's failure as a loose read would fail: a union with a member that the
+ * strict read refused only for keys it does not state then says nothing, as a loose read takes that
+ * member. Explaining a loss, that member is the one that strips the field, so the others' errors
+ * stay.
  */
 const failureAt = (
   issue: SchemaIssue.Issue,
@@ -2513,13 +2564,14 @@ const failureAt = (
   target: Path,
   into: Array<Entry>,
   caller: Caller,
+  asLoose = false,
 ): void => {
   const reached = path.length >= target.length;
   switch (issue._tag) {
     case "Pointer": {
       const next = [...path, ...issue.path];
       if (startsWith(next, target) || startsWith(target, next))
-        failureAt(issue.issue, next, target, into, caller);
+        failureAt(issue.issue, next, target, into, caller, asLoose);
       return;
     }
     case "Composite": {
@@ -2531,22 +2583,24 @@ const failureAt = (
           target,
           into,
           caller,
+          asLoose,
         );
       return;
     }
     case "AnyOf": {
       if (issue.issues.length === 0) break;
+      if (asLoose && issue.issues.some(onlyExcess)) return;
       const tried = issue.issues.filter((member) => !declinesAsVoid(member));
       for (const member of tried.length > 0 ? tried : issue.issues)
-        failureAt(member, path, target, into, caller);
+        failureAt(member, path, target, into, caller, asLoose);
       return;
     }
     case "Encoding":
-      failureAt(issue.issue, path, target, into, caller);
+      failureAt(issue.issue, path, target, into, caller, asLoose);
       return;
     case "Filter":
       if (reached) break;
-      failureAt(issue.issue, path, target, into, caller);
+      failureAt(issue.issue, path, target, into, caller, asLoose);
       return;
     case "UnexpectedKey":
       return;
@@ -2615,44 +2669,29 @@ export const entriesError = (
 };
 
 /**
- * Whether a field lost at `path` is one a key rename reads or writes, as a failed reading's schemas
- * and what it was given show it. A reading of the whole value on one side loses such a field where
- * the caller gave it on the other, valid there or not.
- */
-const renamedBeside = (path: Path, causes: ReadonlyArray<Cause>): boolean =>
-  causes.some(
-    (cause) =>
-      cause.kind === "failure" &&
-      cause.reading !== undefined &&
-      startsWith(path, cause.at) &&
-      renamedAt(
-        cause.reading.types,
-        cause.reading.given,
-        path.slice(cause.at.length),
-      ) !== undefined,
-  );
-
-/**
- * A refusal that names the fields and, like any other schema failure here, leaves out values. Each
- * field is named with what `causes` say about it, or else as one the schema cannot keep.
+ * A refusal that names the fields and stores none of the values the caller gave. Each field is named
+ * with what `causes` say about it, or else as one the schema cannot keep.
  *
  * @remarks
- * A reading that keeps going on one side loses every renamed field given on the other, valid or
- * not. Where the other side's own error explains some of the losses, a renamed field it does not
- * explain may be valid there, so it is left out: correcting the explained fields makes the next
- * refusal name it if it is still lost.
+ * A field in `read` is one the reading that refused read under its other name, which a comparison
+ * by name finds lost, as {@link readUnderOtherName} finds it. Where another reading's error explains
+ * a loss, such a field is left out, since that error is why the value is refused. Every other lost
+ * field is named, with the generic message where nothing more is known of it.
  */
 export const refusal = (
   ast: Ast,
   paths: readonly [Path, ...ReadonlyArray<Path>],
   causes: ReadonlyArray<Cause> = [],
+  read: ReadonlyArray<Path> = [],
 ): Schema.SchemaError => {
   const named = paths.map((path) => ({ path, ...explained(path, causes) }));
   const byFailure = named.some(({ by }) => by === "failure");
   return entriesError(
     ast,
     named.flatMap(({ path, entries, by }) =>
-      byFailure && by === undefined && renamedBeside(path, causes)
+      byFailure &&
+      by === undefined &&
+      read.some((readPath) => samePath(readPath, path))
         ? []
         : entries,
     ),
@@ -2660,8 +2699,9 @@ export const refusal = (
 };
 
 /**
- * The parts of a failure at or inside each of these places, as {@link failureAt} keeps them, that
- * name a value the caller gave. Empty where the failure says nothing of the caller's values there.
+ * The parts of a strict read's failure at or inside each of these places, as {@link failureAt} keeps
+ * them reading it as a loose read would fail, that name a value the caller gave. Empty where the
+ * failure says nothing of the caller's values there.
  */
 export const failureWithin = (
   issue: SchemaIssue.Issue,
@@ -2672,7 +2712,7 @@ export const failureWithin = (
   places.flatMap((place) => {
     const caller = callerOf({ types, given }, []);
     const found: Array<Entry> = [];
-    failureAt(withoutInput(issue), [], place, found, caller);
+    failureAt(withoutInput(issue), [], place, found, caller, true);
     return found.filter(({ path }) => caller.gave(path));
   });
 
