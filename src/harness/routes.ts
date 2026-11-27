@@ -188,7 +188,7 @@ export interface Chunk {
 /**
  * Content that a handler writes piece by piece, as one that streams an export or events does. The
  * head goes out before the content, with no length unless the reply declares one. After the last
- * chunk, `then` says what follows:
+ * chunk, `ending` says what follows:
  *
  * - `end`: the end of the content, whatever length the head declared;
  * - `stall`: nothing more, and no end, so the response stays open;
@@ -199,7 +199,7 @@ export interface Chunk {
  */
 export interface Streamed {
   readonly chunks: ReadonlyArray<Chunk>;
-  readonly then: "end" | "stall" | "fail" | "repeat";
+  readonly ending: "end" | "stall" | "fail" | "repeat";
 }
 
 /**
