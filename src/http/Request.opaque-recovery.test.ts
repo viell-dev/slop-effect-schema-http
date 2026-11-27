@@ -2336,6 +2336,16 @@ describe("an invalid Some payload keeps its decoded error", () => {
           held: { a: "a", b: "keep" },
           count: "2",
         });
+        const optional = Schema.Struct({
+          a: Schema.optionalKey(Schema.NumberFromString),
+        }).check(Schema.makeFilter(({ a }) => a === undefined || a > 0));
+        const optionalChecked = Schema.Struct({
+          held: Schema.OptionFromNullOr(optional),
+          count: Schema.FiniteFromString,
+        });
+        expect(
+          yield* json(optionalChecked, { held: Option.some({}), count: "2" }),
+        ).toEqual({ held: {}, count: "2" });
       }),
   );
 });
