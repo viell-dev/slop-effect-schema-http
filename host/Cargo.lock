@@ -1731,6 +1731,7 @@ dependencies = [
  "base64",
  "http-body-util",
  "loona-hpack",
+ "quinn",
  "rcgen",
  "rustls",
  "serde",

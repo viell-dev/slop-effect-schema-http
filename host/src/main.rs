@@ -5,9 +5,11 @@
 //!   object per line, answered by one line on standard output.
 //! - `warded-test-host h2 <directory>` sends one HTTP/2 request that it reads on standard input,
 //!   as [`h2`] describes, and writes what came back on standard output.
+//! - `warded-test-host h3 <directory>` does the same over HTTP/3, as [`h3`] describes.
 
 mod condition;
 mod h2;
+mod h3;
 mod table;
 
 use base64::{Engine, prelude::BASE64_STANDARD};
@@ -50,7 +52,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ["certificate", directory] => certificate(Path::new(directory)),
         ["serve", directory] => serve(Path::new(directory)).await,
         ["h2", directory] => h2::send(Path::new(directory)).await,
-        _ => Err("usage: warded-test-host (certificate | serve | h2) <directory>".into()),
+        ["h3", directory] => h3::send(Path::new(directory)).await,
+        _ => Err("usage: warded-test-host (certificate | serve | h2 | h3) <directory>".into()),
     }
 }
 

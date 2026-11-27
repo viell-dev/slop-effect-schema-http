@@ -1,8 +1,8 @@
 /**
  * The Node lane's providers. `linesClient` and `rawClient` come from the hostile suite on the
  * `hostile-servers-test` branch of this repository (`src/harness/providers.ts` at `da6734c`), with a
- * `protocol` option added to the raw provider. `h2Client` is this suite's own. The others are
- * Effect's own, as an application would use them, each trusting the host's certificate.
+ * `protocol` option added to the raw provider. `h2Client` and `h3Client` are this suite's own. The
+ * others are Effect's own, as an application would use them, each trusting the host's certificate.
  */
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -23,8 +23,20 @@ import {
   UrlParams,
 } from "effect/http";
 import { Transport } from "viell-effect-schema-http";
-import type { Field, H2Exchange, H2Received } from "./evidence.js";
-import type { H2Options, H2Provider, RawOptions } from "./lane.js";
+import type {
+  Field,
+  H2Exchange,
+  H2Received,
+  H3Exchange,
+  H3Received,
+} from "./evidence.js";
+import type {
+  H2Options,
+  H2Provider,
+  H3Options,
+  H3Provider,
+  RawOptions,
+} from "./lane.js";
 
 const bodyBytes = (
   request: HttpClientRequest.HttpClientRequest,
@@ -409,23 +421,37 @@ const fieldBytes = (text: string): string =>
 
 const root = new URL("../../", import.meta.url);
 
+/** The host's clients that write a header block field by field, and what each answers. */
+interface HostClients {
+  /** HTTP/2 over TLS, `host/src/h2.rs`. */
+  readonly h2: H2Received;
+  /** HTTP/3, `host/src/h3.rs`. */
+  readonly h3: H3Received;
+}
+
+const protocolOf = { h2: "HTTP/2", h3: "HTTP/3" } as const;
+
 /**
- * Send one request through the host's HTTP/2 client (`host/src/h2.rs`), on a connection of its
- * own. A client that cannot run, or a connection it cannot make, is a defect of the suite, not an
- * answer of the server, so it ends the test with the client's reason.
+ * Send one request through one of the host's own clients, on a connection of its own. A client
+ * that cannot run, or a connection it cannot make, is a defect of the suite, not an answer of the
+ * server, so it ends the test with the client's reason.
  */
-const viaHost = (sending: {
-  readonly port: number;
-  readonly fields: ReadonlyArray<Field>;
-  readonly body?: string;
-  readonly headOnly: boolean;
-}): Effect.Effect<H2Received> =>
-  Effect.callback<H2Received>((resume) => {
+const viaHost = <C extends keyof HostClients>(
+  client: C,
+  sending: {
+    readonly port: number;
+    readonly fields: ReadonlyArray<Field>;
+    readonly body?: string;
+    readonly headOnly: boolean;
+    readonly cleartext: boolean;
+  },
+): Effect.Effect<HostClients[C]> =>
+  Effect.callback<HostClients[C]>((resume) => {
     const { executable } = JSON.parse(
       readFileSync(new URL(".host/BUILT", root), "utf8"),
     ) as { executable: string };
     const child = spawn(executable, [
-      "h2",
+      client,
       fileURLToPath(new URL(".host", root)),
     ]);
     const output: Array<Buffer> = [];
@@ -433,7 +459,7 @@ const viaHost = (sending: {
     child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
     let settled = false;
-    const settle = (outcome: Effect.Effect<H2Received>) => {
+    const settle = (outcome: Effect.Effect<HostClients[C]>) => {
       if (settled) return;
       settled = true;
       resume(outcome);
@@ -443,12 +469,14 @@ const viaHost = (sending: {
       const text = Buffer.concat(output).toString("utf8");
       try {
         if (code !== 0) throw new Error(`exit code ${code}`);
-        settle(Effect.succeed(JSON.parse(text) as H2Received));
+        settle(Effect.succeed(JSON.parse(text) as HostClients[C]));
       } catch (cause) {
         const reason = Buffer.concat(errors).toString("utf8").trim();
         settle(
           Effect.die(
-            new Error(`the HTTP/2 client failed (${String(cause)}): ${reason}`),
+            new Error(
+              `the ${protocolOf[client]} client failed (${String(cause)}): ${reason}`,
+            ),
           ),
         );
       }
@@ -457,11 +485,12 @@ const viaHost = (sending: {
     return Effect.sync(() => child.kill());
   });
 
-const describeReceived = (received: H2Received): string => {
+const describeReceived = (received: H2Received | H3Received): string => {
   switch (received.is) {
     case "reset":
       return `the server reset the stream with ${received.code}`;
     case "go_away":
+    case "close":
       return `the server closed the connection with ${received.code}`;
     case "closed":
       return "the server closed the connection without an answer";
@@ -471,14 +500,16 @@ const describeReceived = (received: H2Received): string => {
 };
 
 /**
- * A provider that sends a request over HTTP/2 to the HTTPS listener at `origin`, with its header
- * block written field by field, for the heads no standard client sends. Each request goes on a
+ * A provider that sends a request over HTTP/2 to the listener at `origin`, with its header block
+ * written field by field, for the heads no standard client sends. Each request goes on a
  * connection of its own, through the host's HTTP/2 client, and `exchanges` records what it wrote
- * and what came back: the wire record of the HTTPS listener, which has no recording proxy.
+ * and what came back: the wire record of the HTTPS listener, which has no recording proxy, and of
+ * the cleartext ones, whose proxies read HTTP/1 only. An `https` origin gets HTTP/2 over TLS, and
+ * an `http` one HTTP/2 with prior knowledge (h2c, RFC 9113 section 3.3).
  *
- * - **Pseudo-header fields.** `:method` as given, `:scheme` `https`, `:authority` the origin's
- *   host, and `:path` the target of `rawTarget`, so the request is never parsed as a URL. Both are
- *   written as UTF-8, like the raw provider's request line.
+ * - **Pseudo-header fields.** `:method` as given, `:scheme` the origin's, `:authority` the
+ *   origin's host, and `:path` the target of `rawTarget`, so the request is never parsed as a URL.
+ *   Both are written as UTF-8, like the raw provider's request line.
  * - **Fields.** `Transport.headerLines` as written, names in their own case, with the lines
  *   `withFraming` adds for the body and no `Host`, then the body in DATA frames. Names and values
  *   go out like the raw provider's header lines: Latin-1, or UTF-8 when they do not fit.
@@ -494,9 +525,35 @@ const describeReceived = (received: H2Received): string => {
 export const h2Client = (
   origin: string,
   exchanges: Array<H2Exchange>,
+  options?: H2Options,
+): HttpClient.HttpClient => fieldsClient("h2", origin, exchanges, options);
+
+/**
+ * A provider that sends a request over HTTP/3 to the HTTP/3 endpoint of the HTTPS listener at
+ * `origin`, written as `h2Client` writes it: the same pseudo-header fields (RFC 9114 section
+ * 4.3.1), fields and `fields` option, with nothing refused. Each request goes on a QUIC connection
+ * of its own, through the host's HTTP/3 client, which writes each field as a QPACK literal, and
+ * `exchanges` records what it wrote and what came back. A reset stream or a closed connection
+ * fails the request as a transport error; the exchange says which.
+ */
+export const h3Client = (
+  origin: string,
+  exchanges: Array<H3Exchange>,
+  options?: H3Options,
+): HttpClient.HttpClient => fieldsClient("h3", origin, exchanges, options);
+
+/** `h2Client` and `h3Client`, through the host client `client`. */
+const fieldsClient = <C extends keyof HostClients>(
+  client: C,
+  origin: string,
+  exchanges: Array<{
+    readonly fields: ReadonlyArray<Field>;
+    readonly received: HostClients[C];
+  }>,
   { fields: rewrite = (composed) => composed }: H2Options = {},
 ): HttpClient.HttpClient => {
-  const { host, port } = new URL(origin);
+  const { host, port, protocol } = new URL(origin);
+  const cleartext = protocol === "http:";
   return HttpClient.makeWith<
     never,
     never,
@@ -510,14 +567,14 @@ export const h2Client = (
           const { bytes, contentType } = yield* bodyBytes(request);
           const fields = rewrite([
             [":method", utf8(request.method)],
-            [":scheme", "https"],
+            [":scheme", cleartext ? "http" : "https"],
             [":authority", host],
             [":path", utf8(rawTarget(origin, request))],
             ...withFraming(lines, undefined, bytes, contentType).map(
               ([name, value]): Field => [fieldBytes(name), fieldBytes(value)],
             ),
           ]);
-          const received = yield* viaHost({
+          const received = yield* viaHost(client, {
             port: Number(port),
             fields,
             ...(bytes === undefined
@@ -526,6 +583,7 @@ export const h2Client = (
             headOnly: fields.some(
               ([name, value]) => name === ":method" && value === "CONNECT",
             ),
+            cleartext,
           });
           exchanges.push({ fields, received });
           if (received.is !== "response")
@@ -568,6 +626,18 @@ export const h2Provider = (origin: string, options?: H2Options): H2Provider => {
     layer: Layer.succeed(
       HttpClient.HttpClient,
       h2Client(origin, exchanges, options),
+    ),
+    exchanges,
+  };
+};
+
+/** The HTTP/3 provider as a layer, with the record of what it sent. */
+export const h3Provider = (origin: string, options?: H3Options): H3Provider => {
+  const exchanges: Array<H3Exchange> = [];
+  return {
+    layer: Layer.succeed(
+      HttpClient.HttpClient,
+      h3Client(origin, exchanges, options),
     ),
     exchanges,
   };
