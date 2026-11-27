@@ -2230,9 +2230,11 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
  * @remarks
  * A `names` or a `place` issue says why the field at `at` itself is lost: it is given under both of
  * its names, the items of its list or record use different sides, or it is a built-in whose content
- * the object rebuilt from it cannot hold. A `failure` is how another reading of the value at `at`
- * failed. It explains a loss there or below with that reading's own error at the lost field or
- * inside it, as the encoded side's error explains a wire-named value the decoded side lost.
+ * the object rebuilt from it cannot hold. A `failure` is how another reading of the value at `at`,
+ * made with the caller's own parse options, failed. It explains a loss there or below with that
+ * reading's own error at the lost field or inside it, as a member's own error explains a field the
+ * other members of a union cannot hold. A read with other options cannot explain a loss, since
+ * Effect gives a read's options to every step it runs, and a step can fail differently under them.
  */
 export interface Cause {
   readonly at: Path;
@@ -2246,11 +2248,6 @@ export interface Cause {
     readonly types: ReadonlyArray<Ast>;
     readonly given: unknown;
   };
-  /**
-   * Whether the reading that failed was strict, with other parse options than the caller's, so that
-   * only the parts of its failure no step seeing the options reported explain a loss.
-   */
-  readonly strict?: true | undefined;
 }
 
 const startsWith = (path: Path, prefix: Path): boolean =>
@@ -2333,20 +2330,18 @@ const withoutInput = (issue: SchemaIssue.Issue): SchemaIssue.Issue => {
 };
 
 /**
- * The {@link Cause} that a reading of `given` through these schemas gives as it fails, `readStrictly`
- * where that reading had other parse options than the caller's.
+ * The {@link Cause} that a reading of `given` through these schemas, with the caller's own parse
+ * options, gives as it fails.
  */
 export const failureCause = (
   { issue }: Schema.SchemaError,
   types: ReadonlyArray<Ast>,
   given: unknown,
-  readStrictly = false,
 ): Cause => ({
   at: [],
   kind: "failure",
   issue: withoutInput(issue),
   reading: { types, given },
-  ...(readStrictly && { strict: true }),
 });
 
 /** Where each field lost at these paths was given under both its names, as {@link otherName} finds. */
@@ -2474,196 +2469,6 @@ interface Entry {
 const declinesAsVoid = (issue: SchemaIssue.Issue): boolean =>
   issue._tag === "InvalidType" && issue.ast._tag === "Void";
 
-/**
- * How a failure was read. With the caller's parse options, all of it stands. A strict read had other
- * options: Effect gives them to the steps that run, so a step the schema's author wrote can fail
- * differently under them, and only what no step that sees them reported stands. As loose, a strict
- * read also stands in for a loose read with the caller's options, so a union stands only where each
- * member fails without regard to the options; a loose read could take a member refused only for
- * keys it does not state, or for what such a step reported.
- */
-type ReadWith = "caller" | "strict" | "asLoose";
-
-/** Getters that Effect calls with the value alone; every other getter is given the parse options. */
-const optionFreeGetters: ReadonlySet<string> = new Set([
-  "Passthrough",
-  "Transform",
-  "TransformOptional",
-]);
-
-/**
- * Whether a check is one Effect builds, which reads no parse option. Effect gives every check the
- * options, and marks each of its own with a representation id under `effect/schema/`, so the schema
- * can be described again. A check without such an id may be the schema author's.
- */
-const isEffectCheck = (check: SchemaAST.Check<unknown>): boolean =>
-  check._tag === "FilterGroup"
-    ? check.checks.every(isEffectCheck)
-    : check.annotations?.representation?.id.startsWith("effect/schema/") ===
-      true;
-
-/**
- * A class, whose own steps read no parse option: Effect checks an instance and builds one from the
- * struct it links to, which is also its one type parameter.
- */
-const isClass = (ast: SchemaAST.Declaration): boolean => {
-  const fields = classFields(ast);
-  return fields !== undefined && ast.typeParameters[0] === fields;
-};
-
-const optionFreeDeclarations = new WeakSet<Ast>();
-
-/**
- * Count a declaration whose parser gives the parse options only to these checks, as this library's
- * own Void guard does, among the steps that cannot see them where the checks are Effect's.
- */
-export const passesOptionsOnlyTo = (
-  declaration: SchemaAST.Declaration,
-  checks: SchemaAST.Checks | undefined,
-): SchemaAST.Declaration => {
-  if (checks?.every(isEffectCheck) ?? true)
-    optionFreeDeclarations.add(declaration);
-  return declaration;
-};
-
-/** Whether each link of a schema's encoding has a getter that takes no parse option. */
-const gettersTakeNoOptions = (ast: Ast): boolean =>
-  (ast.encoding ?? []).every(
-    ({ transformation }) =>
-      transformation._tag === "Transformation" &&
-      optionFreeGetters.has(transformation.decode._tag),
-  );
-
-/**
- * Whether Effect's own steps for a schema, apart from its checks and its parts, see no parse option:
- * it is no declaration other than a class or one counted by {@link passesOptionsOnlyTo}, as a
- * declaration's parser is given the options, and each link of its encoding has a getter that takes
- * none and reads from a schema that sees none at any depth.
- */
-const stepsSeeNoOptions = (ast: Ast, visiting?: Set<Ast>): boolean =>
-  (ast._tag !== "Declaration" ||
-    isClass(ast) ||
-    optionFreeDeclarations.has(ast)) &&
-  gettersTakeNoOptions(ast) &&
-  (ast.encoding ?? []).every(({ to }) => seesNoOptions(to, visiting));
-
-/**
- * Whether a failure within a schema's encoding, before the schema reads its own value, comes from
- * steps that see no parse option. A getter that takes none cannot fail, so the failure is a read of
- * the schema a link reads from, whose own issues say what ran there. With more than one link, links
- * read before it ran too, so every schema they read from has to see none.
- */
-const encodingSeesNoOptions = (ast: Ast): boolean =>
-  gettersTakeNoOptions(ast) &&
-  ((ast.encoding?.length ?? 0) <= 1 ||
-    ast.encoding!.every(({ to }) => seesNoOptions(to)));
-
-/**
- * Whether a schema reads its value without a step that sees the parse options: its own steps, as
- * {@link stepsSeeNoOptions} says, and every part it reads, at any depth. Its own checks then run on
- * that value.
- */
-const valueSeesNoOptions = (ast: Ast, visiting?: Set<Ast>): boolean => {
-  const parts =
-    ast._tag === "Suspend"
-      ? [ast.thunk()]
-      : ast._tag === "Objects"
-        ? [...partsOf(ast), ...ast.indexSignatures.map((s) => s.parameter)]
-        : partsOf(ast);
-  return (
-    stepsSeeNoOptions(ast, visiting) &&
-    parts.every((part) => seesNoOptions(part, visiting))
-  );
-};
-
-const optionFreeSchemas = new WeakMap<Ast, boolean>();
-
-/** Whether no step Effect runs to decode a schema, at any depth, sees the parse options. */
-const seesNoOptions = (ast: Ast, visiting = new Set<Ast>()): boolean => {
-  const known = optionFreeSchemas.get(ast);
-  if (known !== undefined) return known;
-  // A schema that holds itself is judged by its other steps.
-  if (visiting.has(ast)) return true;
-  visiting.add(ast);
-  const free =
-    [
-      ast.checks,
-      "encodingChecks" in ast ? ast.encodingChecks : undefined,
-    ].every((checks) => checks?.every(isEffectCheck) ?? true) &&
-    valueSeesNoOptions(ast, visiting);
-  visiting.delete(ast);
-  // Within a cycle a schema's result rests on the outermost one's, so only that or a refusal is kept.
-  if (!free || visiting.size === 0) optionFreeSchemas.set(ast, free);
-  return free;
-};
-
-/**
- * Whether the step that reported this issue, and those Effect ran before it there, see no parse
- * option, so that the caller's options would report it too. A field missing from a struct is judged
- * where the struct holds it, since its schema's getter can leave it missing.
- */
-const reportedWithoutOptions = (issue: SchemaIssue.Issue): boolean => {
-  switch (issue._tag) {
-    case "Pointer":
-    case "MissingKey":
-      return true;
-    case "Filter":
-      return isEffectCheck(issue.filter);
-    case "InvalidValue":
-    case "Forbidden":
-    case "OneOf":
-      // A getter, a declaration or middleware reports these, or a count of members that fit.
-      return false;
-    case "Encoding":
-      return encodingSeesNoOptions(issue.ast);
-    default:
-      return stepsSeeNoOptions(issue.ast);
-  }
-};
-
-/**
- * {@link reportedWithoutOptions} for an issue a schema reports of the value it read: a check judges
- * the value its parts made, and a struct or a tuple reports a key missing that a part's getter can
- * have left out.
- */
-const reportedAt = (holder: Ast, inner: SchemaIssue.Issue): boolean => {
-  if (inner._tag === "Filter")
-    return reportedWithoutOptions(inner) && valueSeesNoOptions(holder);
-  if (inner._tag !== "Pointer" || inner.issue._tag !== "MissingKey")
-    return reportedWithoutOptions(inner);
-  const [key] = inner.path;
-  const type =
-    holder._tag === "Arrays"
-      ? typeof key === "number"
-        ? holder.elements[key]
-        : undefined
-      : fieldsOf(holder).find(({ name }) => name === key)?.type;
-  return type === undefined || stepsSeeNoOptions(type);
-};
-
-/**
- * Whether a strict read's issue reports a failure that a read with the caller's options would report
- * too: one that no step seeing the options reported, and not a key a loose read strips.
- */
-const failsWithoutOptions = (issue: SchemaIssue.Issue): boolean => {
-  if (!reportedWithoutOptions(issue)) return false;
-  switch (issue._tag) {
-    case "Pointer":
-    case "Encoding":
-      return failsWithoutOptions(issue.issue);
-    case "Composite":
-      return issue.issues.some(
-        (inner) => reportedAt(issue.ast, inner) && failsWithoutOptions(inner),
-      );
-    case "AnyOf":
-      return issue.issues.every(failsWithoutOptions);
-    case "UnexpectedKey":
-      return false;
-    default:
-      return true;
-  }
-};
-
 /** What the caller gave around a failure, so its parts are named as the caller named them. */
 interface Caller {
   /**
@@ -2732,14 +2537,6 @@ const asGivenAt = (
  * each under the names the caller gave. A union member's own failure stays, and a key the reading
  * does not state and a key the caller gave reported as missing do not say why the field is lost. A
  * Void declining what it would erase says why only where no other member was tried.
- *
- * @remarks
- * A strict read's failure is not one the caller's options would give, so `read` keeps only what no
- * step that sees the options reported, as {@link ReadWith} says. Each part kept is one a read with
- * the caller's options would report too, had it gone on past its first error. A part left out could
- * differ, as a step that sees the options can fail there and not here, and no reading runs again to
- * find what it would be. Explaining a loss, a union member refused only for keys it does not state
- * is the one that strips the field, so the others' errors stay.
  */
 const failureAt = (
   issue: SchemaIssue.Issue,
@@ -2747,47 +2544,40 @@ const failureAt = (
   target: Path,
   into: Array<Entry>,
   caller: Caller,
-  read: ReadWith = "caller",
 ): void => {
-  if (read !== "caller" && !reportedWithoutOptions(issue)) return;
   const reached = path.length >= target.length;
   switch (issue._tag) {
     case "Pointer": {
       const next = [...path, ...issue.path];
       if (startsWith(next, target) || startsWith(target, next))
-        failureAt(issue.issue, next, target, into, caller, read);
+        failureAt(issue.issue, next, target, into, caller);
       return;
     }
     case "Composite": {
       const names = namesOf(issue.ast);
       for (const inner of issue.issues)
-        if (read === "caller" || reportedAt(issue.ast, inner))
-          failureAt(
-            asGivenAt(inner, names, path, caller),
-            path,
-            target,
-            into,
-            caller,
-            read,
-          );
+        failureAt(
+          asGivenAt(inner, names, path, caller),
+          path,
+          target,
+          into,
+          caller,
+        );
       return;
     }
     case "AnyOf": {
       if (issue.issues.length === 0) break;
-      if (read === "asLoose" && !issue.issues.every(failsWithoutOptions))
-        return;
       const tried = issue.issues.filter((member) => !declinesAsVoid(member));
       for (const member of tried.length > 0 ? tried : issue.issues)
-        failureAt(member, path, target, into, caller, read);
+        failureAt(member, path, target, into, caller);
       return;
     }
     case "Encoding":
-      failureAt(issue.issue, path, target, into, caller, read);
+      failureAt(issue.issue, path, target, into, caller);
       return;
     case "Filter":
       if (reached) break;
-      // What a check that reads no option reports reads none either.
-      failureAt(issue.issue, path, target, into, caller, "caller");
+      failureAt(issue.issue, path, target, into, caller);
       return;
     case "UnexpectedKey":
       return;
@@ -2825,14 +2615,7 @@ const explained = (path: Path, causes: ReadonlyArray<Cause>): Explained => {
       cause.reading === undefined
         ? callerAt(path)
         : callerOf(cause.reading, cause.at);
-    failureAt(
-      cause.issue,
-      cause.at,
-      path,
-      found,
-      caller,
-      cause.strict === true ? "strict" : "caller",
-    );
+    failureAt(cause.issue, cause.at, path, found, caller);
     if (found.length > 0) return { entries: found, by: "failure" };
   }
   return {
@@ -2893,26 +2676,20 @@ export const refusal = (
 };
 
 /**
- * The parts of a failure at or inside each of these places that name a value the caller gave. Empty
- * where the failure says nothing of the caller's values there.
- *
- * @remarks
- * A failure read with the caller's own parse options is taken as it is. A strict read's failure
- * stands in for a loose read's with the caller's options only where it cannot differ from it, as
- * {@link failureAt} reads it `asLoose`: each part kept is one that read would report too, had it gone
- * on past its first error.
+ * The parts of a failure, from a read with the caller's own parse options, at or inside each of
+ * these places that name a value the caller gave. Empty where the failure says nothing of the
+ * caller's values there.
  */
 export const failureWithin = (
   issue: SchemaIssue.Issue,
   types: ReadonlyArray<Ast>,
   given: unknown,
   places: ReadonlyArray<Path>,
-  read: "caller" | "asLoose",
 ): ReadonlyArray<Entry> =>
   places.flatMap((place) => {
     const caller = callerOf({ types, given }, []);
     const found: Array<Entry> = [];
-    failureAt(withoutInput(issue), [], place, found, caller, read);
+    failureAt(withoutInput(issue), [], place, found, caller);
     return found.filter(({ path }) => caller.gave(path));
   });
 

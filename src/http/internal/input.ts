@@ -104,14 +104,6 @@ interface Decoded<A> {
   readonly forRelaxedWrite?: Effect.Effect<Decoded<A>, ReadFailure, unknown>;
 }
 
-/** What the decoder's reads of what was given observed as they failed. */
-interface EncodedFailures {
-  /** The {@link reporting} read's failure, which reports every issue. */
-  readonly strict?: Schema.SchemaError | undefined;
-  /** A loose read's failure, with the caller's own parse options. */
-  readonly loose?: Schema.SchemaError | undefined;
-}
-
 /** The objects and lists holding the fields a decoder named as it failed at a place. */
 interface Refused {
   readonly at: Excess.Path;
@@ -128,9 +120,9 @@ const reporting: SchemaAST.ParseOptions = {
 };
 
 /**
- * The failures of {@link reporting} reads. Effect gives those options to every step that runs, so a
- * step the schema's author wrote can fail differently under them than under the caller's, and only
- * what no such step reported can explain a refusal.
+ * The failures of {@link reporting} reads, which decide which route a value takes but never say why
+ * it is refused. Effect gives those options to every step it runs, and a step can fail differently
+ * under them than under the caller's, so no refusal takes a cause from them.
  */
 const readStrictly = new WeakSet<Schema.SchemaError>();
 
@@ -394,7 +386,8 @@ const afterAmbiguity = (
 
 /**
  * What these failures of readings through `ast` of what the caller gave, `given`, say about another
- * reading's losses, each failure once.
+ * reading's losses, each failure once. Only a read with the caller's own parse options says
+ * anything, so a {@link reporting} read's failure is left out.
  */
 const failureCauses = (
   ast: SchemaAST.AST,
@@ -406,11 +399,10 @@ const failureCauses = (
       (failure, index) =>
         failure !== noRoute &&
         failure !== provisional &&
+        !readStrictly.has(failure) &&
         failures.indexOf(failure) === index,
     )
-    .map((failure) =>
-      Excess.failureCause(failure, [ast], given, readStrictly.has(failure)),
-    );
+    .map((failure) => Excess.failureCause(failure, [ast], given));
 
 /** A reading that lost fields, with the failures of the readings it stands beside as causes. */
 const explainedBy =
@@ -792,8 +784,7 @@ const decodedReading = <S extends Schema.Top>(
    * The decoder's strict read of what was given, or of the input where a key set to `undefined` makes
    * the two differ, and where it fails which of the caller's keys a loose read would strip. Those are
    * lost even where a decoding default fills their names again. A loose read fails too where neither
-   * is known. Where the read of what was given fails, `givenRefused` is that failure, which reports
-   * every issue.
+   * is known.
    */
   const decodedStrictly = Effect.fnUntraced(function* (
     input: unknown,
@@ -803,14 +794,12 @@ const decodedReading = <S extends Schema.Top>(
     let read: Decoded<unknown> | undefined;
     let stripped: ReadonlyArray<Excess.Path> | undefined;
     let refused: Schema.SchemaError | undefined;
-    let givenRefused: Schema.SchemaError | undefined;
     for (const from of given === input ? [given] : [given, input]) {
       const result = yield* attemptRead(
         decode(from, { ...parseOptions, ...reporting }, input),
       );
       if (result._tag === "Failure") {
         readStrictly.add(result.failure);
-        if (from === given) givenRefused = result.failure;
         refused ??= result.failure;
         stripped ??= strippedFrom(result.failure.issue, from, input)?.filter(
           (path) => valueAt(given, path) !== undefined,
@@ -820,15 +809,15 @@ const decodedReading = <S extends Schema.Top>(
       const value: unknown = result.success;
       const lost = leftOut(input, given, value);
       if (lost.length === 0)
-        return { read: whole(value), stripped: [], refused, givenRefused };
+        return { read: whole(value), stripped: [], refused };
       read ??= { value, lost, byDecoder: true };
     }
-    return { read, stripped, refused, givenRefused };
+    return { read, stripped, refused };
   });
   /**
    * The routes after the constructor, each accounting for what it was given. Where every route fails,
-   * `orElse` decides the failure, with what the decoder's reads of the value observed as they failed,
-   * so that it explains the refusal without reading the value again.
+   * `orElse` decides the failure, with the failure of the loose read with the caller's own parse
+   * options where one ran, so that it explains the refusal without reading the value again.
    */
   const accounted = (
     input: unknown,
@@ -839,7 +828,7 @@ const decodedReading = <S extends Schema.Top>(
     parseOptions?: SchemaAST.ParseOptions,
     constructed = false,
     orElse?: (
-      observed: EncodedFailures,
+      loose: Schema.SchemaError | undefined,
     ) => Effect.Effect<never, ReadFailure, unknown>,
   ): Effect.Effect<Decoded<unknown>, ReadFailure, unknown> => {
     const fields = () =>
@@ -848,17 +837,17 @@ const decodedReading = <S extends Schema.Top>(
         : Effect.fail(failure);
     const settled = (
       reading: Effect.Effect<Decoded<unknown>, ReadFailure, unknown>,
-      observed: () => EncodedFailures = () => ({}),
+      loose: () => Schema.SchemaError | undefined = () => undefined,
     ) =>
       orElse === undefined
         ? reading
-        : recoverRead(reading, () => orElse(observed()));
+        : recoverRead(reading, () => orElse(loose()));
     return Effect.matchEffect(decodedStrictly(input, given, parseOptions), {
       onFailure: (ambiguity) =>
         ambiguity.insideUnion || ambiguity.path.length > 0
           ? settled(keepWholeAlternative(ambiguity, fields))
           : Effect.fail(ambiguity),
-      onSuccess: ({ read, stripped, refused = failure, givenRefused }) => {
+      onSuccess: ({ read, stripped, refused = failure }) => {
         // A loose read can take another union member than a strict one and strip its names unseen.
         // If only an opaque neighbour kept the strict decoder from reading, retry a failed loose
         // read without undefined keys before deciding the encoded side cannot take the value.
@@ -903,8 +892,8 @@ const decodedReading = <S extends Schema.Top>(
           part && stripped !== undefined && stripped.length > 0
             ? ([fieldwise, loose] as const)
             : ([loose, fieldwise] as const);
-        // Where a route loses a field, the other side's own error can say why.
-        const explain = explainedBy(contract.ast, given, failure, refused);
+        // Where a route loses a field, the constructor's own error can say why.
+        const explain = explainedBy(contract.ast, given, failure);
         if (read?.lost.length === 0)
           return Effect.succeed<Decoded<unknown>>({
             ...read,
@@ -920,7 +909,7 @@ const decodedReading = <S extends Schema.Top>(
         // can be taken. Otherwise a field both sides could hold can mean something else to each.
         return settled(
           Effect.map(chooseReading(routes, constructed), explain),
-          () => ({ strict: givenRefused, loose: looseFailure }),
+          () => looseFailure,
         );
       },
     });
@@ -932,29 +921,26 @@ const decodedReading = <S extends Schema.Top>(
    *
    * @remarks
    * No schema step runs again to find those errors, since a step can have effects of its own. They
-   * come from a read of what was given that already failed: a loose read with the caller's own parse
-   * options where one ran, or else the strict read, which reports every issue. Effect gave the strict
-   * read's options to every step it ran, so only its errors that no step seeing them reported stand,
-   * where the caller's options would report them too. The strict read cannot show how a step the
-   * schema's author wrote fails for the caller, nor every error the caller's read would report.
-   * Where neither read says anything of the caller's values there, the failure stays as it is.
+   * come from the loose read of what was given, `loose`, with the caller's own parse options, where
+   * one ran and failed; the decoder runs it beside a key it strips. The strict read's failure is not
+   * used: Effect gave its options to every step it ran, so it can differ from what the caller's
+   * options report. Without that loose read, or where it says nothing of the caller's values there,
+   * the failure stays as it is.
    */
   const onEncodedSide = (
     failure: Schema.SchemaError,
     given: unknown,
-    { strict, loose }: EncodedFailures,
+    loose: Schema.SchemaError | undefined,
   ): Schema.SchemaError => {
+    if (loose === undefined) return failure;
     const holders = Excess.misnamedAt([contract.ast], given, failure.issue);
     if (holders === undefined) return failure;
-    const within = (
-      read: Schema.SchemaError | undefined,
-      as: "caller" | "asLoose",
-    ) =>
-      read === undefined
-        ? []
-        : Excess.failureWithin(read.issue, [contract.ast], given, holders, as);
-    const asCaller = within(loose, "caller");
-    const entries = asCaller.length > 0 ? asCaller : within(strict, "asLoose");
+    const entries = Excess.failureWithin(
+      loose.issue,
+      [contract.ast],
+      given,
+      holders,
+    );
     return entries.length === 0
       ? failure
       : Excess.entriesError(contract.ast, entries);
@@ -1098,11 +1084,11 @@ const decodedReading = <S extends Schema.Top>(
                 at,
                 parseOptions,
                 false,
-                (observed) =>
+                (loose) =>
                   erased(
                     input,
                     given,
-                    onEncodedSide(failure, given, observed),
+                    onEncodedSide(failure, given, loose),
                     parseOptions,
                   ),
               ),

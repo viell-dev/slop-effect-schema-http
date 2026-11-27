@@ -7,6 +7,7 @@ import {
   Schema,
   SchemaGetter,
   SchemaIssue,
+  SchemaParser,
   SchemaTransformation,
 } from "effect";
 import {
@@ -1527,21 +1528,21 @@ describe("a field a part lost under a parent read field by field", () => {
     ],
   ] as const;
   /**
-   * Encoded names throughout, which the part's own constructor reads as excess keys. Each refusal
-   * gives the encoded side's own error.
+   * Encoded names throughout, which the part's own constructor reads as excess keys. Only a strict
+   * read refuses the value, so each refusal gives the generic message.
    */
   const encodedLost = [
     [
       Schema.Struct({ n, f: Filter }),
       { n: "1", f: { page_size: "many" } },
       '["f"]["page_size"]',
-      "Expected a finite number",
+      "The schema cannot keep this field with the rest of the value",
     ],
     [
       Schema.Struct({ n, items: Schema.Array(Filter) }),
       { n: "1", items: [{ page_size: "many" }] },
       '["items"][0]["page_size"]',
-      "Expected a finite number",
+      "The schema cannot keep this field with the rest of the value",
     ],
   ] as const;
   /** Valid fields on either side, and defaults for fields the caller left out. */
@@ -1635,7 +1636,6 @@ describe("a field a part lost under a parent read field by field", () => {
       }),
   );
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/275
   it.effect(
     "keeps a member's loss when another member reads the field loosely",
     () =>
@@ -1658,7 +1658,9 @@ describe("a field a part lost under a parent read field by field", () => {
             yield* schemaFailure(posted(schema), {
               body: { n: 1, m: "1", f: wrap({ page_size: "many" }) },
             } as never),
-          ).toBe(`Expected a finite number\n  at ${field}["page_size"]`);
+          ).toBe(
+            `The schema cannot keep this field with the rest of the value\n  at ${field}["page_size"]`,
+          );
           expect(
             JSON.parse(
               (yield* sentBy(schema, {
@@ -2387,31 +2389,46 @@ describe("a refusal says why it cannot keep a field", () => {
   );
 
   it.effect(
-    "gives the encoded side's own error for a wire-named value it refuses",
+    "gives the loose read's error for a wire-named value beside a stray key",
     () =>
       Effect.gen(function* () {
-        // Optional, the field would be lost; required, the decoded side would report its name missing.
-        for (const schema of [Filter, Required])
-          for (const refuse of bindings(schema))
-            expect(yield* refuse({ page_size: "many", count: "1" })).toBe(
-              'Expected a finite number\n  at ["page_size"]',
-            );
-        for (const refuse of bindings(Required))
-          expect(yield* refuse({ page_size: "5", count: "x" })).toBe(
-            'Expected a finite number\n  at ["count"]',
+        // The decoder strips the stray key reading with the caller's options, and that read reports
+        // the value. `count` is a stray key to `Filter`.
+        for (const refuse of bindings(Filter))
+          expect(yield* refuse({ page_size: "many", count: "1" })).toBe(
+            'Expected a finite number\n  at ["page_size"]',
           );
-        for (const schema of [Filter, Required])
+        for (const refuse of bindings(Required)) {
           expect(
-            yield* schemaFailure(posted(schema), {
-              body: { page_size: 5, count: "1" },
-            } as never),
-          ).toBe('Expected string\n  at ["page_size"]');
-        // A whole object read as encoded, where a decoded value beside the wire name is not text.
-        expect(
-          yield* schemaFailure(posted(Required), {
-            body: { page_size: "5", count: 3 },
-          } as never),
-        ).toBe('Expected string\n  at ["count"]');
+            yield* refuse({ page_size: "many", count: "1", stray: "1" }),
+          ).toBe('Expected a finite number\n  at ["page_size"]');
+          expect(
+            yield* refuse({ page_size: "5", count: "x", stray: "1" }),
+          ).toBe('Expected a finite number\n  at ["count"]');
+        }
+      }),
+  );
+
+  it.effect(
+    "keeps the earlier message where only a strict read refuses a wire-named value",
+    () =>
+      Effect.gen(function* () {
+        // Optional, the field is lost; required, the decoded side reports its name missing. Only the
+        // strict read, whose parse options are not the caller's, reads these values on their side.
+        for (const value of [{ page_size: "many" }, { page_size: 5 }]) {
+          for (const refuse of bindings(Filter))
+            expect(yield* refuse(value)).toBe(generic('["page_size"]'));
+          for (const refuse of bindings(Required))
+            expect(yield* refuse({ ...value, count: "1" })).toBe(
+              'Missing key\n  at ["limit"]',
+            );
+        }
+        for (const refuse of bindings(Required))
+          for (const value of [
+            { page_size: "5", count: "x" },
+            { page_size: "5", count: 3 },
+          ])
+            expect(yield* refuse(value)).toBe('Missing key\n  at ["limit"]');
       }),
   );
 
@@ -2442,17 +2459,13 @@ describe("a refusal says why it cannot keep a field", () => {
           reads = 0;
           lastRead = Infinity;
           const value = { page_size: "many", side: "42" };
-          expect(yield* refuse(value)).toBe(
-            'Expected a finite number\n  at ["page_size"]',
-          );
+          expect(yield* refuse(value)).toBe('Missing key\n  at ["limit"]');
           // The routes before the refusal read the sibling three times, as 0.19.0 does, and the
-          // message comes from what they observed.
+          // refusal reads nothing more.
           expect(reads).toBe(3);
           reads = 0;
           lastRead = 3;
-          expect(yield* refuse(value)).toBe(
-            'Expected a finite number\n  at ["page_size"]',
-          );
+          expect(yield* refuse(value)).toBe('Missing key\n  at ["limit"]');
         }
       }),
   );
@@ -2513,12 +2526,12 @@ describe("a refusal says why it cannot keep a field", () => {
             value: { page_size: "many", stray: "1" },
             expected: 'Caller-options refusal\n  at ["page_size"]',
           },
-          // Effect's own codec fails alike under any options; the sibling's strict-only refusal is
-          // left out, and without the codec's error the decoded side's own stays.
+          // Effect's own codec refuses the value under any options, but only the strict read reports
+          // it there, so neither its error nor the sibling's strict-only refusal is taken.
           {
             schema: beside,
             value: { page_size: "many", side: "42" },
-            expected: 'Expected a finite number\n  at ["page_size"]',
+            expected: 'Missing key\n  at ["limit"]',
           },
           {
             schema: beside,
@@ -2542,6 +2555,74 @@ describe("a refusal says why it cannot keep a field", () => {
   );
 
   it.effect(
+    "takes no cause from a strict read where the options change what Effect's own steps report",
+    () =>
+      Effect.gen(function* () {
+        const strict = { errors: "all", onExcessProperty: "error" } as const;
+        // A declaration that hands the options to another parser, whose issue Effect returns as its
+        // own: a number under strict options, any text otherwise.
+        const declared = Schema.declareConstructor<string | number>()(
+          [],
+          () => (input, _ast, options) =>
+            SchemaParser.decodeUnknownEffect(
+              options.onExcessProperty === "error"
+                ? Schema.Number
+                : Schema.String,
+            )(input, options),
+        );
+        // Effect's own check, which gives the options to a key filter it is given.
+        const keyed = Schema.Record(Schema.String, Schema.Number).check(
+          Schema.isPropertyNames(
+            Schema.String.check(
+              Schema.makeFilter(
+                (_key, _ast, options) =>
+                  options.onExcessProperty !== "error" ||
+                  "Strict-only key refusal",
+              ),
+            ),
+          ),
+        );
+        // Built-ins only: loosely the first member strips `b`, strictly the second keeps it and fails
+        // the check.
+        const chosen = Schema.Union([
+          Schema.Struct({ a: Schema.optionalKey(Schema.Number) }),
+          Schema.Struct({
+            a: Schema.optionalKey(Schema.Number),
+            b: Schema.Number,
+          }),
+        ]).check(Schema.isMaxProperties(1));
+        for (const [field, value] of [
+          [declared, "synthetic"],
+          [keyed, { foo: 1 }],
+          [chosen, { a: 1, b: 2 }],
+        ] as const) {
+          // The caller's options read the value; strict ones refuse it.
+          const decode = Schema.decodeUnknownExit(
+            field as Schema.Codec<unknown>,
+          );
+          expect(Exit.isSuccess(decode(value))).toBe(true);
+          expect(Exit.isFailure(decode(value, strict))).toBe(true);
+          for (const [schema, expected] of [
+            [pageSized({ limit: field }), 'Missing key\n  at ["limit"]'],
+            [
+              pageSized({ limit: Schema.optionalKey(field) }),
+              generic('["page_size"]'),
+            ],
+          ] as const)
+            for (const refuse of bindings(schema))
+              expect(yield* refuse({ page_size: value })).toBe(expected);
+        }
+        // A strict-only refusal at a valid sibling names nothing there.
+        for (const refuse of bindings(
+          pageSized({ limit: Schema.FiniteFromString, side: keyed }),
+        ))
+          expect(
+            yield* refuse({ page_size: "invalid", side: { foo: 1 } }),
+          ).toBe('Missing key\n  at ["limit"]');
+      }),
+  );
+
+  it.effect(
     "gives the decoded side's own error for a decoded-named value",
     () =>
       Effect.gen(function* () {
@@ -2561,12 +2642,12 @@ describe("a refusal says why it cannot keep a field", () => {
           b: Schema.optionalKey(Schema.String),
         }).pipe(Schema.encodeKeys({ a: "A", b: "B" }));
         // Each value here would be kept once the other is corrected, but no reading that refused it
-        // read it, so it is named with the generic message.
+        // read it, so it is named with the generic message. Only the strict read reports `B`'s value.
         expect(
           yield* schemaFailure(posted(Two), {
             body: { A: "x", B: 5 },
           } as never),
-        ).toBe(`${generic('["A"]')}\nExpected string\n  at ["B"]`);
+        ).toBe(`${generic('["A"]')}\n${generic('["B"]')}`);
         expect(
           yield* schemaFailure(posted(Two), {
             body: { a: 5, b: "x" },
@@ -2621,14 +2702,12 @@ describe("a refusal says why it cannot keep a field", () => {
             body: body as never,
           }),
         ).toBe(`${message}\n  at ${at}["page_size"]`);
-      // Items on one side that the encoded side refuses report its own error instead.
+      // Items on one side that only a strict read refuses keep the generic message.
       expect(
         yield* schemaFailure(posted(Schema.Array(Filter)), {
           body: [{ page_size: "many" }, { page_size: "x" }],
         } as never),
-      ).toBe(
-        'Expected a finite number\n  at [0]["page_size"]\nExpected a finite number\n  at [1]["page_size"]',
-      );
+      ).toBe(`${generic('[0]["page_size"]')}\n${generic('[1]["page_size"]')}`);
     }),
   );
 

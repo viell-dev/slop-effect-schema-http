@@ -1277,7 +1277,6 @@ describe("request preparation beside Void", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/275
   it.effect(
     "names an invalid alias beside a valid decoded sibling when Void is last",
     () =>
@@ -1298,8 +1297,9 @@ describe("request preparation beside Void", () => {
             Request.path(schema, () => "/sent"),
           );
           const value = { n: 1, filter };
-          // The encoded side's own error, at the name the caller gave.
-          const expected = "Expected a finite number\n  at " + field;
+          const expected =
+            "The schema cannot keep this field with the rest of the value\n  at " +
+            field;
           expect(
             yield* schemaFailure(post(schema), { body: value } as never),
           ).toBe(expected);
@@ -1355,7 +1355,8 @@ describe("request preparation beside Void", () => {
               } as never),
             ).toBe('{"extra":{"a":1},"filter":{"page_size":"5"}}');
           }
-        // A Void under a renamed key gives its error under the name the caller gave.
+        // Under a renamed key only the strict read reports the Void's error, so the field keeps the
+        // generic message.
         const Renamed = Schema.Struct({ v: Schema.Void }).pipe(
           Schema.encodeKeys({ v: "w" }),
         );
@@ -1363,7 +1364,9 @@ describe("request preparation beside Void", () => {
           yield* schemaFailure(post(Renamed), {
             body: { w: { a: 1 } },
           } as never),
-        ).toBe('Expected void\n  at ["w"]');
+        ).toBe(
+          'The schema cannot keep this field with the rest of the value\n  at ["w"]',
+        );
       }),
   );
 
