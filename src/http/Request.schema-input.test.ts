@@ -2480,6 +2480,14 @@ describe("a refusal says why it cannot keep a field", () => {
             body: { f: { page_size: "5", term: 1 } },
           } as never),
         ).toBe('Expected string\n  at ["f"]["term"]');
+        // Currently, below a wrapper the parent does not read field by field, such as
+        // `Schema.optional`, `Missing key` stays (#313).
+        expect(
+          yield* schemaFailure(
+            posted(Schema.Struct({ f: Schema.optional(Two) })),
+            { body: { f: { page_size: "5", term: 1 } } } as never,
+          ),
+        ).toBe('Missing key\n  at ["f"]["limit"]');
         // Beside a Void, where both fields read the generic message, the member's own error names
         // the sibling alone, and the valid `page_size`, which the reading read, is not named.
         const BesideVoid = pageSized({
@@ -2630,10 +2638,10 @@ describe("a refusal says why it cannot keep a field", () => {
             value: { page_size: "many", stray: "1" },
             expected: 'Caller-options refusal\n  at ["page_size"]',
           },
-          // Effect's own codec refuses `page_size` under any options, but only the strict read
-          // reports it there, so neither its error nor the sibling's strict-only refusal is taken.
-          // No route reads the sibling, so it gives its decoded side's error, read with the caller's
-          // options, as it does beside the decoded name (#313).
+          // Only the strict read decides that the sibling fails, so neither that read's error nor
+          // the sibling's strict-only refusal is taken. No route reads the sibling, so it gives its
+          // decoded side's error, read with the caller's options, as it does beside the decoded
+          // name (#313).
           {
             schema: beside,
             value: { page_size: "many", side: "42" },
