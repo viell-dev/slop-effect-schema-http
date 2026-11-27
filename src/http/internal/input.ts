@@ -573,16 +573,34 @@ const decodedReading = <S extends Schema.Top>(
     );
   };
   const guardedReading = guardReading(guarded);
+  const decodeBeforeWrapperCheck = Schema.decodeUnknownEffect(schema);
   const decodeUnknown = Schema.decodeUnknownEffect(
     guardedReading === guarded ? schema : Schema.make<S>(guardedReading),
   );
+  const checkWrapperFailure = (
+    input: unknown,
+    options: SchemaAST.ParseOptions | undefined,
+    failure: Schema.SchemaError,
+  ) =>
+    refusedOptionSource(failure.issue)
+      ? // A filter or transformation later in the encoded read may also fail. Only
+        // a read that otherwise succeeds could displace a legitimate fieldwise route.
+        Effect.flatMap(decodeBeforeWrapperCheck(input, options), () =>
+          Effect.fail(failure),
+        )
+      : Effect.fail(failure);
   const decode = (
     input: unknown,
     parseOptions?: SchemaAST.ParseOptions,
     caller = input,
   ) =>
-    Effect.mapError(decodeUnknown(input, parseOptions), (failure) =>
-      classify(failure, input, caller),
+    Effect.mapError(
+      Effect.catchTag(
+        decodeUnknown(input, parseOptions),
+        "SchemaError",
+        (failure) => checkWrapperFailure(input, parseOptions, failure),
+      ),
+      (failure) => classify(failure, input, caller),
     );
   /** Check the normalised input for ambiguity before a raw constructor can choose a member. */
   const constructing = (
