@@ -1,4 +1,4 @@
-import { Effect, type Scope } from "effect";
+import { Duration, Effect, type Scope } from "effect";
 import { inject } from "vitest";
 import type { Exchange, WireRequest } from "./evidence.js";
 import type { Listener } from "./lane.js";
@@ -16,6 +16,12 @@ export interface Table {
     readonly exchanges: ReadonlyArray<Exchange>;
     readonly wire: ReadonlyArray<WireRequest>;
   }>;
+  /**
+   * Wait until every streamed reply of the table has ended, or `within` has passed, whichever
+   * comes first. The host answers when the last one ends, so the wait is as long as the server
+   * takes, and no longer than `within`.
+   */
+  readonly settle: (within: Duration.Input) => Effect.Effect<void>;
 }
 
 export interface OpenOptions {
@@ -76,5 +82,11 @@ export const open = (
       definition,
       origins,
       take: control(`/tables/${id}`) as Table["take"],
+      settle: (within) =>
+        Effect.asVoid(
+          control(
+            `/tables/${id}/settle?within=${Duration.toMillis(Duration.fromInputUnsafe(within))}`,
+          ),
+        ),
     })),
   );

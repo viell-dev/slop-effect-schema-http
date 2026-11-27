@@ -139,6 +139,20 @@ export interface Dispatched {
   readonly params: Result<Readonly<Record<string, string>>>;
   /** The request body in base64, as the target read it. */
   readonly body: Result<string>;
+  /** How far the reply's content got, for a streamed reply, when the ledger was read. */
+  readonly streamed: Progress | null;
+}
+
+/** How far the content of a streamed reply got. */
+export interface Progress {
+  /** The chunks that the server took from the content. */
+  readonly chunks: number;
+  /**
+   * How the content ended: after its last chunk, with its error, or dropped by the server before
+   * either, when the client went away or the connection or stream failed. `null` while the server
+   * can still take more.
+   */
+  readonly ended: "finished" | "failed" | "dropped" | null;
 }
 
 export interface Exchange {

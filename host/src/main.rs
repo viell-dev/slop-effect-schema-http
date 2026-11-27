@@ -2,7 +2,8 @@
 //!
 //! - `warded-test-host certificate <directory>` writes a certificate for the loopback names.
 //! - `warded-test-host serve <directory>` uses it, and takes commands on standard input: one JSON
-//!   object per line, answered by one line on standard output.
+//!   object per line, answered by one line on standard output. Answers can come out of order: a
+//!   command that waits is answered when it is done, and the others meanwhile.
 //! - `warded-test-host h2 <directory>` sends one HTTP/2 request that it reads on standard input,
 //!   as [`h2`] describes, and writes what came back, with the server's SETTINGS, on standard
 //!   output.
@@ -18,9 +19,12 @@ use rcgen::PublicKeyData;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, error::Error, fs, path::Path};
+use std::{collections::HashMap, error::Error, fs, path::Path, time::Duration};
 use table::{Definition, Table};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout},
+    sync::mpsc,
+};
 use warded_server::Tls;
 
 #[derive(Deserialize)]
@@ -43,6 +47,11 @@ enum Action {
     },
     Close {
         table: u64,
+    },
+    /// Wait until the table's streamed replies have ended, for at most `within` milliseconds.
+    Settle {
+        table: u64,
+        within: u64,
     },
 }
 
@@ -77,16 +86,38 @@ async fn serve(directory: &Path) -> Result<(), Box<dyn Error>> {
     let tls = Tls::pem_files(directory.join("cert.pem"), directory.join("key.pem"))?;
     let mut tables = HashMap::new();
     let mut lines = BufReader::new(stdin()).lines();
-    let mut output = stdout();
+    let (answers, mut answered) = mpsc::unbounded_channel::<Value>();
+    let writer = tokio::spawn(async move {
+        let mut output = stdout();
+        while let Some(answer) = answered.recv().await {
+            output.write_all(format!("{answer}\n").as_bytes()).await?;
+            output.flush().await?;
+        }
+        Ok::<_, std::io::Error>(())
+    });
+    let answer = |id: u64, result: Result<Value, String>| match result {
+        Ok(value) => json!({ "id": id, "ok": value }),
+        Err(error) => json!({ "id": id, "error": error }),
+    };
     while let Some(line) = lines.next_line().await? {
-        let command: Command = serde_json::from_str(&line)?;
-        let answer = match perform(command.id, command.action, &mut tables, &tls).await {
-            Ok(value) => json!({ "id": command.id, "ok": value }),
-            Err(error) => json!({ "id": command.id, "error": error }),
-        };
-        output.write_all(format!("{answer}\n").as_bytes()).await?;
-        output.flush().await?;
+        let Command { id, action } = serde_json::from_str(&line)?;
+        if let Action::Settle { table, within } = action {
+            // Other tests' commands go on while this one waits.
+            let Some(streams) = tables.get(&table).map(|open: &Table| open.streams.clone()) else {
+                answers.send(answer(id, Err(format!("no table {table}"))))?;
+                continue;
+            };
+            let answers = answers.clone();
+            tokio::spawn(async move {
+                streams.settle(Duration::from_millis(within)).await;
+                let _ = answers.send(answer(id, Ok(Value::Null)));
+            });
+            continue;
+        }
+        answers.send(answer(id, perform(id, action, &mut tables, &tls).await))?;
     }
+    drop(answers);
+    writer.await??;
     Ok(())
 }
 
@@ -99,6 +130,7 @@ async fn perform(
 ) -> Result<Value, String> {
     let unknown = |table| format!("no table {table}");
     match action {
+        Action::Settle { .. } => Err("settle is answered by `serve`".to_owned()),
         Action::Open { definition } => {
             let table = Table::open(&definition, tls).await?;
             let ports = table.ports;

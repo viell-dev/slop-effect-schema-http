@@ -167,10 +167,39 @@ export const filter = (
   test: "number" | "username",
 ): Condition => ({ is: "filter", of, capture, test });
 
+/**
+ * A handler's answer. Its content is `body` as text, `bytes` in base64, or what `stream` writes; a
+ * reply has at most one of them.
+ */
 export interface Reply {
   readonly status: number;
   readonly headers?: ReadonlyArray<readonly [string, string]>;
   readonly body?: string;
+  readonly bytes?: string;
+  readonly stream?: Streamed;
+}
+
+/** A piece of streamed content, written after waiting `after` milliseconds. */
+export interface Chunk {
+  readonly after: number;
+  readonly text: string;
+}
+
+/**
+ * Content that a handler writes piece by piece, as one that streams an export or events does. The
+ * head goes out before the content, with no length unless the reply declares one. After the last
+ * chunk, `then` says what follows:
+ *
+ * - `end`: the end of the content, whatever length the head declared;
+ * - `stall`: nothing more, and no end, so the response stays open;
+ * - `fail`: an error from the content, as from a handler whose source fails in the middle;
+ * - `repeat`: the chunks again, forever.
+ *
+ * The exchange records how far it got, in `Dispatched.streamed`.
+ */
+export interface Streamed {
+  readonly chunks: ReadonlyArray<Chunk>;
+  readonly then: "end" | "stall" | "fail" | "repeat";
 }
 
 /**

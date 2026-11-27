@@ -37,9 +37,9 @@ The projects' own documentation is what the tests are judged against: the librar
   applications: the host condition, copied unchanged from Warded's guide to custom matchers, and the
   `filter` predicates. Keep `Router::select` in the recorder and the dispatch check in `send`, so
   that every exchange compares them.
-- **Handlers.** A target answers what its table gives it: a fixed reply, or a lookup by one of its
-  decoded captures, the way an application reads a record by its id. A handler never decides which
-  route runs.
+- **Handlers.** A target answers what its table gives it: a fixed reply, whose content can be
+  streamed as the table says, or a lookup by one of its decoded captures, the way an application
+  reads a record by its id. A handler never decides which route runs.
 - **The library's public API.** Tests use only the library's package root, Effect, and the
   harness. Do not work around the library or edit `.library/`.
 - **Real sockets.** Every request goes over a socket to a table opened in the test's own scope.
@@ -51,7 +51,8 @@ The projects' own documentation is what the tests are judged against: the librar
   - never weaken an assertion, skip a case or change a value until it passes.
 - **Per provider.** Do not assume one client behaves like another. Where providers differ, the test
   states each one's behaviour, as measured, with the reason in a comment.
-- **Time.** Use `it.live`, and keep real waits bounded.
+- **Time.** Use `it.live`, and keep real waits bounded. Wait for what the host reports, such as a
+  table's streams ending (`settle`), rather than sleeping and checking again.
 
 ## Verification and delivery
 

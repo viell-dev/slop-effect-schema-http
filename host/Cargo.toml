@@ -14,6 +14,8 @@ warded-server = { git = "https://github.com/viell-dev/slop-warded-server", rev =
 
 axum = { version = "0.8.9", default-features = false, features = ["http1", "http2", "tokio"] }
 base64 = "0.23"
+# The content of streamed replies, as a stream of chunks. The version that Axum and Hyper use.
+futures-util = { version = "0.3.34", default-features = false }
 http-body-util = "0.1"
 # The HTTP/2 client decodes response heads with it, and the HTTP/3 client its Huffman codes; both
 # encode requests themselves.

@@ -3,14 +3,21 @@
 use crate::condition::{Condition, OfferSet};
 use base64::{Engine, prelude::BASE64_STANDARD};
 use http_body_util::BodyExt;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use std::{
     collections::BTreeMap,
     convert::Infallible,
+    io,
     net::{Ipv4Addr, SocketAddr},
     sync::{Arc, Mutex},
+    time::Duration,
 };
-use tokio::{net::TcpListener, task::JoinSet};
+use tokio::{
+    net::TcpListener,
+    sync::Notify,
+    task::JoinSet,
+    time::{Instant, sleep, timeout_at},
+};
 use tower::service_fn;
 use warded_server::{
     Limits, Params, Server, Tls,
@@ -74,8 +81,14 @@ impl Lookup {
             .and_then(|value| self.by.get(value))
             .unwrap_or(&self.otherwise)
     }
+
+    fn replies(&self) -> impl Iterator<Item = &Reply> {
+        self.by.values().chain([&self.otherwise])
+    }
 }
 
+/// A handler's answer. Its content is `body` as text, or `bytes` in base64, or what `stream` writes;
+/// a reply has at most one of them.
 #[derive(Clone, Debug, Deserialize)]
 struct Reply {
     status: u16,
@@ -83,6 +96,183 @@ struct Reply {
     headers: Vec<(String, String)>,
     #[serde(default)]
     body: String,
+    bytes: Option<String>,
+    stream: Option<Streamed>,
+}
+
+/// Content that a handler writes piece by piece, as one that streams an export or events does:
+/// each chunk after a delay, and after the last, what `then` says. The server takes each chunk as
+/// it comes, so the reply's head goes out before its content, without a length unless the reply
+/// declares one.
+#[derive(Clone, Debug, Deserialize)]
+struct Streamed {
+    chunks: Vec<Chunk>,
+    then: Then,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct Chunk {
+    /// The milliseconds to wait before writing it.
+    after: u64,
+    text: String,
+}
+
+/// What a streamed reply does after its last chunk.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Then {
+    /// End the content, whatever length the head declared.
+    End,
+    /// Write nothing more, and never end: the response stays open.
+    Stall,
+    /// Fail the content with an error, as a handler does whose source fails in the middle.
+    Fail,
+    /// Write the chunks again, forever.
+    Repeat,
+}
+
+/// How far the content of a streamed reply got.
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+struct Progress {
+    /// The chunks that the server took from the content.
+    chunks: usize,
+    /// How the content ended, or `None` while the server can still take more.
+    ended: Option<Ended>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Ended {
+    /// After the last chunk, as `Then::End` says.
+    Finished,
+    /// With the error of `Then::Fail`.
+    Failed,
+    /// The server dropped the content before it ended: the client went away, or the connection
+    /// or stream failed.
+    Dropped,
+}
+
+/// The progress of one streamed reply, which its content goes on updating after the exchange is
+/// recorded. It is serialized as it stands when the ledger is read.
+#[derive(Clone, Debug, Default)]
+struct Watched(Arc<Mutex<Progress>>);
+
+impl Serialize for Watched {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let progress = *self.0.lock().expect("no holder of a progress panics");
+        progress.serialize(serializer)
+    }
+}
+
+/// The streamed replies of a table that have not ended, so that a test can wait for them.
+#[derive(Debug, Default)]
+pub struct Streams {
+    open: Mutex<usize>,
+    changed: Notify,
+}
+
+impl Streams {
+    /// Wait until no streamed reply of the table is open, or `within` has passed.
+    pub async fn settle(&self, within: Duration) {
+        let deadline = Instant::now() + within;
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if *self.open.lock().expect("no holder of the count panics") == 0 {
+                return;
+            }
+            if timeout_at(deadline, changed).await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
+/// The content of one streamed reply, with what it records of its progress. Dropping it before
+/// it ended records that it was dropped.
+struct Writing {
+    streamed: Streamed,
+    next: usize,
+    failed: bool,
+    watched: Watched,
+    streams: Arc<Streams>,
+}
+
+impl Writing {
+    fn start(streamed: Streamed, streams: Arc<Streams>) -> Self {
+        *streams.open.lock().expect("no holder of the count panics") += 1;
+        Self {
+            streamed,
+            next: 0,
+            failed: false,
+            watched: Watched::default(),
+            streams,
+        }
+    }
+
+    /// Record the end, unless the content has ended already.
+    fn end(&self, how: Ended) {
+        let mut progress = self
+            .watched
+            .0
+            .lock()
+            .expect("no holder of a progress panics");
+        if progress.ended.is_none() {
+            progress.ended = Some(how);
+            drop(progress);
+            *self
+                .streams
+                .open
+                .lock()
+                .expect("no holder of the count panics") -= 1;
+            self.streams.changed.notify_waiters();
+        }
+    }
+
+    /// The next piece of content, or `None` at its end.
+    async fn next(&mut self) -> Option<Result<axum::body::Bytes, io::Error>> {
+        if self.failed {
+            return None;
+        }
+        if self.next == self.streamed.chunks.len() {
+            match self.streamed.then {
+                Then::End => {
+                    self.end(Ended::Finished);
+                    return None;
+                }
+                Then::Stall => std::future::pending::<()>().await,
+                Then::Fail => {
+                    self.failed = true;
+                    self.end(Ended::Failed);
+                    return Some(Err(io::Error::other("the streamed content failed")));
+                }
+                Then::Repeat => self.next = 0,
+            }
+        }
+        let chunk = &self.streamed.chunks[self.next];
+        sleep(Duration::from_millis(chunk.after)).await;
+        self.next += 1;
+        self.watched
+            .0
+            .lock()
+            .expect("no holder of a progress panics")
+            .chunks += 1;
+        Some(Ok(axum::body::Bytes::from(chunk.text.clone())))
+    }
+
+    fn body(self) -> Body {
+        Body::from_stream(futures_util::stream::unfold(self, |mut writing| async {
+            let piece = writing.next().await?;
+            Some((piece, writing))
+        }))
+    }
+}
+
+impl Drop for Writing {
+    fn drop(&mut self) {
+        self.end(Ended::Dropped);
+    }
 }
 
 /// The request head, as the HTTP stack gave it to the router.
@@ -125,6 +315,8 @@ struct Dispatched {
     params: Result<BTreeMap<String, String>, String>,
     /// The request body, in base64, or why it could not be read.
     body: Result<String, String>,
+    /// How far the reply's content got, for a streamed reply.
+    streamed: Option<Watched>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -143,6 +335,7 @@ type Routes = Router<Body, Body, Infallible>;
 /// A table that is being served. Dropping it closes its listeners and connections.
 pub struct Table {
     pub ledger: Ledger,
+    pub streams: Arc<Streams>,
     pub ports: Ports,
     _serving: JoinSet<()>,
 }
@@ -159,7 +352,8 @@ pub struct Ports {
 
 impl Table {
     pub async fn open(definition: &Definition, tls: &Tls) -> Result<Self, String> {
-        let routes = routes(definition)?;
+        let streams = Arc::<Streams>::default();
+        let routes = routes(definition, &streams)?;
         let ledger = Ledger::default();
         let app = app(routes, ledger.clone(), definition.cors);
         let mut serving = JoinSet::new();
@@ -199,6 +393,7 @@ impl Table {
 
         Ok(Self {
             ledger,
+            streams,
             ports: Ports {
                 plain: plain_port,
                 http,
@@ -213,7 +408,7 @@ fn text(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-fn routes(definition: &Definition) -> Result<Routes, String> {
+fn routes(definition: &Definition, streams: &Arc<Streams>) -> Result<Routes, String> {
     let offers = definition
         .offers
         .iter()
@@ -229,6 +424,12 @@ fn routes(definition: &Definition) -> Result<Routes, String> {
         if target.reply.is_some() && target.lookup.is_some() {
             return Err(format!("{:?} has both a reply and a lookup", target.name));
         }
+        let lookup = target.lookup.iter();
+        for reply in target.reply.iter().chain(lookup.flat_map(Lookup::replies)) {
+            reply
+                .check()
+                .map_err(|error| format!("{:?}: {error}", target.name))?;
+        }
     }
     for route in &definition.routes {
         let condition = route
@@ -236,19 +437,27 @@ fn routes(definition: &Definition) -> Result<Routes, String> {
             .build(&offers)
             .map_err(|error| format!("route {:?}: {error}", route.target.name))?;
         let target = Arc::new(route.target.clone());
+        let streams = streams.clone();
         routes = routes.route(
             condition,
-            service_fn(move |request| answer(target.clone(), request)),
+            service_fn(move |request| answer(target.clone(), streams.clone(), request)),
         );
     }
     if let Some(target) = &definition.fallback {
         let target = Arc::new(target.clone());
-        routes = routes.fallback(service_fn(move |request| answer(target.clone(), request)));
+        let streams = streams.clone();
+        routes = routes.fallback(service_fn(move |request| {
+            answer(target.clone(), streams.clone(), request)
+        }));
     }
     Ok(routes)
 }
 
-async fn answer(target: Arc<Target>, request: Request) -> Result<Response, Infallible> {
+async fn answer(
+    target: Arc<Target>,
+    streams: Arc<Streams>,
+    request: Request,
+) -> Result<Response, Infallible> {
     let (mut parts, body) = request.into_parts();
     let captures = parts
         .extensions
@@ -270,6 +479,13 @@ async fn answer(target: Arc<Target>, request: Request) -> Result<Response, Infal
         (None, Some(lookup)) => Some(lookup.reply(params.as_ref().ok())),
         (None, None) => None,
     };
+    let (response, streamed) = match reply {
+        Some(reply) => {
+            let (response, streamed) = reply.response(&streams);
+            (Some(response), streamed)
+        }
+        None => (None, None),
+    };
     let dispatched = Dispatched {
         route: target.name.clone(),
         index: parts
@@ -279,9 +495,10 @@ async fn answer(target: Arc<Target>, request: Request) -> Result<Response, Infal
         captures,
         params,
         body,
+        streamed,
     };
-    let mut response = match reply {
-        Some(reply) => reply.response(),
+    let mut response = match response {
+        Some(response) => response,
         None => {
             let selection = serde_json::json!({
                 "route": dispatched.route,
@@ -300,19 +517,59 @@ async fn answer(target: Arc<Target>, request: Request) -> Result<Response, Infal
 }
 
 impl Reply {
-    fn response(&self) -> Response {
-        let mut response = Response::new(Body::from(self.body.clone()));
+    /// Refuse a reply whose content is given twice, or cannot be written.
+    fn check(&self) -> Result<(), String> {
+        let given = [
+            !self.body.is_empty(),
+            self.bytes.is_some(),
+            self.stream.is_some(),
+        ];
+        if given.into_iter().filter(|given| *given).count() > 1 {
+            return Err("a reply has one of a body, bytes and a stream".to_owned());
+        }
+        if let Some(bytes) = &self.bytes {
+            BASE64_STANDARD.decode(bytes).map_err(text)?;
+        }
+        if let Some(stream) = &self.stream
+            && matches!(stream.then, Then::Repeat)
+            && stream.chunks.is_empty()
+        {
+            return Err("a stream that repeats needs a chunk".to_owned());
+        }
+        Ok(())
+    }
+
+    /// The response, and for a streamed reply, the record of how far its content gets.
+    fn response(&self, streams: &Arc<Streams>) -> (Response, Option<Watched>) {
+        let (body, watched) = match (&self.bytes, &self.stream) {
+            (Some(bytes), _) => {
+                let bytes = BASE64_STANDARD.decode(bytes).expect("checked at open");
+                (Body::from(bytes), None)
+            }
+            (None, Some(stream)) => {
+                let writing = Writing::start(stream.clone(), streams.clone());
+                let watched = writing.watched.clone();
+                (writing.body(), Some(watched))
+            }
+            (None, None) => (Body::from(self.body.clone()), None),
+        };
+        let mut response = Response::new(body);
         match StatusCode::from_u16(self.status) {
             Ok(status) => *response.status_mut() = status,
-            Err(error) => return problem(&error.to_string()),
+            Err(error) => return (problem(&error.to_string()), watched),
         }
         for (name, value) in &self.headers {
             match (name.parse::<HeaderName>(), value.parse::<HeaderValue>()) {
                 (Ok(name), Ok(value)) => response.headers_mut().append(name, value),
-                _ => return problem(&format!("{name:?}: {value:?} is not a header")),
+                _ => {
+                    return (
+                        problem(&format!("{name:?}: {value:?} is not a header")),
+                        watched,
+                    );
+                }
             };
         }
-        response
+        (response, watched)
     }
 }
 

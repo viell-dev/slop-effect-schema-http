@@ -19,8 +19,9 @@ family, HTTP version, transport security and host.
 
 It also tests the library against services built on Warded: route tables shaped like real APIs,
 whose handlers answer with the conventions real services use, such as odd statuses, error shapes
-that differ by status, repeated `Set-Cookie` lines, JSONP, challenges and redirects, and whose
-routes match the way such services read a request, such as by forwarded fields or `;` queries.
+that differ by status, repeated `Set-Cookie` lines, JSONP, challenges, redirects, content that is
+slow, stalls, ends early or never ends, and codings that do not match the bytes, and whose routes
+match the way such services read a request, such as by forwarded fields or `;` queries.
 The tests check what the library decodes or refuses of each answer, and the records show what the
 server did with it on the way. The
 [hostile suite](https://github.com/viell-dev/slop-effect-schema-http/tree/hostile-servers-test)
@@ -57,7 +58,9 @@ four records of each exchange, in the order they happen:
 4. **What ran.** The selected target reports the selection and captures in its request's
    extensions, the captures as the server's `Params` extractor decodes them, and the body it read.
    The exchange also keeps the status the application answered, before the server finished the
-   response, which can replace it.
+   response, which can replace it, and for a streamed reply, how far the server took its content:
+   the chunks it took, and whether the content finished, failed, or was dropped when the client
+   went away. A test can wait for its streams to end, for a bounded time, before reading this.
 
 So a mismatch says where it belongs. A wrong wire points at the library or the HTTP client it uses.
 A right wire and a wrong head point at the server's HTTP stack. A right head and a wrong choice point
@@ -101,14 +104,17 @@ Tests that need Node itself live in `*.node.test.ts` files, and tests that need 
 
 A service table in [`src/apis/`](./src/apis/) is an ordinary route table whose targets answer the
 way a real service does: with a fixed reply, or with a lookup by one of the route's decoded
-captures, the way an application reads a record by its id. Each table, route and reply says which
-convention it imitates, with synthetic names and data. The consumer side, the library's
-description of the same API, sits beside it.
+captures, the way an application reads a record by its id. A reply's content is text, bytes, or a
+stream: chunks written after delays, then the end, a stall that keeps the response open, an error,
+or the chunks again, forever. Each table, route and reply says which convention it imitates, with
+synthetic names and data. The consumer side, the library's description of the same API, sits
+beside it.
 
-| Table                                 | What it imitates                                                                                                                                                                                                            |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`parcels.ts`](./src/apis/parcels.ts) | A parcel-tracking API behind an edge proxy: error shapes by status and layer, statuses from 100 to 999, `Set-Cookie` lines with a clearing cookie of the same name, PURGE                                                   |
-| [`reports.ts`](./src/apis/reports.ts) | A CGI-style reporting gateway: a report for a trusted forwarded hop only, `;` queries, JSONP, a Digest challenge, and temporary, permanent, relative, cross-origin and looping redirects, with an archive on another origin |
+| Table                                 | What it imitates                                                                                                                                                                                                                  |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`parcels.ts`](./src/apis/parcels.ts) | A parcel-tracking API behind an edge proxy: error shapes by status and layer, statuses from 100 to 999, `Set-Cookie` lines with a clearing cookie of the same name, PURGE                                                         |
+| [`reports.ts`](./src/apis/reports.ts) | A CGI-style reporting gateway: a report for a trusted forwarded hop only, `;` queries, JSONP, a Digest challenge, and temporary, permanent, relative, cross-origin and looping redirects, with an archive on another origin       |
+| [`exports.ts`](./src/apis/exports.ts) | An export service: slow CSV and NDJSON exports, a feed that stalls, content that ends before its `Content-Length` or fails halfway, an endless event stream, and stored files whose `Content-Encoding` need not match their bytes |
 
 | File                                                                       | What it checks                                                                     |
 | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
@@ -131,6 +137,8 @@ description of the same API, sits beside it.
 | [`parcels.node.test.ts`](./src/scenarios/parcels.node.test.ts)             | What the servers wrote for those answers, through the recording providers          |
 | [`reports.test.ts`](./src/scenarios/reports.test.ts)                       | The reports table through every provider: what each decodes, follows or hands over |
 | [`reports.node.test.ts`](./src/scenarios/reports.node.test.ts)             | Its repeated fields and redirects over HTTP/2 and HTTP/3, as both sides wrote them |
+| [`exports.test.ts`](./src/scenarios/exports.test.ts)                       | The exports table through every provider: timeouts, interruption and body reads    |
+| [`exports.node.test.ts`](./src/scenarios/exports.node.test.ts)             | How the servers ended those streams over HTTP/2 and HTTP/3, and the stored bytes   |
 
 ## Running the suite
 

@@ -1,5 +1,5 @@
 import { expect } from "@effect/vitest";
-import { Effect, Exit, type Layer, Schema } from "effect";
+import { type Duration, Effect, Exit, type Layer, Schema } from "effect";
 import type { HttpClient } from "effect/http";
 import { Body, Operation, Request, Response } from "viell-effect-schema-http";
 import type { Exchange, WireRequest } from "./evidence.js";
@@ -117,6 +117,15 @@ const expectConsistent = (table: Table, exchange: Exchange) => {
   }
 };
 
+export interface Collecting {
+  /**
+   * Before taking the records, wait until the table's streamed replies have ended, for at most
+   * this long, so that their progress says how each ended. A reply that is still open after it is
+   * recorded as open.
+   */
+  readonly settle?: Duration.Input;
+}
+
 /**
  * Run an Effect that sends requests to a table, and collect what each side saw during it. Use it
  * for a request that names its own target, such as `*` or an absolute URL; `send` covers the rest.
@@ -124,11 +133,13 @@ const expectConsistent = (table: Table, exchange: Exchange) => {
 export const collect = <A, E, R>(
   table: Table,
   run: Effect.Effect<A, E, R>,
+  { settle }: Collecting = {},
 ): Effect.Effect<Sent<A>, never, R> =>
   Effect.gen(function* () {
     // Leave out what earlier calls caused but did not take, such as a connection closing late.
     yield* table.take;
     const exit = yield* Effect.exit(run);
+    if (settle !== undefined) yield* table.settle(settle);
     const taken = yield* table.take;
     const wire = taken.wire.filter((request) => !request.preflight);
     for (const exchange of taken.exchanges) expectConsistent(table, exchange);
@@ -141,31 +152,105 @@ export const collect = <A, E, R>(
   });
 
 /**
- * Run an operation against one of a table's listeners through a provider, and collect what each
- * side saw. The table's origin goes in front of the operation's base URL, so a definition can keep a
- * relative base such as `/api/v1` or none at all.
+ * An operation's Effect against one of a table's listeners through a provider. The table's origin
+ * goes in front of the operation's base URL, so a definition can keep a relative base such as
+ * `/api/v1` or none at all. `send` runs it and collects the records; use it alone inside `collect`
+ * to run it some other way, such as in a fiber that the test interrupts.
  */
-export const send = <I, A, E, R>(
+export const execute = <I, A, E, R>(
   table: Table,
   listener: Listener,
   client: Client | Layer.Layer<HttpClient.HttpClient>,
   definition: Operation.Operation<I, A, E, R>,
   input: I,
-): Effect.Effect<Sent<A>, never, Exclude<R, HttpClient.HttpClient>> => {
+): Effect.Effect<A, E, Exclude<R, HttpClient.HttpClient>> => {
   const layer = "layer" in client ? client.layer : client;
   const origin = table.origins[listener];
   // Every operation the scenarios send comes from `Operation.make`, which keeps its parts.
   const adjusted = Operation.mapRequest(
     Request.mapBaseUrl((base) => `${origin}${base}`),
   )(definition as never) as unknown as Operation.Operation<I, A, E, R>;
-  return collect(
-    table,
-    adjusted.execute(input).pipe(Effect.provide(layer)),
-  ) as Effect.Effect<Sent<A>, never, Exclude<R, HttpClient.HttpClient>>;
+  return adjusted.execute(input).pipe(Effect.provide(layer)) as Effect.Effect<
+    A,
+    E,
+    Exclude<R, HttpClient.HttpClient>
+  >;
 };
+
+/** Run an operation as `execute` does, and collect what each side saw. */
+export const send = <I, A, E, R>(
+  table: Table,
+  listener: Listener,
+  client: Client | Layer.Layer<HttpClient.HttpClient>,
+  definition: Operation.Operation<I, A, E, R>,
+  input: I,
+  collecting?: Collecting,
+): Effect.Effect<Sent<A>, never, Exclude<R, HttpClient.HttpClient>> =>
+  collect(
+    table,
+    execute(table, listener, client, definition, input),
+    collecting,
+  );
 
 /** The one exchange of a call that should have made exactly one. */
 export const only = (sent: Sent): Exchange => {
   expect(sent.exchanges, JSON.stringify(sent)).toHaveLength(1);
   return sent.exchanges[0]!;
+};
+
+/** One request of a call, as the routes saw and answered it. */
+export interface Hop {
+  readonly route: string;
+  readonly path: string;
+  readonly status: number;
+  readonly method?: string;
+  readonly query?: string;
+  readonly captures?: Readonly<Record<string, string>>;
+}
+
+/**
+ * Check every request a call made, in order: its request line on a cleartext wire, the head the
+ * server saw, the route `select` chose with its captures, the handler that ran with the captures
+ * the server decoded, and the status that handler answered.
+ */
+export const expectHops = (
+  table: Table,
+  sent: Sent,
+  listener: Listener,
+  hops: ReadonlyArray<Hop>,
+): ReadonlyArray<Exchange> => {
+  const context = JSON.stringify(sent);
+  const line = ({ method = "GET", path, query }: Hop) => [
+    method,
+    query === undefined ? path : `${path}?${query}`,
+  ];
+  if (listener !== "https")
+    expect(
+      sent.wire.map((request) => [request.method, request.target]),
+      context,
+    ).toEqual(hops.map(line));
+  expect(sent.exchanges, context).toHaveLength(hops.length);
+  hops.forEach((hop, at) => {
+    const { route, path, status, method = "GET", captures = {} } = hop;
+    const exchange = sent.exchanges[at]!;
+    expect(exchange.seen, context).toMatchObject({
+      method,
+      path,
+      query: hop.query ?? null,
+    });
+    expect(exchange.verdict, context).toEqual({
+      is: "selected",
+      index: table.definition.routes.findIndex(
+        (candidate) => candidate.name === route,
+      ),
+      captures,
+    });
+    expect(exchange.dispatched, context).toMatchObject({
+      route,
+      captures,
+      params: { Ok: captures },
+    });
+    expect(exchange.status, context).toBe(status);
+  });
+  return sent.exchanges;
 };
