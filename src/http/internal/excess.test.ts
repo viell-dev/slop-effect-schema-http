@@ -4,6 +4,8 @@ import {
   Option,
   Schema,
   SchemaAST,
+  SchemaGetter,
+  SchemaIssue,
   SchemaTransformation,
 } from "effect";
 import * as Excess from "./excess.js";
@@ -1276,9 +1278,126 @@ describe("Excess.failureWithin", () => {
     );
     // A loose read takes the first member, which the strict read refused only for `z`.
     expect(
-      Excess.failureWithin(strict.issue, [Wire.ast], given, [[]]).map(
-        ({ path }) => path,
-      ),
+      Excess.failureWithin(
+        strict.issue,
+        [Wire.ast],
+        given,
+        [[]],
+        "asLoose",
+      ).map(({ path }) => path),
     ).toEqual([["n"]]);
+  });
+
+  it("keeps only what no step that sees the parse options reported", () => {
+    // Steps the schema's author wrote, which Effect gives the parse options.
+    const Authored = Schema.String.pipe(
+      Schema.decodeTo(Schema.Number, {
+        decode: SchemaGetter.transformEffect(() =>
+          Effect.fail(new SchemaIssue.InvalidValue({ message: "authored" })),
+        ),
+        encode: SchemaGetter.transform(String),
+      }),
+    );
+    const Checked = Schema.String.check(Schema.makeFilter(() => "authored"));
+    const Decoded = Schema.String.pipe(
+      Schema.decodeTo(Schema.Number, {
+        decode: SchemaGetter.transformEffect((value: string) =>
+          Effect.succeed(Number(value)),
+        ),
+        encode: SchemaGetter.transform(String),
+      }),
+    );
+    // Effect's own check, on what the struct's fields made of the value.
+    const none = Schema.isMaxProperties(0);
+    class Item extends Schema.Class<Item>("Item")({
+      n: Schema.FiniteFromString,
+    }) {}
+    const Wire = Schema.Struct({
+      n: Schema.FiniteFromString,
+      short: Schema.String.check(Schema.isMinLength(3)),
+      item: Item,
+      authored: Authored,
+      checked: Checked,
+      plain: Schema.Struct({ x: Schema.String }).check(none),
+      made: Schema.Struct({ x: Decoded }).check(none),
+      either: Schema.Union([
+        Schema.Struct({ a: Authored }),
+        Schema.Struct({ a: Schema.Number }),
+      ]),
+    });
+    const given = {
+      n: "x",
+      short: "ab",
+      item: { n: "y" },
+      authored: "1",
+      checked: "1",
+      plain: { x: "1" },
+      made: { x: "1" },
+      either: { a: "1" },
+    };
+    const strict = Effect.runSync(
+      Effect.flip(
+        Schema.decodeUnknownEffect(Wire)(given, {
+          errors: "all",
+          onExcessProperty: "error",
+          reportInput: true,
+        }),
+      ),
+    );
+    const paths = (as: "caller" | "asLoose") =>
+      Excess.failureWithin(strict.issue, [Wire.ast], given, [[]], as).map(
+        ({ path }) => path,
+      );
+    const own = [["n"], ["short"], ["item", "n"], ["plain"]];
+    expect(paths("caller")).toEqual([
+      ["n"],
+      ["short"],
+      ["item", "n"],
+      ["authored"],
+      ["checked"],
+      ["plain"],
+      ["made"],
+      ["either", "a"],
+      ["either", "a"],
+    ]);
+    // A union stands only where each member fails alike under any options.
+    expect(paths("asLoose")).toEqual(own);
+    // Explaining a loss, a union stands member by member.
+    const generic =
+      "The schema cannot keep this field with the rest of the value";
+    expect(
+      Excess.refusal(
+        Wire.ast,
+        [["authored"], ["either"]],
+        [Excess.failureCause(strict, [Wire.ast], given, true)],
+      ).message,
+    ).toBe(
+      `${generic}\n  at ["authored"]\nExpected number\n  at ["either"]["a"]`,
+    );
+    // A getter that sees the options can leave out a key the caller did not give, as a default could
+    // fill it.
+    const Left = Schema.Struct({
+      left: Schema.String.pipe(
+        Schema.decodeTo(Schema.String, {
+          decode: SchemaGetter.transformOptionalEffect(() =>
+            Effect.succeed(Option.none()),
+          ),
+          encode: SchemaGetter.passthrough(),
+        }),
+      ),
+    });
+    const left = Effect.runSync(
+      Effect.flip(
+        Schema.decodeUnknownEffect(Left)({}, { onExcessProperty: "error" }),
+      ),
+    );
+    const named = (readStrictly: boolean) =>
+      Excess.refusal(
+        Left.ast,
+        [["left"]],
+        [Excess.failureCause(left, [Left.ast], {}, readStrictly)],
+      ).message;
+    expect(named(false)).toBe('Missing key\n  at ["left"]');
+    expect(named(true)).toBe(`${generic}\n  at ["left"]`);
   });
 });

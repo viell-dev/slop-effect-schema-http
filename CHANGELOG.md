@@ -14,7 +14,9 @@
   `Expected a finite number at ["page_size"]`, where an optional field read
   `The schema cannot keep this field with the rest of the value` and a required one
   `Missing key at ["limit"]`; a decoded-named value the decoded side refuses reads its error too.
-  Items of a list or record on different sides read
+  Where a step that Effect gives the parse options to, such as a decoder that can fail or a check
+  the schema's author wrote, runs on the way to a wire-named field, the earlier message stays. Items
+  of a list or record on different sides read
   `The items of this field's list or record use different sides; give every item on one side`, and a
   built-in such as a `Map` where a record would rebuild it reads
   `The schema cannot keep this Map as a record`. Beside a Void,

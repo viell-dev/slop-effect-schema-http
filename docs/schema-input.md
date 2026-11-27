@@ -198,13 +198,15 @@ into, as an `Option` is. It has these consequences:
   `[{ limit: 1, page_size: "02" }, { page_size: "25" }]` refuses at `[0]["page_size"]` and at
   `[1]["page_size"]`, and a record names each entry the same way. A schema's own error, such as
   `Expected number`, is Effect's, which reports the first failure it meets. Where the side a value
-  was given on refuses it, that side's own error names the field, under the name the caller gave.
-  The other fields it cannot keep are named too, with the generic message where nothing more is
-  known, even where correcting that value would keep them: the other side's reading of the whole
-  value loses them whether or not they are valid. Only a wire-named field that the reading read
-  under its decoded name is left out. A refusal stores no value the caller gave and adds none to its
-  messages, but a message the schema's author wrote, which can quote the value, reads as written.
-  [Limits](./limits.md#read-a-refusal-message) lists each message.
+  was given on refuses it, that side's own error names the field, under the name the caller gave,
+  unless a step that sees the parse options runs on the way to a wire-named field. The other fields
+  it cannot keep are named too, with the generic message where nothing more is known, even where
+  correcting that value would keep them: the other side's reading of the whole value loses them
+  whether or not they are valid. Only a wire-named field that the reading read under its decoded
+  name is left out. A refusal stores no value the caller gave and adds none to its messages, but a
+  message the schema's author wrote, which can quote the value, reads as written.
+  [Limits](./limits.md#read-a-refusal-message) lists each message and the steps that see the parse
+  options.
 
 ### Where it applies
 
