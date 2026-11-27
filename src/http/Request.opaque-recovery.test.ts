@@ -974,6 +974,33 @@ describe("loose writes inside Some", () => {
   const who = new Counted({ a: "item" });
   const writtenWho = { a: "item" };
   const wide = { ...owner, limit: "l" };
+  const classChoice = Schema.Union([A, Counted]);
+  const direct = <S extends Schema.Top>(payload: S) =>
+    Schema.NullOr(payload).pipe(
+      Schema.decodeTo(
+        Schema.Option(Schema.toType(payload)),
+        SchemaTransformation.transform({
+          decode: (value): Option.Option<S["Type"]> =>
+            value === null ? Option.none() : Option.some(value),
+          encode: (value) => Option.getOrNull(value),
+        }),
+      ),
+    );
+  const boxed = <S extends Schema.Top>(payload: S) =>
+    Schema.Struct({ v: Schema.NullOr(payload) }).pipe(
+      Schema.decodeTo(
+        Schema.Option(Schema.toType(payload)),
+        SchemaTransformation.transform({
+          decode: ({ v }): Option.Option<S["Type"]> =>
+            v === null ? Option.none() : Option.some(v),
+          encode: (value) => ({ v: Option.getOrNull(value) }),
+        }),
+      ),
+    );
+  const caught = <S extends Schema.Top>(payload: S) =>
+    Schema.OptionFromNullOr(payload).pipe(
+      Schema.catchEncoding(() => Effect.succeedSome(null)),
+    );
 
   it.effect(
     "keeps a wider field and its narrow control below an index rename",
@@ -1298,62 +1325,178 @@ describe("loose writes inside Some", () => {
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/312
   it.effect(
-    "keeps wider fields through a plain codec that exposes the same Some payload",
+    "leaves a stray key inside a tagged Option to Effect after a failed strict write",
     () =>
       Effect.gen(function* () {
-        const decoded = Schema.Option(Schema.toType(Filter));
-        const direct = Schema.NullOr(Filter).pipe(
+        const codec = A.pipe(
           Schema.decodeTo(
-            decoded,
+            AB,
             SchemaTransformation.transform({
-              decode: (value) => Option.fromNullOr(value),
-              encode: (value) => Option.getOrNull(value),
+              decode: ({ a }) => ({ a, b: "default" }),
+              encode: (value) => value,
             }),
           ),
         );
-        const boxed = Schema.Struct({ v: Schema.NullOr(Filter) }).pipe(
-          Schema.decodeTo(
-            decoded,
-            SchemaTransformation.transform({
-              decode: ({ v }) => Option.fromNullOr(v),
-              encode: (value) => ({ v: Option.getOrNull(value) }),
-            }),
+        const schema = Schema.Struct({
+          held: Schema.OptionFromNullOr(
+            Schema.Struct({ inner: Schema.Option(Filter) }),
           ),
-        );
-        const input = { held: Option.some(wide), who };
-        expect(
-          yield* json(Schema.Struct({ held: direct, who: Counted }), input),
-        ).toEqual({
-          held: wide,
-          who: writtenWho,
+          codec,
         });
         expect(
-          yield* json(Schema.Struct({ held: boxed, who: Counted }), input),
+          yield* json(schema, {
+            held: Option.some({ inner: Option.some({ ...wide, stray: "x" }) }),
+            codec: { a: "a", b: "b" },
+          }),
         ).toEqual({
-          held: { v: wide },
-          who: writtenWho,
+          held: { inner: { _tag: "Some", value: owner } },
+          codec: { a: "a" },
         });
       }),
   );
 
   it.effect(
-    "keeps a wider payload when encoding middleware follows an unwrapping link",
+    "keeps the wider encoded field in a tagged Option beside a scalar outside a payload",
     () =>
       Effect.gen(function* () {
-        const held = Schema.OptionFromNullOr(Filter).pipe(
-          Schema.catchEncoding(() => Effect.succeedSome(null)),
-        );
-        const schema = Schema.Struct({ held, who: Counted, filter: Filter });
+        const payload = Schema.Union([
+          Owner,
+          Schema.Struct({
+            owner: Schema.String,
+            limit: Schema.FiniteFromString,
+          }),
+        ]);
+        const schema = Schema.Struct({
+          held: Schema.Union([Schema.Option(payload), Schema.String]),
+          item: classChoice,
+        });
         expect(
-          yield* json(schema, { held: Option.some(wide), who, filter: wide }),
+          yield* json(schema, {
+            held: Option.some({ ...owner, limit: 5 }),
+            item: who,
+          }),
         ).toEqual({
-          held: wide,
-          who: writtenWho,
-          filter: wide,
+          held: { _tag: "Some", value: { ...owner, limit: "5" } },
+          item: writtenWho,
         });
       }),
   );
+
+  it.effect(
+    "keeps a tagged Option wide inside a payload beside an unwrapping alternative",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Struct({
+          held: Schema.OptionFromNullOr(
+            Schema.Struct({
+              inner: Schema.Union([
+                Schema.Option(Filter),
+                Schema.OptionFromNullOr(Filter),
+              ]),
+            }),
+          ),
+          item: classChoice,
+        });
+        expect(
+          yield* json(schema, {
+            held: Option.some({ inner: Option.some(wide) }),
+            item: who,
+          }),
+        ).toEqual({
+          held: { inner: { _tag: "Some", value: wide } },
+          item: writtenWho,
+        });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/312
+  it.effect(
+    "sends the class member and leaves a tagged sibling's member choice to Effect",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Struct({
+          held: Schema.Option(Filter),
+          item: classChoice,
+        });
+        expect(
+          yield* json(schema, { held: Option.some(wide), item: who }),
+        ).toEqual({
+          held: { _tag: "Some", value: owner },
+          item: writtenWho,
+        });
+      }),
+  );
+
+  for (const [name, codec, wire] of [
+    ["a direct transform", direct, wide],
+    ["a single-field transform", boxed, { v: wide }],
+    ["encoding middleware", caught, wide],
+  ] as const) {
+    it.effect(
+      `keeps wider fields through ${name} at a field or inside another Some`,
+      () =>
+        Effect.gen(function* () {
+          const inner = codec(Filter);
+          const some = Option.some(wide);
+          expect(
+            yield* json(Schema.Struct({ held: inner, who: Counted }), {
+              held: some,
+              who,
+            }),
+          ).toEqual({
+            held: wire,
+            who: writtenWho,
+          });
+          const held = Schema.OptionFromNullOr(Schema.Struct({ inner }));
+          expect(
+            yield* json(Schema.Struct({ held, who: Counted }), {
+              held: Option.some({ inner: some }),
+              who,
+            }),
+          ).toEqual({
+            held: { inner: wire },
+            who: writtenWho,
+          });
+        }),
+    );
+  }
+
+  for (const [name, codec] of [
+    ["a direct transform", direct],
+    ["encoding middleware", caught],
+  ] as const) {
+    it.effect(`keeps a wider same-tag member through ${name}`, () =>
+      Effect.gen(function* () {
+        const held = codec(
+          Schema.Union([
+            Schema.TaggedStruct("A", Owner.fields),
+            Schema.TaggedStruct("A", Wide.fields),
+          ]),
+        );
+        const value = { _tag: "A" as const, ...wide };
+        expect(
+          yield* json(Schema.Struct({ held, who: Counted }), {
+            held: Option.some(value),
+            who,
+          }),
+        ).toEqual({ held: value, who: writtenWho });
+      }),
+    );
+
+    it.effect(`keeps a wider list item through ${name}`, () =>
+      Effect.gen(function* () {
+        const held = codec(Schema.Array(Filter));
+        expect(
+          yield* json(Schema.Struct({ held, who: Counted }), {
+            held: Option.some([wide]),
+            who,
+          }),
+        ).toEqual({ held: [wide], who: writtenWho });
+      }),
+    );
+  }
 
   it.effect("compares caller names and values inside an unwrapping Some", () =>
     Effect.gen(function* () {

@@ -1236,8 +1236,7 @@ export const writtenOptionSource = (
   )
     return undefined;
   const projected = ast.typeParameters[0]!;
-  // A trailing middleware still lets the writer reach the known unwrapping link. The read
-  // comparison has no matching proof about a value that passes through that middleware.
+  // A trailing middleware still lets the writer reach the known unwrapping link.
   const link = unwrappingLink(ast, true, true);
   if (link === undefined) {
     if (ast.encoding.length !== 1) return undefined;
@@ -1377,7 +1376,16 @@ const sourceAt = (
   let option: Ast | undefined;
   let source: Ast | undefined;
   const visit = (type: Ast): boolean => {
-    const payload = optionSource(type, loose);
+    // A followed codec can show what the decoded read should hold. Only a known unwrapping
+    // source also provides evidence about where the payload appears on the wire.
+    const payload =
+      optionSource(type, loose) ??
+      (decodedOnly &&
+      loose &&
+      isOptionDeclaration(type) &&
+      writtenOptionSource(type) !== undefined
+        ? type.typeParameters[0]
+        : undefined);
     if (payload !== undefined) {
       const next = decodedOnly ? SchemaAST.toType(payload) : payload;
       if (
@@ -1414,7 +1422,11 @@ const containsOption = (ast: Ast, loose: boolean): boolean => {
   const known = cache.get(ast);
   if (known !== undefined) return known;
   const visit = (type: Ast) => containsOption(type, loose);
-  let found = optionSource(ast, loose) !== undefined;
+  let found =
+    optionSource(ast, loose) !== undefined ||
+    (loose &&
+      isOptionDeclaration(ast) &&
+      writtenOptionSource(ast) !== undefined);
   if (ast._tag === "Suspend") found = ast.encoding === undefined;
   if (!found) {
     const fields = plainClassFrame(ast);
@@ -1595,8 +1607,8 @@ export const optionLoss = (
   ): void => {
     if (Option.isOption(given)) {
       const unwrapped = sourceAt(types, checkWrite);
-      // Competing unwrapping codecs can agree on what the read must hold without agreeing on
-      // wire names. Schema.Option remains opaque even when its payload matches.
+      // Competing codecs and codecs followed by the writer can show what the read must hold
+      // without proving wire names. Schema.Option remains opaque even when its payload matches.
       const source =
         unwrapped ?? (checkWrite ? sourceAt(types, true, true) : undefined);
       const some = ownSome(given);
