@@ -63,6 +63,61 @@
   preparation with a defect on 0.20.0 and lets the request send again, as on 0.19.0. Under a `oneOf`
   query group, a constructor default that returns `id-${runs}` sent `id=id-2` on 0.20.0 and sends
   `id=id-1` again.
+- Send a `Schema.Error` or `Schema.TaggedError` body again, in most schemas
+  ([#350](https://github.com/viell-dev/slop-effect-schema-http/issues/350)). Since 0.20.0 such a
+  body was refused with `The schema cannot keep this Error as an object`, whether the caller gave
+  the class's instance or plain data that fits it; 0.19.0 sent it. With
+  `class Failed extends Schema.Error<Failed>("Failed")({ id: Schema.Number }) {}`,
+  `{ held: { id: 1 } }` and `{ held: new Failed({ id: 1 }) }` under `held: Failed` send
+  `{"held":{"id":1}}` again. That holds at the root, in a field, a list, a nested struct or another
+  class's field, through a suspension, beside a union of structs, and in a union whose other members
+  could not have built what the class writes. The class's codec writes its fields, not what an
+  `Error` holds besides them. The same fix sends a class encoded on to a record, and a
+  `Schema.Class` whose instance holds no field and writes itself with `toJSON`, which was refused
+  with `The schema cannot keep the content of this value as an object`. It also sends plain data a
+  codec reads into its own value, such as `{}` for a codec that writes a `Set` as a struct or a
+  `Map` as a record. 0.19.0 refused the `Map` case too.
+
+  Still refused as on 0.20.0, because something the caller gave would be lost:
+  - a built-in or another class's instance that the class's fields read, such as
+    `{ held: new Date(0) }` under an Error class whose fields are all optional, or
+    `Object.assign(new Error("x"), { id: 1 })` under `held: Failed`, also where decoding returns one
+    shared object for that position and another;
+  - a value built to pass the class's check, such as a `Date` given the class's prototype, or a
+    `Map`, an `Error` or a proxy that carries the class's marker. A value built from the class's own
+    prototype that holds what its instances hold, such as an `Error` given an Error class's
+    prototype, cannot be told from an instance and is sent as the class writes its fields;
+  - a built-in that a declaration takes as its own and passes on to a struct;
+  - a codec's own built-in where its struct or record could have rebuilt the object it writes, such
+    as a `Date` holding a field `a` under a codec that writes `{ a: date.toISOString() }`
+    ([#374](https://github.com/viell-dev/slop-effect-schema-http/issues/374));
+  - an Error class's instance that holds a field its class does not state, in a union after a struct
+    that reads it first, such as an instance of a class made with `Failed.extend` under
+    `Union([Struct({ zz: optionalKey(String) }), Failed])`. 0.19.0 refused it too.
+
+  The class is still refused, as on 0.20.0, in a union with a struct, a record or another class that
+  could have built what it writes, such as `Union([Failed, Struct({ id: Number })])`. So is a value
+  where the request's reading does not reach it: the class's instance inside another instance kept
+  as given, as in a recursive class's instance, and the class's instance or plain data below a
+  hand-written transformation, such as one that reads a `Set` as a list of the class.
+- **Message change:** some requests the fix for
+  [#350](https://github.com/viell-dev/slop-effect-schema-http/issues/350) leaves refused now name a
+  different reason, or fewer fields. Only requests that refused change; every request that sent
+  sends the same bytes.
+  - A refusal names only the positions where the class's fields, or a codec, read a value that was
+    not plain data or the class's own instance. With an Error class `Soft` whose fields are all
+    optional, `{ a: new Date(0), b: {} }` under `Struct({ a: Soft, b: Soft })` names `["a"]`, where
+    0.20.0 also named `["b"]`.
+  - Beside `Record(String, Number)`, `{ held: { id: 1 } }` under
+    `held: Union([Failed, Record(String, Number)])` now reads
+    `The schema cannot keep this Error as a record`, not `as an object`.
+  - Under a union of a codec that writes a `Map` as a record and a struct, some plain data that is
+    refused anyway, such as an object holding a symbol field in a field, now reads
+    `The schema cannot keep this Map as an object`, not `as a record`.
+  - A `Schema.Error` or `Schema.TaggedError` body that holds what its writer cannot write now
+    refuses with the writer's own error in place of that `SchemaError`. Examples are a symbol field
+    or a `Map` in a field of `Schema.Unknown` (`HttpBodyError`), and a nested object in a query or
+    header field (`InvalidRequest`).
 
 ## 0.20.0 — 2026-11-27
 

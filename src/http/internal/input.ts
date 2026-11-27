@@ -1516,23 +1516,14 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   const decoded = decodeInput(contract);
   const ast = contract.ast;
   // The same positions, compared on the way in and on the way out of the schema.
-  const readLoss = Excess.rebuildLoss(ast, false);
-  const writeLoss = Excess.rebuildLoss(ast, canonicalJson);
+  const rebuildLoss = Excess.rebuildLoss(ast, canonicalJson);
   const losses = (
     input: unknown,
     value: unknown,
     output: unknown,
-  ): Excess.Losses => {
-    const onRead = readLoss?.(input, value);
-    const onWrite = writeLoss?.(value, output);
-    return {
-      lost: Excess.uniquePaths([
-        ...(onRead?.lost ?? []),
-        ...(onWrite?.lost ?? []),
-      ]),
-      causes: [...(onRead?.causes ?? []), ...(onWrite?.causes ?? [])],
-    };
-  };
+    unstated?: boolean,
+  ): Excess.Losses =>
+    rebuildLoss?.(input, value, output, unstated) ?? { lost: [], causes: [] };
   const written = (
     input: unknown,
     reading: ReturnType<typeof decoded>,
@@ -1686,7 +1677,10 @@ const readerForCodec = <S extends Schema.Top, A, R>(
           // A field more than one comparison reports is named once.
           const isHeld = (path: Excess.Path) =>
             !readsNothing(given, value, path);
-          const rebuilt = losses(input, value, output);
+          // A strict read whose strict write failed may have kept an instance holding a field its
+          // class does not state, which the class drops without a trace. What every class's value
+          // holds outside its fields is then compared as any rebuild is, as on 0.20.0.
+          const rebuilt = losses(input, value, output, strictly !== undefined);
           const lost = causing(
             mergePaths(
               // What a strict read kept as given, only what was written can say it holds.
@@ -1989,7 +1983,6 @@ const encodeWith = <S extends Schema.Top, A, R, B, E, R2>(
 ) => {
   if (
     !Excess.choosing(contract.ast) &&
-    Excess.rebuildLoss(contract.ast, false) === undefined &&
     Excess.rebuildLoss(contract.ast, canonicalJson) === undefined
   ) {
     const decoded = decodeInput(contract);

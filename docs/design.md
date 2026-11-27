@@ -335,9 +335,21 @@ at a class's root is stripped, as a struct strips any key it does not state. `Sc
 Both also rebuild a built-in, such as a `Map`, a `Date` or a `URL`, from its own fields, and lose
 the content it holds elsewhere. All of these fail with `SchemaError`. An empty struct passes the
 symbol or the built-in through, and the writer refuses what it cannot write with `HttpBodyError`.
-Both name the field. Not covered, as on 0.18.0: a symbol inside a declaration's type parameter, such
-as `Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`, which the declaration's own
-codec reads and drops.
+Both name the field. A class, or another declaration whose encoding leads to a struct or a record,
+is read through those fields too. Where it writes, the content its value holds outside them goes
+uncompared only where the read showed that content is the schema's own. That is so where the read
+built the value from plain data, or found there the caller's own instance of the class, which its
+codec writes as its fields: a `Schema.Error` writes them and not the `Error`'s message. An instance
+is the class's own where the class accepts both it and its prototype, and it holds the state the
+class's instances hold, so a built-in given the class's prototype or marker is not one. Every other
+value is compared as any rebuild is: one the read built from anything else, such as a `Date` the
+class's fields read; one another declaration takes as its own, because nothing shows whether its
+codec writes that value or passes it on to a struct that rebuilds it; and one the read did not
+reach, such as an instance inside another instance kept as given or below a hand-written
+transformation. So is every value of a strict read whose strict write failed, since it may hold a
+field its class drops without a trace. Not covered, as on 0.18.0: a symbol inside a declaration's
+type parameter, such as `Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`, which
+the declaration's own codec reads and drops.
 
 `Body.jsonSchema` first encodes through the schema's canonical JSON codec (`Schema.toCodecJson`). It
 then shares the JSON writer with raw and composed `Body.json`. That writer reads each value once, in

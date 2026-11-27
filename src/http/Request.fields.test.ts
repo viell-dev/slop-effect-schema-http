@@ -980,6 +980,32 @@ describe("Request.query", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/350
+  it.effect(
+    "reads a Schema.Error query from its instance or plain data, and refuses a built-in",
+    () =>
+      Effect.gen(function* () {
+        class Soft extends Schema.Error<Soft>("Soft")({
+          a: Schema.optionalKey(Schema.String),
+        }) {}
+        const query = Request.get("https://api.test/s").pipe(
+          Request.query(Soft),
+        );
+        for (const value of [new Soft({ a: "v" }), { a: "v" }])
+          expect(yield* urlOf(query, { query: value })).toBe(
+            "https://api.test/s?a=v",
+          );
+        // The class's fields read the URLSearchParams, and what it holds would be lost.
+        const error = yield* Effect.flip(
+          compile(query, { query: new URLSearchParams("a=v") } as never),
+        );
+        expect(error).toBeInstanceOf(Schema.SchemaError);
+        expect(error.message).toBe(
+          "The schema cannot keep this Error as an object",
+        );
+      }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/87
   it("keeps raw setters and further schemas in the type", () => {
     const bound = Request.get("/").pipe(Request.query(Search));

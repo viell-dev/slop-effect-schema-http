@@ -782,7 +782,23 @@ const renamedFields = (ast: Ast): Renamed => {
 const distinct = (types: ReadonlyArray<Ast>): ReadonlyArray<Ast> =>
   types.length < 2 ? types : [...new Set(types)];
 
-/** Bring a value's {@link unlisted} fields out as keys, at any depth, and take out what `drops` says. */
+/**
+ * The object each plain copy {@link rewriting} made stands for, where that object is not plain
+ * data, as a class instance or a `Date` read as a struct is. A copy holds the fields a read takes
+ * from the object, and not what the object holds outside them, so {@link rebuildLoss} judges where
+ * a value came from by the object itself. Each copy is new, so its entry cannot outlive it or
+ * describe another value.
+ */
+const copiedFrom = new WeakMap<object, object>();
+
+/** The value the caller gave, where `value` is a copy that {@link copiedFrom} records. */
+const callersValue = (value: unknown): unknown =>
+  isObject(value) ? (copiedFrom.get(value) ?? value) : value;
+
+/**
+ * Bring a value's {@link unlisted} fields out as keys, at any depth, and take out what `drops` says.
+ * Each plain copy it makes of an object that is not plain data is recorded in {@link copiedFrom}.
+ */
 const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
   const rewrite = (
     types: ReadonlyArray<Ast>,
@@ -860,7 +876,11 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
       return [[key, next] as const];
     });
     if (!changed) return value;
-    if (!isList) return Object.fromEntries(entries);
+    if (!isList) {
+      const copy = Object.fromEntries(entries);
+      if (!plain) copiedFrom.set(copy, value);
+      return copy;
+    }
     // Own-key inspection already read this descriptor. Do not add a length getter read when an
     // enumerable child changes through a mixed opaque view, which may never read array layout.
     const length: unknown =
@@ -1555,9 +1575,23 @@ const isOptionFrame = (ast: Ast): boolean =>
   isStructural(ast) ||
   (ast._tag === "Objects" && isKeyRename(ast, unwrapsOption));
 
+/**
+ * How the declaration of an Effect class, such as a `Schema.Class` or a `Schema.Error`, describes
+ * its constructor. Effect reads this annotation with `SchemaAST.getConstructorDescriptor`, which is
+ * internal and absent from its published typings, so it is read here by its key.
+ */
+const constructorDescription = (
+  ast: Ast,
+): ((typeParameters: ReadonlyArray<Ast>) => unknown) | undefined => {
+  const describe = ast.annotations?.["~constructor"];
+  return typeof describe === "function"
+    ? (describe as (typeParameters: ReadonlyArray<Ast>) => unknown)
+    : undefined;
+};
+
 /** A native class may be constructed from a plain input using these fields. */
 const plainClassFrame = (ast: Ast): Ast | undefined =>
-  isStatedClass(ast) && typeof ast.annotations?.["~constructor"] === "function"
+  isStatedClass(ast) && constructorDescription(ast) !== undefined
     ? classFields(ast)
     : undefined;
 
@@ -2122,6 +2156,12 @@ export interface Losses {
 interface Found {
   readonly lost: Path[];
   readonly causes: Cause[];
+  /**
+   * For each declaration the read reached, each value it read or built there, and whether what the
+   * caller gave there holds nothing outside its fields that the schema does not own: plain data, or
+   * the class's own instance.
+   */
+  owned?: Map<Ast, Map<object, boolean>>;
 }
 
 /** Compares what went into a schema step at a position with what came out there. */
@@ -2199,6 +2239,76 @@ const within = (
 const isIndexed = (ast: Ast): boolean =>
   ast._tag === "Objects" && ast.indexSignatures.length > 0;
 
+/** A record, or a link whose encoded end is one, which rebuilds its object from string keys. */
+const rebuildsRecord = (ast: Ast): boolean =>
+  isIndexed(ast) || isIndexed(encodedEnd(ast));
+
+/**
+ * Note on the read step the value a declaration read or built at a position, and whether what the
+ * caller gave there holds only what the schema owns. One decoded value can stand at several
+ * positions, as where a codec returns one shared object for equal input, so a position that says it
+ * does not holds for all of them.
+ */
+const noteOwned = (found: Found, node: Ast, value: object, own: boolean) => {
+  const owned = (found.owned ??= new Map());
+  let values = owned.get(node);
+  if (values === undefined) owned.set(node, (values = new Map()));
+  values.set(value, (values.get(value) ?? true) && own);
+};
+
+/**
+ * A test of an Effect class's own instances, such as a `Schema.Class`'s or a `Schema.Error`'s,
+ * which the class's codec writes as its fields. Undefined for any other declaration, whatever it
+ * accepts.
+ *
+ * @remarks
+ * The class's own check, from the constructor its declaration describes, accepts its instances and
+ * any value that carries the class's marker property. Effect's classes declare that marker on their
+ * prototype, so the check also accepts an instance's prototype. An instance holds the state the
+ * class's own instances hold: an `Error`'s for an Error class, and for another class none, or the
+ * `toJSON` its prototype gives it. So a value built otherwise to pass the check is not taken for an
+ * instance, such as a `Date` given the class's prototype, a `Map` or an `Error` that carries the
+ * marker, or a proxy that names the prototype. Should a later Effect describe its classes
+ * differently, an instance gets the comparison any rebuild gets, which refuses rather than sends.
+ */
+const ownInstanceTest = (
+  ast: Ast,
+): ((value: unknown) => boolean) | undefined => {
+  if (ast._tag !== "Declaration") return undefined;
+  const describe = constructorDescription(ast);
+  if (describe === undefined) return undefined;
+  const descriptor = describe(ast.typeParameters);
+  const isConstructed = isObject(descriptor)
+    ? descriptor.isConstructed
+    : undefined;
+  if (typeof isConstructed !== "function") return undefined;
+  const accepts = (value: unknown): value is Record<PropertyKey, unknown> =>
+    isObject(value) &&
+    (isConstructed as (value: unknown) => unknown)(value) === true;
+  return (value) => {
+    if (!accepts(value)) return false;
+    const prototype: unknown = Object.getPrototypeOf(value);
+    if (!accepts(prototype)) return false;
+    const kind = hiddenContent(value);
+    return prototype instanceof Error
+      ? kind === "Error"
+      : kind === undefined ||
+          (kind === null && value.toJSON === prototype.toJSON);
+  };
+};
+
+/** Both checks at one position, either of which may be absent. */
+const both = (
+  first: RebuildCheck | undefined,
+  second: RebuildCheck | undefined,
+): RebuildCheck | undefined =>
+  first === undefined || second === undefined
+    ? (first ?? second)
+    : (supplied, result, path, found) => {
+        first(supplied, result, path, found);
+        second(supplied, result, path, found);
+      };
+
 /** A class: a declaration whose first encoding link leads to the struct of its fields. */
 export const classFields = (ast: Ast): Ast | undefined =>
   ast._tag === "Declaration" && ast.encoding?.[0]?.to._tag === "Objects"
@@ -2220,7 +2330,17 @@ export const uniquePaths = (paths: ReadonlyArray<Path>): ReadonlyArray<Path> =>
             ),
       );
 
-type Comparison = (supplied: unknown, result: unknown) => Losses;
+/**
+ * Compares the caller's value with the decoded value, and that with what the schema wrote. Where
+ * `unstated` is set, the value may hold a field its schema does not state, so no content outside a
+ * class's fields is taken as the schema's own.
+ */
+type Comparison = (
+  given: unknown,
+  value: unknown,
+  output: unknown,
+  unstated?: boolean,
+) => Losses;
 
 const rebuildChecks = {
   schema: new WeakMap<Ast, Comparison | null>(),
@@ -2233,24 +2353,75 @@ const rebuildChecks = {
  *
  * @remarks
  * The comparison runs twice, at the same positions: from the caller's value to the decoded value,
- * and from the decoded value to what the schema writes. An index signature rebuilds its object
- * from string keys, so a record drops a symbol field on either step, and so does a link whose
- * encoded end is a record, such as a record decoded to a struct. A symbol key the node's own
- * fields declare is the schema's to write, under whatever name it chooses. A class is read through
- * its fields; a symbol at its root is a key no field states, which a class strips as a struct
- * does. For JSON, the canonical codec of `Schema.ObjectKeyword` also copies only the top-level
- * string fields of an object and the positions of an array. Everywhere else a symbol field or a
- * built-in reaches the writer, which refuses it there. Not covered: values inside a declaration's
- * type parameters, such as a record in an `Option`, which the declaration's own codec reads.
+ * and from the decoded value to what the schema writes, through its canonical JSON codec where
+ * `json` is set. An index signature rebuilds its object from string keys, so a record drops a
+ * symbol field on either step, and so does a link whose encoded end is a record, such as a record
+ * decoded to a struct. A symbol key the node's own fields declare is the schema's to write, under
+ * whatever name it chooses. A class is read through its fields; a symbol at its root is a key no
+ * field states, which a class strips as a struct does.
  *
- * The comparison is compiled once per schema and visits only the positions where such a node can
- * be, with one shared path that is copied only for a loss, so an array of rows checks each row
- * without rediscovering its schema or allocating a path. A suspended schema is read on first use.
+ * A class, or another declaration whose encoding leads to a struct or a record, is read through
+ * that struct or record too. Where it writes, the content its value holds outside those fields is
+ * the schema's own where the read built the value from plain data, or where the read found the
+ * caller's own instance of the class, which its codec writes as its fields: a `Schema.Error` writes
+ * them, and not what an `Error` holds besides. Only that content goes uncompared there, and only
+ * for a value the read noted. {@link ownInstanceTest} tells the class's own instance from a value
+ * built to pass its check, such as a `Date` given its prototype. Every other value keeps the
+ * comparison:
+ * one the read built from anything else, such as a `Date` a class's fields read; one another
+ * declaration takes as its own, because nothing shows whether its codec writes that value or passes
+ * it to a struct that rebuilds it; one the read did not reach, such as an instance below a
+ * hand-written transformation or inside another instance kept as given; and any value where
+ * `unstated` is set.
+ *
+ * For JSON, the canonical codec of `Schema.ObjectKeyword` also copies only the top-level string
+ * fields of an object and the positions of an array. Everywhere else a symbol field or a built-in
+ * reaches the writer, which refuses it there. Not covered: values inside a declaration's type
+ * parameters, such as a record in an `Option`, which the declaration's own codec reads.
+ *
+ * Each step is compiled once per schema and visits only the positions where such a node can be,
+ * with one shared path that is copied only for a loss, so an array of rows checks each row without
+ * rediscovering its schema or allocating a path. A suspended schema is read on first use.
  */
 export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
   const memo = rebuildChecks[json ? "json" : "schema"];
   const known = memo.get(ast);
   if (known !== undefined) return known ?? undefined;
+  const read = rebuildCheck(ast, "read");
+  const write = rebuildCheck(ast, json ? "writeJson" : "write");
+  const compare =
+    read === undefined && write === undefined
+      ? undefined
+      : (
+          given: unknown,
+          value: unknown,
+          output: unknown,
+          unstated = false,
+        ): Losses => {
+          const found: Found = { lost: [], causes: [] };
+          read?.(given, value, [], found);
+          // Without the read's notes, the write compares every class's value as any rebuild is.
+          write?.(
+            value,
+            output,
+            [],
+            unstated ? { lost: found.lost, causes: found.causes } : found,
+          );
+          return { lost: uniquePaths(found.lost), causes: found.causes };
+        };
+  memo.set(ast, compare ?? null);
+  return compare;
+}
+
+/**
+ * One step of {@link rebuildLoss}: `"read"`, from the caller's value to the decoded value, or
+ * `"write"`, from the decoded value to what the schema writes, which is `"writeJson"` where the
+ * schema writes through its canonical JSON codec.
+ */
+function rebuildCheck(
+  ast: Ast,
+  step: "read" | "write" | "writeJson",
+): RebuildCheck | undefined {
   const cache = new Map<Ast, RebuildCheck | undefined>();
   const build = (node: Ast): RebuildCheck | undefined => {
     if (cache.has(node)) return cache.get(node);
@@ -2258,27 +2429,41 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
     cache.set(node, check);
     return check;
   };
-  /** Symbols compared at this very position, where the node rebuilds the object. */
+  /** Each symbol field a record built from `node`'s fields drops: each one they do not declare. */
+  const recordSymbols = (node: Ast): RebuildCheck => {
+    const declared = new Set(
+      fieldsOf(node)
+        .map(({ name }) => name)
+        .filter((name) => typeof name === "symbol"),
+    );
+    return (supplied, result, path, found) => {
+      if (
+        supplied !== result &&
+        isObject(supplied) &&
+        isObject(result) &&
+        !Array.isArray(supplied)
+      )
+        ownLostSymbols(supplied, result, path, found, declared);
+    };
+  };
+  /** What a record built from `node`'s fields drops: a built-in's content, or else its symbols. */
+  const recordLoss = (node: Ast): RebuildCheck => {
+    const symbols = recordSymbols(node);
+    return (supplied, result, path, found) => {
+      if (
+        supplied === result ||
+        !isObject(supplied) ||
+        !isObject(result) ||
+        Array.isArray(supplied)
+      )
+        return;
+      if (!lostHiddenContent(supplied, result, path, found, "record"))
+        symbols(supplied, result, path, found);
+    };
+  };
+  /** What is compared at this very position, where the node rebuilds the object. */
   const here = (node: Ast): RebuildCheck | undefined => {
-    const end = encodedEnd(node);
-    if (isIndexed(node) || (end !== node && isIndexed(end))) {
-      const declared = new Set(
-        fieldsOf(node)
-          .map(({ name }) => name)
-          .filter((name) => typeof name === "symbol"),
-      );
-      return (supplied, result, path, found) => {
-        if (
-          supplied !== result &&
-          isObject(supplied) &&
-          isObject(result) &&
-          !Array.isArray(supplied)
-        ) {
-          if (!lostHiddenContent(supplied, result, path, found, "record"))
-            ownLostSymbols(supplied, result, path, found, declared);
-        }
-      };
-    }
+    if (rebuildsRecord(node)) return recordLoss(node);
     // A struct builds a plain object from the fields it states, so the content of a built-in such
     // as a `Map` or a `Date` is lost there too. An empty struct keeps the value as given. In a
     // union, only a result this struct could have built is its loss.
@@ -2299,7 +2484,11 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
           lostHiddenContent(supplied, result, path, found, "object");
       };
     }
-    if (!json || node._tag !== "ObjectKeyword" || node.encoding !== undefined)
+    if (
+      step !== "writeJson" ||
+      node._tag !== "ObjectKeyword" ||
+      node.encoding !== undefined
+    )
       return undefined;
     return (supplied, result, path, found) => {
       if (supplied === result || !isObject(supplied) || !isObject(result))
@@ -2314,15 +2503,45 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
         found.lost.push([...path, extra]);
     };
   };
+  /**
+   * A class, or another declaration whose encoding leads to a struct or a record, is read through
+   * those fields on both steps. The read notes each value it read or built there, and whether the
+   * caller's value held only what the schema owns. The write leaves the content outside the fields
+   * uncompared only for a value the read noted so, and compares every other one as any rebuild is,
+   * including one the read did not reach, such as an instance below a hand-written transformation
+   * or inside another instance kept as given.
+   */
+  const declaration = (node: Ast, fields: Ast): RebuildCheck | undefined => {
+    const rebuilt = both(here(node), build(fields));
+    const isOwnInstance = ownInstanceTest(node);
+    /** Plain data holds nothing outside its fields, and a class writes its own instance as them. */
+    const holdsOwn = (value: unknown) =>
+      isPlain(value) || isOwnInstance?.(value) === true;
+    if (step === "read")
+      return (supplied, result, path, found) => {
+        if (isObject(result))
+          noteOwned(found, node, result, holdsOwn(callersValue(supplied)));
+        rebuilt?.(supplied, result, path, found);
+      };
+    // Where the content outside the fields is the schema's own, only the symbols a record among
+    // them drops and the fields' own positions are compared.
+    const withoutContent = both(
+      rebuildsRecord(node) || rebuildsRecord(fields)
+        ? recordSymbols(fields)
+        : undefined,
+      inner(fields),
+    );
+    return (supplied, result, path, found) => {
+      const own =
+        isObject(supplied) && found.owned?.get(node)?.get(supplied) === true;
+      (own ? withoutContent : rebuilt)?.(supplied, result, path, found);
+    };
+  };
   const inner = (node: Ast): RebuildCheck | undefined => {
     switch (node._tag) {
       case "Declaration": {
-        // A value given on an unwrapping Option codec's encoded side is read as its payload. Check
-        // it first: a codec such as OptionFromOptionalKey ends in a struct, as a class does.
-        if (!readsOptionPayload(node)) {
-          const fields = classFields(node);
-          return fields === undefined ? undefined : build(fields);
-        }
+        // A value given on an unwrapping Option codec's encoded side is read as its payload.
+        if (!readsOptionPayload(node)) return undefined;
         const payload = build(node.encoding!.at(-1)!.to);
         if (payload === undefined) return undefined;
         return (supplied, result, path, found) => {
@@ -2418,24 +2637,14 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
     }
   };
   const make = (node: Ast): RebuildCheck | undefined => {
-    const first = here(node);
-    const second = inner(node);
-    if (first === undefined || second === undefined) return first ?? second;
-    return (supplied, result, path, found) => {
-      first(supplied, result, path, found);
-      second(supplied, result, path, found);
-    };
+    // An unwrapping Option codec such as OptionFromOptionalKey ends in a struct, as a class does,
+    // but is read as its payload.
+    const fields = classFields(node);
+    return fields === undefined || readsOptionPayload(node)
+      ? both(here(node), inner(node))
+      : declaration(node, fields);
   };
-  const check = build(ast);
-  const compare =
-    check &&
-    ((supplied: unknown, result: unknown): Losses => {
-      const found: Found = { lost: [], causes: [] };
-      check(supplied, result, [], found);
-      return { lost: uniquePaths(found.lost), causes: found.causes };
-    });
-  memo.set(ast, compare ?? null);
-  return compare;
+  return build(ast);
 }
 
 /**
