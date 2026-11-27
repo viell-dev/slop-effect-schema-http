@@ -82,9 +82,12 @@
   struct with renamed keys: with `held` renamed to `wire_held`, a `Some` or `None` given at
   `wire_held`, or beside a renamed sibling or below a renamed ancestor on the encoded side,
   including through a suspension, a recursive schema, a nested rename, a renamed class, or a list or
-  union below that ancestor, now refuses where 0.19.0 sent `{"wire_held":{}}`, and a record payload
-  there refuses where 0.19.0 sent `{"wire_held":{"value":{...}}}`. The refusal can read
-  `Missing key` at the decoded name
+  union below that ancestor, with the exceptions the [active
+  limits](https://viell-dev.github.io/slop-effect-schema-http/schema-input#active-limits-and-recovery)
+  list ([#327](https://github.com/viell-dev/slop-effect-schema-http/issues/327),
+  [#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328)), now refuses where 0.19.0
+  sent `{"wire_held":{}}`, and a record payload there refuses where 0.19.0 sent
+  `{"wire_held":{"value":{...}}}`. The refusal can read `Missing key` at the decoded name
   ([#313](https://github.com/viell-dev/slop-effect-schema-http/issues/313)); give the field on its
   decoded side, as `held`, or its encoded payload at `wire_held`
   ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)).

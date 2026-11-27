@@ -721,7 +721,9 @@ the schema does with it. These are the places where it cannot, and what happens 
   wrote there: the one in its place, or, for an integer-like name such as `"1"`, which JavaScript
   lists first, the one field whose wire side it is. Where several fields share that wire side, a
   wrapper given there refuses if any of them may be an Option codec, even when the one written there
-  is not. A field written by another transformation keeps the schema's own reading
+  is not. Below such a field, a nested Option keeps the schema's own reading and can be sent as `{}`
+  ([#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328)). A field written by
+  another transformation keeps the schema's own reading
   ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)). A recovery's value is
   not checked against what it was given: a `Schema.catchDecoding` record beside a list member can
   take a list whose cells hold a key the list member does not state, and what it recovers is sent.
