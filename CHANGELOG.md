@@ -78,11 +78,11 @@
   in the other order it still sends that. Reading field by field runs the fields' decoders and
   checks again after the whole read, as the other recovery routes do. Supply the enclosing value and
   its siblings on their decoded side, or give the encoded payload or absence directly at the
-  Option's wire position. The same holds below a
-  struct with renamed keys: with `held` renamed to `wire_held`, a `Some` or `None` given at
-  `wire_held`, or beside a renamed sibling or below a renamed ancestor on the encoded side,
-  including through a suspension, a recursive schema, a nested rename, a renamed class, or a list or
-  union below that ancestor, with the exceptions the [active
+  Option's wire position. The #309 refusal also holds below a struct with renamed keys: with `held`
+  renamed to `wire_held`, a `Some` or `None` given at `wire_held`, or beside a renamed sibling or
+  below a renamed ancestor on the encoded side, including through a suspension, a recursive schema,
+  a nested rename, a renamed class, or a list or union below that ancestor, with the exceptions the
+  [active
   limits](https://viell-dev.github.io/slop-effect-schema-http/schema-input#active-limits-and-recovery)
   list ([#327](https://github.com/viell-dev/slop-effect-schema-http/issues/327),
   [#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328)), now refuses where 0.19.0
