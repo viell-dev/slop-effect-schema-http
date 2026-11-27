@@ -226,13 +226,29 @@ gives the compatible fixes, with a checked example of a `Schema.Error` body that
   suspended field as one that could have been written under any such name. With
   `left: suspend(() => Any)` and `right: suspend(() => OptionFromNullOr(P))` renamed to `"1"` and
   `"0"`, `{ "1": Option.some(1), "0": null }` refused with `Expected no excess property at ["0"]`;
-  it now sends the `Option` as `Any` reads it, as 0.19.0 did. A key that only the other field's
-  decoded side states is left out, as beside a field that is not suspended, where 0.20.0 refused
-  with `The schema cannot keep this field with the rest of the value`. Preparing a recursive schema
-  through such fields took time exponential in the value's depth, about 4 s at depth 20 for a tree
-  with keys `"0"` and `"1"`, and ran out of memory at 24; it now takes tens of milliseconds there,
-  as on 0.19.0. A wrapper where the field written there holds an Option codec still refuses, and one
-  suspension given as two fields still has one wire side, so a rename cannot tell them apart.
+  it now sends the `Option` as `Any` reads it, as 0.19.0 did. So does one `suspend(() => Any)` given
+  as both fields, or beside its own `Schema.toEncoded`. A key that only the other field's decoded
+  side states is left out, as beside a field that is not suspended, where 0.20.0 refused with
+  `The schema cannot keep this field with the rest of the value`. Preparing a recursive schema
+  through such fields took time exponential in the value's depth on 0.20.0, about 4 s at depth 20
+  for a tree with keys `"0"` and `"1"`; with the change for
+  [#355](https://github.com/viell-dev/slop-effect-schema-http/issues/355) above, it takes tens of
+  milliseconds there, as on 0.19.0. A wrapper where the field written there holds an Option codec
+  still refuses. A suspension that is no decoded field's wire side, as in a contract derived with
+  `Schema.toCodecJson` or a hand-written rename spelled as `Schema.encodeKeys` spells it, is paired
+  as on 0.20.0, so a wrapper at such a name refuses as it did.
+- Keep the schema's own reading below a suspension that a custom transformation writes, as 0.19.0
+  did and as without the suspension
+  ([#344](https://github.com/viell-dev/slop-effect-schema-http/issues/344)). With
+  `Row = Struct({ held: OptionFromNullOr(P), n: String }).pipe(encodeKeys({ held: "h" }))`, a
+  transformation from `suspend(() => W)` to `suspend(() => D)` whose `D` holds
+  `rec: suspend(() => Row)` and whose `W` holds `rec: suspend(() => toEncoded(Row))` refused
+  `{ tag: "1", rec: { h: Option.none(), n: "x" } }` on 0.20.0. It now sends
+  `{"tag":"1","rec":{"h":{},"n":"x"}}`, as it does without the suspensions: the transformation's
+  callback alone decides which field it writes where, so a field it writes keeps the schema's own
+  reading, as the input reference states. A `Some` there still refuses, with
+  `The schema cannot keep this field with the rest of the value at ["rec"]["h"]` where 0.20.0 read
+  `Expected number at ["tag"]`.
 
 ## 0.20.0 — 2026-11-27
 

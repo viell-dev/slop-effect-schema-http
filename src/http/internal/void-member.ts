@@ -390,13 +390,16 @@ const counterpart = (
 ):
   | SchemaAST.AST
   | { readonly ambiguous: ReadonlyArray<SchemaAST.AST> }
+  | { readonly unproven: ReadonlyArray<SchemaAST.AST> }
   | undefined => {
   const decoded = originOf(layer);
   const link = decoded.encoding?.at(-1);
   if (link !== undefined && link.to === originOf(reference)) {
     const pairing = renamedPairs(classFields(decoded) ?? decoded, link);
     const ambiguous = pairing?.ambiguous.get(key);
-    return ambiguous !== undefined ? { ambiguous } : pairing?.pairs.get(key);
+    if (ambiguous !== undefined) return { ambiguous };
+    const unproven = pairing?.unproven.get(key);
+    return unproven !== undefined ? { unproven } : pairing?.pairs.get(key);
   }
   return childrenOf(layer).find((child) => child.key === key)?.type;
 };
@@ -429,18 +432,27 @@ const internLayers = interning<SchemaAST.AST>();
 const internAlternatives = interning<Layers>();
 
 /**
- * The layers without those the next one makes redundant. A layer with no encoding of its own before
- * another such layer is that one's projection: it holds no Option codec and writes no name, and the
- * keys pair through it unchanged. One before a layer with an encoding stays, as a rename pairs only
- * with its own wire struct. Effect builds a new copy of a recursive schema's wire side for each
- * level, so keeping every projection would add a layer per level of a value.
+ * The layers without those the next one makes redundant: a layer that is the very node `toEncoded`
+ * returns for the next layer, where that one has no encoding of its own. A projection reaches no
+ * encoding, so it holds no Option codec and writes no name, and it has the next layer's keys, so
+ * the next layer pairs the children it would have paired. One before a layer with an encoding
+ * stays, as a rename pairs only with its own wire struct, and so does the last, which holds the
+ * decoded field itself.
+ *
+ * @remarks
+ * Without this a recursive renamed schema would add a layer per level of a value: each level reads
+ * a renamed field through its wire field, which `Schema.encodeKeys` builds as the field's
+ * `toEncoded` node, before the field itself. Only identity shows that a layer is a projection. A
+ * wire field of the same shape need not be one: a hand-written rename spelled as `Schema.encodeKeys`
+ * spells it writes suspensions of its own, which `standsFor` in `excess.ts` pairs, and they can
+ * hold Option codecs that the wire side applies.
  */
 const withoutProjections = (layers: Layers): Layers =>
   layers.filter(
     (layer, at) =>
       at === layers.length - 1 ||
-      layer.encoding !== undefined ||
-      layers[at + 1]!.encoding !== undefined,
+      layers[at + 1]!.encoding !== undefined ||
+      layer !== SchemaAST.toEncoded(layers[at + 1]!),
   );
 
 /**
@@ -471,7 +483,10 @@ interface Projected {
  * Where a rename could have written several fields under `key`, each of them continues as its own
  * alternative, and the wrapper is refused if any of them may unwrap an Option, here or below. No
  * layer above such a rename pairs anything: it is written as the renamed struct, which is no wire
- * struct a rename could pair with.
+ * struct a rename could pair with. Where those fields are suspensions that no identity pairs, their
+ * wire suspensions can hold codecs of their own and so stay as layers, which would make the
+ * alternatives grow apart at each level of a recursive schema. None of them is followed then: the
+ * wrapper is refused at `key`, and below it only the layers read before the rename continue (#381).
  */
 const projectChild = (
   projection: Projection | undefined,
@@ -487,6 +502,10 @@ const projectChild = (
     for (const layer of layers) {
       const decoded = counterpart(layer, reference, key);
       if (decoded === undefined) break;
+      if ("unproven" in decoded) {
+        unwraps = true;
+        break;
+      }
       if ("ambiguous" in decoded) {
         candidates = decoded.ambiguous;
         break;
@@ -498,12 +517,12 @@ const projectChild = (
     }
     if (candidates === undefined) next.push(nodes);
     // Any of these fields could be the one written here, so each continues as an alternative,
-    // and the wrapper is refused if any of them may unwrap an Option. Here a suspension's target
-    // is not known yet.
+    // and the wrapper is refused if any of them may unwrap an Option. A suspended one does so
+    // where its target is read, as any alternative's suspension does.
     else
       for (const type of candidates) {
         const chain = chainOf(type);
-        unwraps ||= type._tag === "Suspend" || chain.unwraps;
+        unwraps ||= chain.unwraps;
         next.push([...nodes, ...chain.nodes]);
       }
   }

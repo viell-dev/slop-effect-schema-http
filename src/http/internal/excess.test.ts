@@ -1144,14 +1144,71 @@ it("pairs each suspended field under an integer-like name with its own wire fiel
   expect(pairing?.pairs.get("1")).toBe(left.ast);
   expect(pairing?.pairs.get("0")).toBe(right.ast);
   expect(pairing?.ambiguous.size).toBe(0);
-  // One suspension given as both fields has one wire side, so either could be written at each name.
+  // One suspension given as both fields is one schema: whichever field the rename wrote at a name,
+  // it is read the same way.
   const twice = Schema.Struct({ left, right: left }).pipe(
     Schema.encodeKeys({ left: "1", right: "0" }),
   );
   const shared = Excess.renamedPairs(twice.ast, twice.ast.encoding![0]!);
-  expect(shared?.pairs.size).toBe(0);
-  expect(shared?.ambiguous.get("0")).toEqual([left.ast, left.ast]);
-  expect(shared?.ambiguous.get("1")).toEqual([left.ast, left.ast]);
+  expect(shared?.pairs.get("0")).toBe(left.ast);
+  expect(shared?.pairs.get("1")).toBe(left.ast);
+  expect(shared?.ambiguous.size).toBe(0);
+});
+
+/**
+ * The pairing of the transformation `Schema.encodeKeys(toWire)` builds for `decoded`, applied from
+ * a wire struct written by hand, as a hand-written rename spelled the same way would be.
+ */
+const handWrittenPairing = (
+  wire: Schema.Top,
+  decoded: Schema.Struct<Schema.Struct.Fields>,
+  toWire: Record<string, string>,
+) => {
+  const { transformation } = decoded.pipe(Schema.encodeKeys(toWire)).ast
+    .encoding![0]!;
+  if (transformation._tag !== "Transformation")
+    throw new Error("Schema.encodeKeys renames through a transformation");
+  const ast = SchemaAST.decodeTo(wire.ast, decoded.ast, transformation);
+  return Excess.renamedPairs(ast, ast.encoding![0]!);
+};
+
+it("takes a suspension that is no decoded field's projection as the one it can stand for", () => {
+  const held = Schema.suspend(() => Schema.String);
+  const other = Schema.suspend(() => Schema.Number);
+  const wireHeld = Schema.suspend(() => Schema.String);
+  const wireOther = Schema.suspend(() => Schema.Number);
+  // A suspension pairs with the one in its place; any other field only by identity.
+  const inPlace = handWrittenPairing(
+    Schema.Struct({ h: wireHeld, n: Schema.String }),
+    Schema.Struct({ held, n: Schema.String }),
+    { held: "h" },
+  );
+  expect(inPlace?.pairs.get("h")).toBe(held.ast);
+  expect(
+    handWrittenPairing(
+      Schema.Struct({ h: Schema.NullOr(Schema.String) }),
+      Schema.Struct({ held: Schema.NullOr(Schema.String) }),
+      { held: "h" },
+    ),
+  ).toBeUndefined();
+  // Under integer-like names, the one decoded suspension that no wire field projects pairs, and
+  // several are unproven: any of them could be the one written there.
+  const one = handWrittenPairing(
+    Schema.Struct({ "1": wireHeld, "0": Schema.String }),
+    Schema.Struct({ held, n: Schema.String }),
+    { held: "1", n: "0" },
+  );
+  expect(one?.pairs.get("1")).toBe(held.ast);
+  expect(one?.unproven.size).toBe(0);
+  const several = handWrittenPairing(
+    Schema.Struct({ "1": wireHeld, "0": wireOther }),
+    Schema.Struct({ held, other }),
+    { held: "1", other: "0" },
+  );
+  expect(several?.pairs.size).toBe(0);
+  expect(several?.ambiguous.size).toBe(0);
+  expect(several?.unproven.get("1")).toEqual([held.ast, other.ast]);
+  expect(several?.unproven.get("0")).toEqual([held.ast, other.ast]);
 });
 
 it("does not pair a reordered decoded name from a handwritten link", () => {

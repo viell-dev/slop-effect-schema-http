@@ -730,6 +730,7 @@ const writtenBy = (
   new Map([
     ...[...pairing.pairs].map(([name, type]) => [name, [type]] as const),
     ...pairing.ambiguous,
+    ...pairing.unproven,
   ]);
 
 /**
@@ -1326,10 +1327,24 @@ const isIntegerKey = (key: PropertyKey): boolean => {
 const projectsTo = (decoded: Ast, wire: Ast): boolean =>
   SchemaAST.toEncoded(decoded) === wire;
 
+/**
+ * Whether a wire field that is not `decoded`'s projection is still taken as its wire side: where
+ * both are suspensions. Identity shows that `Schema.encodeKeys` built the wire field from `decoded`,
+ * but a derivation such as `Schema.toCodecJson` builds new suspensions on both sides of a rename,
+ * and a hand-written rename spelled as `Schema.encodeKeys` spells it can write its own, so neither
+ * is the node `toEncoded` returns. A suspension's target is not read here, so such a pair is taken
+ * without that evidence, where {@link renamedPairs} says (#327).
+ */
+const standsFor = (decoded: Ast, wire: Ast): boolean =>
+  decoded._tag === "Suspend" && wire._tag === "Suspend";
+
 /** A rename's pairs, and the names it could have written from several decoded fields. */
 export interface RenamePairing {
   readonly pairs: ReadonlyMap<PropertyKey, Ast>;
+  /** Names whose wire field is the projection of each of these fields. */
   readonly ambiguous: ReadonlyMap<PropertyKey, ReadonlyArray<Ast>>;
+  /** Names whose wire suspension is no field's projection and could stand for any of these. */
+  readonly unproven: ReadonlyMap<PropertyKey, ReadonlyArray<Ast>>;
 }
 
 const renamePairs = new WeakMap<SchemaAST.Link, RenamePairing | null>();
@@ -1342,9 +1357,13 @@ const renamePairs = new WeakMap<SchemaAST.Link, RenamePairing | null>();
  * The rename's mapping lives in a closure no schema node exposes, so it is recovered from the
  * schemas. Effect builds the wire struct from the projections of the decoded fields in their order,
  * and JavaScript keeps that order for every name but an integer-like one, which it lists first in
- * numeric order. Without such names a field pairs with the one in its place. With them, a wire field
- * pairs only with the one decoded field whose projection it is; where several are, it lists them
- * all, so a caller can refuse what any of them would refuse rather than guess.
+ * numeric order. Without such names a field pairs with the one in its place, where that is its
+ * projection or both are suspensions. With them, a wire field pairs only with the one decoded field
+ * whose projection it is; where several are, it lists them all as ambiguous, so a caller can refuse
+ * what any of them would refuse rather than guess. One schema given as several fields is listed
+ * once: whichever of them the rename wrote, it is read the same way. A wire suspension that is no
+ * decoded field's projection pairs with the one decoded suspension whose own projection is not
+ * among the wire fields, or lists them all as unproven where there are several.
  * Any other transformation pairs nothing, since its callback alone knows which field it writes
  * where. The rename is recognised by its getters, as configured Option codecs are, which a
  * hand-written transformation spelled the same way would also match (#327).
@@ -1372,21 +1391,40 @@ export const renamedPairs = (
     const wire = to.propertySignatures;
     const pairs = new Map<PropertyKey, Ast>();
     const ambiguous = new Map<PropertyKey, ReadonlyArray<Ast>>();
+    const unproven = new Map<PropertyKey, ReadonlyArray<Ast>>();
     if (wire.some(({ name }) => isIntegerKey(name))) {
+      // Decoded fields whose projection no wire field is, which a wire field with no partner by
+      // identity can stand for.
+      const types = new Set(wire.map(({ type }) => type));
+      const unpaired = distinct(
+        decoded
+          .map((field) => field.type)
+          .filter((type) => !types.has(SchemaAST.toEncoded(type))),
+      );
       for (const { name, type } of wire) {
-        const candidates = decoded
-          .filter((field) => projectsTo(field.type, type))
-          .map((field) => field.type);
-        if (candidates.length === 1) pairs.set(name, candidates[0]!);
-        else if (candidates.length > 1) ambiguous.set(name, candidates);
+        const own = distinct(
+          decoded
+            .map((field) => field.type)
+            .filter((field) => projectsTo(field, type)),
+        );
+        if (own.length === 1) pairs.set(name, own[0]!);
+        else if (own.length > 1) ambiguous.set(name, own);
+        else {
+          const standing = unpaired.filter((field) => standsFor(field, type));
+          if (standing.length === 1) pairs.set(name, standing[0]!);
+          else if (standing.length > 1) unproven.set(name, standing);
+        }
       }
-      pairing = { pairs, ambiguous };
+      pairing = { pairs, ambiguous, unproven };
     } else if (
-      decoded.every((field, index) => projectsTo(field.type, wire[index]!.type))
+      decoded.every((field, index) => {
+        const { type } = wire[index]!;
+        return projectsTo(field.type, type) || standsFor(field.type, type);
+      })
     ) {
       for (const [index, { name }] of wire.entries())
         pairs.set(name, decoded[index]!.type);
-      pairing = { pairs, ambiguous };
+      pairing = { pairs, ambiguous, unproven };
     }
   }
   renamePairs.set(link, pairing ?? null);

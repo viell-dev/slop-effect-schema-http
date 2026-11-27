@@ -6,6 +6,7 @@ import {
   Option,
   Schema,
   SchemaTransformation,
+  Struct,
 } from "effect";
 import * as Body from "./Body.js";
 import * as Inputs from "./internal/input.js";
@@ -71,6 +72,20 @@ const treeAbove = (levels: number, leaf: object): object => {
   for (let level = 0; level < levels; level++)
     value = { h: null, any: 1, kids: [value] };
   return value;
+};
+
+/** Optional suspended fields at "0" and "1". */
+const integerPair = (first: () => Schema.Top, second: () => Schema.Top) =>
+  Schema.Struct({
+    "0": Schema.optionalKey(Schema.suspend(first)),
+    "1": Schema.optionalKey(Schema.suspend(second)),
+  });
+
+/** A tree `depth` levels deep at "0", with an empty tree at each "1". */
+const treeOf = (depth: number): object => {
+  let tree: object = {};
+  for (let level = 0; level < depth; level++) tree = { "0": tree, "1": {} };
+  return tree;
 };
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/143
@@ -3762,6 +3777,26 @@ describe("an invalid Some payload keeps its decoded error", () => {
     { left: "0", right: "1" },
   ] as const;
 
+  /**
+   * A rename spelled as `Schema.encodeKeys` spells it, from a wire struct written by hand rather than
+   * built from the decoded fields' projections.
+   */
+  const handWritten = (
+    wire: Schema.Top,
+    decoded: Schema.Top,
+    toDecoded: Record<string, string>,
+    toWire: Record<string, string>,
+  ) =>
+    wire.pipe(
+      Schema.decodeTo(
+        decoded,
+        SchemaTransformation.transform({
+          decode: Struct.renameKeys(toDecoded),
+          encode: Struct.renameKeys(toWire),
+        }) as never,
+      ),
+    ) as unknown as typeof renamed;
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/328
   it.effect(
     "refuses a wrapper below fields an integer-like rename cannot tell apart",
@@ -4018,20 +4053,185 @@ describe("an invalid Some payload keeps its decoded error", () => {
             } as never),
           ).toEqual({ [L]: { wx: "s" }, [R]: { y: "t" } });
         }
-        // One suspension given as both fields has one wire side, so a wrapper refuses at either name.
-        const shared = Schema.suspend(() => held);
-        const twice = Schema.Struct({ left: shared, right: shared }).pipe(
-          Schema.encodeKeys({ left: "1", right: "0" }),
+        // One suspension given as both fields is one schema, read the same way whichever field the
+        // rename wrote at a name: a codec there refuses a wrapper at either name, and `Any` keeps
+        // an Option at either name. A suspension beside its own projection shares one wire side,
+        // so a wrapper refuses where either may be a codec, and only there.
+        const codec = Schema.suspend(() => held);
+        const any = Schema.suspend(() => Schema.Any);
+        for (const names of integerNames)
+          for (const at of ["0", "1"]) {
+            const other = at === "0" ? "1" : "0";
+            for (const right of [codec, Schema.toEncoded(codec)]) {
+              const failure = yield* Effect.flip(
+                json(
+                  Schema.Struct({ left: codec, right }).pipe(
+                    Schema.encodeKeys(names),
+                  ),
+                  { [at]: none, [other]: null } as never,
+                ),
+              );
+              expect(failure.message).toContain(
+                'Expected no excess property\n  at ["0"]',
+              );
+            }
+            for (const right of [any, Schema.toEncoded(any)])
+              expect(
+                yield* json(
+                  Schema.Struct({ left: any, right }).pipe(
+                    Schema.encodeKeys(names),
+                  ),
+                  { [at]: Option.some(1), [other]: null } as never,
+                ),
+              ).toEqual({ [at]: sentSome, [other]: null });
+          }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/361
+  it.effect(
+    "pairs a rename's own suspensions where they are not the nodes toEncoded returns",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.OptionFromNullOr(payload);
+        const none = Option.none();
+        const some = Option.some({ a: "a", b: "keep" });
+        // A derived codec builds new suspensions on both sides of the rename.
+        interface Node {
+          readonly held: Option.Option<typeof payload.Type>;
+          readonly next?: Node;
+        }
+        const Node: Schema.Codec<Node, unknown> = Schema.Struct({
+          held,
+          next: Schema.optionalKey(Schema.suspend(() => Node)),
+        }).pipe(Schema.encodeKeys({ held: "h" }));
+        const derived = Schema.toCodecJson(Node) as unknown as typeof renamed;
+        // A hand-written rename spelled as Schema.encodeKeys spells it writes suspensions of its own.
+        const hand = handWritten(
+          Schema.Struct({
+            h: Schema.suspend(() => Schema.NullOr(payload)),
+            n: Schema.String,
+          }),
+          Schema.Struct({ held: Schema.suspend(() => held), n: Schema.String }),
+          { h: "held" },
+          { held: "h" },
         );
-        for (const row of [
-          { "1": none, "0": null },
-          { "1": null, "0": none },
-        ]) {
-          const failure = yield* Effect.flip(json(twice, row as never));
+        // Its own suspension can hold the codec, as can one further down.
+        const handCodec = (inner: (codec: Schema.Top) => Schema.Top) =>
+          handWritten(
+            Schema.Struct({ h: Schema.suspend(() => inner(held)) }),
+            Schema.Struct({
+              held: Schema.suspend(() => inner(Schema.Option(payload))),
+            }),
+            { h: "held" },
+            { held: "h" },
+          );
+        const handNested = handCodec((codec) =>
+          Schema.Struct({
+            inner: Schema.suspend(() => Schema.Struct({ x: codec })),
+          }),
+        );
+        const handOwn = handCodec((codec) => Schema.Struct({ x: codec }));
+        const integer = Schema.Struct({
+          held: Schema.suspend(() => held),
+          n: Schema.String,
+        }).pipe(Schema.encodeKeys({ held: "1", n: "0" }));
+        // Several such suspensions under integer-like names could each be the one written at a
+        // name, so a wrapper refuses there, even where the field written there is `Any`.
+        const handIntegers = handWritten(
+          Schema.Struct({
+            "1": Schema.suspend(() => Schema.NullOr(payload)),
+            "0": Schema.suspend(() => Schema.Any),
+          }),
+          Schema.Struct({
+            held: Schema.suspend(() => held),
+            other: Schema.suspend(() => Schema.Any),
+          }),
+          { "1": "held", "0": "other" },
+          { held: "1", other: "0" },
+        );
+        for (const [schema, value, path] of [
+          [derived, { h: none }, '["h"]'],
+          [derived, { h: null, next: { h: none } }, '["h"]'],
+          [
+            Schema.Struct({ f: derived }) as unknown as typeof renamed,
+            { f: { h: none } },
+            '["f"]["h"]',
+          ],
+          [
+            Schema.toCodecJson(integer) as unknown as typeof renamed,
+            { "1": none, "0": "x" },
+            '["0"]',
+          ],
+          [hand, { h: none, n: "x" }, '["h"]'],
+          [
+            besideRenamed(hand),
+            { row: { h: none, n: "x" }, wire_n: "x" },
+            '["wire_n"]',
+          ],
+          [
+            besideRenamed(handOwn),
+            { row: { h: { x: none } }, wire_n: "x" },
+            '["wire_n"]',
+          ],
+          [
+            besideRenamed(handNested),
+            { row: { h: { inner: { x: none } } }, wire_n: "x" },
+            '["wire_n"]',
+          ],
+          [handIntegers, { "1": none, "0": 1 }, '["0"]'],
+          [handIntegers, { "1": null, "0": Option.some(1) }, '["0"]'],
+        ] as const) {
+          const failure = yield* Effect.flip(json(schema, value as never));
           expect(failure.message).toContain(
-            'Expected no excess property\n  at ["0"]',
+            `Expected no excess property\n  at ${path}`,
           );
         }
+        for (const schema of [derived, hand]) {
+          const failure = yield* Effect.flip(
+            json(schema, { h: some, n: "x" } as never),
+          );
+          expect(failure.message).toContain('Missing key\n  at ["held"]');
+        }
+        // The decoded side and the encoded payload are kept.
+        expect(yield* json(hand, { held: none, n: "x" } as never)).toEqual({
+          h: null,
+          n: "x",
+        });
+        expect(
+          yield* json(derived, { h: null, next: { h: { a: "a" } } } as never),
+        ).toEqual({ h: null, next: { h: { a: "a" } } });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/381
+  it.effect(
+    "currently sends a nested Option as {} below a name several unproven suspensions could fill",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.OptionFromNullOr(payload);
+        const Tree = Schema.Struct({
+          l: Schema.optionalKey(
+            Schema.suspend(() => Schema.Struct({ x: held })),
+          ),
+          r: Schema.optionalKey(
+            Schema.suspend(() => Schema.Struct({ x: Schema.Any })),
+          ),
+        }).pipe(Schema.encodeKeys({ l: "1", r: "0" }));
+        const given = { "1": { x: Option.none() }, "0": { x: 1 } };
+        // A derivation builds new suspensions, so the one written at "1" is not known and the
+        // codec below it is not followed.
+        expect(
+          yield* json(
+            Schema.toCodecJson(Tree) as unknown as typeof renamed,
+            given as never,
+          ),
+        ).toEqual({ "0": { x: 1 }, "1": { x: {} } });
+        // Paired by identity, the same value refuses.
+        const failure = yield* Effect.flip(json(Tree, given as never));
+        expect(failure.message).toContain(
+          'Expected no excess property\n  at ["0"]',
+        );
       }),
   );
 
@@ -4044,7 +4244,9 @@ describe("an invalid Some payload keeps its decoded error", () => {
         // work doubled about every level: at depth 20 the tree took about 4 s and the pair of
         // types 1.4 s, and carrying the candidates below the names ran out of memory at depth 18.
         // Paired with its own wire field, each takes tens of milliseconds. Every key is renamed,
-        // which keeps #355's cost out of this check.
+        // which keeps #355's cost out of this check. A hand-written rename's own suspensions are
+        // paired without identity, and following several candidates below such a name doubled
+        // the work per level again: about 2 s at depth 13 and 0.5 GB, out of memory at 16.
         interface Tree {
           readonly l?: Tree;
           readonly r?: Tree;
@@ -4053,6 +4255,47 @@ describe("an invalid Some payload keeps its decoded error", () => {
           l: Schema.optionalKey(Schema.suspend(() => Tree)),
           r: Schema.optionalKey(Schema.suspend(() => Tree)),
         }).pipe(Schema.encodeKeys({ l: "0", r: "1" }));
+        // The same tree with the suspension written once, as one node for both fields.
+        const Child = Schema.suspend((): Schema.Codec<Tree, unknown> => Shared);
+        const Shared: Schema.Codec<Tree, unknown> = Schema.Struct({
+          l: Schema.optionalKey(Child),
+          r: Schema.optionalKey(Child),
+        }).pipe(Schema.encodeKeys({ l: "0", r: "1" }));
+        // Hand-written renames between two types, each read through a hand-written wire twin.
+        const Wire1: Schema.Top = integerPair(
+          () => Wire1,
+          () => Wire2,
+        );
+        const Wire2: Schema.Top = integerPair(
+          () => Wire2,
+          () => Wire1,
+        );
+        const fromWire = { "0": "l", "1": "r" };
+        const toWire = { l: "0", r: "1" };
+        const Hand1: Schema.Top = handWritten(
+          integerPair(
+            () => Wire1,
+            () => Wire2,
+          ),
+          Schema.Struct({
+            l: Schema.optionalKey(Schema.suspend(() => Hand1)),
+            r: Schema.optionalKey(Schema.suspend(() => Hand2)),
+          }),
+          fromWire,
+          toWire,
+        );
+        const Hand2: Schema.Top = handWritten(
+          integerPair(
+            () => Wire2,
+            () => Wire1,
+          ),
+          Schema.Struct({
+            l: Schema.optionalKey(Schema.suspend(() => Hand2)),
+            r: Schema.optionalKey(Schema.suspend(() => Hand1)),
+          }),
+          fromWire,
+          toWire,
+        );
         interface Pair {
           readonly a?: Pair;
           readonly b?: Pair;
@@ -4065,15 +4308,13 @@ describe("an invalid Some payload keeps its decoded error", () => {
           a: Schema.optionalKey(Schema.suspend(() => Second)),
           b: Schema.optionalKey(Schema.suspend(() => First)),
         }).pipe(Schema.encodeKeys({ a: "0", b: "1" }));
-        let tree: object = {};
         let chain: object = {};
-        for (let level = 0; level < 20; level++) {
-          tree = { "0": tree, "1": {} };
-          chain = { "0": chain };
-        }
+        for (let level = 0; level < 20; level++) chain = { "0": chain };
         for (const [schema, value] of [
-          [Tree, tree],
+          [Tree, treeOf(20)],
+          [Shared, treeOf(20)],
           [First, chain],
+          [Hand1 as typeof Tree, treeOf(13)],
         ] as const) {
           const start = performance.now();
           expect(yield* json(schema, value as never)).toEqual(value);

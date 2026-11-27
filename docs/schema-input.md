@@ -806,11 +806,18 @@ the schema does with it. These are the places where it cannot, and what happens 
   a suspension, a recursive schema, a nested rename or a renamed class, and in a list or union below
   a renamed ancestor. A wire field is paired with the decoded field a `Schema.encodeKeys` rename
   wrote there: the one in its place, or, for an integer-like name such as `"1"`, which JavaScript
-  lists first, the one field whose wire side it is. Each suspension has its own wire side. Where
-  several fields share one, as `Box` and `Schema.toEncoded(Box)` do, a wrapper given there, or
+  lists first, the one field whose wire side it is. Each suspension has its own wire side, and one
+  schema given as several fields is read the same way whichever of them was written. Where several
+  fields share one wire side, as `Box` and `Schema.toEncoded(Box)` do, a wrapper given there, or
   anywhere below it, refuses if any of them may hold an Option codec at that position, even when the
   one written there does not
-  ([#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328)). A field written by
+  ([#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328)). A suspension that is no
+  decoded field's wire side, as a derivation such as `Schema.toCodecJson` builds one or a
+  hand-written rename spelled as `Schema.encodeKeys` spells it can write one, pairs with the
+  suspension in its place or, for integer-like names, with the one decoded suspension whose wire
+  side is missing. Where several are missing, a wrapper given at such a name refuses, and a nested
+  Option below it keeps the schema's own reading and can be sent as `{}`
+  ([#381](https://github.com/viell-dev/slop-effect-schema-http/issues/381)). A field written by
   another transformation, including one below a suspension it writes, keeps the schema's own reading
   ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)). A recovery's value is
   not checked against what it was given: a `Schema.catchDecoding` record beside a list member can
