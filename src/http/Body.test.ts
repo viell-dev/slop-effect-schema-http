@@ -1357,6 +1357,180 @@ describe("writers keep or refuse what they cannot write", () => {
       }),
     );
 
+    /**
+     * Where a struct still sends a built-in as `{}` or as its defaults: each route, its schema and
+     * body, what is sent, and what the refusal the body should meet instead cannot keep, at the
+     * path it uses.
+     */
+    const remaining = (): ReadonlyArray<
+      readonly [string, Schema.Top, unknown, string, string, string]
+    > => {
+      const P = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+      class Point extends Schema.Class<Point>("Point")({
+        x: Schema.Number,
+      }) {}
+      const Node = Schema.TaggedStruct("Node", { n: Schema.Number });
+      const renamedOpen = Schema.Struct({ held: Schema.ObjectKeyword }).pipe(
+        Schema.encodeKeys({ held: "h" }),
+      );
+      const date = "this Date as an object";
+      return [
+        // The JSON object codec rebuilds on the write step, whose output holds the wire name.
+        [
+          "through the JSON object codec below a rename",
+          renamedOpen,
+          { held: new Date(0) },
+          '{"h":{}}',
+          date,
+          '["held"]',
+        ],
+        [
+          "through the JSON object codec below a rename, under the wire name",
+          renamedOpen,
+          { h: new Date(0) },
+          '{"h":{}}',
+          date,
+          '["h"]',
+        ],
+        [
+          "or a symbol field through the JSON object codec below a rename",
+          renamedOpen,
+          { held: { a: 1, [Symbol.for("s")]: 2 } },
+          '{"h":{"a":1}}',
+          "this field with the rest of the value",
+          '["held"][Symbol(s)]',
+        ],
+        // An integer-like wire name does not keep its field's place.
+        [
+          "below an integer-like rename",
+          Schema.Struct({ held: P }).pipe(Schema.encodeKeys({ held: "0" })),
+          { 0: new Date(0) },
+          '{"0":{}}',
+          date,
+          '["0"]',
+        ],
+        // A default fills a field that another member could have written.
+        ...(
+          [
+            ["a class", Point],
+            ["Schema.Unknown", Schema.Unknown],
+            ["Schema.Void", Schema.Void],
+          ] as const
+        ).map(
+          ([name, other]) =>
+            [
+              `as a default beside ${name}`,
+              Schema.Struct({ held: Schema.Union([defaulted, other]) }),
+              { held: new Date(0) },
+              '{"held":{"a":"d"}}',
+              date,
+              '["held"]',
+            ] as const,
+        ),
+        [
+          "as a tag beside a suspended member",
+          Schema.Struct({
+            held: Schema.Union([
+              Schema.TaggedStruct("Leaf", {}),
+              Schema.suspend(() => Node),
+            ]),
+          }),
+          { held: new Date(0) },
+          '{"held":{"_tag":"Leaf"}}',
+          date,
+          '["held"]',
+        ],
+        ...(
+          [
+            ["as a default", defaulted, '{"held":{"a":"d"},"k":"1"}'],
+            [
+              "as a tag",
+              Schema.TaggedStruct("T", {}),
+              '{"held":{"_tag":"T"},"k":"1"}',
+            ],
+          ] as const
+        ).map(
+          ([name, held, sent]) =>
+            [
+              `${name} in a field of a union member`,
+              Schema.Union([
+                Schema.Struct({ held, k: Schema.Literal("1") }),
+                Schema.Struct({ other: Schema.String }),
+              ]),
+              { held: new Date(0), k: "1" },
+              sent,
+              date,
+              '["held"]',
+            ] as const,
+        ),
+        [
+          "as a default of Schema.StructWithRest",
+          Schema.Struct({
+            held: Schema.StructWithRest(defaulted, [
+              Schema.Record(Schema.String, Schema.Unknown),
+            ]),
+          }),
+          { held: new Date(0) },
+          '{"held":{"a":"d"}}',
+          "this Date as a record",
+          '["held"]',
+        ],
+      ];
+    };
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/337
+    it.effect(
+      "currently sends a built-in as {} or as a struct's defaults on the remaining routes",
+      () =>
+        Effect.gen(function* () {
+          for (const [, schema, body, sent] of remaining())
+            expect(yield* outcomeAt(schema, body)).toBe(`sent ${sent}`);
+        }),
+    );
+
+    // One test per route, so that each runs its own refusal.
+    for (const [route, schema, body, , kept, at] of remaining())
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/337
+      it.effect.fails(
+        `refuses a built-in ${route}, at the path the caller used`,
+        () =>
+          Effect.gen(function* () {
+            expect(yield* outcomeAt(schema, body)).toBe(
+              `SchemaError: The schema cannot keep ${kept}\n  at ${at}`,
+            );
+          }),
+      );
+
+    /** A class reads the value through the struct of its fields, and builds an instance. */
+    class Row extends Schema.Class<Row>("Row")({
+      a: Schema.optionalKey(Schema.String),
+    }) {}
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/375
+    it.effect("currently sends a built-in a Schema.Class reads as {}", () =>
+      Effect.gen(function* () {
+        for (const value of [new Date(0), new Map([["a", 1]])])
+          expect(
+            yield* outcomeAt(Schema.Struct({ held: Row }), { held: value }),
+          ).toBe('sent {"held":{}}');
+      }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/375
+    it.effect.fails(
+      "refuses a built-in a Schema.Class reads, at the path the caller used",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* outcomeAt(Schema.Struct({ held: Row }), {
+              held: new Date(0),
+            }),
+          ).toBe(
+            'SchemaError: The schema cannot keep this Date as an object\n  at ["held"]',
+          );
+        }),
+    );
+
     it.effect("is kept beside a member that reads its content", () =>
       Effect.gen(function* () {
         const entries = Schema.ReadonlyMap(Schema.String, Schema.Number);
