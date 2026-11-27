@@ -48,12 +48,25 @@ export type H2Received =
   | { readonly is: "closed" };
 
 /**
+ * The parameters of the first SETTINGS frame that a server sent, by the names their RFCs give
+ * them, such as `SETTINGS_MAX_HEADER_LIST_SIZE`. An unknown one is named by its identifier in hex,
+ * and HTTP/3's greasing ones are left out. `null` when no SETTINGS arrived.
+ */
+export type Settings = Readonly<Record<string, number>> | null;
+
+/**
  * A request as the HTTP/2 client wrote it to the HTTPS listener, which has no recording proxy. The
  * client writes each field as a plain literal, in order, so its fields are what crossed the wire.
  */
 export interface H2Exchange {
   readonly fields: ReadonlyArray<Field>;
   readonly received: H2Received;
+  /** The server's SETTINGS. */
+  readonly settings: Settings;
+  /** The size in bytes of the encoded header block. */
+  readonly block: number;
+  /** The frames that carried it: HEADERS, then CONTINUATION frames of at most 16 384 bytes. */
+  readonly frames: number;
 }
 
 /** What came back for a request that the HTTP/3 client sent; `host/src/h3.rs` has the details. */
@@ -76,6 +89,10 @@ export type H3Received =
 export interface H3Exchange {
   readonly fields: ReadonlyArray<Field>;
   readonly received: H3Received;
+  /** The SETTINGS on the server's control stream. */
+  readonly settings: Settings;
+  /** The size in bytes of the encoded field section: the payload of the HEADERS frame. */
+  readonly block: number;
 }
 
 /** The request head as the HTTP stack gave it to the router. */

@@ -3,8 +3,9 @@
 //!
 //! `warded-test-host h3 <directory>` reads one request as JSON on standard input, in the form that
 //! [`Sending`] describes, sends it on a QUIC connection of its own to the HTTPS listener's HTTP/3
-//! endpoint at its port, trusting the certificate in `<directory>`, and writes what came back as one
-//! line of JSON on standard output.
+//! endpoint at its port, trusting the certificate in `<directory>`, and writes an
+//! [`Outcome`](crate::h2::Outcome) as one line of JSON on standard output: what came back, the
+//! SETTINGS on the server's control stream, and the size of the field section it wrote.
 //!
 //! QUIC comes from Quinn, at the version and with the features that the Warded Server uses, so the
 //! client adds no crate. HTTP/3 framing (RFC 9114) and QPACK (RFC 9204) are written here: h3's
@@ -16,7 +17,7 @@
 
 use crate::{
     condition::latin1,
-    h2::{Head, Sending, final_head},
+    h2::{Head, Outcome, Sending, Settings, final_head},
 };
 use base64::{Engine, prelude::BASE64_STANDARD};
 use loona_hpack::huffman::HuffmanDecoder;
@@ -88,6 +89,8 @@ const SETTINGS: u64 = 0x4;
 const CONTROL_STREAM: u64 = 0x0;
 /// H3_NO_ERROR, for closing the connection once the response has arrived.
 const NO_ERROR: u32 = 0x100;
+/// How long the client waits for the server's control stream.
+const SETTINGS_WAIT: Duration = Duration::from_secs(2);
 /// The largest response frame that the client reads. The routes' answers are far smaller.
 const MAX_FRAME: u64 = 1 << 24;
 
@@ -95,14 +98,14 @@ pub async fn send(directory: &Path) -> Result<(), Failure> {
     let mut input = String::new();
     stdin().read_to_string(&mut input).await?;
     let sending: Sending = serde_json::from_str(&input)?;
-    let received = timeout(Duration::from_secs(10), exchange(directory, &sending))
+    let outcome = timeout(Duration::from_secs(10), exchange(directory, &sending))
         .await
         .map_err(|_| "the server did not answer within 10 seconds")??;
-    println!("{}", serde_json::to_string(&received)?);
+    println!("{}", serde_json::to_string(&outcome)?);
     Ok(())
 }
 
-async fn exchange(directory: &Path, sending: &Sending) -> Result<Received, Failure> {
+async fn exchange(directory: &Path, sending: &Sending) -> Result<Outcome<Received>, Failure> {
     let mut roots = RootCertStore::empty();
     roots.add(CertificateDer::from_pem_file(directory.join("cert.pem"))?)?;
     let mut tls =
@@ -117,15 +120,104 @@ async fn exchange(directory: &Path, sending: &Sending) -> Result<Received, Failu
     )?)));
     let server = SocketAddr::from((Ipv4Addr::LOCALHOST, sending.port));
     let connection = endpoint.connect(server, "127.0.0.1")?.await?;
-    let received = request(&connection, sending).await;
-    // Tell the server, so that it does not wait for the connection to go idle.
+    let section = section(sending)?;
+    let block = section.len();
+    let (received, (settings, _streams)) = tokio::join!(
+        request(&connection, section, sending),
+        server_settings(&connection),
+    );
+    // Tell the server, so that it does not wait for the connection to go idle. Its streams stay
+    // open until then.
     connection.close(NO_ERROR.into(), b"");
     let _ = timeout(Duration::from_secs(1), endpoint.wait_idle()).await;
-    received
+    Ok(Outcome {
+        received: received?,
+        settings,
+        block,
+        frames: None,
+    })
+}
+
+/// The SETTINGS that begin the server's control stream (RFC 9114 section 6.2.1), by name, and
+/// the unidirectional streams that the server opened until then, which stay open while the
+/// connection is used: closing a critical one is a connection error. Greasing parameters (RFC 9114
+/// section 7.2.4.1) are left out. None when no control stream arrives within `SETTINGS_WAIT`.
+async fn server_settings(connection: &Connection) -> (Option<Settings>, Vec<RecvStream>) {
+    let mut streams = Vec::new();
+    let settings = async {
+        loop {
+            let mut stream = connection.accept_uni().await.ok()?;
+            let kind = stream_type(&mut stream).await;
+            streams.push(stream);
+            if kind? != CONTROL_STREAM {
+                continue;
+            }
+            let stream = streams.last_mut()?;
+            let (kind, payload) = next_frame(stream).await.ok().flatten()?;
+            return (kind == SETTINGS).then(|| named(&payload)).flatten();
+        }
+    };
+    let settings = timeout(SETTINGS_WAIT, settings).await.ok().flatten();
+    (settings, streams)
+}
+
+/// The type of a unidirectional stream: the variable-length integer that begins it.
+async fn stream_type(stream: &mut RecvStream) -> Option<u64> {
+    let mut first = [0];
+    stream.read_exact(&mut first).await.ok()?;
+    rest_of_varint(first[0], stream).await.ok()
+}
+
+/// The parameters of a SETTINGS frame, pairs of variable-length integers (RFC 9114 section 7.2.4),
+/// by name, without the greasing ones. None when the payload ends inside a pair.
+fn named(mut payload: &[u8]) -> Option<Settings> {
+    let mut settings = Settings::new();
+    while !payload.is_empty() {
+        let id = take_varint(&mut payload)?;
+        let value = take_varint(&mut payload)?;
+        if let Some(name) = setting(id) {
+            settings.insert(name, value);
+        }
+    }
+    Some(settings)
+}
+
+/// The name of a SETTINGS parameter (RFC 9114 section 7.2.4.1, RFC 9204, RFC 9220, RFC 9297, and
+/// the WebTransport draft that h3 follows), or none for a greasing one.
+fn setting(id: u64) -> Option<String> {
+    let name = match id {
+        0x1 => "SETTINGS_QPACK_MAX_TABLE_CAPACITY",
+        0x6 => "SETTINGS_MAX_FIELD_SECTION_SIZE",
+        0x7 => "SETTINGS_QPACK_BLOCKED_STREAMS",
+        0x8 => "SETTINGS_ENABLE_CONNECT_PROTOCOL",
+        0x33 => "SETTINGS_H3_DATAGRAM",
+        0x2b60_3742 => "SETTINGS_ENABLE_WEBTRANSPORT",
+        0x2b60_3743 => "SETTINGS_WEBTRANSPORT_MAX_SESSIONS",
+        0x21.. if (id - 0x21).is_multiple_of(0x1f) => return None,
+        other => return Some(format!("{other:#x}")),
+    };
+    Some(name.to_owned())
+}
+
+/// A variable-length integer (RFC 9000 section 16) taken from the front of `rest`.
+fn take_varint(rest: &mut &[u8]) -> Option<u64> {
+    let first = *rest.first()?;
+    let length = 1 << (first >> 6);
+    let bytes = rest.get(..length)?;
+    *rest = &rest[length..];
+    let mut value = u64::from(first & 0x3f);
+    for &byte in &bytes[1..] {
+        value = (value << 8) | u64::from(byte);
+    }
+    Some(value)
 }
 
 /// Open the control stream, send the request on a stream of its own, and read what comes back.
-async fn request(connection: &Connection, sending: &Sending) -> Result<Received, Failure> {
+async fn request(
+    connection: &Connection,
+    section: Vec<u8>,
+    sending: &Sending,
+) -> Result<Received, Failure> {
     // Empty SETTINGS leave the dynamic table's capacity at 0, so the server's encoder uses none
     // (RFC 9204 section 3.2.3). The stream stays open while the connection is used, since closing
     // it is a connection error (RFC 9114 section 6.2.1). Without a dynamic table, the client needs
@@ -139,7 +231,7 @@ async fn request(connection: &Connection, sending: &Sending) -> Result<Received,
     let (mut out, mut stream) = connection.open_bi().await?;
     // A server that refuses the request can stop reading it before it all went out, and then
     // what it answers says why.
-    let _ = out.write_all(&message(sending)?).await;
+    let _ = out.write_all(&message(section, sending)?).await;
     let _ = out.finish();
     match read(&mut stream, sending.head_only).await {
         Ok(head) => Ok(head),
@@ -152,14 +244,19 @@ async fn request(connection: &Connection, sending: &Sending) -> Result<Received,
     }
 }
 
-/// The request's HEADERS frame and DATA frame (RFC 9114 section 4.1). An empty body has no DATA
-/// frame, since h3 takes an empty one for the end of the content.
-fn message(sending: &Sending) -> Result<Vec<u8>, Failure> {
+/// The request's field section: the payload of its HEADERS frame.
+fn section(sending: &Sending) -> Result<Vec<u8>, Failure> {
     // Required Insert Count 0 and Base 0 (RFC 9204 section 4.5.1): no dynamic table.
     let mut section = vec![0, 0];
     for (name, value) in &sending.fields {
         literal(&latin1(name)?, &latin1(value)?, &mut section);
     }
+    Ok(section)
+}
+
+/// The request's HEADERS frame and DATA frame (RFC 9114 section 4.1). An empty body has no DATA
+/// frame, since h3 takes an empty one for the end of the content.
+fn message(section: Vec<u8>, sending: &Sending) -> Result<Vec<u8>, Failure> {
     let mut out = Vec::new();
     frame(HEADERS, &section, &mut out);
     if let Some(body) = &sending.body {
@@ -549,6 +646,34 @@ mod tests {
             varint(value, &mut out);
             assert_eq!(out, expected, "{value}");
         }
+    }
+
+    #[test]
+    fn settings_are_named_without_grease() {
+        let mut payload = Vec::new();
+        for (id, value) in [
+            (0x6, 32_768),
+            (0x21 + 0x1f * 1_000, 7),
+            (0x8, 0),
+            (0x2b60_3742, 0),
+            (0x41, 1),
+        ] {
+            varint(id, &mut payload);
+            varint(value, &mut payload);
+        }
+        assert_eq!(
+            named(&payload),
+            Some(Settings::from([
+                ("SETTINGS_MAX_FIELD_SECTION_SIZE".to_owned(), 32_768),
+                ("SETTINGS_ENABLE_CONNECT_PROTOCOL".to_owned(), 0),
+                ("SETTINGS_ENABLE_WEBTRANSPORT".to_owned(), 0),
+                ("0x41".to_owned(), 1),
+            ]))
+        );
+        assert_eq!(named(&payload[..payload.len() - 1]), None);
+        let mut rest = &[0x9d, 0x7f, 0x3e, 0x7d, 0x25][..];
+        assert_eq!(take_varint(&mut rest), Some(494_878_333));
+        assert_eq!(rest, [0x25]);
     }
 
     #[test]

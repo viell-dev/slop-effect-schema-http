@@ -4,9 +4,10 @@
 //!
 //! `warded-test-host h2 <directory>` reads one request as JSON on standard input, sends it on a
 //! connection of its own to the HTTPS listener at its port, trusting the certificate in
-//! `<directory>`, and writes what came back as one line of JSON on standard output. With
-//! `cleartext`, it sends it to a cleartext listener instead, with prior knowledge (RFC 9113 section
-//! 3.3): the preface over TCP, without TLS or an upgrade.
+//! `<directory>`, and writes an [`Outcome`] as one line of JSON on standard output: what came back,
+//! the server's SETTINGS, and the size of the header block it wrote. With `cleartext`, it sends it
+//! to a cleartext listener instead, with prior knowledge (RFC 9113 section 3.3): the preface over
+//! TCP, without TLS or an upgrade.
 //!
 //! Every field goes out as a literal that is neither indexed nor Huffman-coded (RFC 7541 section
 //! 6.2.2), in the order given, so the bytes of the header block are the fields as given, and a
@@ -22,6 +23,7 @@ use rustls::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     error::Error,
     net::{IpAddr, Ipv4Addr},
     path::Path,
@@ -54,6 +56,24 @@ pub(crate) struct Sending {
     /// HTTP/2 over TCP without TLS. The HTTP/3 client always uses QUIC's TLS.
     #[serde(default)]
     pub(crate) cleartext: bool,
+}
+
+/// The values of a SETTINGS frame, by the names that their RFCs give them.
+pub(crate) type Settings = BTreeMap<String, u64>;
+
+/// What a client writes on standard output.
+#[derive(Serialize)]
+pub(crate) struct Outcome<R> {
+    /// What came back for the request.
+    pub(crate) received: R,
+    /// The first SETTINGS that the server sent, or none when none arrived.
+    pub(crate) settings: Option<Settings>,
+    /// The size in bytes of the header block or field section that the client wrote: what the
+    /// server's limits on encoded heads count.
+    pub(crate) block: usize,
+    /// How many frames carried it: HEADERS, then CONTINUATION. HTTP/3 has only one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) frames: Option<usize>,
 }
 
 /// What came back on the connection.
@@ -105,14 +125,14 @@ pub async fn send(directory: &Path) -> Result<(), Failure> {
     let mut input = String::new();
     stdin().read_to_string(&mut input).await?;
     let sending: Sending = serde_json::from_str(&input)?;
-    let received = timeout(Duration::from_secs(10), exchange(directory, &sending))
+    let outcome = timeout(Duration::from_secs(10), exchange(directory, &sending))
         .await
         .map_err(|_| "the server did not answer within 10 seconds")??;
-    println!("{}", serde_json::to_string(&received)?);
+    println!("{}", serde_json::to_string(&outcome)?);
     Ok(())
 }
 
-async fn exchange(directory: &Path, sending: &Sending) -> Result<Received, Failure> {
+async fn exchange(directory: &Path, sending: &Sending) -> Result<Outcome<Received>, Failure> {
     let tcp = TcpStream::connect((Ipv4Addr::LOCALHOST, sending.port)).await?;
     if sending.cleartext {
         return over(tcp, sending).await;
@@ -135,17 +155,41 @@ async fn exchange(directory: &Path, sending: &Sending) -> Result<Received, Failu
 }
 
 /// Send the request on a connection that speaks HTTP/2, and read what comes back.
-async fn over<C>(mut connection: C, sending: &Sending) -> Result<Received, Failure>
+async fn over<C>(mut connection: C, sending: &Sending) -> Result<Outcome<Received>, Failure>
 where
     C: AsyncRead + AsyncWrite + Unpin,
 {
-    connection.write_all(&request(sending)?).await?;
-    connection.flush().await?;
-    read(&mut connection, sending.head_only).await
+    let Request {
+        bytes,
+        block,
+        frames,
+    } = request(sending)?;
+    // A server that refuses a large head can close the connection before it all went out, and
+    // then what it sent before says why.
+    let written = async {
+        connection.write_all(&bytes).await?;
+        connection.flush().await
+    };
+    let _ = written.await;
+    let mut settings = None;
+    let received = read(&mut connection, sending.head_only, &mut settings).await?;
+    Ok(Outcome {
+        received,
+        settings,
+        block,
+        frames: Some(frames),
+    })
+}
+
+/// The bytes of a request, and the size of its header block and the frames that carry it.
+struct Request {
+    bytes: Vec<u8>,
+    block: usize,
+    frames: usize,
 }
 
 /// The preface, SETTINGS, and the request's HEADERS, CONTINUATION and DATA frames.
-fn request(sending: &Sending) -> Result<Vec<u8>, Failure> {
+fn request(sending: &Sending) -> Result<Request, Failure> {
     let mut block = Vec::new();
     for (name, value) in &sending.fields {
         literal(&latin1(name)?, &latin1(value)?, &mut block);
@@ -165,6 +209,7 @@ fn request(sending: &Sending) -> Result<Vec<u8>, Failure> {
     } else {
         block.chunks(MAX_PAYLOAD).collect()
     };
+    let frames = pieces.len();
     for (index, piece) in pieces.iter().enumerate() {
         let (kind, mut flags) = match (index, &body) {
             (0, None) => (HEADERS, END_STREAM),
@@ -191,7 +236,11 @@ fn request(sending: &Sending) -> Result<Vec<u8>, Failure> {
             frame(DATA, flags, STREAM, piece, &mut out);
         }
     }
-    Ok(out)
+    Ok(Request {
+        bytes: out,
+        block: block.len(),
+        frames,
+    })
 }
 
 /// A literal field line without indexing, with a new name (RFC 7541 section 6.2.2): `0x00`, then
@@ -229,8 +278,13 @@ fn frame(kind: u8, flags: u8, stream: u32, payload: &[u8], out: &mut Vec<u8>) {
 }
 
 /// Read frames until the request's stream ends, is reset, or the connection goes away. SETTINGS
-/// and PING are acknowledged, and DATA is given back to both windows.
-async fn read<C>(connection: &mut C, head_only: bool) -> Result<Received, Failure>
+/// and PING are acknowledged, and DATA is given back to both windows. The first SETTINGS go in
+/// `settings`.
+async fn read<C>(
+    connection: &mut C,
+    head_only: bool,
+    settings: &mut Option<Settings>,
+) -> Result<Received, Failure>
 where
     C: AsyncRead + AsyncWrite + Unpin,
 {
@@ -252,7 +306,12 @@ where
         let mut reply = Vec::new();
         let mut ended = false;
         match kind {
-            SETTINGS if flags & ACK == 0 => frame(SETTINGS, ACK, 0, &[], &mut reply),
+            SETTINGS if flags & ACK == 0 => {
+                if settings.is_none() {
+                    *settings = Some(named(&payload));
+                }
+                frame(SETTINGS, ACK, 0, &[], &mut reply);
+            }
             PING if flags & ACK == 0 => frame(PING, ACK, 0, &payload, &mut reply),
             RST_STREAM if stream == STREAM => {
                 return Ok(Received::Reset {
@@ -348,6 +407,36 @@ fn unpadded(payload: &[u8], flags: u8) -> Result<&[u8], Failure> {
     Ok(&rest[..end])
 }
 
+/// The parameters of a SETTINGS frame, six bytes each (RFC 9113 section 6.5.1), by name. A later
+/// value for the same parameter replaces an earlier one.
+fn named(payload: &[u8]) -> Settings {
+    let (entries, _) = payload.as_chunks::<6>();
+    entries
+        .iter()
+        .map(|entry| {
+            let id = u16::from_be_bytes([entry[0], entry[1]]);
+            let value = u32::from_be_bytes([entry[2], entry[3], entry[4], entry[5]]);
+            (setting(id), u64::from(value))
+        })
+        .collect()
+}
+
+/// The name of a SETTINGS parameter (RFC 9113 section 6.5.2, RFC 8441, RFC 9218).
+fn setting(id: u16) -> String {
+    let name = match id {
+        0x1 => "SETTINGS_HEADER_TABLE_SIZE",
+        0x2 => "SETTINGS_ENABLE_PUSH",
+        0x3 => "SETTINGS_MAX_CONCURRENT_STREAMS",
+        0x4 => "SETTINGS_INITIAL_WINDOW_SIZE",
+        0x5 => "SETTINGS_MAX_FRAME_SIZE",
+        0x6 => "SETTINGS_MAX_HEADER_LIST_SIZE",
+        0x8 => "SETTINGS_ENABLE_CONNECT_PROTOCOL",
+        0x9 => "SETTINGS_NO_RFC7540_PRIORITIES",
+        other => return format!("{other:#x}"),
+    };
+    name.to_owned()
+}
+
 /// The 32-bit word at `at` in a payload.
 fn word(payload: &[u8], at: usize) -> Result<u32, Failure> {
     let bytes = payload
@@ -397,6 +486,24 @@ mod tests {
             integer(value, &mut out);
             assert_eq!(out, expected, "{value}");
         }
+    }
+
+    #[test]
+    fn settings_are_named() {
+        let payload = [
+            0x0, 0x3, 0x0, 0x0, 0x0, 0x80, // MAX_CONCURRENT_STREAMS 128
+            0x0, 0x6, 0x0, 0x0, 0x80, 0x0, // MAX_HEADER_LIST_SIZE 32 768
+            0x0, 0xa, 0x0, 0x0, 0x0, 0x1, // an unknown one
+            0x0, 0x6, 0x0, 0x0, 0x40, 0x0, // MAX_HEADER_LIST_SIZE again, 16 384
+        ];
+        assert_eq!(
+            named(&payload),
+            Settings::from([
+                ("SETTINGS_MAX_CONCURRENT_STREAMS".to_owned(), 128),
+                ("SETTINGS_MAX_HEADER_LIST_SIZE".to_owned(), 16_384),
+                ("0xa".to_owned(), 1),
+            ])
+        );
     }
 
     #[test]

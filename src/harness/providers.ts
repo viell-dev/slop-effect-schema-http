@@ -421,12 +421,12 @@ const fieldBytes = (text: string): string =>
 
 const root = new URL("../../", import.meta.url);
 
-/** The host's clients that write a header block field by field, and what each answers. */
+/** The host's clients that write a header block field by field, and what each reports. */
 interface HostClients {
-  /** HTTP/2 over TLS, `host/src/h2.rs`. */
-  readonly h2: H2Received;
+  /** HTTP/2, `host/src/h2.rs`. */
+  readonly h2: Omit<H2Exchange, "fields">;
   /** HTTP/3, `host/src/h3.rs`. */
-  readonly h3: H3Received;
+  readonly h3: Omit<H3Exchange, "fields">;
 }
 
 const protocolOf = { h2: "HTTP/2", h3: "HTTP/3" } as const;
@@ -504,8 +504,9 @@ const describeReceived = (received: H2Received | H3Received): string => {
  * written field by field, for the heads no standard client sends. Each request goes on a
  * connection of its own, through the host's HTTP/2 client, and `exchanges` records what it wrote
  * and what came back: the wire record of the HTTPS listener, which has no recording proxy, and of
- * the cleartext ones, whose proxies read HTTP/1 only. An `https` origin gets HTTP/2 over TLS, and
- * an `http` one HTTP/2 with prior knowledge (h2c, RFC 9113 section 3.3).
+ * the cleartext ones, whose proxies read HTTP/1 only. It also records the server's SETTINGS and
+ * the size of the encoded header block, and the frames that carried it. An `https` origin gets
+ * HTTP/2 over TLS, and an `http` one HTTP/2 with prior knowledge (h2c, RFC 9113 section 3.3).
  *
  * - **Pseudo-header fields.** `:method` as given, `:scheme` the origin's, `:authority` the
  *   origin's host, and `:path` the target of `rawTarget`, so the request is never parsed as a URL.
@@ -533,8 +534,9 @@ export const h2Client = (
  * `origin`, written as `h2Client` writes it: the same pseudo-header fields (RFC 9114 section
  * 4.3.1), fields and `fields` option, with nothing refused. Each request goes on a QUIC connection
  * of its own, through the host's HTTP/3 client, which writes each field as a QPACK literal, and
- * `exchanges` records what it wrote and what came back. A reset stream or a closed connection
- * fails the request as a transport error; the exchange says which.
+ * `exchanges` records what it wrote and what came back, with the SETTINGS on the server's control
+ * stream and the size of the encoded field section. A reset stream or a closed connection fails
+ * the request as a transport error; the exchange says which.
  */
 export const h3Client = (
   origin: string,
@@ -546,10 +548,7 @@ export const h3Client = (
 const fieldsClient = <C extends keyof HostClients>(
   client: C,
   origin: string,
-  exchanges: Array<{
-    readonly fields: ReadonlyArray<Field>;
-    readonly received: HostClients[C];
-  }>,
+  exchanges: Array<{ readonly fields: ReadonlyArray<Field> } & HostClients[C]>,
   { fields: rewrite = (composed) => composed }: H2Options = {},
 ): HttpClient.HttpClient => {
   const { host, port, protocol } = new URL(origin);
@@ -574,7 +573,7 @@ const fieldsClient = <C extends keyof HostClients>(
               ([name, value]): Field => [fieldBytes(name), fieldBytes(value)],
             ),
           ]);
-          const received = yield* viaHost(client, {
+          const reported = yield* viaHost(client, {
             port: Number(port),
             fields,
             ...(bytes === undefined
@@ -585,7 +584,8 @@ const fieldsClient = <C extends keyof HostClients>(
             ),
             cleartext,
           });
-          exchanges.push({ fields, received });
+          exchanges.push({ fields, ...reported });
+          const { received } = reported;
           if (received.is !== "response")
             return yield* Effect.fail(
               transportError(request, new Error(describeReceived(received))),
