@@ -270,7 +270,7 @@ describe("visible unions beside opaque fields", () => {
       )(input());
       expect(result.lost).toEqual([["f", "b"]]);
       const failure = yield* Effect.flip(
-        Inputs.refuseLost(impossible, result.lost, () => true),
+        Inputs.refuseLost(impossible, result, () => true),
       );
       expect(failure.message).toContain('["f"]["b"]');
     }),

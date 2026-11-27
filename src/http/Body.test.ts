@@ -828,39 +828,44 @@ describe("writers keep or refuse what they cannot write", () => {
       Schema.Union([Schema.Struct({ q: Schema.String }), record]),
       Schema.Union([record, Schema.Struct({ q: Schema.String })]),
     ];
-    const hidden = () => [
-      new Date(0),
-      new Map([["a", 1]]),
-      new Set([1]),
-      /x/u,
-      new Error("x"),
-      Object.assign(new Error("x"), { code: 1 }),
-      new DataView(new ArrayBuffer(1)),
-      new URLSearchParams("a=b"),
-      new URL("https://x.test"),
-      // oxlint-disable-next-line no-new-wrappers -- A box holds its primitive outside its fields.
-      Object(5),
-      Promise.resolve(1),
-      new Sealed(),
-    ];
+    /** Each value, and how a refusal names it: by its kind, or as a value whose kind is unknown. */
+    const named = () =>
+      [
+        [new Date(0), "this Date"],
+        [new Map([["a", 1]]), "this Map"],
+        [new Set([1]), "this Set"],
+        [/x/u, "this RegExp"],
+        [new Error("x"), "this Error"],
+        [Object.assign(new Error("x"), { code: 1 }), "this Error"],
+        [new DataView(new ArrayBuffer(1)), "this DataView"],
+        [new URLSearchParams("a=b"), "this URLSearchParams"],
+        [new URL("https://x.test"), "the content of this value"],
+        // oxlint-disable-next-line no-new-wrappers -- A box holds its primitive outside its fields.
+        [Object(5), "this boxed number"],
+        [Promise.resolve(1), "this Promise"],
+        [new Sealed(), "the content of this value"],
+      ] as const;
+    const hidden = () => named().map(([value]) => value);
 
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/275
     it.effect("is refused where it is, through Body.jsonSchema", () =>
       Effect.gen(function* () {
         for (const schema of open)
-          for (const value of hidden()) {
+          for (const [value, kind] of named()) {
+            // JSON's object codec rebuilds an object of its fields; every other schema a record.
+            const as =
+              schema === Schema.ObjectKeyword ? "an object" : "a record";
             for (const [wrapped, body, at] of [
               [schema, value, ""],
-              [Schema.Struct({ v: schema }), { v: value }, 'at ["v"]'],
-              [Schema.Array(schema), [value], "at [0]"],
+              [Schema.Struct({ v: schema }), { v: value }, '\n  at ["v"]'],
+              [Schema.Array(schema), [value], "\n  at [0]"],
             ] as const) {
               const error = yield* Effect.flip(
                 Body.jsonSchema(wrapped).encode(body as never),
               );
               expect(error).toBeInstanceOf(Schema.SchemaError);
               expect(error.message).toBe(
-                at === ""
-                  ? "The schema cannot keep the content of this value"
-                  : `The schema cannot keep this field with the rest of the value\n  ${at}`,
+                `The schema cannot keep ${kind} as ${as}${at}`,
               );
             }
           }

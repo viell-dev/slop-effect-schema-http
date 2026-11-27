@@ -537,7 +537,8 @@ describe("encoded input beside constructor defaults", () => {
         const schema = Schema.Union([A, B]);
         const input = { A: "x", b: "y" };
         const read = Inputs.reader(schema, Schema.encodeEffect(schema));
-        expect(yield* read(input)).toEqual({
+        const { output, lost } = yield* read(input);
+        expect({ output, lost }).toEqual({
           output: { b: "y" },
           lost: [["A"]],
         });
@@ -599,11 +600,11 @@ describe("encoded input beside constructor defaults", () => {
           shared,
         }).pipe(Schema.encodeKeys({ limit: "page_size" }));
         const schema = Schema.Union([renamed, Cursor]);
-        const result = yield* Inputs.reader(
+        const { output, lost } = yield* Inputs.reader(
           schema,
           Schema.encodeEffect(schema),
         )({ page_size: "05", shared: "x", cursor: 5 } as never);
-        expect(result).toEqual({
+        expect({ output, lost }).toEqual({
           output: { page_size: "5", shared: "x" },
           lost: [["cursor"]],
         });
