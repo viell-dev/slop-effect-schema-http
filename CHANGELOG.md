@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Correct which clients retry a body cut off after its headers
+  ([#369](https://github.com/viell-dev/slop-effect-schema-http/issues/369)). The Limits page and the
+  design named "a provider on Node's `http`" as one that reports a `TransportError`, which
+  `Policy.transient` retries. Effect's own `NodeHttpClient` layers, on `node:http` and on undici,
+  hand a response over at its headers as `fetch` does, so a cut body reaches the library as a
+  `Response.DecodeError` and is not retried. Only a client that reads the whole response before
+  handing it over reports a `TransportError`.
+
 - Prepare a recursive struct with a renamed key without repeating work at each level of the value
   ([#355](https://github.com/viell-dev/slop-effect-schema-http/issues/355)). On 0.20.0, each level
   below a renamed field read the schemas there twice as often as the level above it. With `held`
