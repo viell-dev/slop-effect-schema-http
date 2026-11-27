@@ -173,10 +173,25 @@ export interface Reply {
   readonly body?: string;
 }
 
-/** A selected target. Without a reply, it answers 200 with `{ route, captures }` as JSON. */
+/**
+ * A handler that answers by the value of one capture, as the server's `Params` extractor decodes it,
+ * the way an application looks a record up by its id: the reply `by` lists for that value, or
+ * `otherwise`, which also answers when the capture cannot be decoded.
+ */
+export interface Lookup {
+  readonly capture: string;
+  readonly by: Readonly<Record<string, Reply>>;
+  readonly otherwise: Reply;
+}
+
+/**
+ * A selected target. It answers its `reply`, or what its `lookup` finds, and without either, 200
+ * with `{ route, captures }` as JSON. A target cannot have both.
+ */
 export interface Target {
   readonly name: string;
   readonly reply?: Reply;
+  readonly lookup?: Lookup;
 }
 
 export interface Route extends Target {
@@ -204,3 +219,10 @@ export interface Definition {
 
 export const route = (name: string, when: Condition, reply?: Reply): Route =>
   reply === undefined ? { name, when } : { name, when, reply };
+
+/** A route whose handler answers by a capture's value, as `Lookup` describes. */
+export const lookupRoute = (
+  name: string,
+  when: Condition,
+  lookup: Lookup,
+): Route => ({ name, when, lookup });

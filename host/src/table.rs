@@ -49,11 +49,31 @@ struct Route {
     target: Target,
 }
 
-/// What a selected route answers. Without a `reply`, the selection itself, as JSON.
+/// What a selected route answers. Without a `reply` or a `lookup`, the selection itself, as JSON.
 #[derive(Clone, Debug, Deserialize)]
 struct Target {
     name: String,
     reply: Option<Reply>,
+    lookup: Option<Lookup>,
+}
+
+/// A handler that answers by the value of one capture, as the server's `Params` extractor decodes
+/// it, the way an application looks a record up by its id: the reply `by` lists for that value, or
+/// `otherwise`, which also answers when the capture cannot be decoded.
+#[derive(Clone, Debug, Deserialize)]
+struct Lookup {
+    capture: String,
+    by: BTreeMap<String, Reply>,
+    otherwise: Reply,
+}
+
+impl Lookup {
+    fn reply(&self, params: Option<&BTreeMap<String, String>>) -> &Reply {
+        params
+            .and_then(|params| params.get(&self.capture))
+            .and_then(|value| self.by.get(value))
+            .unwrap_or(&self.otherwise)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -200,6 +220,16 @@ fn routes(definition: &Definition) -> Result<Routes, String> {
         .map(|(name, set)| Ok((name.clone(), set.build().map_err(text)?)))
         .collect::<Result<BTreeMap<_, _>, String>>()?;
     let mut routes = Router::new();
+    for target in definition
+        .routes
+        .iter()
+        .map(|route| &route.target)
+        .chain(&definition.fallback)
+    {
+        if target.reply.is_some() && target.lookup.is_some() {
+            return Err(format!("{:?} has both a reply and a lookup", target.name));
+        }
+    }
     for route in &definition.routes {
         let condition = route
             .when
@@ -235,6 +265,11 @@ async fn answer(target: Arc<Target>, request: Request) -> Result<Response, Infal
         .await
         .map(|body| BASE64_STANDARD.encode(body.to_bytes()))
         .map_err(text);
+    let reply = match (&target.reply, &target.lookup) {
+        (Some(reply), _) => Some(reply),
+        (None, Some(lookup)) => Some(lookup.reply(params.as_ref().ok())),
+        (None, None) => None,
+    };
     let dispatched = Dispatched {
         route: target.name.clone(),
         index: parts
@@ -245,7 +280,7 @@ async fn answer(target: Arc<Target>, request: Request) -> Result<Response, Infal
         params,
         body,
     };
-    let mut response = match &target.reply {
+    let mut response = match reply {
         Some(reply) => reply.response(),
         None => {
             let selection = serde_json::json!({

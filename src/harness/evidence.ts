@@ -44,6 +44,11 @@ export type H2Received =
   | { readonly is: "reset"; readonly code: string }
   /** GOAWAY before the response ended: a connection error. */
   | { readonly is: "go_away"; readonly code: string; readonly debug: string }
+  /**
+   * Informational heads, then the end of the stream, which RFC 9113 section 8.1 makes a malformed
+   * response: their statuses, in order.
+   */
+  | { readonly is: "interim"; readonly statuses: ReadonlyArray<number> }
   /** The connection ended without any of those. */
   | { readonly is: "closed" };
 
@@ -141,6 +146,10 @@ export interface Exchange {
   readonly verdict: Verdict;
   /** `null` when no target ran: a miss without fallback, or a routing error. */
   readonly dispatched: Dispatched | null;
+  /**
+   * The status the application answered with, before the server finished the response: the
+   * handler's own, which the client may not receive, such as an informational status.
+   */
   readonly status: number;
 }
 
