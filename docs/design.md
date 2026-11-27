@@ -219,9 +219,10 @@ An encoded read through a codec whose decoded side declares an Option records wh
 native wrapper as the wire value. This includes custom codecs and open wire schemas such as `Any`. A
 native or tagged `Schema.Option` explicitly declared on the wire side keeps its own reading. A
 struct alternative beside an unwrapping Option also records a wrapper it took. If the decoded
-reading fails and a whole encoded read succeeds with that note, preparation reports the decoded
-failure. A relaxed read can use the plain payload itself where both sides accept an empty struct and
-the payload holds none of their fields.
+reading fails and a whole encoded read succeeds with that note, a struct is read field by field, so
+each field keeps its own side; a whole union, which this would read member by member, or a struct
+whose fields cannot be read that way, reports the decoded failure. A relaxed read can use the plain
+payload itself where both sides accept an empty struct and the payload holds none of their fields.
 
 The guard caches the rewritten schema per AST. An observed decode carries a flag in its parse
 options, tests the inputs at the guarded positions, and gives each tried union member a local flag

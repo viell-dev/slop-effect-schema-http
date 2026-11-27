@@ -2315,38 +2315,39 @@ describe("an invalid Some payload keeps its decoded error", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/319
-  it.effect(
-    "refuses the wrapper even when the encoded side accepts any object",
-    () =>
-      Effect.gen(function* () {
-        for (const wire of [
-          Schema.Any,
-          Schema.ObjectKeyword,
-          Schema.Union([Schema.String, Schema.ObjectKeyword]),
-        ]) {
-          const schema = Schema.Struct({
-            held: Schema.OptionFromNullOr(wire),
-            count: Schema.FiniteFromString,
-          });
-          for (const held of [Option.some({ a: 1 }), Option.none()]) {
-            const failure = yield* Effect.flip(
-              json(schema, { held, count: "2" } as never),
-            );
-            expect(failure).toBeInstanceOf(Schema.SchemaError);
-            expect(failure.message).toContain('["count"]');
-          }
-          expect(
-            yield* json(schema, { held: Option.some({ a: 1 }), count: 2 }),
-          ).toEqual({
-            held: { a: 1 },
+  it.effect("never reads the wrapper as the encoded side's open object", () =>
+    Effect.gen(function* () {
+      for (const wire of [
+        Schema.Any,
+        Schema.ObjectKeyword,
+        Schema.Union([Schema.String, Schema.ObjectKeyword]),
+      ]) {
+        const schema = Schema.Struct({
+          held: Schema.OptionFromNullOr(wire),
+          count: Schema.FiniteFromString,
+        });
+        // Read field by field, the wrapper is the field's own decoded value (#318).
+        expect(
+          yield* json(schema, {
+            held: Option.some({ a: 1 }),
             count: "2",
-          });
-          expect(yield* json(schema, { held: { a: 1 }, count: "2" })).toEqual({
-            held: { a: 1 },
-            count: "2",
-          });
-        }
-      }),
+          } as never),
+        ).toEqual({ held: { a: 1 }, count: "2" });
+        expect(
+          yield* json(schema, { held: Option.none(), count: "2" } as never),
+        ).toEqual({ held: null, count: "2" });
+        expect(
+          yield* json(schema, { held: Option.some({ a: 1 }), count: 2 }),
+        ).toEqual({
+          held: { a: 1 },
+          count: "2",
+        });
+        expect(yield* json(schema, { held: { a: 1 }, count: "2" })).toEqual({
+          held: { a: 1 },
+          count: "2",
+        });
+      }
+    }),
   );
 
   it.effect("keeps a native Option explicitly declared on the wire side", () =>
@@ -2570,8 +2571,9 @@ describe("an invalid Some payload keeps its decoded error", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/318
   it.effect(
-    "refuses a mixed read that would send a reinterpreted wrapper",
+    "keeps a wrapper beside an encoded sibling by reading each field on its side",
     () =>
       Effect.gen(function* () {
         const schema = Schema.Struct({
@@ -2579,10 +2581,62 @@ describe("an invalid Some payload keeps its decoded error", () => {
           count: Schema.FiniteFromString,
         });
         const held = Option.some({ a: "a", b: "keep" });
-        const failure = yield* Effect.flip(
-          json(schema, { held, count: "2" } as never),
+        expect(yield* json(schema, { held, count: "2" } as never)).toEqual({
+          held: { a: "a", b: "keep" },
+          count: "2",
+        });
+        expect(
+          yield* json(schema, { held: Option.none(), count: "2" } as never),
+        ).toEqual({ held: null, count: "2" });
+        expect(
+          yield* json(
+            Schema.Struct({ row: schema, tag: Schema.FiniteFromString }),
+            {
+              row: { held, count: "2" },
+              tag: "1",
+            } as never,
+          ),
+        ).toEqual({
+          row: { held: { a: "a", b: "keep" }, count: "2" },
+          tag: "1",
+        });
+        // A hand-written codec whose wire struct has a `value` key writes the wrapper itself.
+        const byHand = Schema.Struct({
+          value: Schema.optionalKey(payload),
+        }).pipe(
+          Schema.decodeTo(
+            Schema.Option(payload),
+            SchemaTransformation.transform({
+              decode: ({ value }) =>
+                value === undefined ? Option.none() : Option.some(value),
+              encode: (option) =>
+                Option.isSome(option) ? { value: option.value } : {},
+            }),
+          ),
         );
-        expect(failure.message).toContain('["count"]');
+        const handSchema = Schema.Struct({
+          held: byHand,
+          count: Schema.FiniteFromString,
+        });
+        expect(yield* json(handSchema, { held, count: "2" } as never)).toEqual({
+          held: { value: { a: "a", b: "keep" } },
+          count: "2",
+        });
+        expect(
+          yield* json(handSchema, { held: Option.none(), count: "2" } as never),
+        ).toEqual({ held: {}, count: "2" });
+        // An invalid payload and an invalid sibling still refuse.
+        const invalid = yield* Effect.flip(
+          json(schema, {
+            held: Option.some({ a: 5, b: "keep" }),
+            count: "2",
+          } as never),
+        );
+        expect(invalid.message).toContain('["held"]["value"]["a"]');
+        const sibling = yield* Effect.flip(
+          json(schema, { held, count: "x" } as never),
+        );
+        expect(sibling.message).toContain('["count"]');
         expect(yield* json(schema, { held, count: 2 })).toEqual({
           held: { a: "a", b: "keep" },
           count: "2",

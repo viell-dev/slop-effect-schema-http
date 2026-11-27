@@ -52,14 +52,17 @@
   when `held` wraps a struct with optional string fields `a` and `b`. Previously it could send
   `{"held":{}}`. This also covers hand-written codecs and open payload schemas such as `Any` and
   `ObjectKeyword` ([#309](https://github.com/viell-dev/slop-effect-schema-http/issues/309),
-  [#319](https://github.com/viell-dev/slop-effect-schema-http/issues/319)). A valid `Some` or `None`
-  can also refuse beside an encoded sibling. This includes a hand-written
-  `Struct({ value: optionalKey(P) })` codec decoded to `Option(P)`, where 0.19.0 could send both
-  values intact. Supply the enclosing value and its siblings on their decoded side, or give the
-  encoded payload or absence directly at the Option's wire position. For the hand-written codec,
-  give `{ value: payload }` or `{}`
-  ([#318](https://github.com/viell-dev/slop-effect-schema-http/issues/318)). A rename on the
-  enclosing struct or an ancestor can still let the encoded read take the wrapper as the payload
+  [#319](https://github.com/viell-dev/slop-effect-schema-http/issues/319)). Beside an encoded
+  sibling, a struct now reads its fields one by one, so a valid `Some` or `None` keeps its value:
+  `{ held: Some({ a: "a", b: "keep" }), count: "2" }` under `count: FiniteFromString` sends
+  `{"held":{"a":"a","b":"keep"},"count":"2"}`, where 0.19.0 sent `{"held":{},"count":"2"}`, and a
+  hand-written `Struct({ value: optionalKey(P) })` codec decoded to `Option(P)` sends what it writes
+  ([#318](https://github.com/viell-dev/slop-effect-schema-http/issues/318)). A union of whole
+  structs can still refuse there, and under a `oneOf` whose other member reads `held` as a plain
+  struct a `None` now refuses as ambiguous where 0.19.0 sent `{"held":{}}`. Supply the enclosing
+  value and its siblings on their decoded side, or give the encoded payload or absence directly at
+  the Option's wire position. A rename on the enclosing struct or an ancestor can still let the
+  encoded read take the wrapper as the payload
   ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)).
 - Tell the author of a provider that writes bytes to refuse a header name that is not a token, and a
   NUL in a header value, as well as a carriage return or line feed
