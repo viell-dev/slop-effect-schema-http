@@ -65,12 +65,15 @@ the host's own HTTP/2 client, `warded-test-host h2`, one connection per request.
 header block field by field, as plain HPACK literals in the order given, and refuses nothing, so a
 test can repeat, move, drop or add pseudo-header fields. It records the fields it wrote and what
 came back: a response, a reset stream or a closed connection. It speaks HTTP/2 over TLS to
-`https`, and with prior knowledge (h2c) to the cleartext listeners.
+`https`, and with prior knowledge (h2c) to the cleartext listeners. It also records the server's
+SETTINGS, and the size of the header block it wrote and the frames that carried it, which the
+limits on encoded heads count.
 
 An HTTP/3 provider does the same over QUIC to the HTTP/3 endpoint of `https`, through
 `warded-test-host h3`. It writes the field section as QPACK literals, without Huffman codes or the
 dynamic table, allows the server no dynamic table either, and records what came back: a response,
-a reset stream or a closed connection with its code. It uses Quinn, at the version and with the
+a reset stream or a closed connection with its code. It also records the SETTINGS on the server's
+control stream and the size of the field section. It uses Quinn, at the version and with the
 features that the Warded Server uses; the framing and QPACK are the host's own, since h3's client
 builds its heads from the `http` crate's types, which hold none of these shapes.
 
@@ -97,6 +100,7 @@ Tests that need Node itself live in `*.node.test.ts` files, and tests that need 
 | [`hostile-heads.node.test.ts`](./src/scenarios/hostile-heads.node.test.ts) | Malformed HTTP/1.1 heads, the server's host rules and false lengths     |
 | [`http2-heads.node.test.ts`](./src/scenarios/http2-heads.node.test.ts)     | Malformed HTTP/2 heads, `:authority` against `Host`, split cookies, h2c |
 | [`http3-heads.node.test.ts`](./src/scenarios/http3-heads.node.test.ts)     | The same heads over HTTP/3                                              |
+| [`head-limits.node.test.ts`](./src/scenarios/head-limits.node.test.ts)     | Head limits over HTTP/2 and HTTP/3, their SETTINGS, negotiation fields  |
 | [`http3.browser.test.ts`](./src/scenarios/http3.browser.test.ts)           | The same conditions over HTTP/3                                         |
 
 ## Running the suite

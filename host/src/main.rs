@@ -4,7 +4,8 @@
 //! - `warded-test-host serve <directory>` uses it, and takes commands on standard input: one JSON
 //!   object per line, answered by one line on standard output.
 //! - `warded-test-host h2 <directory>` sends one HTTP/2 request that it reads on standard input,
-//!   as [`h2`] describes, and writes what came back on standard output.
+//!   as [`h2`] describes, and writes what came back, with the server's SETTINGS, on standard
+//!   output.
 //! - `warded-test-host h3 <directory>` does the same over HTTP/3, as [`h3`] describes.
 
 mod condition;
