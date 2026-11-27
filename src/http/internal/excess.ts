@@ -707,6 +707,30 @@ const renamings = new WeakMap<Ast, Renamed>();
  * The fields a schema reads from names it writes: each name a key rename writes, with the schema of
  * the field written there. Below such a name a caller can give either side of that field.
  */
+/** Each name a rename writes, with the schema of the field written there. */
+const renamedBy = (
+  from: SchemaAST.Objects,
+  to: Ast,
+): ReadonlyMap<PropertyKey, Ast> =>
+  new Map(
+    fieldsOf(to).map(({ name }, index) => [
+      name,
+      from.propertySignatures[index]!.type,
+    ]),
+  );
+
+/** A class read through its fields' struct, which `Schema.encodeKeys` then renames. */
+const renamedClass = (ast: Ast): Renamed => {
+  const fields = classFields(ast);
+  const rename = ast.encoding?.[1];
+  return fields?._tag === "Objects" &&
+    ast.encoding?.length === 2 &&
+    rename !== undefined &&
+    renamesKeys(fields, rename)
+    ? [renamedBy(fields, rename.to)]
+    : [];
+};
+
 const renamedFields = (ast: Ast): Renamed => {
   let renamed = renamings.get(ast);
   if (renamed === undefined) {
@@ -716,15 +740,8 @@ const renamedFields = (ast: Ast): Renamed => {
         : ast._tag === "Suspend"
           ? renamedFields(ast.thunk())
           : ast._tag === "Objects" && isKeyRename(ast)
-            ? [
-                new Map(
-                  fieldsOf(ast.encoding![0].to).map(({ name }, index) => [
-                    name,
-                    ast.propertySignatures[index]!.type,
-                  ]),
-                ),
-              ]
-            : [];
+            ? [renamedBy(ast, ast.encoding![0].to)]
+            : renamedClass(ast);
     renamings.set(ast, renamed);
   }
   return renamed;
@@ -750,10 +767,11 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     const open = leaveKeysOpen(view);
     const keepKeys = open || statesNothing(sides);
     const alsoSides = also.length === 0 ? [] : viewAt(also, value).sides;
+    // A decoded side below a written name can rename its own fields, as a recursive row does.
     const renamed =
-      types.length === 1
+      types.length === 1 && also.length === 0
         ? renamedFields(types[0]!)
-        : types.flatMap(renamedFields);
+        : [...types, ...also].flatMap(renamedFields);
     const beyond = alsoSides.length > 0 || renamed.length > 0;
     const plain = isPlain(value);
     const asArray = readAsArray(sides);

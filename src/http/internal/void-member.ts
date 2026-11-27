@@ -293,9 +293,26 @@ interface Child {
   readonly type: SchemaAST.AST;
 }
 
+// Private keys for positions, so no property name of a caller's schema can collide with one.
+const positionKeys = new Map<string, symbol>();
+const positionKey = (kind: "index" | "rest", at: number): symbol => {
+  const name = `${kind} ${at}`;
+  let key = positionKeys.get(name);
+  if (key === undefined) {
+    key = Symbol(name);
+    positionKeys.set(name, key);
+  }
+  return key;
+};
+
 /** A node's children, each under the key that relates it to the same child of a projection. */
 const childrenOf = (ast: SchemaAST.AST): ReadonlyArray<Child> => {
   switch (ast._tag) {
+    case "Declaration": {
+      // A class is read through the struct of its fields.
+      const fields = classFields(ast);
+      return fields === undefined ? [] : childrenOf(fields);
+    }
     case "Objects":
       return [
         ...ast.propertySignatures.map(({ name, type }) => ({
@@ -303,14 +320,17 @@ const childrenOf = (ast: SchemaAST.AST): ReadonlyArray<Child> => {
           type,
         })),
         ...ast.indexSignatures.map(({ type }, index) => ({
-          key: `index ${index}`,
+          key: positionKey("index", index),
           type,
         })),
       ];
     case "Arrays":
       return [
         ...ast.elements.map((type, index) => ({ key: index, type })),
-        ...ast.rest.map((type, index) => ({ key: `rest ${index}`, type })),
+        ...ast.rest.map((type, index) => ({
+          key: positionKey("rest", index),
+          type,
+        })),
       ];
     case "Union":
       return ast.types.map((type, index) => ({ key: index, type }));
@@ -343,8 +363,11 @@ const counterpart = (
   target: SchemaAST.AST,
 ): SchemaAST.AST | undefined => {
   const wire = originOf(target);
+  // A projected suspension is a new one each time, and its target may not exist yet, so a
+  // suspension stands for one in the same place; its target is paired when it is read.
   const projects = ({ type }: Child) =>
-    SchemaAST.toEncoded(originOf(type)) === wire;
+    SchemaAST.toEncoded(originOf(type)) === wire ||
+    (type._tag === "Suspend" && target._tag === "Suspend");
   const children = childrenOf(layer);
   const same = children.find((child) => child.key === key && projects(child));
   if (same !== undefined) return same.type;
@@ -523,7 +546,10 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
             let target = visit(
               link.to,
               link === last ? wirePosition : undefined,
-              reading && link === last && link.to._tag === ast._tag
+              reading &&
+                link === last &&
+                (link.to._tag === ast._tag ||
+                  (isClass && link.to._tag === "Objects"))
                 ? intern([ast])
                 : undefined,
             );
@@ -579,7 +605,7 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
           : new SchemaAST.PropertySignature(property.name, type);
       });
       const indexes = mapSame(ast.indexSignatures, (index, at) => {
-        const type = visitChild(`index ${at}`, index.type);
+        const type = visitChild(positionKey("index", at), index.type);
         return type === index.type
           ? index
           : new SchemaAST.IndexSignature(index.parameter, type);
@@ -603,7 +629,7 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
         visitChild(at, element),
       );
       const rest = mapSame(ast.rest, (element, at) =>
-        visitChild(`rest ${at}`, element),
+        visitChild(positionKey("rest", at), element),
       );
       return encoding === ast.encoding &&
         elements === ast.elements &&
