@@ -648,9 +648,10 @@ write it strictly, the value as given is read strictly too. Where the reading th
 the value can be read once more without those keys, since they may be what made it fail. A failed
 decode of the whole value is retried this way before the value is read field by field. A JSON body
 whose reading fails is read again from the value without those keys, and that reading is used only
-where it keeps every field. The decoders and checks of each such read run again. Under a `oneOf`,
-the constructor can run once more as well, as [A fieldless value must match exactly one member under
-oneOf](#a-fieldless-value-must-match-exactly-one-member-under-oneof) describes.
+where it keeps every field. The decoders and checks of each such read run again. Under a `oneOf` or
+a suspended schema, the constructor can run once more as well, as [A fieldless value must match
+exactly one member under oneOf](#a-fieldless-value-must-match-exactly-one-member-under-oneof)
+describes.
 
 Under a union, a key only a member with another tag states is unstated too, because the tag has
 already chosen. With `Comment` and `Reschedule` from [What will be sent](#what-will-be-sent),
