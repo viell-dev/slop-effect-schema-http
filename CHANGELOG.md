@@ -236,7 +236,21 @@ gives the compatible fixes, with a checked example of a `Schema.Error` body that
   milliseconds there, as on 0.19.0. A wrapper where the field written there holds an Option codec
   still refuses. A suspension that is no decoded field's wire side, as in a contract derived with
   `Schema.toCodecJson` or a hand-written rename spelled as `Schema.encodeKeys` spells it, is paired
-  as on 0.20.0, so a wrapper at such a name refuses as it did.
+  as on 0.20.0, so a wrapper at such a name refuses as it did. So is every suspension of a
+  hand-written rename whose wire struct holds some decoded suspensions' own wire sides but not
+  others'.
+
+  Where the suspended field written at such a name is a plain struct, a native `Option` given there
+  now takes that struct's reading and can be sent as `{}`, as it is without the suspension. With
+  `held: suspend(() => OptionFromNullOr(P))` and `other: suspend(() => NullOr(P))` renamed to `"1"`
+  and `"0"`, `{ "1": null, "0": Option.some({ a: "a", b: "keep" }) }` refused on 0.20.0 with
+  `Missing key at ["held"]` and now sends `{"0":{},"1":null}`, as 0.19.0 did. That loss is
+  [#330](https://github.com/viell-dev/slop-effect-schema-http/issues/330)'s. A hand-written rename
+  whose wire struct holds each such field's own wire side at a name its mapping gives the other
+  field cannot be told from `Schema.encodeKeys` with that other mapping
+  ([#390](https://github.com/viell-dev/slop-effect-schema-http/issues/390)). There a wrapper given
+  where it writes the Option codec, which 0.20.0 refused, is now sent as `{}`, as it is without the
+  suspensions.
 - Keep the schema's own reading below a suspension that a custom transformation writes, as 0.19.0
   did and as without the suspension
   ([#344](https://github.com/viell-dev/slop-effect-schema-http/issues/344)). With

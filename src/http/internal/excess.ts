@@ -1320,20 +1320,20 @@ const isIntegerKey = (key: PropertyKey): boolean => {
 
 /**
  * Whether `wire` is the very node `toEncoded` returns for `decoded`, as `Schema.encodeKeys` builds
- * each wire field. Effect memoizes `toEncoded`, suspensions included, so a suspended field pairs only
- * with its own wire field. Checked on Effect 4.0.7 and 4.1.5; revisit when a peer update stops
- * memoizing it.
+ * each wire field. Effect memoizes `toEncoded`, suspensions included, so a suspended field pairs
+ * only with its own wire field. Checked on Effect 4.0.7 and 4.1.5; revisit when a peer update
+ * stops memoizing it.
  */
 const projectsTo = (decoded: Ast, wire: Ast): boolean =>
   SchemaAST.toEncoded(decoded) === wire;
 
 /**
  * Whether a wire field that is not `decoded`'s projection is still taken as its wire side: where
- * both are suspensions. Identity shows that `Schema.encodeKeys` built the wire field from `decoded`,
- * but a derivation such as `Schema.toCodecJson` builds new suspensions on both sides of a rename,
- * and a hand-written rename spelled as `Schema.encodeKeys` spells it can write its own, so neither
- * is the node `toEncoded` returns. A suspension's target is not read here, so such a pair is taken
- * without that evidence, where {@link renamedPairs} says (#327).
+ * both are suspensions. Identity shows that `Schema.encodeKeys` built the wire field from
+ * `decoded`, but a derivation such as `Schema.toCodecJson` builds new suspensions on both sides of
+ * a rename, and a hand-written rename spelled as `Schema.encodeKeys` spells it can write its own,
+ * so neither is the node `toEncoded` returns. A suspension's target is not read here, so such a
+ * pair is taken without that evidence, where {@link renamedPairs} says (#327).
  */
 const standsFor = (decoded: Ast, wire: Ast): boolean =>
   decoded._tag === "Suspend" && wire._tag === "Suspend";
@@ -1362,11 +1362,16 @@ const renamePairs = new WeakMap<SchemaAST.Link, RenamePairing | null>();
  * whose projection it is; where several are, it lists them all as ambiguous, so a caller can refuse
  * what any of them would refuse rather than guess. One schema given as several fields is listed
  * once: whichever of them the rename wrote, it is read the same way. A wire suspension that is no
- * decoded field's projection pairs with the one decoded suspension whose own projection is not
- * among the wire fields, or lists them all as unproven where there are several.
- * Any other transformation pairs nothing, since its callback alone knows which field it writes
- * where. The rename is recognised by its getters, as configured Option codecs are, which a
- * hand-written transformation spelled the same way would also match (#327).
+ * decoded field's projection pairs with the one decoded suspension given as more fields than there
+ * are wire fields that are its projection, or lists them all as unproven where there are several.
+ * A wire struct that holds some decoded suspensions' projections but not others' was written by
+ * hand, since `Schema.encodeKeys` writes all of them and a derivation none, so each of its wire
+ * suspensions lists every decoded suspension as unproven, and a wrapper there refuses as on
+ * 0.20.0. A wire struct that holds each decoded field's projection at a name its mapping gives
+ * another field reads as `Schema.encodeKeys` with the mapping those places show (#390). Any other
+ * transformation pairs nothing, since its callback alone knows which field it writes where. The
+ * rename is recognised by its getters, as configured Option codecs are, which a hand-written
+ * transformation spelled the same way would also match (#327).
  */
 export const renamedPairs = (
   from: Ast,
@@ -1393,24 +1398,33 @@ export const renamedPairs = (
     const ambiguous = new Map<PropertyKey, ReadonlyArray<Ast>>();
     const unproven = new Map<PropertyKey, ReadonlyArray<Ast>>();
     if (wire.some(({ name }) => isIntegerKey(name))) {
-      // Decoded fields whose projection no wire field is, which a wire field with no partner by
-      // identity can stand for.
-      const types = new Set(wire.map(({ type }) => type));
-      const unpaired = distinct(
-        decoded
-          .map((field) => field.type)
-          .filter((type) => !types.has(SchemaAST.toEncoded(type))),
+      const types = distinct(decoded.map((field) => field.type));
+      // Decoded schemas given as more fields than there are wire fields that are their projection,
+      // which a wire field with no partner by identity can stand for. Fields are counted, not
+      // schemas, so one schema given as two fields stays here while only one wire field is its own.
+      const unpaired = types.filter(
+        (type) =>
+          decoded.filter((field) => field.type === type).length >
+          wire.filter((field) => projectsTo(type, field.type)).length,
       );
+      // Schema.encodeKeys writes every decoded suspension's own wire node, and a derivation writes
+      // none of them, so a wire struct that holds some of them but not others was written by hand,
+      // and identity does not show which suspension it wrote where.
+      const suspended = types.filter((type) => type._tag === "Suspend");
+      const partlyOwn =
+        suspended.some((type) => unpaired.includes(type)) &&
+        suspended.some((type) => !unpaired.includes(type));
       for (const { name, type } of wire) {
-        const own = distinct(
-          decoded
-            .map((field) => field.type)
-            .filter((field) => projectsTo(field, type)),
-        );
+        const own =
+          partlyOwn && type._tag === "Suspend"
+            ? []
+            : types.filter((candidate) => projectsTo(candidate, type));
         if (own.length === 1) pairs.set(name, own[0]!);
         else if (own.length > 1) ambiguous.set(name, own);
         else {
-          const standing = unpaired.filter((field) => standsFor(field, type));
+          const standing = (partlyOwn ? suspended : unpaired).filter(
+            (candidate) => standsFor(candidate, type),
+          );
           if (standing.length === 1) pairs.set(name, standing[0]!);
           else if (standing.length > 1) unproven.set(name, standing);
         }
