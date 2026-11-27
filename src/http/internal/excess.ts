@@ -1188,7 +1188,7 @@ const optionalCopyOf = (source: Ast, payload: Ast): boolean =>
   );
 
 /** A schema for a native Option, including codecs whose payload is opaque here. */
-const isOptionDeclaration = (ast: Ast): ast is SchemaAST.Declaration =>
+export const isOptionDeclaration = (ast: Ast): ast is SchemaAST.Declaration =>
   ast._tag === "Declaration" &&
   (ast.annotations?.["representation"] as { readonly id?: string } | undefined)
     ?.id === "effect/schema/Option";
@@ -1216,8 +1216,9 @@ const getterSource = (getter: object): string | undefined =>
     ? Function.prototype.toString.call(getter.transform)
     : undefined;
 
-const optionGetters = (ast: Ast) => {
-  const transformation = ast.encoding?.[0]?.transformation;
+const gettersOf = (
+  transformation: SchemaAST.Link["transformation"] | undefined,
+) => {
   if (transformation?._tag !== "Transformation") return undefined;
   const { decode, encode } = transformation;
   return [decode._tag, getterSource(decode), encode._tag, getterSource(encode)];
@@ -1227,7 +1228,7 @@ const additionalOptionGetters = [
   Schema.OptionFromOptional(Schema.String).ast,
   Schema.OptionFromOptionalNullOr(Schema.String, { onNoneEncoding: null }).ast,
   Schema.OptionFromNullishOr(Schema.String).ast,
-].map(optionGetters);
+].map((ast) => gettersOf(ast.encoding?.[0]?.transformation));
 
 /** The single encoding link where a built-in codec exposes its Some payload. */
 const unwrappingLink = (
@@ -1258,7 +1259,7 @@ const unwrappingLink = (
   )
     return link;
   if (!loose) return undefined;
-  const getters = optionGetters(ast);
+  const getters = gettersOf(link.transformation);
   return additionalOptionGetters.some(
     (known) =>
       known?.every((item, index) => item === getters?.[index]) === true,
@@ -1267,9 +1268,34 @@ const unwrappingLink = (
     : undefined;
 };
 
-/** The wire side of a built-in codec that unwraps a native Option. */
-export const unwrapsNativeOption = (ast: Ast): boolean =>
-  unwrappingLink(ast, true, true) !== undefined;
+// JSON and other canonical codecs can give Schema.Option its own tagged wire representation.
+const taggedOption = gettersOf(
+  Schema.toCodecJson(Schema.Option(Schema.String)).ast.encoding?.[0]
+    ?.transformation,
+);
+
+/** A codec with a native Option on the decoded side and a different representation on the wire. */
+export const readsOptionPayload = (ast: Ast): ast is SchemaAST.Declaration => {
+  if (!isOptionDeclaration(ast)) return false;
+  if (ast.encoding === undefined) return false;
+  let tagged = false;
+  for (const { transformation } of ast.encoding) {
+    if (transformation._tag === "Middleware") continue;
+    if (
+      transformation.decode._tag === "Passthrough" &&
+      transformation.encode._tag === "Passthrough"
+    )
+      continue;
+    const getters = gettersOf(transformation);
+    if (
+      tagged ||
+      !taggedOption?.every((part, index) => part === getters?.[index])
+    )
+      return true;
+    tagged = true;
+  }
+  return !tagged && !isOptionDeclaration(ast.encoding.at(-1)!.to);
+};
 
 const onlyContent = (ast: Ast, allowEncoding = false): Ast | undefined => {
   if (ast._tag !== "Union" || (!allowEncoding && ast.encoding !== undefined))

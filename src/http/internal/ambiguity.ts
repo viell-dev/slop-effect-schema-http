@@ -30,7 +30,13 @@ export const afterAlternative = (failure: FieldlessOneOf): FieldlessOneOf =>
     ? failure
     : new FieldlessOneOf({ ...failure, afterAlternative: true });
 
-export type ReadFailure = Schema.SchemaError | FieldlessOneOf;
+/** The encoded read only succeeded by using a native Option wrapper as a wire value. */
+export class OptionWrapperRead extends Data.TaggedError("OptionWrapperRead")<{
+  readonly failure: Schema.SchemaError;
+}> {}
+
+export type ReadFailure =
+  Schema.SchemaError | FieldlessOneOf | OptionWrapperRead;
 
 const isFieldless = (value: unknown): boolean =>
   typeof value === "object" &&
@@ -135,7 +141,7 @@ export const readFailure = (
 export const recoverRead = <A, B, E, R, R2>(
   effect: Effect.Effect<A, ReadFailure, R>,
   recover: (error: Schema.SchemaError) => Effect.Effect<B, E, R2>,
-): Effect.Effect<A | B, E | FieldlessOneOf, R | R2> =>
+): Effect.Effect<A | B, E | FieldlessOneOf | OptionWrapperRead, R | R2> =>
   Effect.catchTag(effect, "SchemaError", recover);
 
 /** Capture ordinary read failures. An ambiguity stays in the error channel. */
@@ -179,5 +185,9 @@ export const publicRead = <A, R>(
   options?: SchemaAST.ParseOptions,
 ): Effect.Effect<A, Schema.SchemaError, R> =>
   Effect.mapError(read, (error) =>
-    error._tag === "SchemaError" ? error : publicAmbiguity(error, options),
+    error._tag === "FieldlessOneOf"
+      ? publicAmbiguity(error, options)
+      : error._tag === "OptionWrapperRead"
+        ? error.failure
+        : error,
   );
