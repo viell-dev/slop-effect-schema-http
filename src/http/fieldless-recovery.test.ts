@@ -1100,6 +1100,41 @@ describe("a Some payload beside Void", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/310
+  it.effect("reads such a payload as Some({}) in a list inside the Some", () =>
+    Effect.gen(function* () {
+      for (const payload of [{}, ...strays]) {
+        const label = spelled(payload);
+        expect(
+          yield* outcome(
+            post(
+              Schema.Struct({
+                f: Schema.OptionFromNullOr(
+                  Schema.Array(oneOf(Filter, Schema.Void)),
+                ),
+              }),
+            ),
+            { f: Option.some([payload]) },
+          ),
+          `oneOf, ${label}`,
+        ).toBe(ambiguous('["f"]["value"][0]'));
+        expect(
+          yield* outcome(
+            post(
+              Schema.Struct({
+                f: Schema.OptionFromNullOr(
+                  Schema.Array(Schema.Union([Filter, Schema.Void])),
+                ),
+              }),
+            ),
+            { f: Option.some([payload]) },
+          ),
+          `anyOf, ${label}`,
+        ).toBe('sent {"f":[{}]}');
+      }
+    }),
+  );
+
   it.effect("keeps a payload's stated field and None as before", () =>
     Effect.gen(function* () {
       const either = Schema.Struct({

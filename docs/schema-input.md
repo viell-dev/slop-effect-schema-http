@@ -760,7 +760,8 @@ the schema does with it. These are the places where it cannot, and what happens 
   `The schema cannot keep this field with the rest of the value` where `Some({})` sends `{}`
   ([#340](https://github.com/viell-dev/slop-effect-schema-http/issues/340)). A payload with a stated
   field and a key no member states, such as `Some({ limit: 5, extra: 1 })`, sends `null` and loses
-  `limit`, where Effect's own encoding keeps it under `anyOf`. Leave out the unstated key
+  `limit`, where Effect's own encoding keeps it under `anyOf`; beside a stray key in an opaque
+  sibling it refuses under either form instead. Leave out the unstated key
   ([#341](https://github.com/viell-dev/slop-effect-schema-http/issues/341)).
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
   guard for native Options follows visible schema nodes into the encoded side of Option codecs,
