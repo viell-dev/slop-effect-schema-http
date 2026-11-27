@@ -264,7 +264,7 @@ const chooseReading = (
           provisional ||= result.failure.afterAlternative === true;
         } else if (stopOnWrapper && wrapperBlocked(result.failure)) {
           // This whole read would have accepted the wrapper in place of its payload.
-          // Refuse it rather than switching to another preparation route and changing the output.
+          // Refuse it here so a later preparation route cannot change the output.
           return yield* result.failure;
         } else if (!keepMost || failure === undefined) {
           failure = result.failure;
