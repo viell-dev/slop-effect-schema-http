@@ -3728,6 +3728,232 @@ describe("an invalid Some payload keeps its decoded error", () => {
       }),
   );
 
+  /** A row below a struct whose other field is renamed. */
+  const besideRenamed = (row: Schema.Top) =>
+    Schema.Struct({ row, n: Schema.String }).pipe(
+      Schema.encodeKeys({ n: "wire_n" }),
+    ) as unknown as typeof renamed;
+
+  /** Fields `left` and `right` share one wire schema, so either could be written at "0" or "1". */
+  const ambiguousPair = (
+    box: Schema.Top,
+    names: { readonly left: string; readonly right: string } = {
+      left: "1",
+      right: "0",
+    },
+  ) =>
+    besideRenamed(
+      Schema.Struct({ left: box, right: Schema.toEncoded(box) }).pipe(
+        Schema.encodeKeys(names),
+      ),
+    );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/328
+  it.effect(
+    "refuses a wrapper below fields an integer-like rename cannot tell apart",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.OptionFromNullOr(payload);
+        const Box = Schema.Struct({ held });
+        class ClassRow extends Schema.Class<ClassRow>("AmbiguousClassRow")({
+          held,
+        }) {}
+        for (const [box, given, other] of [
+          [Box, { held: Option.none() }, { held: { b: "ok" } }],
+          [Box, { held: Option.some({ a: "a", b: "keep" }) }, { held: null }],
+          [
+            Schema.Struct({ held: Schema.Array(held) }),
+            { held: [Option.none()] },
+            { held: [] },
+          ],
+          [
+            Schema.Struct({ held: Schema.Tuple([held]) }),
+            { held: [Option.none()] },
+            { held: [null] },
+          ],
+          [
+            Schema.Struct({ held: Schema.Record(Schema.String, held) }),
+            { held: { k: Option.none() } },
+            { held: {} },
+          ],
+          [
+            Schema.Struct({ held: Schema.Union([held, Schema.String]) }),
+            { held: Option.none() },
+            { held: "s" },
+          ],
+          [
+            Schema.Struct({ held }).pipe(
+              Schema.encodeKeys({ held: "wire_held" }),
+            ),
+            { wire_held: Option.none() },
+            { wire_held: null },
+          ],
+          [Schema.suspend(() => Box), { held: Option.none() }, { held: null }],
+          [
+            Schema.Struct({ held: Schema.suspend(() => held) }),
+            { held: Option.none() },
+            { held: null },
+          ],
+          [
+            ClassRow.pipe(Schema.encodeKeys({ held: "wire_held" })),
+            { wire_held: Option.none() },
+            { wire_held: null },
+          ],
+        ] as const)
+          for (const names of [
+            { left: "1", right: "0" },
+            { left: "0", right: "1" },
+          ])
+            for (const row of [
+              { "1": given, "0": other },
+              { "1": other, "0": given },
+            ]) {
+              const failure = yield* Effect.flip(
+                json(ambiguousPair(box, names), { row, wire_n: "x" } as never),
+              );
+              expect(failure).toBeInstanceOf(Schema.SchemaError);
+            }
+        // Where none of the fields the rename could have written holds an Option codec, an Option
+        // keeps the schema's own reading.
+        const none = Option.none();
+        const sentNone = { _id: "Option", _tag: "None" };
+        const beside = Schema.Struct({
+          held,
+          any: Schema.Any,
+          list: Schema.Array(Schema.Any),
+          record: Schema.Record(Schema.String, Schema.Any),
+          option: Schema.Option(Schema.Number),
+        });
+        expect(
+          yield* json(ambiguousPair(beside), {
+            row: {
+              "1": {
+                held: null,
+                any: none,
+                list: [none],
+                record: { k: none },
+                option: Option.some(1),
+              },
+              "0": {
+                held: { b: "ok" },
+                any: 1,
+                list: [],
+                record: {},
+                option: none,
+              },
+            },
+            wire_n: "x",
+          } as never),
+        ).toEqual({
+          row: {
+            "0": {
+              held: { b: "ok" },
+              any: 1,
+              list: [],
+              record: {},
+              option: { _tag: "None" },
+            },
+            "1": {
+              held: null,
+              any: sentNone,
+              list: [sentNone],
+              record: { k: sentNone },
+              option: { _tag: "Some", value: 1 },
+            },
+          },
+          wire_n: "x",
+        });
+        // The decoded side and the encoded payload are kept.
+        expect(
+          yield* json(ambiguousPair(Box), {
+            row: { left: { held: none }, right: { held: { b: "ok" } } },
+            n: "x",
+          } as never),
+        ).toEqual({
+          row: { "0": { held: { b: "ok" } }, "1": { held: null } },
+          wire_n: "x",
+        });
+        expect(
+          yield* json(ambiguousPair(Box), {
+            row: { "1": { held: { a: "a" } }, "0": { held: null } },
+            wire_n: "x",
+          } as never),
+        ).toEqual({
+          row: { "0": { held: null }, "1": { held: { a: "a" } } },
+          wire_n: "x",
+        });
+        // A rename that can tell its fields apart pairs the one written there, as before.
+        const unambiguous = besideRenamed(
+          Schema.Struct({ left: Box, right: Schema.String }).pipe(
+            Schema.encodeKeys({ left: "1", right: "0" }),
+          ),
+        );
+        expect(
+          yield* Effect.flip(
+            json(unambiguous, {
+              row: { "1": { held: none }, "0": "s" },
+              wire_n: "x",
+            } as never),
+          ),
+        ).toBeInstanceOf(Schema.SchemaError);
+        expect(
+          yield* json(unambiguous, {
+            row: { left: { held: none }, right: "s" },
+            n: "x",
+          } as never),
+        ).toEqual({ row: { "0": "s", "1": { held: null } }, wire_n: "x" });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/344
+  it.effect(
+    "refuses a wrapper in a suspended field of a renamed row below a renamed ancestor",
+    () =>
+      Effect.gen(function* () {
+        const Box = Schema.Struct({
+          held: Schema.suspend(() => Schema.OptionFromNullOr(payload)),
+        });
+        const renameRow = Schema.encodeKeys({ left: "l", right: "r" });
+        const Row = Schema.Struct({ left: Box, right: Schema.String }).pipe(
+          renameRow,
+        );
+        const DeepRow = Schema.Struct({
+          left: Schema.Struct({ inner: Box }),
+          right: Schema.String,
+        }).pipe(renameRow);
+        const schema = besideRenamed(Row);
+        for (const [within, row] of [
+          [schema, { l: { held: Option.none() }, r: "s" }],
+          [schema, { l: { held: Option.some({ a: "a" }) }, r: "s" }],
+          [
+            besideRenamed(DeepRow),
+            { l: { inner: { held: Option.none() } }, r: "s" },
+          ],
+          [
+            besideRenamed(Schema.Array(Row)),
+            [{ l: { held: Option.none() }, r: "s" }],
+          ],
+        ] as const) {
+          const failure = yield* Effect.flip(
+            json(within, { row, wire_n: "x" } as never),
+          );
+          expect(failure).toBeInstanceOf(Schema.SchemaError);
+        }
+        expect(
+          yield* json(schema, {
+            row: { left: { held: Option.none() }, right: "s" },
+            n: "x",
+          } as never),
+        ).toEqual({ row: { l: { held: null }, r: "s" }, wire_n: "x" });
+        expect(
+          yield* json(schema, {
+            row: { l: { held: { a: "a" } }, r: "s" },
+            wire_n: "x",
+          } as never),
+        ).toEqual({ row: { l: { held: { a: "a" } }, r: "s" }, wire_n: "x" });
+      }),
+  );
+
   it.effect("refuses an invalid Some under a hand-written codec", () =>
     Effect.gen(function* () {
       const held = Schema.NullOr(payload).pipe(

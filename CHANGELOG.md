@@ -192,6 +192,21 @@ gives the compatible fixes, with a checked example of a `Schema.Error` body that
   same error class, every request that sent sends the same bytes, and this change does not alter how
   often a schema's decoders, checks and defaults run. Code that matches the text of these refusals
   needs updating.
+- **Breaking:** refuse a native `Option` given on the encoded side below fields that an integer-like
+  `Schema.encodeKeys` rename cannot tell apart, where any of those fields holds an Option codec at
+  that position ([#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328)). Two
+  fields with the same wire schema, such as `left: Box` and `right: Schema.toEncoded(Box)` renamed
+  to `"1"` and `"0"`, can each be the one written under either name. 0.20.0 refused a wrapper at
+  such a name, but with `Box = Struct({ held: OptionFromNullOr(P) })` a `None` given at `held` below
+  `"1"` was sent as `{"held":{}}`. Each field's schema is now followed below the name, so that
+  refuses, also through a list, tuple, record, union, nested rename, suspension or renamed class.
+  Where none of the fields holds an Option codec at the position, an `Option` keeps the schema's own
+  reading. Give the field on its decoded side, as `left`, or its encoded payload.
+- **Breaking:** refuse a native `Option` in a suspended field of a renamed struct below another
+  renamed struct ([#344](https://github.com/viell-dev/slop-effect-schema-http/issues/344)). With
+  `held: suspend(() => OptionFromNullOr(P))` in a struct renamed below a renamed ancestor, a `None`
+  given at `held` on the encoded side was sent as `{"held":{}}`; it now refuses, as it did without
+  the ancestor's rename. Give the field on its decoded side or its encoded payload.
 
 ## 0.20.0 — 2026-11-27
 
