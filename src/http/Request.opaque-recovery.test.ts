@@ -2507,6 +2507,16 @@ describe("an invalid Some payload keeps its decoded error", () => {
           held,
           next: Schema.optionalKey(Schema.suspend(() => Recursive)),
         });
+        class ClassRow extends Schema.Class<ClassRow>("ClassRow")({ held }) {}
+        interface RenamedRecursive {
+          readonly held: Option.Option<typeof payload.Type>;
+          readonly next?: RenamedRecursive;
+        }
+        const RenamedRecursive: Schema.Codec<RenamedRecursive, unknown> =
+          Schema.Struct({
+            held,
+            next: Schema.optionalKey(Schema.suspend(() => RenamedRecursive)),
+          }).pipe(Schema.encodeKeys({ held: "wire_held" }));
         const below = (row: Schema.Top) =>
           Schema.Struct({ row, n: Schema.String }).pipe(
             Schema.encodeKeys({ n: "wire_n" }),
@@ -2518,6 +2528,18 @@ describe("an invalid Some payload keeps its decoded error", () => {
             { held: Option.none() },
           ],
           [below(RenamedRow), { wire_held: Option.none() }],
+          [
+            below(ClassRow.pipe(Schema.encodeKeys({ held: "wire_held" }))),
+            { wire_held: Option.some({ a: 5, b: "keep" }) },
+          ],
+          [
+            below(ClassRow.pipe(Schema.encodeKeys({ held: "wire_held" }))),
+            { wire_held: Option.none() },
+          ],
+          [
+            below(RenamedRecursive),
+            { wire_held: null, next: { wire_held: Option.none() } },
+          ],
           [
             below(Recursive),
             { held: Option.some({ a: "a" }), next: { held: Option.none() } },
@@ -2571,6 +2593,22 @@ describe("an invalid Some payload keeps its decoded error", () => {
           other: { _id: "Option", _tag: "Some", value: { b: "keep" } },
           wire_n: "x",
         };
+        // A property named like a position is not the index signature's counterpart.
+        const rest = Schema.Struct({
+          row: Schema.StructWithRest(Schema.Struct({ "index 0": Held }), [
+            Schema.Record(Schema.String, Schema.Any),
+          ]),
+          n: Schema.String,
+        }).pipe(Schema.encodeKeys({ n: "wire_n" }));
+        expect(
+          yield* json(rest, {
+            row: { "index 0": { a: "x" }, extra: Option.some({ b: "keep" }) },
+            wire_n: "x",
+          } as never),
+        ).toEqual({
+          row: { "index 0": { a: "x" }, extra: sent.other },
+          wire_n: "x",
+        });
         for (const fields of [
           { held: Held, other: Schema.Any, n: Schema.String },
           { other: Schema.Any, held: Held, n: Schema.String },
