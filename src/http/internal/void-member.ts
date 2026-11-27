@@ -89,7 +89,7 @@ interface ClosedPayload {
 
 /** The declared fields and empty-object behavior of a closed, untransformed payload. */
 const closedPayload = (ast: SchemaAST.AST): ClosedPayload | undefined => {
-  if (ast.encoding !== undefined || ast.checks !== undefined) return undefined;
+  if (ast.encoding !== undefined) return undefined;
   if (ast._tag === "Union" && ast.options?.mode !== "oneOf") {
     const fields: PropertyKey[] = [];
     let takesEmpty = false;
@@ -106,14 +106,7 @@ const closedPayload = (ast: SchemaAST.AST): ClosedPayload | undefined => {
     ast._tag !== "Objects" ||
     ast.encodingChecks !== undefined ||
     ast.propertySignatures.length === 0 ||
-    ast.indexSignatures.length > 0 ||
-    ast.propertySignatures.some(
-      ({ name, type }) =>
-        name === "_tag" ||
-        name === "value" ||
-        type.encoding !== undefined ||
-        type.context?.constructorDefault !== undefined,
-    )
+    ast.indexSignatures.length > 0
   )
     return undefined;
   return {
@@ -133,7 +126,7 @@ const readFieldlessPayload = (
   const decoded = closedPayload(ast.typeParameters[0]!);
   const encoded = closedPayload(source);
   if (!decoded?.takesEmpty || !encoded?.takesEmpty) return guarded;
-  const fields = new Set([...decoded.fields, ...encoded.fields]);
+  const fields = [...new Set([...decoded.fields, ...encoded.fields])];
   const usePayload = SchemaTransformation.transformEffect({
     decode: (input: unknown, options) => {
       if (
@@ -147,7 +140,7 @@ const readFieldlessPayload = (
           payload !== null &&
           !Array.isArray(payload) &&
           isPlainData(payload) &&
-          !Reflect.ownKeys(payload).some((key) => fields.has(key))
+          !fields.some((key) => key in input || Object.hasOwn(payload, key))
         )
           return Effect.succeed(payload);
       }
