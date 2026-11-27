@@ -6,12 +6,12 @@
 started](./getting-started.md) adds it to your Effect project. [What's in
 0.20](./release-notes/0.20.md) covers updating from `0.19`: an `Option`'s payload keeps the fields
 its schema states, a native `Option` given where its encoded payload belongs is kept or refused
-instead of being sent as `{}`, a built-in a plain struct would rebuild refuses, and a fieldless
-value several `oneOf` members read refuses as ambiguous. Updating from `0.18` or earlier also
-includes the breaking migration in [What's in 0.19](./release-notes/0.19.md). [Release
-history](./release-notes/index.md) compares earlier changes and links every migration article. Use
-the [current input reference](./schema-input.md) for today's supported behavior and [Schema-backed
-groups](./schema-groups.md) for the recovery boundary.
+instead of being sent as `{}`, some built-ins a struct would rebuild now refuse, though others are
+still sent as `{}`, and a fieldless value several `oneOf` members read refuses as ambiguous.
+Updating from `0.18` or earlier also includes the breaking migration in [What's in
+0.19](./release-notes/0.19.md). [Release history](./release-notes/index.md) compares earlier changes
+and links every migration article. Use the [current input reference](./schema-input.md) for today's
+supported behavior and [Schema-backed groups](./schema-groups.md) for the recovery boundary.
 
 The npm `latest` tag selects the stable release, so ordinary install commands need no version
 suffix. The `rc` tag still identifies `0.1.0-rc.1`; use an explicit prerelease version when
