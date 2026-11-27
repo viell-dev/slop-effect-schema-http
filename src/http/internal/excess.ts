@@ -1496,9 +1496,6 @@ const optionSource = (ast: Ast, loose = false): Ast | undefined => {
   return source;
 };
 
-const unwrapsOption = (ast: Ast): boolean =>
-  optionSource(ast, true) !== undefined;
-
 /**
  * A plain codec can place the same payload directly on the wire or wrap it in a field. A codec that
  * can omit its key places the optional copy `Schema.optionalKey` makes of it.
@@ -1578,11 +1575,15 @@ export const choosesOpaqueOption = (ast: SchemaAST.Union): boolean => {
   );
 };
 
-// OptionFromOptionalKey and its relatives can omit a wire key required on the decoded side, and so
-// can any other codec that unwraps a Some, such as a hand-written one whose encoder omits the key.
+/**
+ * Whether a key rename's field can be optional on the wire although it is required on the decoded
+ * side. OptionFromOptionalKey and its relatives can omit their key, and so can any other codec that
+ * unwraps a Some, such as a hand-written one whose encoder omits it.
+ */
+const mayOmitKey = readsOptionPayload;
+
 const isOptionFrame = (ast: Ast): boolean =>
-  isStructural(ast) ||
-  (ast._tag === "Objects" && isKeyRename(ast, readsOptionPayload));
+  isStructural(ast) || (ast._tag === "Objects" && isKeyRename(ast, mayOmitKey));
 
 /**
  * How the declaration of an Effect class, such as a `Schema.Class` or a `Schema.Error`, describes
@@ -1648,7 +1649,7 @@ const structuralAlternatives = (
       active.add(type);
       const known =
         type._tag === "Suspend"
-          ? visit(within?.resolve(type) ?? type.thunk(), retained)
+          ? visit(within?.resolveAndRecord(type) ?? type.thunk(), retained)
           : type.types.every((member) =>
               visit(member, retained && !ruledOut(member, value)),
             );
@@ -1707,13 +1708,14 @@ const ownSome = (value: object): PropertyDescriptor | undefined => {
 
 /**
  * Whether this codec unwraps a Some although preparation cannot find its payload's schema on the
- * wire, as it does for Effect's codecs over a plain payload. That holds for a hand-written codec,
- * whatever its encoder writes or leaves out, a built-in one behind middleware or another
- * transformation of its own, and Effect's JSON codec of a built-in one where it rebuilds the
- * payload, as it does for one holding a `Date` and for a suspended one. `Schema.Option` reads no
- * payload in any of its forms, so it is not one. Nothing leaves a key out of such a codec's Some.
+ * wire, so it has no {@link optionSource}, as Effect's codecs over a plain payload have. That holds
+ * for a hand-written codec, whatever its encoder writes or leaves out, a built-in one behind
+ * middleware or another transformation of its own, and Effect's JSON codec of a built-in one where
+ * it rebuilds the payload, as it does for one holding a `Date` and for a suspended one.
+ * `Schema.Option` reads no payload in any of its forms, so it is not one. Nothing leaves a key out
+ * of such a codec's Some.
  */
-const unwrapsUnfoundPayload = (ast: Ast): ast is SchemaAST.Declaration =>
+const unwrapsWithoutSource = (ast: Ast): ast is SchemaAST.Declaration =>
   readsOptionPayload(ast) &&
   ast.typeParameters.length === 1 &&
   optionSource(ast, true) === undefined;
@@ -1756,6 +1758,17 @@ const codecsIn = (root: Ast): FoundCodecs => {
   return found;
 };
 
+/** The codecs inside a decoded payload, as {@link decodedCodecs} finds them. */
+interface DecodedCodecs {
+  /** Whether a native Option here is the decoded side of a codec recorded so far. */
+  readonly has: (ast: Ast) => boolean;
+  /**
+   * Resolve a decoded suspension, and record the codecs in what its own suspension holds, so that
+   * {@link DecodedCodecs.has} finds them below it.
+   */
+  readonly resolveAndRecord: (ast: SchemaAST.Suspend) => Ast;
+}
+
 /**
  * The decoded sides of the codecs that unwrap a Some inside a decoded payload, found from the
  * schemas of the codecs that hold it, on either side.
@@ -1765,32 +1778,31 @@ const codecsIn = (root: Ast): FoundCodecs => {
  * nested codec as a native Option with no encoding, as `Schema.Option` is. Effect memoizes
  * `toType`, so a nested Option there is a codec's decoded side exactly where it is `toType` of a
  * codec found in those schemas. Only that identity is used: the schemas' wire names are not, so a
- * renamed payload is compared under the names its decoded side states, as before.
+ * renamed payload is compared under the names its decoded side states, as before. A codec's
+ * decoded side placed in the same payload as a schema of its own is that same node, so it is
+ * compared as the codec is.
  *
  * A suspension is followed only where the comparison resolves its decoded side, which resolves the
- * suspension too, so no schema's thunk runs here that the comparison would not run.
+ * suspension too, so no schema's thunk runs here that the comparison would not run. The codecs it
+ * holds are recorded then.
  */
-interface DecodedCodecs {
-  /** Whether a native Option here is the decoded side of one of the codecs. */
-  readonly has: (ast: Ast) => boolean;
-  /** Resolve a decoded suspension, and look for codecs in what its own suspension holds. */
-  readonly resolve: (ast: SchemaAST.Suspend) => Ast;
-}
-
 const decodedCodecs = (types: ReadonlyArray<Ast>): DecodedCodecs => {
-  const found = types.map(codecsIn);
+  // Grows as the comparison resolves suspensions.
+  const recorded = types.map(codecsIn);
   const resolved = new Set<Ast>();
+  const record = (ast: SchemaAST.Suspend): void => {
+    if (resolved.has(ast)) return;
+    resolved.add(ast);
+    const source = recorded
+      .map(({ suspended }) => suspended.get(ast))
+      .find((suspension) => suspension !== undefined);
+    if (source !== undefined) recorded.push(codecsIn(source.thunk()));
+  };
   return {
-    has: (ast) => found.some(({ codecs }) => codecs.has(ast)),
-    resolve: (ast) => {
+    has: (ast) => recorded.some(({ codecs }) => codecs.has(ast)),
+    resolveAndRecord: (ast) => {
       const target = ast.thunk();
-      if (!resolved.has(ast)) {
-        resolved.add(ast);
-        const source = found
-          .map(({ suspended }) => suspended.get(ast))
-          .find((suspension) => suspension !== undefined);
-        if (source !== undefined) found.push(codecsIn(source.thunk()));
-      }
+      record(ast);
       return target;
     },
   };
@@ -1798,33 +1810,44 @@ const decodedCodecs = (types: ReadonlyArray<Ast>): DecodedCodecs => {
 
 /**
  * The payload of the unwrapping codecs at a position, possibly beside scalars that cannot read the
- * Some, where every codec there has that one payload schema. With `decoded`, it is their decoded
- * payload, and a codec {@link unwrapsUnfoundPayload} counts too, as does one `within` finds: at
- * every position, or with `"unfoundOnly"` only where one of the codecs there is such a codec.
+ * Some, where every codec there has that one payload schema.
  */
 const sourceAt = (
   types: ReadonlyArray<Ast>,
-  loose = false,
-  decoded?: "always" | "unfoundOnly",
-  within?: DecodedCodecs,
+  {
+    loose = false,
+    decoded,
+    within,
+  }: {
+    /** Recognise configured codecs, as the loose writer does. */
+    readonly loose?: boolean | undefined;
+    /**
+     * Give the codecs' decoded payload, recognising configured codecs, and count a codec
+     * {@link unwrapsWithoutSource} too, as well as one `within` finds: at every position, or with
+     * `"withoutSource"` only where one of the codecs there is such a codec.
+     */
+    readonly decoded?: "always" | "withoutSource" | undefined;
+    /** Below a decoded payload, the codecs in it. */
+    readonly within?: DecodedCodecs | undefined;
+  } = {},
 ): Ast | undefined => {
+  const recognised = loose || decoded !== undefined;
   const active = new Set<Ast>();
   let option: Ast | undefined;
   let source: Ast | undefined;
-  let unfound = false;
+  let withoutSource = false;
   const visit = (type: Ast): boolean => {
     // Any codec that unwraps a Some can show what the decoded read should hold. Only a known
     // unwrapping source also provides evidence about where the payload appears on the wire.
-    let payload = optionSource(type, loose);
+    let payload = optionSource(type, recognised);
     if (
       payload === undefined &&
       decoded !== undefined &&
-      loose &&
-      (unwrapsUnfoundPayload(type) ||
+      (unwrapsWithoutSource(type) ||
         (isOptionDeclaration(type) && within?.has(type) === true))
     ) {
       payload = type.typeParameters[0]!;
-      unfound = true;
+      withoutSource = true;
     }
     if (payload !== undefined) {
       const next = decoded === undefined ? payload : SchemaAST.toType(payload);
@@ -1849,13 +1872,13 @@ const sourceAt = (
       const known =
         type._tag === "Union"
           ? type.types.every(visit)
-          : visit(within?.resolve(type) ?? type.thunk());
+          : visit(within?.resolveAndRecord(type) ?? type.thunk());
       active.delete(type);
       return known;
     }
     return takesNoObject(type);
   };
-  return types.every(visit) && (decoded !== "unfoundOnly" || unfound)
+  return types.every(visit) && (decoded !== "withoutSource" || withoutSource)
     ? source
     : undefined;
 };
@@ -1870,7 +1893,7 @@ const containsOption = (ast: Ast, loose: boolean): boolean => {
   const visit = (type: Ast) => containsOption(type, loose);
   let found =
     optionSource(ast, loose) !== undefined ||
-    (loose && unwrapsUnfoundPayload(ast));
+    (loose && unwrapsWithoutSource(ast));
   if (ast._tag === "Suspend") found = ast.encoding === undefined;
   if (!found) {
     const fields = plainClassFrame(ast);
@@ -1924,7 +1947,7 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
     inSome: boolean,
   ): unknown => {
     if (Option.isOption(value)) {
-      const source = sourceAt(types, true);
+      const source = sourceAt(types, { loose: true });
       const some = ownSome(value);
       if (source === undefined || some === undefined) return value;
       const payload: unknown = some.value;
@@ -2074,7 +2097,7 @@ const optionNamesAlong = (side: SchemaAST.Objects) => {
   const links = side.encoding ?? [];
   // A hand-written rename can reorder index or symbol fields on the decoded side too.
   if (links.length > 0 && !keepsOrder(side)) return undefined;
-  const names = namesAlong(side, links, unwrapsOption);
+  const names = namesAlong(side, links, mayOmitKey);
   optionNames.set(side, names ?? null);
   return names;
 };
@@ -2109,7 +2132,7 @@ export const optionLoss = (
   {
     checkWrite = false,
     looseRead = checkWrite,
-    unfoundCodecs = false,
+    codecsWithoutSource = false,
   }: {
     /**
      * The write was loose, so check that it holds what the read kept, and compare the read through
@@ -2119,16 +2142,18 @@ export const optionLoss = (
     /** Recognise configured codecs on the read, as the input's normalisation does. */
     readonly looseRead?: boolean;
     /**
-     * Compare the read through a codec {@link unwrapsUnfoundPayload} after a strict write too. What
+     * Compare the read through a codec {@link unwrapsWithoutSource} after a strict write too. What
      * such a codec writes is never compared. A loose write compares it already.
      */
-    readonly unfoundCodecs?: boolean;
+    readonly codecsWithoutSource?: boolean;
   } = {},
 ): ReadonlyArray<Path> => {
   const lost: Path[] = [];
   const active = new Set<object>();
   const mayContain =
-    looseRead || unfoundCodecs ? mayWriteUnwrappedOption : mayUnwrapOption;
+    looseRead || codecsWithoutSource
+      ? mayWriteUnwrappedOption
+      : mayUnwrapOption;
   interface Position {
     readonly path: Path;
     readonly inSome: boolean;
@@ -2161,18 +2186,18 @@ export const optionLoss = (
     { path, inSome, writing, within }: Position,
   ): void => {
     if (Option.isOption(given)) {
-      const unwrapped = sourceAt(types, looseRead);
-      // Codecs with different payloads competing here, and codecs whose payload preparation does
-      // not find, can show what the read must hold without proving wire names. Schema.Option
-      // remains opaque even when its payload matches. A codec whose payload preparation does not
-      // find is compared so after a strict write too: nothing leaves a key out of its Some, so the
-      // relaxed read can take a narrower member there whatever made the strict attempt fail.
+      const unwrapped = sourceAt(types, { loose: looseRead });
+      // Codecs with different payloads competing here, and codecs without a source, can show what
+      // the read must hold without proving wire names. Schema.Option remains opaque even when its
+      // payload matches. A codec without a source is compared so after a strict write too: nothing
+      // leaves a key out of its Some, so the relaxed read can take a narrower member there whatever
+      // made the strict attempt fail.
       const source =
         unwrapped ??
         (checkWrite
-          ? sourceAt(types, true, "always", within)
-          : unfoundCodecs
-            ? sourceAt(types, true, "unfoundOnly", within)
+          ? sourceAt(types, { decoded: "always", within })
+          : codecsWithoutSource
+            ? sourceAt(types, { decoded: "withoutSource", within })
             : undefined);
       const some = ownSome(given);
       if (source === undefined || some === undefined) return;
@@ -2219,11 +2244,13 @@ export const optionLoss = (
       // where its names cannot be paired we have no evidence about which field it wrote.
       const wire = writing ? optionWireNames(sides, key) : undefined;
       const mustWrite = wire !== undefined;
-      // Unwrapping None can omit the wire field entirely.
-      const omittedNone =
+      // Unwrapping None can omit the wire field entirely, and a codec without a source writes its
+      // field as its encoder does, which is never compared.
+      const mayBeOmitted = () =>
         Option.isOption(expected) &&
-        Option.isNone(expected) &&
-        sourceAt(children, looseRead) !== undefined;
+        ((Option.isNone(expected) &&
+          sourceAt(children, { loose: looseRead }) !== undefined) ||
+          sourceAt(children, { decoded: "withoutSource" }) !== undefined);
       // Value equality can distinguish an unchanged scalar from another field under its wire
       // name. A field codec with its own encoding may legitimately change that scalar.
       const directScalar =
@@ -2255,8 +2282,8 @@ export const optionLoss = (
         (decoded === undefined ||
           (!isObject(expected) && !Object.is(decoded, expected)) ||
           (mustWrite &&
-            !omittedNone &&
-            outputs.every((actual) => actual === undefined)))
+            outputs.every((actual) => actual === undefined) &&
+            !mayBeOmitted()))
       ) {
         lost.push(here);
         continue;

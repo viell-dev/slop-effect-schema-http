@@ -96,7 +96,7 @@ describe("the reading of Effect's schema structure", () => {
   });
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/347
-  it("gives a codec nested in a payload one decoded side, the one the payload's holds", () => {
+  it("gives a codec nested in a payload one decoded side, the one the payload's decoded side holds", () => {
     const nested = Schema.OptionFromNullOr(Either);
     const payload = Schema.Struct({ inner: nested });
     const decoded = SchemaAST.toType(payload.ast);
@@ -1264,7 +1264,13 @@ it("compares a hand-written codec's read after a strict write, never what it wri
   const narrowed = { held: Option.some({ a: "a" }) };
   expect(Excess.optionLoss(schema.ast, given, narrowed, {})).toEqual([]);
   expect(
-    Excess.optionLoss(schema.ast, given, narrowed, {}, { unfoundCodecs: true }),
+    Excess.optionLoss(
+      schema.ast,
+      given,
+      narrowed,
+      {},
+      { codecsWithoutSource: true },
+    ),
   ).toEqual([["held", "value", "b"]]);
   // What the read kept is not checked against what the codec wrote.
   expect(
@@ -1273,7 +1279,7 @@ it("compares a hand-written codec's read after a strict write, never what it wri
       given,
       given,
       { held: {} },
-      { unfoundCodecs: true },
+      { codecsWithoutSource: true },
     ),
   ).toEqual([]);
   // Effect's own codecs keep the comparison their recognition gives: a configured codec is
@@ -1287,7 +1293,7 @@ it("compares a hand-written codec's read after a strict write, never what it wri
       given,
       narrowed,
       {},
-      { unfoundCodecs: true },
+      { codecsWithoutSource: true },
     ),
   ).toEqual([]);
   // The JSON codec of a built-in one whose payload has a JSON form of its own, such as a Date's,
@@ -1315,7 +1321,7 @@ it("compares a hand-written codec's read after a strict write, never what it wri
         dated,
         narrowedDated,
         {},
-        { unfoundCodecs: true },
+        { codecsWithoutSource: true },
       ),
     ).toEqual([["held", "value", "b"]]);
   }
@@ -1363,8 +1369,65 @@ it("follows a hand-written codec that can omit its key as one that writes a valu
   const given = { held: Option.some({ a: "a", b: "b" }) };
   const narrowed = { held: Option.some({ a: "a" }) };
   expect(
-    Excess.optionLoss(schema.ast, given, narrowed, {}, { unfoundCodecs: true }),
+    Excess.optionLoss(
+      schema.ast,
+      given,
+      narrowed,
+      {},
+      { codecsWithoutSource: true },
+    ),
   ).toEqual([["held", "value", "b"]]);
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/364
+it("compares what a renamed struct holding a codec that can omit its key wrote, apart from that codec", () => {
+  const omitting = Schema.optional(Either).pipe(
+    Schema.decodeTo(
+      Schema.Option(Schema.toType(Either)),
+      SchemaTransformation.transformOptional<
+        Option.Option<typeof Either.Type>,
+        typeof Either.Type | undefined
+      >({
+        decode: (value) =>
+          Option.some(Option.flatMap(value, Option.fromUndefinedOr)),
+        encode: (value) => Option.flatMap(value, (some) => some),
+      }),
+    ),
+  );
+  // Its wire key is optional, so the rename is a frame and pairs its names, as for the built-in
+  // codecs that can omit theirs.
+  const schema = Schema.Struct({
+    held: Schema.OptionFromNullOr(
+      Schema.Struct({ inner: omitting, other: text, n: text }).pipe(
+        Schema.encodeKeys({ n: "wire_n" }),
+      ),
+    ),
+  });
+  const given = {
+    held: Option.some({ inner: Option.none(), other: "o", n: "n" }),
+  };
+  const loss = (written: object) =>
+    Excess.optionLoss(schema.ast, given, given, written, { checkWrite: true });
+  expect(loss({ held: { other: "o", wire_n: "n" } })).toEqual([]);
+  expect(loss({ held: { wire_n: "n" } })).toEqual([["held", "value", "other"]]);
+  expect(loss({ held: { other: "o", n: "n" } })).toEqual([
+    ["held", "value", "n"],
+  ]);
+  // What the codec writes is its own: its key can be missing for a Some too.
+  const some = {
+    held: Option.some({ inner: Option.some({ a: "a" }), other: "o", n: "n" }),
+  };
+  expect(
+    Excess.optionLoss(
+      schema.ast,
+      some,
+      some,
+      { held: { other: "o", wire_n: "n" } },
+      {
+        checkWrite: true,
+      },
+    ),
+  ).toEqual([]);
 });
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/347
@@ -1381,11 +1444,12 @@ it("compares a codec inside a hand-written codec's decoded payload, never a Sche
         narrowed,
         {},
         {
-          unfoundCodecs: true,
+          codecsWithoutSource: true,
         },
       ),
     ).toEqual([["held", "value", "inner", "value", "b"]]);
-  // A codec's decoded side given as a schema of its own reads as Schema.Option does.
+  // A codec's decoded side given as a schema of its own, without the codec in the same payload, reads
+  // as Schema.Option does.
   for (const inner of [
     Schema.Option(Either),
     Schema.toType(Schema.OptionFromNullOr(Either)),
@@ -1397,7 +1461,7 @@ it("compares a codec inside a hand-written codec's decoded payload, never a Sche
         narrowed,
         {},
         {
-          unfoundCodecs: true,
+          codecsWithoutSource: true,
         },
       ),
     ).toEqual([]);

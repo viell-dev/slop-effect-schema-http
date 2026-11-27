@@ -2343,7 +2343,7 @@ const inSome = (inner: object) =>
   ({ held: Option.some({ inner: Option.some(inner) }) }) as never;
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/334
-describe("a codec whose payload preparation cannot find keeps or refuses its payload's fields", () => {
+describe("a codec whose payload preparation cannot find on the wire keeps or refuses its payload's fields", () => {
   const TaggedOwner = Schema.TaggedStruct("A", Owner.fields);
   const TaggedWide = Schema.TaggedStruct("A", Wide.fields);
   const Tagged = Schema.Union([TaggedOwner, TaggedWide]);
@@ -2721,9 +2721,57 @@ describe("a codec whose payload preparation cannot find keeps or refuses its pay
         ),
       ),
     );
-  const besideAdds = (position: Position) =>
-    json(Schema.Struct({ held: position.held, s: Adds }), {
-      held: position.give(wide),
+  const Numbered = Schema.Union([
+    Owner,
+    Schema.Struct({ owner: Schema.String, limit: Schema.Number }),
+  ]);
+  const numbered = { ...owner, limit: 7 };
+  /** A codec the loose writer does not follow into its payload, given a Some holding `limit`. */
+  interface NotFollowed {
+    readonly held: Codec;
+    readonly given: unknown;
+    readonly whole: unknown;
+    readonly narrowed: unknown;
+    readonly limit: string;
+  }
+  const notFollowed: ReadonlyArray<NotFollowed> = [
+    ...through(effectful).map((position) => ({
+      held: position.held,
+      given: position.give(wide),
+      whole: position.sent(wide),
+      narrowed: position.sent(owner),
+      limit: position.limit,
+    })),
+    // `Body.jsonSchema` applies the JSON codec first, which rebuilds a payload holding a `Number`
+    // field, or a codec that writes `undefined`, so the writer no longer finds the payload the
+    // hand-written codec was built over.
+    {
+      held: fromNull(Numbered),
+      given: Option.some(numbered),
+      whole: numbered,
+      narrowed: owner,
+      limit: '["held"]["value"]["limit"]',
+    },
+    {
+      held: optionalKey(Numbered),
+      given: Option.some(numbered),
+      whole: numbered,
+      narrowed: owner,
+      limit: '["held"]["value"]["limit"]',
+    },
+    {
+      held: fromNull(
+        Schema.Struct({ inner: Schema.OptionFromOptional(Filter) }),
+      ),
+      given: Option.some({ inner: Option.some(wide) }),
+      whole: { inner: wide },
+      narrowed: { inner: owner },
+      limit: '["held"]["value"]["inner"]["value"]["limit"]',
+    },
+  ];
+  const besideAdds = ({ held, given }: NotFollowed) =>
+    json(Schema.Struct({ held, s: Adds }), {
+      held: given,
       s: { a: "a" },
     } as never);
 
@@ -2749,11 +2797,16 @@ describe("a codec whose payload preparation cannot find keeps or refuses its pay
     "currently loses what the read kept through a codec the writer does not follow when a sibling's strict write fails",
     () =>
       Effect.gen(function* () {
-        for (const position of through(effectful))
-          expect(yield* besideAdds(position)).toEqual({
-            held: position.sent(owner),
+        for (const row of notFollowed)
+          expect(yield* besideAdds(row)).toEqual({
+            held: row.narrowed,
             s: { a: "a" },
           });
+        // Without the failing sibling, the strict write keeps `limit`.
+        for (const { held, given, whole } of notFollowed)
+          expect(
+            yield* json(Schema.Struct({ held }), { held: given } as never),
+          ).toEqual({ held: whole });
       }),
   );
 
@@ -2762,15 +2815,12 @@ describe("a codec whose payload preparation cannot find keeps or refuses its pay
     "keeps or refuses what the read kept through a codec the writer does not follow when a sibling's strict write fails",
     () =>
       Effect.gen(function* () {
-        for (const position of through(effectful))
-          yield* Effect.match(besideAdds(position), {
+        for (const row of notFollowed)
+          yield* Effect.match(besideAdds(row), {
             onSuccess: (body) =>
-              expect(body).toEqual({
-                held: position.sent(wide),
-                s: { a: "a" },
-              }),
+              expect(body).toEqual({ held: row.whole, s: { a: "a" } }),
             onFailure: (failure) =>
-              expect(failure.message).toContain(position.limit),
+              expect(failure.message).toContain(row.limit),
           });
       }),
   );
@@ -2826,6 +2876,26 @@ describe("a codec whose payload preparation cannot find keeps or refuses its pay
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/380
+  it.effect.fails(
+    "names the missing field where a codec that can omit its key has its own field renamed",
+    () =>
+      Effect.gen(function* () {
+        for (const codec of [Schema.OptionFromOptional, optionalKey]) {
+          const schema = Schema.Struct({
+            held: codec(Wide),
+            n: Schema.String,
+          }).pipe(Schema.encodeKeys({ held: "h" }));
+          const failure = yield* Effect.flip(
+            json(schema, { held: Option.some(owner), n: "n" } as never),
+          );
+          expect(failure.message).toContain("Missing key");
+          expect(failure.message).toContain('["held"]["value"]["limit"]');
+          expect(failure.message).not.toContain('["held"]["value"]["owner"]');
+        }
+      }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/364
   it.effect(
     "refuses through a renamed struct holding a codec that can omit its key",
@@ -2861,6 +2931,182 @@ describe("a codec whose payload preparation cannot find keeps or refuses its pay
             } as never),
           ).toEqual(sent({ _tag: "A", ...wide }));
         }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/364
+  it.effect(
+    "reads the other fields of a renamed struct holding a codec that can omit its key as beside the built-in one",
+    () =>
+      Effect.gen(function* () {
+        const other = Option.some({ owner: "b", limit: "m", stray: "x" });
+        const sentOther = { owner: "b", limit: "m" };
+        for (const codec of [optionalKey, Schema.OptionFromOptional]) {
+          const holding = (payload: Codec) =>
+            Schema.Struct({
+              held: codec(payload),
+              other: Schema.OptionFromNullOr(Filter),
+              n: Schema.String,
+            }).pipe(Schema.encodeKeys({ n: "wire_n" }));
+          // The struct is a frame, so the built-in sibling leaves its stray key out and keeps
+          // `limit`, as it does with no `held` beside it.
+          expect(
+            yield* json(holding(Filter), {
+              held: Option.none(),
+              other,
+              n: "n",
+            } as never),
+          ).toEqual({ other: sentOther, wire_n: "n" });
+          // Inside an Option, Void is the schema's own and takes the payload first, as Effect's
+          // own encoding does: `null` with or without the sibling's stray key.
+          const voidFirst = holding(Schema.Union([Schema.Void, Wide]));
+          for (const given of [other, Option.some(sentOther)])
+            expect(
+              yield* json(voidFirst, {
+                held: Option.some(wide),
+                other: given,
+                n: "n",
+              } as never),
+            ).toEqual({ held: null, other: sentOther, wire_n: "n" });
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/364
+  it.effect(
+    "refuses a field the read loses through a codec that writes none of its payload",
+    () =>
+      Effect.gen(function* () {
+        // A presence flag: its encoder writes whether there is a Some, never what the Some holds.
+        // The read is compared, never what the codec writes, as for an encoder that narrows.
+        const Flag = Schema.Boolean.pipe(
+          Schema.decodeTo(
+            Schema.Option(Schema.toType(Filter)),
+            SchemaTransformation.transform<
+              Option.Option<typeof Filter.Type>,
+              boolean
+            >({
+              decode: (flag) => (flag ? Option.some(owner) : Option.none()),
+              encode: Option.isSome,
+            }),
+          ),
+        );
+        const schema = Schema.Struct({ held: Flag, n: Schema.String }).pipe(
+          Schema.encodeKeys({ n: "wire_n" }),
+        );
+        const failure = yield* Effect.flip(
+          json(schema, { held: Option.some(withStray), n: "n" } as never),
+        );
+        expect(failure.message).toContain('["held"]["value"]["limit"]');
+        expect(failure.message).not.toContain("stray");
+        for (const given of [wide, { ...owner, stray: "x" }])
+          expect(
+            yield* json(schema, { held: Option.some(given), n: "n" } as never),
+          ).toEqual({ held: true, wire_n: "n" });
+      }),
+  );
+
+  /** `held` beside `Adds`: a built-in codec's Some holding `inner`, written loosely. */
+  const besideAddsIn = (codec: Codec, given: unknown) => ({
+    schema: Schema.Struct({
+      held: Schema.OptionFromNullOr(Schema.Struct({ inner: codec })),
+      s: Adds,
+    }),
+    given: { held: Option.some({ inner: given }), s: { a: "a" } },
+  });
+  /** The same with a renamed sibling of `inner`. */
+  const besideAddsInRenamed = (codec: Codec, given: unknown) => ({
+    schema: Schema.Struct({
+      held: Schema.OptionFromNullOr(
+        Schema.Struct({ inner: codec, n: Schema.String }).pipe(
+          Schema.encodeKeys({ n: "wire_n" }),
+        ),
+      ),
+      s: Adds,
+    }),
+    given: { held: Option.some({ inner: given, n: "n" }), s: { a: "a" } },
+  });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/386
+  it.effect(
+    "sends what a codec that can omit its key writes inside a Some written loosely",
+    () =>
+      Effect.gen(function* () {
+        // Inside a built-in codec's Some, the loose write is compared with what the read kept, but
+        // what a codec without a source writes is its own, including leaving its key out.
+        const writesNothing = optionalKey(Filter, () => Option.none());
+        const cases = [
+          [besideAddsIn(optionalKey(Filter), Option.none()), {}],
+          [besideAddsIn(writesNothing, Option.some(wide)), {}],
+          [besideAddsIn(Schema.OptionFromOptional(Filter), Option.none()), {}],
+          [
+            besideAddsInRenamed(optionalKey(Filter), Option.none()),
+            { wire_n: "n" },
+          ],
+          [
+            besideAddsInRenamed(writesNothing, Option.some(wide)),
+            { wire_n: "n" },
+          ],
+        ] as const;
+        for (const [{ schema, given }, held] of cases)
+          expect(yield* json(schema, given as never)).toEqual({
+            held,
+            s: { a: "a" },
+          });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/385
+  it.effect(
+    "currently runs a payload member's encoder four times through a followed codec when its strict write fails",
+    () =>
+      Effect.gen(function* () {
+        let runs = 0;
+        const more = { more: "m" };
+        // Its encoder adds a key its wire struct does not state, so its strict write fails.
+        const Member = Schema.Struct({ owner: Schema.String }).pipe(
+          Schema.encodeTo(
+            Schema.Struct({ owner: Schema.String }),
+            new SchemaTransformation.Transformation(
+              SchemaGetter.transform<typeof Owner.Type, typeof Owner.Type>(
+                (value) => value,
+              ),
+              SchemaGetter.transformEffect<
+                typeof Owner.Type,
+                typeof Owner.Type
+              >((value) =>
+                Effect.sync(() => {
+                  runs += 1;
+                  return { ...value, ...more };
+                }),
+              ),
+            ),
+          ),
+        );
+        const payload = Schema.Union([Member, Wide]);
+        // The writer follows a codec that can omit its key, so it runs the encoder as often as the
+        // other followed codecs and a plain field do.
+        for (const held of [
+          optionalKey(payload),
+          fromNull(payload),
+          Schema.OptionFromOptional(payload),
+          Schema.OptionFromNullOr(payload),
+        ]) {
+          runs = 0;
+          expect(
+            yield* json(Schema.Struct({ held }), {
+              held: Option.some(owner),
+            } as never),
+          ).toEqual({ held: owner });
+          expect(runs).toBe(4);
+        }
+        runs = 0;
+        expect(
+          yield* json(Schema.Struct({ held: payload }), {
+            held: owner,
+          } as never),
+        ).toEqual({ held: owner });
+        expect(runs).toBe(4);
       }),
   );
 
@@ -2994,6 +3240,44 @@ describe("a codec whose payload preparation cannot find keeps or refuses its pay
             ).toEqual({
               held: { inner: { _tag: "Some", value: owner } },
             });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/347
+  it.effect(
+    "compares a codec's decoded side beside that codec in a hand-written Some, as the one schema they share",
+    () =>
+      Effect.gen(function* () {
+        // In the decoded payload both fields are the same node, so identity cannot tell them apart.
+        const Inner = Schema.OptionFromNullOr(Filter);
+        for (const outer of outers) {
+          const schema = Schema.Struct({
+            held: outer(
+              Schema.Struct({ inner: Inner, plain: Schema.toType(Inner) }),
+            ),
+          });
+          const failure = yield* Effect.flip(
+            json(schema, {
+              held: Option.some({
+                inner: Option.some(wide),
+                plain: Option.some(withStray),
+              }),
+            } as never),
+          );
+          expect(failure.message).toContain(
+            '["held"]["value"]["plain"]["value"]["limit"]',
+          );
+          expect(
+            yield* json(schema, {
+              held: Option.some({
+                inner: Option.some(wide),
+                plain: Option.some(wide),
+              }),
+            } as never),
+          ).toEqual({
+            held: { inner: wide, plain: { _tag: "Some", value: wide } },
+          });
+        }
       }),
   );
 

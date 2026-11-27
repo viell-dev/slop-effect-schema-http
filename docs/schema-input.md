@@ -612,7 +612,8 @@ has to run loosely, unions the writer reaches through the Option's payload schem
 that keeps the whole value first. This includes a nested `Some` and a payload below a key renamed to
 an index-like name such as `"0"`. A plain transformation can expose the same payload schema
 directly, in a single-field struct, or as the optional copy an encoder that can omit the key writes,
-as `OptionFromOptional`'s does, for loose writing. An effectful encoder is not followed.
+as `OptionFromOptional`'s does, for loose writing. An effectful encoder is not followed, nor a
+payload that `Body.jsonSchema` rebuilds, as the limits below say.
 
 For some codecs that unwrap a `Some`, preparation cannot find the payload schema on the wire: a
 hand-written codec, whatever its encoder writes or leaves out, a built-in one behind middleware or
@@ -628,12 +629,27 @@ is refused, naming the field. A `Schema.Option` nested there keeps Effect's own 
 renamed payload there is compared under its decoded names, so a wire name given inside the nested
 `Some` is left out, as a key its decoded side does not state. This needs the codec to be the only
 Option schema at its position, or to share its payload schema with the codecs beside it, as the
-limits below say. What the encoder writes from the read is its own: one that writes only `owner`
-sends only `owner`. `Body.jsonSchema` applies `Schema.toCodecJson` itself, so give it the built-in
-codec rather than its JSON form. Declare a hand-written codec's decoded side as
-`Schema.Option(Schema.toType(payload))`: over a payload with a renamed field,
+limits below say.
+
+What the encoder writes from the read is its own: one that writes only `owner` sends only `owner`,
+and one that leaves its key out sends nothing there, also where the value is written loosely. That
+holds for an encoder that writes none of the payload too, such as a flag that writes only whether
+there is a `Some`: beside a stray key, a `limit` its read lost is refused, although the flag would
+send the same `true` with it. A struct with renamed keys, such as one from `Schema.encodeKeys`, that
+holds such a codec is followed as one holding `OptionFromOptional` is, also where the codec's wire
+key is optional. Its other fields read as they do beside the built-in codec: a built-in codec there
+leaves a stray key out of its own `Some` and keeps `limit`.
+
+`Body.jsonSchema` applies `Schema.toCodecJson` itself, so give it the built-in codec rather than its
+JSON form. Declare a hand-written codec's decoded side as `Schema.Option(Schema.toType(payload))`,
+from the same `payload` schema it is built over. Over a payload with a renamed field,
 `Schema.Option(payload)` gives the codec two different payload types, which TypeScript rejects
-(TS2322), and at run time the payload is encoded twice, so `limit` can go with no error.
+(TS2322), and at run time the payload is encoded twice, so `limit` can go with no error. A codec
+nested in the payload is found as Effect's `Schema.toType` of a codec in the outer codec's own
+schema, so a decoded side built from a second construction of the payload leaves it to Effect's
+reading, where `limit` can go with no error. A codec's decoded side given in the same payload as a
+schema of its own, as `Schema.toType(inner)` beside `inner`, is that same schema, so it is compared
+as `inner` is; on its own it keeps Effect's reading, as `Schema.Option` does.
 
 Use decoded names inside a `Some` that an unwrapping codec reads. For a payload that writes `limit`
 as `page_size`, pass `Some({ limit: "5" })`. To supply the wire name, pass the encoded value
@@ -787,11 +803,17 @@ the schema does with it. These are the places where it cannot, and what happens 
   sibling it refuses under either form instead. Leave out the unstated key
   ([#341](https://github.com/viell-dev/slop-effect-schema-http/issues/341)).
 - Where a strict read keeps every stated field but the strict write fails, as beside a field whose
-  encoder adds a key its wire struct does not state, the value is written loosely. Through a codec
-  the writer does not follow into its payload, such as a hand-written one with an effectful encoder
-  or more than one transformation, a union in its payload can take a narrower member there and lose
-  `limit` with no error. A hand-written codec with one synchronous transformation keeps it, so use
-  one, or let the failing field write only what its wire struct states
+  encoder adds a key its wire struct does not state, the value is written loosely. The writer
+  follows a hand-written codec into its payload only where the codec has one transformation with a
+  synchronous encoder and the payload it was built over is still on the wire. `Body.jsonSchema`
+  applies `Schema.toCodecJson` first, which rebuilds a payload holding a `Number`, `Date`, `BigInt`,
+  `UndefinedOr` or `Schema.optional` field, a codec that writes `undefined`, such as
+  `OptionFromOptional`, or a suspension. Through a codec the writer does not follow, such as one
+  over such a payload, one with an effectful encoder or one with more than one transformation, a
+  union in its payload can take a narrower member and lose `limit` with no error, and so can a codec
+  nested in it. A `Finite`, `Int`, `Boolean`, `String` or `NullOr` field leaves the payload as it
+  is. Use the built-in codec, such as `OptionFromNullOr` or `OptionFromOptional`, which keeps
+  `limit` there, or let the failing field write only what its wire struct states
   ([#378](https://github.com/viell-dev/slop-effect-schema-http/issues/378)).
 - An Option codec whose wire side does not show its payload's union, such as one that writes the
   payload as text, can lose `limit` with no stray key: the schema shows preparation no choice, so it
@@ -874,25 +896,29 @@ the schema does with it. These are the places where it cannot, and what happens 
   forces the original reading. If a narrower member on that route would lose a stated field,
   preparation can refuse at that field. Remove undeclared keys from the value blocking the strict
   attempt, or bind the member you intend to use.
-- Beside a key no member states in a `Some` that a codec reads whose payload preparation cannot
-  find, such as a hand-written one, including one that can omit its key, a stated field that a
-  built-in codec would keep is refused, because preparation cannot leave the key out without knowing
-  what the encoder writes. With `Choice` as above, `Some({ owner, limit, stray })` refuses at
-  `limit` under a same-tag union, a list of `Choice` or a `Choice` inside another `Some`
+- Beside a key no member states in a `Some` that a codec reads whose payload preparation cannot find
+  on the wire, such as a hand-written one, including one that can omit its key, a stated field that
+  a built-in codec would keep is refused, because preparation cannot leave the key out without
+  knowing what the encoder writes. With `Choice` as above, `Some({ owner, limit, stray })` refuses
+  at `limit` under a same-tag union, a list of `Choice` or a `Choice` inside another `Some`
   ([#334](https://github.com/viell-dev/slop-effect-schema-http/issues/334),
   [#364](https://github.com/viell-dev/slop-effect-schema-http/issues/364)). So does a codec nested
   in such a codec's payload, built-in or hand-written, at
   `["held"]["value"]["inner"]["value"]["limit"]`
-  ([#347](https://github.com/viell-dev/slop-effect-schema-http/issues/347)). Under `Choice` itself,
-  a struct holding it, or such a codec beside a scalar or another codec, the refusal also names the
+  ([#347](https://github.com/viell-dev/slop-effect-schema-http/issues/347)). A codec whose encoder
+  writes none of the payload, such as a flag that writes only whether there is a `Some`, refuses the
+  same way, although its request would carry the same bytes with `limit`. Under `Choice` itself, a
+  struct holding it, or such a codec beside a scalar or another codec, the refusal also names the
   unstated key, and `Some({ owner, stray })` refuses at `stray`
   ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)). Leave unstated keys out
   of the `Some`, or use a built-in codec such as `OptionFromNullOr` or `OptionFromOptional`, without
   middleware or an explicit `Schema.toCodecJson`, for the outer codec too. Where something else
   makes the strict attempt fail, such as a stray key in a sibling `Schema.Option`,
-  `OptionFromNullOr` refuses the field too. Under its own renamed field, a codec that can omit its
-  key, built-in or hand-written, refuses an invalid `Some` naming a field it holds rather than
-  `Missing key` ([#380](https://github.com/viell-dev/slop-effect-schema-http/issues/380)).
+  `OptionFromNullOr` refuses the field too. Beside a field whose strict write fails, a built-in
+  codec refuses an unstated key in its `Some` the same way, where it leaves the key out otherwise,
+  so leave the key out there. Under its own renamed field, a codec that can omit its key, built-in
+  or hand-written, refuses an invalid `Some` naming a field it holds rather than `Missing key`
+  ([#380](https://github.com/viell-dev/slop-effect-schema-http/issues/380)).
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
   either binding order. Bounded [stacked-union
   recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;

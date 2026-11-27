@@ -244,19 +244,25 @@ can also follow a plain transformation whose wire shape exposes the same payload
 a field of a single-field struct, or as the optional copy an encoder that can omit the key writes,
 as `OptionFromOptional`'s does. Every union it reaches there can try a member that holds the whole
 payload, including beneath an index-like rename whose field names cannot be paired by position. An
-effectful encoder is not followed. The relaxed route checks what the read held. Through a codec that
-unwraps a `Some` whose payload preparation cannot find on the wire, such as a hand-written one
-whatever its encoder writes, a built-in one behind middleware, or a JSON codec that rebuilds its
-payload, it does so on the decoded payload, after a strict write as well as a loose one, and it
-never compares what that codec wrote. `Schema.toType` leaves a codec nested in that decoded payload
-with no encoding, as `Schema.Option` has none, so the check finds it by identity: as `toType` of a
-codec in the outer codec's own schema, which Effect memoizes. It is compared on its own decoded
-payload the same way, and a `Schema.Option` there keeps Effect's reading. A suspension in that
-schema is followed only where the check resolves it on the decoded side. Output comparison uses
-candidate wire names where they can be paired. An unpairable rename supplies no output evidence, and
-the writer can still select a wider member. A value that Void reads as nothing in place still holds
-its field. `Schema.Option(X)` uses Effect's own reading and member selection for its contents on
-every write route. A narrower member can drop a field there.
+effectful encoder is not followed, nor a payload the JSON codec has rebuilt, because the writer
+finds a hand-written codec's payload by identity with the schema it was built over. The relaxed
+route checks what the read held. Through a codec that unwraps a `Some` whose payload preparation
+cannot find on the wire, such as a hand-written one whatever its encoder writes, a built-in one
+behind middleware, or a JSON codec that rebuilds its payload, it does so on the decoded payload,
+after a strict write as well as a loose one, and it never compares what that codec wrote, including
+where it leaves its key out. A key rename holding such a codec is a frame for the check and pairs
+its names for output comparison, as one holding `OptionFromOptional` does, also where the codec's
+wire key is optional. `Schema.toType` leaves a codec nested in that decoded payload with no
+encoding, as `Schema.Option` has none, so the check finds it by identity: as `toType` of a codec in
+the outer codec's own schema, which Effect memoizes. That needs the decoded side to be built from
+the same payload schema, and it cannot tell the codec from its own decoded side placed beside it,
+which is the same node, so both are compared. It is compared on its own decoded payload the same
+way, and a `Schema.Option` there keeps Effect's reading. A suspension in that schema is followed
+only where the check resolves it on the decoded side. Output comparison uses candidate wire names
+where they can be paired. An unpairable rename supplies no output evidence, and the writer can still
+select a wider member. A value that Void reads as nothing in place still holds its field.
+`Schema.Option(X)` uses Effect's own reading and member selection for its contents on every write
+route. A narrower member can drop a field there.
 
 The second rule: an empty struct, an open schema without a check, or, for a value that is not a
 list, an empty class keeps every key of the value it reads, at every depth, as an alternative of its
