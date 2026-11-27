@@ -2,13 +2,20 @@
 
 ## Unreleased
 
+- Run a schema's decoders and checks as often as before the message change below
+  ([#317](https://github.com/viell-dev/slop-effect-schema-http/issues/317)). That change decoded the
+  value an extra time wherever the constructor could not keep all of it, even where no route used
+  that read. A field or union member read field by field, a list in one, and a union beside another
+  query or header group ran an effectful decoder or check more often as a result, including where
+  the request was sent. Defaults ran as often as before, and the change's messages stay as they are.
+  No release carried the extra runs.
 - **Message change:** say why a refused field cannot be kept, and name the field at fault, where the
   field's names or place, or a reading with the request's own parse options, shows why
   ([#275](https://github.com/viell-dev/slop-effect-schema-http/issues/275)). Every request that
   refused still refuses before dispatch with the same error class, every request that sent sends the
-  same bytes, and a schema's decoders and constructor defaults run as often as before; only the
-  messages and paths below change, and every other refusal reads as before. Code that matches the
-  text of these refusals, such as `The schema cannot keep this field with the rest of the value` or
+  same bytes, and a schema's decoders, checks and defaults run as often as before; only the messages
+  and paths below change, and every other refusal reads as before. Code that matches the text of
+  these refusals, such as `The schema cannot keep this field with the rest of the value` or
   `Missing key at ["limit"]`, needs updating. With `limit` written as `page_size`,
   `{ limit: 5, page_size: "6" }` now reads
   `This field is given under both "limit" and "page_size"; give it under one name`. Items of a list,

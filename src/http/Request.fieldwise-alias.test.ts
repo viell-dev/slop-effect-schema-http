@@ -7,6 +7,7 @@ import {
   Exit,
   Fiber,
   Schema,
+  SchemaGetter,
   SchemaIssue,
   SchemaTransformation,
 } from "effect";
@@ -638,4 +639,133 @@ describe("encoded aliases lost by root fieldwise preparation", () => {
       );
     }
   }
+});
+
+/** A renamed field with a default of either kind, beside a decoded field and a checked one. */
+const traced = (defaults: "constructor" | "decoding") => {
+  const trace: Array<string> = [];
+  const finite = (name: string) =>
+    Schema.String.pipe(
+      Schema.decodeTo(Schema.String, {
+        decode: SchemaGetter.transform((text) => {
+          trace.push(`${name}.read:${text}`);
+          return text;
+        }),
+        encode: SchemaGetter.transform((text) => {
+          trace.push(`${name}.write:${text}`);
+          return text;
+        }),
+      }),
+      Schema.decodeTo(Schema.FiniteFromString),
+    );
+  const schema = Schema.Struct({
+    limit:
+      defaults === "constructor"
+        ? Schema.optionalKey(finite("limit")).pipe(
+            Schema.withConstructorDefault(
+              Effect.sync(() => {
+                trace.push("limit.default");
+                return 25;
+              }),
+            ),
+          )
+        : finite("limit").pipe(
+            Schema.withDecodingDefaultKey(
+              Effect.sync(() => {
+                trace.push("limit.decodingDefault");
+                return "30";
+              }),
+            ),
+          ),
+    gate: finite("gate"),
+    c: Schema.String.check(
+      Schema.makeFilter((value) => {
+        trace.push(`c.check:${value}`);
+        return true;
+      }),
+    ),
+  }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+  return { schema, trace };
+};
+
+// Recording a read's failure to explain a refusal must not run the schema's steps. These traces
+// are those from before #275's messages, whose recorded loose read ran even where no route read.
+// https://github.com/viell-dev/slop-effect-schema-http/issues/317
+describe("callback traces of a refused root fieldwise group", () => {
+  const invalidDecoded = {
+    input: { limit: "x", gate: 3, c: "z" },
+    message: 'Expected number\n  at ["limit"]',
+    trace: ["limit.read:x", "c.check:z", "limit.read:x"],
+  };
+  const cases = {
+    constructor: [
+      {
+        input: { page_size: "many", gate: "03", c: "z" },
+        message:
+          'The schema cannot keep this field with the rest of the value\n  at ["page_size"]',
+        trace: [
+          "c.check:z",
+          "limit.read:many",
+          "gate.read:03",
+          "c.check:z",
+          "limit.default",
+          "c.check:z",
+          "limit.read:many",
+          "gate.read:03",
+          "c.check:z",
+          "gate.read:03",
+          "gate.read:03",
+          "c.check:z",
+          "limit.default",
+          "c.check:z",
+          "limit.write:25",
+          "gate.write:3",
+          "c.check:z",
+          "c.check:z",
+        ],
+      },
+      invalidDecoded,
+    ],
+    decoding: [
+      {
+        input: { page_size: "many", gate: "03", c: "z" },
+        message: 'Missing key\n  at ["limit"]',
+        trace: [
+          "c.check:z",
+          "limit.read:many",
+          "gate.read:03",
+          "c.check:z",
+          "c.check:z",
+          "limit.read:many",
+          "gate.read:03",
+          "c.check:z",
+          "gate.read:03",
+          "gate.read:03",
+          "c.check:z",
+        ],
+      },
+      invalidDecoded,
+    ],
+  } as const;
+  for (const group of ["query", "headers"] as const)
+    for (const defaults of ["constructor", "decoding"] as const)
+      it.effect(
+        `keeps the callback traces of refused ${group} fields beside a ${defaults} default`,
+        () =>
+          Effect.gen(function* () {
+            for (const { input, message, trace: expected } of cases[defaults]) {
+              const { schema, trace } = traced(defaults);
+              const request: Checked =
+                group === "query"
+                  ? Request.get("/x").pipe(Request.query(schema))
+                  : Request.get("/x").pipe(Request.headers(schema));
+              const error = yield* Effect.flip(
+                compile(request, { [group]: input }),
+              );
+              expect(error).toBeInstanceOf(Schema.SchemaError);
+              expect(error.message).toBe(message);
+              expect(trace).toEqual(expected);
+            }
+          }),
+      );
 });

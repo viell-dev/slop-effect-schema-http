@@ -276,3 +276,79 @@ describe("annotated whole-union recovery", () => {
     }),
   );
 });
+
+// Recording a read's failure to explain a refusal must not run the schema's steps. These traces
+// are those from before #275's messages, whose recorded loose read ran even where no route read.
+// https://github.com/viell-dev/slop-effect-schema-http/issues/317
+describe("check runs of an annotated union beside a sibling", () => {
+  const names = {
+    query: { a: "a", b: "b", c: "c" },
+    headers: { a: "X-A", b: "X-B", c: "X-C" },
+  } as const;
+  for (const group of ["query", "headers"] as const)
+    for (const [members, runs] of [
+      ["wider first", 7],
+      ["narrower first", 12],
+    ] as const)
+      for (const unionFirst of [true, false])
+        it.effect(
+          `keeps the check runs of an annotated ${group} union, ${members}, union first ${unionFirst}`,
+          () =>
+            Effect.gen(function* () {
+              const name = names[group];
+              const checks: Array<string> = [];
+              const wide = Schema.Struct({
+                [name.a]: Schema.String,
+                [name.c]: Schema.String.check(
+                  Schema.makeFilter((value) => {
+                    checks.push(value);
+                    return true;
+                  }),
+                ),
+              });
+              const narrow = Schema.Struct({ [name.b]: Schema.String });
+              const union = Schema.Union(
+                members === "wider first" ? [wide, narrow] : [narrow, wide],
+              ).annotate(annotations[0]!);
+              const input = { [name.a]: "x /+", [name.b]: "y", [name.c]: "z" };
+              const result = yield* group === "query"
+                ? Request.compile(
+                    unionFirst
+                      ? Request.get("/x").pipe(
+                          Request.query(union),
+                          Request.query(narrow),
+                        )
+                      : Request.get("/x").pipe(
+                          Request.query(narrow),
+                          Request.query(union),
+                        ),
+                    { query: input },
+                  )
+                : Request.compile(
+                    unionFirst
+                      ? Request.get("/x").pipe(
+                          Request.headers(union),
+                          Request.headers(narrow),
+                        )
+                      : Request.get("/x").pipe(
+                          Request.headers(narrow),
+                          Request.headers(union),
+                        ),
+                    { headers: input },
+                  );
+              if (group === "query")
+                expect(result.request.url).toBe(
+                  unionFirst
+                    ? "/x?a=x%20%2F%2B&c=z&b=y"
+                    : "/x?b=y&a=x%20%2F%2B&c=z",
+                );
+              else
+                expect(result.request.headers).toEqual({
+                  "x-a": "x /+",
+                  "x-b": "y",
+                  "x-c": "z",
+                });
+              expect(checks).toEqual(Array<string>(runs).fill("z"));
+            }),
+        );
+});
