@@ -31,6 +31,9 @@ const jsonText = <S extends Schema.Top>(schema: S, value: Inputs.Input<S>) =>
   });
 const json = <S extends Schema.Top>(schema: S, value: Inputs.Input<S>) =>
   Effect.map(jsonText(schema, value), (text) => JSON.parse(text) as unknown);
+/** The library's own message for a field it cannot keep with the rest of the value. */
+const notHeld = (path: string) =>
+  `The schema cannot keep this field with the rest of the value\n  at ${path}`;
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/143
 describe("visible unions beside opaque fields", () => {
@@ -2569,6 +2572,83 @@ describe("an invalid Some payload keeps its decoded error", () => {
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/351
+  it.effect(
+    "names a wrapper the strict pass refuses, without that pass's own error",
+    () =>
+      Effect.gen(function* () {
+        for (const wire of [Schema.Any, Schema.Unknown]) {
+          // Only the strict pass reads these: its decoder takes the wrapper as the open wire value,
+          // and its constructor, run with `onExcessProperty: "error"`, calls `wire_n` excess.
+          const sibling = Schema.Struct({
+            held: Schema.OptionFromNullOr(wire),
+            n: Schema.String,
+          }).pipe(Schema.encodeKeys({ n: "wire_n" }));
+          const atWireName = Schema.Struct({
+            held: Schema.OptionFromNullOr(wire),
+          }).pipe(Schema.encodeKeys({ held: "wire_held" }));
+          for (const held of [Option.some({ a: 1 }), Option.none()]) {
+            const given = { held, wire_n: "x" };
+            for (const [schema, body, path] of [
+              [sibling, given, '["held"]'],
+              [Schema.Struct({ f: sibling }), { f: given }, '["f"]["held"]'],
+              [Schema.Array(sibling), [given], '[0]["held"]'],
+              [
+                Schema.Record(Schema.String, sibling),
+                { r: given },
+                '["r"]["held"]',
+              ],
+              [
+                Schema.Union([sibling, Schema.Struct({ z: Schema.String })]),
+                given,
+                '["held"]',
+              ],
+              [atWireName, { wire_held: held }, '["wire_held"]'],
+            ] as const) {
+              const failure = yield* Effect.flip(
+                json(schema as typeof sibling, body as never),
+              );
+              expect(failure.message).toBe(notHeld(path));
+            }
+            const query = yield* Effect.flip(
+              Request.compile(Request.get("/x").pipe(Request.query(sibling)), {
+                query: given as never,
+              }),
+            );
+            expect(query.message).toBe(notHeld('["held"]'));
+          }
+          // Each place a wrapper is given is named.
+          const shared = Option.some({ a: 1 });
+          const twice = yield* Effect.flip(
+            json(Schema.Struct({ x: sibling, y: sibling }), {
+              x: { held: shared, wire_n: "x" },
+              y: { held: shared, wire_n: "y" },
+            } as never),
+          );
+          expect(twice.message).toBe(
+            `${notHeld('["x"]["held"]')}\n${notHeld('["y"]["held"]')}`,
+          );
+          // On one side throughout, the value is sent.
+          expect(
+            yield* json(sibling, { held: Option.some({ a: 1 }), n: "x" }),
+          ).toEqual({ held: { a: 1 }, wire_n: "x" });
+          expect(
+            yield* json(sibling, { held: { a: 1 }, wire_n: "x" } as never),
+          ).toEqual({ held: { a: 1 }, wire_n: "x" });
+        }
+        // Where the encoded side cannot take the wrapper, the request's own reading still names
+        // the decoded field the wire name stands for.
+        const struct = Schema.Struct({
+          held: Schema.OptionFromNullOr(Schema.Struct({ a: Schema.Number })),
+          n: Schema.String,
+        }).pipe(Schema.encodeKeys({ n: "wire_n" }));
+        const failure = yield* Effect.flip(
+          json(struct, { held: Option.some({ a: 1 }), wire_n: "x" } as never),
+        );
+        expect(failure.message).toBe('Missing key\n  at ["n"]');
+      }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/321
   it.effect(
     "pairs a projected field with its own decoded field, in any order",
@@ -2914,7 +2994,9 @@ describe("an invalid Some payload keeps its decoded error", () => {
           json(schema, { held: Option.some({ a: "a" }), count: "2" } as never),
         );
         expect(failure).toBeInstanceOf(Schema.SchemaError);
-        expect(failure.message).toContain('["count"]');
+        // Only the strict pass reads it, so the wrapper is named rather than that pass's error
+        // (https://github.com/viell-dev/slop-effect-schema-http/issues/351).
+        expect(failure.message).toBe(notHeld('["held"]'));
       }),
   );
 
@@ -3017,7 +3099,9 @@ describe("an invalid Some payload keeps its decoded error", () => {
           compile(Option.some({ a: 5, b: "keep" })),
         );
         expect(failure).toBeInstanceOf(Schema.SchemaError);
-        expect(failure.message).toContain('["pre"]');
+        // Only the strict pass reads it, so the wrapper is named rather than that pass's error
+        // (https://github.com/viell-dev/slop-effect-schema-http/issues/351).
+        expect(failure.message).toBe(notHeld('["held"]'));
         expect([decoderRuns, defaultRuns]).toEqual([2, 0]);
       }),
     );

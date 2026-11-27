@@ -89,15 +89,15 @@ const guardedOptionSources = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
 const guardedOptionRivals = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
 
 const record = Symbol("record Option wrapper reads");
-interface WrapperNote {
-  used: boolean;
-}
+
+/** The native Options a decode consumed as encoded input, as it met them. */
+type WrapperNote = Set<Option.Option<unknown>>;
 
 type ReadOptions = SchemaAST.ParseOptions & {
   readonly [record]?: WrapperNote;
 };
 
-/** Parse options that record whether a decode consumed a native Option as encoded input. */
+/** Parse options that record each native Option a decode consumes as encoded input. */
 export const recordingWrapperInto = (
   note: WrapperNote,
   options?: SchemaAST.ParseOptions,
@@ -118,7 +118,7 @@ const copyAst = (ast: SchemaAST.AST, changes: object): SchemaAST.AST =>
 
 const noteWrapper = Schema.makeFilter((input, _ast, options: ReadOptions) => {
   const note = options[record];
-  if (note !== undefined && Option.isOption(input)) note.used = true;
+  if (note !== undefined && Option.isOption(input)) note.add(input);
   return true;
 });
 
@@ -159,11 +159,11 @@ const notingMembers = (ast: SchemaAST.Union): SchemaAST.AST => {
         return (input, options: ReadOptions) => {
           const parent = options[record];
           if (parent === undefined) return parse(input, options);
-          const child = { used: false };
+          const child: WrapperNote = new Set();
           return onSuccess(
             parse(input, recordingWrapperInto(child, options)),
             () => {
-              parent.used ||= child.used;
+              for (const wrapper of child) parent.add(wrapper);
             },
           );
         };

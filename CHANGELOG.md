@@ -118,6 +118,23 @@
     refuses with the writer's own error in place of that `SchemaError`. Examples are a symbol field
     or a `Map` in a field of `Schema.Unknown` (`HttpBodyError`), and a nested object in a query or
     header field (`InvalidRequest`).
+- **Message change:** a native `Option` refused because the whole value is read on its encoded side,
+  where an open payload such as `Schema.Any` would take the wrapper itself, is now named at the
+  wrapper with the library's own message
+  ([#351](https://github.com/viell-dev/slop-effect-schema-http/issues/351)). With `n` written as
+  `wire_n`, `Struct({ held: OptionFromNullOr(Schema.Any), n: String })` given
+  `{ held: Option.some({ a: 1 }), wire_n: "x" }` read `Expected no excess property at ["wire_n"]`,
+  which calls the caller's own wire name excess; it now reads
+  `The schema cannot keep this field with the rest of the value at ["held"]`. The same holds for a
+  wrapper under a renamed field's wire name, below a renamed parent, and in a parent, a list, a
+  record or a union, at the wrapper's own path. The earlier text came from the library's strict
+  read, whose options Effect also gives the schema's own steps, and no reading with the request's
+  own options reads such a value, so the wrapper is named without reading anything again. Where the
+  encoded payload cannot take the wrapper, as with `OptionFromNullOr(Struct({ a: Number }))`, the
+  request's own reading still reports `Missing key at ["n"]`. Every request that refused still
+  refuses before dispatch with the same error class, every request that sent sends the same bytes,
+  and a schema's decoders, checks and defaults run as often as on 0.20.0. Code that matches the text
+  of these refusals needs updating.
 
 ## 0.20.0 — 2026-11-27
 

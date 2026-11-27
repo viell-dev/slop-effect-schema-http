@@ -622,10 +622,14 @@ struct reads its fields one by one, so a valid wrapper stays its field's decoded
 sibling is read on its encoded side, as it is for a struct inside a field's union. Where the value
 is a union of whole structs, the refusal can remain, because reading the union member by member
 would lose which member the whole value chose: give the sibling on its decoded side or supply the
-encoded payload directly. A field called `value` inside the payload belongs to the payload.
-`Schema.Option(X)` uses Effect's own reading and member selection on every write route. Effect can
-read X's encoded names and values from a `Some` at runtime, though the typed input expects decoded
-contents. A narrower member can drop a payload field without a refusal.
+encoded payload directly. A sibling given under its wire name cannot be read on its own either, so
+there the wrapper refuses too. Where an open payload such as `Schema.Any` would take the wrapper
+itself, only the library's strict read reads the value, so the refusal names the wrapper as
+`The schema cannot keep this field with the rest of the value` instead of showing that read's error.
+A field called `value` inside the payload belongs to the payload. `Schema.Option(X)` uses Effect's
+own reading and member selection on every write route. Effect can read X's encoded names and values
+from a `Some` at runtime, though the typed input expects decoded contents. A narrower member can
+drop a payload field without a refusal.
 
 ### The reading of Effect is tested, not checked at run time
 

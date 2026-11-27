@@ -1839,6 +1839,33 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
 export const holdsNothing = (value: unknown): boolean =>
   value === null || (isObject(value) && !hasDefinedFields(value));
 
+/**
+ * Where a value holds any of these targets, through plain data only, so finding them runs no
+ * accessor. A list's cells are named by their indexes, and an object held in several places is
+ * searched once.
+ */
+export const placesOf = (
+  value: unknown,
+  targets: ReadonlySet<unknown>,
+): Array<Path> => {
+  const found: Array<Path> = [];
+  const searched = new Set<object>();
+  const visit = (held: unknown, path: Path): void => {
+    if (targets.has(held)) {
+      found.push(path);
+      return;
+    }
+    if (!isObject(held) || searched.has(held) || !isPlainData(held)) return;
+    searched.add(held);
+    const list = Array.isArray(held);
+    for (const key of Reflect.ownKeys(held))
+      if (Object.prototype.propertyIsEnumerable.call(held, key))
+        visit(held[key], [...path, list ? (arrayIndex(key) ?? key) : key]);
+  };
+  visit(value, []);
+  return found;
+};
+
 const optionNames = new WeakMap<
   SchemaAST.Objects,
   ReadonlyArray<Naming> | null

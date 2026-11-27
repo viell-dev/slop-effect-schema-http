@@ -1,6 +1,7 @@
 import {
   Data,
   Effect,
+  type Option,
   Result,
   Schema,
   type SchemaAST,
@@ -33,6 +34,8 @@ export const afterAlternative = (failure: FieldlessOneOf): FieldlessOneOf =>
 /** The encoded read only succeeded by using a native Option wrapper as a wire value. */
 export class OptionWrapperRead extends Data.TaggedError("OptionWrapperRead")<{
   readonly failure: Schema.SchemaError;
+  /** The wrappers that read took as wire values. */
+  readonly wrappers: ReadonlySet<Option.Option<unknown>>;
 }> {}
 
 export type ReadFailure =
