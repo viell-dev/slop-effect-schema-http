@@ -5,6 +5,7 @@ import {
   FieldlessOneOf,
   hasPlainWitness,
   matchRead,
+  mayHoldFieldless,
   OptionWrapperRead,
   publicAmbiguity,
   publicRead,
@@ -565,12 +566,14 @@ const decodedReading = <S extends Schema.Top>(
   // A class's own constructor, which a guarded schema has not, reads nothing as no fields.
   const isClass =
     Excess.classFields(contract.ast) !== undefined && "identifier" in contract;
+  /** What the constructor reads for `input`. */
+  const constructedFrom = (input: unknown) => (isClass ? (input ?? {}) : input);
   const make = (
     input: unknown,
     parseOptions: SchemaAST.ParseOptions | undefined,
     caller = input,
   ) => {
-    const from = isClass ? (input ?? {}) : input;
+    const from = constructedFrom(input);
     return Effect.mapError(
       schema.makeEffect(from, parseOptions && { parseOptions }),
       (issue) => classify(new Schema.SchemaError(issue), from, caller),
@@ -609,7 +612,10 @@ const decodedReading = <S extends Schema.Top>(
       );
     });
   };
-  /** Check the normalised input for ambiguity before a raw constructor can choose a member. */
+  /**
+   * Check the normalised input for ambiguity before a raw constructor can choose a member, where it
+   * can be ambiguous, and construct it only as a fallback elsewhere.
+   */
   const constructing = (
     input: unknown,
     given: unknown,
@@ -618,7 +624,10 @@ const decodedReading = <S extends Schema.Top>(
     const raw = () => make(input, parseOptions);
     if (given === undefined || given === input) return raw();
     const normalised = () => make(given, parseOptions, input);
-    if (!canBeAmbiguous)
+    // Effect's constructor runs a schema's steps when it is called. Where the normalised input holds
+    // nothing that can read as ambiguous, it is constructed only after the raw input fails, so a
+    // value the raw constructor keeps runs them once.
+    if (!canBeAmbiguous || !mayHoldFieldless(constructedFrom(given)))
       return recoverRead(raw(), (failure) =>
         recoverRead(normalised(), () => Effect.fail(failure)),
       );
@@ -1792,12 +1801,14 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       R | S["DecodingServices"]
     > => {
       if (given === cleaned) return strictly(kept(cleaned));
-      const second = recoverExposed(kept(seen));
+      // Effect's constructor and decoder run a schema's steps when they are called, so the exposed
+      // value is read only on the routes below that use it.
+      const second = () => recoverExposed(kept(seen));
       return matchRead(strictly(kept(given as Input<S>)), {
         // The exposed value is not read after a provisional ambiguity: read strictly, its
         // undefined-valued keys make members fail, and the one left would be chosen.
         onFailure: (failure) =>
-          failure === provisional ? Effect.fail(failure) : second,
+          failure === provisional ? Effect.fail(failure) : second(),
         // Keep the normalized read if it settled an ambiguity. The exposed input could make a
         // member of the ambiguous union fail on an undefined-valued key and admit the other.
         // Otherwise the first read stands where the second does not write strictly either.
@@ -1806,7 +1817,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             ? Effect.succeed(first)
             : recoverRead(
                 Effect.filterOrFail(
-                  second,
+                  second(),
                   (next) => "written" in next,
                   () => noRoute,
                 ),

@@ -28,11 +28,33 @@
   `page_size`. This applies where the renamed struct is the value or a field of a struct; below
   `Schema.optional`, `NullOr`, a union, a list, a tuple or a record, `Missing key` stays. Every
   request that refused still refuses before dispatch with the same error class, every request that
-  sent sends the same bytes, and a schema's decoders, checks and defaults run as often as on 0.20.0.
-  Without such a field, a wire-named value the encoded side refuses keeps `Missing key at ["limit"]`
-  for a required field and `The schema cannot keep this field with the rest of the value` for an
-  optional one. Code that matches the text of these refusals, such as `Missing key at ["limit"]`,
-  needs updating.
+  sent sends the same bytes, and this change does not alter how often a schema's decoders, checks
+  and defaults run. Without such a field, a wire-named value the encoded side refuses keeps
+  `Missing key at ["limit"]` for a required field and
+  `The schema cannot keep this field with the rest of the value` for an optional one. Code that
+  matches the text of these refusals, such as `Missing key at ["limit"]`, needs updating.
+- Run a schema's checks and constructor defaults beside a key the schema does not state, or a key
+  set to `undefined`, only in reads that can decide whether the value is kept or refused, as 0.19.0
+  did ([#331](https://github.com/viell-dev/slop-effect-schema-http/issues/331)). 0.20.0 built two
+  constructor reads that no route used, and building one runs the constructor's checks and defaults:
+  the strict read of the value as given, even where the strict read of the value without those keys
+  had kept it, and, under a schema with a `oneOf` union or a suspended schema, the construction of
+  the value without those keys before its construction as given. Neither read ran a decoder. A check
+  therefore ran once more on requests that were sent. With
+  `Struct({ c: Number.check(…), b: Struct({ owner: String }) })`, `owner` written as `OWNER_w` and
+  the body `{ c: 1, b: { OWNER_w: "x", zz: 1 } }`, the check ran 3 times on 0.19.0, 4 on 0.20.0, and
+  runs 3 again. Over 60,000 generated requests, the runs removed were 787 checks and 121 constructor
+  defaults, and no decoder or decoding default. The reads that can decide stay, as the [input
+  reference](https://viell-dev.github.io/slop-effect-schema-http/schema-input#a-key-no-member-states-is-stripped-as-a-struct-strips-it)
+  describes, so such a key can still run a schema's steps more often than its absence: the strict
+  pass reads the value as given where the read without those keys fails, a reading that fails is
+  tried again without them, and under such a schema a value that holds an object or list with no
+  fields at any depth once those keys are left out, or bytes such as a `Uint8Array`, is still
+  constructed both ways. This changes no request's outcome or message unless a check or default
+  depends on how often it runs. In the example above, a check that throws on its fourth run ended
+  preparation with a defect on 0.20.0 and lets the request send again, as on 0.19.0. Under a `oneOf`
+  query group, a constructor default that returns `id-${runs}` sent `id=id-2` on 0.20.0 and sends
+  `id=id-1` again.
 
 ## 0.20.0 — 2026-11-27
 

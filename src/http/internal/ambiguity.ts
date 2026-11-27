@@ -6,7 +6,7 @@ import {
   type SchemaAST,
   SchemaIssue,
 } from "effect";
-import { hasDefinedFields } from "./excess.js";
+import { definesField, hasDefinedFields } from "./excess.js";
 import { isPlainData } from "./plain.js";
 import { extraArrayField } from "./writer-error.js";
 
@@ -44,6 +44,40 @@ const isFieldless = (value: unknown): boolean =>
   isPlainData(value) &&
   !hasDefinedFields(value) &&
   (!Array.isArray(value) || extraArrayField(value, value.length) === undefined);
+
+/**
+ * Whether a read of `value` can find an ambiguity in it: whether it is, or holds in an own data field
+ * at any depth, a fieldless plain object or list. {@link readFailure} names only such a value
+ * ambiguous, reached as this reaches it, through own data fields of any object, plain or not.
+ *
+ * @remarks
+ * A typed array or other `ArrayBuffer` view counts as holding one without being looked into: its
+ * indexes hold only numbers, but listing them would cost more than the read this can save.
+ */
+export const mayHoldFieldless = (value: unknown): boolean => {
+  const seen = new Set<object>();
+  // The values still to look at, in place of recursion, so that a deep value takes no stack.
+  const pending: Array<unknown> = [value];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (typeof node !== "object" || node === null || seen.has(node)) continue;
+    seen.add(node);
+    if (ArrayBuffer.isView(node)) return true;
+    // One pass over its keys finds what the node holds and whether it defines a field. Only a node
+    // that defines none can be fieldless.
+    let defines = false;
+    for (const key of Reflect.ownKeys(node)) {
+      const field = Object.getOwnPropertyDescriptor(node, key);
+      // An accessor is not run, as `ownValueAt` does not run it.
+      if (field === undefined || !("value" in field)) continue;
+      const held: unknown = field.value;
+      if (typeof held === "object" && held !== null) pending.push(held);
+      defines ||= definesField(node, key);
+    }
+    if (!defines && isFieldless(node)) return true;
+  }
+  return false;
+};
 
 const ownValueAt = (
   input: unknown,
