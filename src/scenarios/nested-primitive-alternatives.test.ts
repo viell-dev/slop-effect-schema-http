@@ -1267,9 +1267,9 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
             expect(yield* backend.ledger).toHaveLength(cases.length);
           }),
       );
-      // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/275
       it.live(
-        `[EXT-49r] currently a refusal names the outer invalid field and the valid alias beside it (${binding}, ${order})`,
+        `[EXT-49r] a refusal beside a Void names the member's own error at the invalid field, not the valid alias (${binding}, ${order})`,
         () =>
           Effect.gen(function* () {
             const refusing = yield* start();
@@ -1302,9 +1302,9 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
             const ledger = yield* backend.ledger;
             expect(ledger).toHaveLength(1);
             wire(ledger[0]!, binding, `{"extra":{"a":1},"filter":${five}}`);
-            expect(message).toContain('at ["extra"]\n');
-            expect(message).toContain('at ["filter"]["page_size"]');
-            expect(message).not.toContain('["extra"]["a"]');
+            expect(message).toContain("Expected number");
+            expect(message).toContain('at ["extra"]["a"]');
+            expect(message).not.toContain('["filter"]');
           }),
       );
       // https://github.com/viell-dev/slop-effect-schema-http/issues/143

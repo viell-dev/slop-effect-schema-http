@@ -985,13 +985,13 @@ export const wireCases = {
       "open JSON record refuses a Map before rebuilding it",
       json(Open, () => new Map([["a", 1]])),
       "SchemaError",
-      "The schema cannot keep the content of this value",
+      "The schema cannot keep this Map as a record",
     ),
     refused(
       "ObjectKeyword JSON root refuses a Date before rebuilding it",
       json(Schema.ObjectKeyword, () => new Date(0)),
       "SchemaError",
-      "The schema cannot keep the content of this value",
+      "The schema cannot keep this Date as an object",
     ),
     refused(
       "nested ObjectKeyword refuses a Map",
@@ -1016,7 +1016,7 @@ export const wireCases = {
           () => new Date(0),
         ),
         "SchemaError",
-        "The schema cannot keep the content of this value",
+        "The schema cannot keep this Date as a record",
       ),
     ),
     sent(
