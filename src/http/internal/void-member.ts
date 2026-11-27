@@ -246,7 +246,7 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
       return new SchemaAST.Suspend(
         () => (target ??= visit(ast.thunk(), raw)),
         ast.annotations,
-        undefined,
+        reading ? ast.checks : undefined,
         encoding,
         ast.context,
       );
