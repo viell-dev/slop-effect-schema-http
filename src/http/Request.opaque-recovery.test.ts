@@ -2048,6 +2048,131 @@ it.effect("lets a record key codec supply wire names on a loose write", () =>
   }),
 );
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/312
+describe("configured and same-payload Option codecs read a Some as the built-in codecs do", () => {
+  const configured = [null, undefined].map(
+    (onNoneEncoding) => (payload: Schema.Top) =>
+      Schema.OptionFromOptionalNullOr(payload as typeof Filter, {
+        onNoneEncoding,
+      }),
+  );
+  const TaggedFilter = Schema.Union([
+    Schema.TaggedStruct("A", Owner.fields),
+    Schema.TaggedStruct("A", Wide.fields),
+  ]);
+  const wide = { ...owner, limit: "l" };
+
+  it.effect("keeps a stated field beside a stray key at every position", () =>
+    Effect.gen(function* () {
+      for (const codec of configured) {
+        const cases = [
+          [codec(Filter), Option.some({ ...wide, stray: "x" }), wide],
+          [
+            codec(TaggedFilter),
+            Option.some({ _tag: "A", ...wide, stray: "x" }),
+            { _tag: "A", ...wide },
+          ],
+          [
+            codec(Schema.Array(Filter)),
+            Option.some([{ ...wide, stray: "x" }]),
+            [wide],
+          ],
+          [
+            Schema.OptionFromNullOr(Schema.Struct({ inner: codec(Filter) })),
+            Option.some({ inner: Option.some({ ...wide, stray: "x" }) }),
+            { inner: wide },
+          ],
+        ] as const;
+        for (const [held, given, sent] of cases)
+          expect(
+            yield* json(Schema.Struct({ held, filter: Filter }), {
+              held: given,
+              filter,
+            } as never),
+          ).toEqual({ held: sent, filter });
+      }
+    }),
+  );
+
+  it.effect(
+    "keeps a stated field between codecs that share their payload",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.Union([
+          Schema.OptionFromNullOr(Filter),
+          Schema.OptionFromUndefinedOr(Filter),
+        ]);
+        expect(
+          yield* json(Schema.Struct({ held, filter: Filter }), {
+            held: Option.some({ ...wide, stray: "x" }),
+            filter,
+          }),
+        ).toEqual({ held: wide, filter });
+        // Payloads of different schemas could be written by either codec, so a stray key refuses.
+        const Cursor = Schema.Struct({
+          ...Owner.fields,
+          cursor: Schema.String,
+        });
+        const apart = Schema.Union([
+          Schema.OptionFromNullOr(Filter),
+          Schema.OptionFromUndefinedOr(Schema.Union([Owner, Cursor])),
+        ]);
+        const failure = yield* Effect.flip(
+          json(Schema.Struct({ held: apart, filter: Filter }), {
+            held: Option.some({ ...wide, stray: "x" }),
+            filter,
+          } as never),
+        );
+        expect(failure.message).toContain('["held"]["value"]["limit"]');
+      }),
+  );
+
+  it.effect("leaves out an unstated key as OptionFromNullOr does", () =>
+    Effect.gen(function* () {
+      const payload = Schema.Union([
+        Schema.Struct({ value: A }),
+        Schema.Struct({ c: Schema.String }),
+      ]);
+      const value = { a: "inner" };
+      for (const held of [
+        Schema.OptionFromNullOr(payload),
+        ...configured.map((codec) => codec(payload)),
+        // Competing codecs with one payload schema write a Some the same way.
+        Schema.Union([
+          Schema.OptionFromNullOr(payload),
+          Schema.OptionFromUndefinedOr(payload),
+        ]),
+      ])
+        for (const given of [
+          { value, a: "outer" },
+          { value, stray: "x" },
+          { value },
+        ])
+          expect(
+            yield* json(Schema.Struct({ held }), {
+              held: Option.some(given),
+            } as never),
+          ).toEqual({ held: { value } });
+      // Members whose codecs share the payload schema read the Some the same way too.
+      const plain = Schema.OptionFromNullOr(payload);
+      const members = Schema.Union([
+        Schema.Struct({ held: plain, a: Schema.String }),
+        Schema.Struct({
+          held: Schema.OptionFromNullOr(payload),
+          b: Schema.String,
+        }),
+      ]);
+      for (const given of [
+        { value, a: "outer" },
+        { value, stray: "x" },
+      ])
+        expect(
+          yield* json(members, { held: Option.some(given), a: "a" } as never),
+        ).toEqual({ held: { value }, a: "a" });
+    }),
+  );
+});
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/299
 it.effect("refuses wrapper collisions at opaque Option positions", () =>
   Effect.gen(function* () {
@@ -2058,47 +2183,19 @@ it.effect("refuses wrapper collisions at opaque Option positions", () =>
     const value = { a: "inner" };
     const held = Option.some({ value, a: "outer" });
     const plain = Schema.OptionFromNullOr(payload);
-    const withA = Schema.Struct({ held: plain, a: Schema.String });
-    const withB = Schema.Struct({
-      held: Schema.OptionFromNullOr(payload),
-      b: Schema.String,
+    // A struct alternative beside the codec can take the Some itself.
+    const schema = Schema.Struct({
+      held: Schema.Union([plain, Schema.Struct({ z: Schema.String })]),
     });
-    for (const schema of [
-      Schema.Struct({
-        held: Schema.OptionFromOptionalNullOr(payload, {
-          onNoneEncoding: null,
-        }),
-      }),
-      Schema.Struct({
-        held: Schema.OptionFromOptionalNullOr(payload, {
-          onNoneEncoding: undefined,
-        }),
-      }),
-      Schema.Struct({
-        held: Schema.Union([plain, Schema.Struct({ z: Schema.String })]),
-      }),
-      Schema.Struct({
-        held: Schema.Union([plain, Schema.OptionFromUndefinedOr(payload)]),
-      }),
-      Schema.Union([withA, withB]),
-    ]) {
-      const supplied =
-        schema.ast._tag === "Union" ? { held, a: "a" } : { held };
-      const failure = yield* Effect.flip(json(schema, supplied));
-      expect(failure.message).toContain('["held"]["value"]["a"]');
-      const unstated = {
-        ...supplied,
-        held: Option.some({ value, stray: "x" }),
-      };
-      const refused = yield* Effect.flip(json(schema, unstated));
-      expect(refused.message).toContain('["held"]["value"]["stray"]');
-      const control = { ...supplied, held: Option.some({ value }) };
-      const expected =
-        schema.ast._tag === "Union"
-          ? { held: { value }, a: "a" }
-          : { held: { value } };
-      expect(yield* json(schema, control)).toEqual(expected);
-    }
+    const failure = yield* Effect.flip(json(schema, { held }));
+    expect(failure.message).toContain('["held"]["value"]["a"]');
+    const refused = yield* Effect.flip(
+      json(schema, { held: Option.some({ value, stray: "x" }) }),
+    );
+    expect(refused.message).toContain('["held"]["value"]["stray"]');
+    expect(yield* json(schema, { held: Option.some({ value }) })).toEqual({
+      held: { value },
+    });
   }),
 );
 

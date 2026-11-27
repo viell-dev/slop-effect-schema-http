@@ -1509,6 +1509,10 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     guarded === codec.ast ? write : Schema.encodeEffect(guardedCodec);
   // Only the built-in writer establishes how the codec exposes a Some on the wire.
   const visibleOptions = custom === undefined && Excess.mayUnwrapOption(ast);
+  // A configured codec, such as OptionFromOptionalNullOr with an onNoneEncoding, exposes a Some's
+  // payload the same way, so its unstated keys are left out before the strict read too.
+  const cleansOptions =
+    custom === undefined && Excess.mayWriteUnwrappedOption(ast);
   const readOriginal = decodedReading(contract);
   const readingFrom = (input: Input<S>, caller: Input<S>) =>
     caller === input
@@ -1820,7 +1824,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     });
   };
   return (input: Input<S>) => {
-    const cleaned = visibleOptions
+    const cleaned = cleansOptions
       ? (Excess.normalisedOptions(ast, input) as Input<S>)
       : input;
     if (cleaned === input) return reading(input, input);
