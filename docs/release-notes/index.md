@@ -1,6 +1,6 @@
 # Release history
 
-The current release is [0.19.0](./0.19.md). [Versions](../versions.md) covers installation and
+The current release is [0.20.0](./0.20.md). [Versions](../versions.md) covers installation and
 updates. Use [Schema-backed input](../schema-input.md) and [Schema-backed
 groups](../schema-groups.md) for today's rules and active limits; the articles below explain changes
 between releases.
@@ -16,7 +16,8 @@ to `Schema.Void` members, keeps keys under `Schema.Struct({})` in that strict re
 separately stops the field-by-field reading from sending a list as an index-keyed object. The [0.19
 release](./0.19.md) replaces those proofs: every reading accounts for the values it was given,
 whatever the schema's shape, which finishes the constructor-default repair and the recorded
-preservation gaps.
+preservation gaps. The [0.20 release](./0.20.md) applies that rule to `Option` payloads and
+wrappers.
 
 ## Schema-input hardening
 
@@ -24,22 +25,23 @@ The recurring renamed-field example tests several different questions. A later r
 replaced by a generated field is one problem. A caller's encoded alias being ignored in favor of a
 constructor default is another. Static input types and array normalization are separate layers.
 
-| Release           | What changed for a consumer                                                      | Decisive new condition                                                    |
-| ----------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| [0.6.x](./0.6.md) | Refuse a replaced raw edit; recover some union/sibling and opaque-neighbor calls | Empty caller group for renamed defaults; separate bounded recoveries      |
-| [0.7](./0.7.md)   | Extend the same replaced-raw-edit check                                          | A closed union wraps the renamed group                                    |
-| [0.8](./0.8.md)   | Already working encoded input can compile                                        | Shared outer names had hidden an encoded alias from the type              |
-| [0.9](./0.9.md)   | Validate an ignored caller alias instead of sending its default                  | Successful initial whole construction at an eligible root                 |
-| [0.10](./0.10.md) | Already working nested encoded input can compile                                 | Whole encoded shapes below unchanged outer names                          |
-| [0.11](./0.11.md) | Refuse another route to the same alias/default loss                              | Failed whole decoding followed by successful final fieldwise construction |
-| [0.12](./0.12.md) | Extend initial-constructor validation below an object                            | Unchanged direct-object ancestor fields                                   |
-| [0.13](./0.13.md) | Extend that validation through a parent union                                    | Closed members share the same field schema                                |
-| [0.14](./0.14.md) | Extend that validation through positional ancestors                              | Stable dense array/tuple cells with matching output length                |
-| [0.15](./0.15.md) | Preserve actual array layout and handle symbol keys                              | An inner rewrite previously compacted/dropped cells or misread metadata   |
-| [0.16](./0.16.md) | Validate aliases in the accepted remaining container profiles                    | Primitive alternatives, sparse own cells and exact native own iterators   |
-| [0.17](./0.17.md) | Validate aliases beside Effect's nested primitive alternatives                   | An unencoded union whose members are all primitive alternatives           |
-| [0.18](./0.18.md) | Validate aliases beside encoded primitive and array-shaped members               | Plain-transformation primitive codecs; a union's one list-reading member  |
-| [0.19](./0.19.md) | Keep or refuse every supplied field, and refuse values a writer cannot represent | Plain data the library can see; no schema shape is required               |
+| Release           | What changed for a consumer                                                      | Decisive new condition                                                     |
+| ----------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [0.6.x](./0.6.md) | Refuse a replaced raw edit; recover some union/sibling and opaque-neighbor calls | Empty caller group for renamed defaults; separate bounded recoveries       |
+| [0.7](./0.7.md)   | Extend the same replaced-raw-edit check                                          | A closed union wraps the renamed group                                     |
+| [0.8](./0.8.md)   | Already working encoded input can compile                                        | Shared outer names had hidden an encoded alias from the type               |
+| [0.9](./0.9.md)   | Validate an ignored caller alias instead of sending its default                  | Successful initial whole construction at an eligible root                  |
+| [0.10](./0.10.md) | Already working nested encoded input can compile                                 | Whole encoded shapes below unchanged outer names                           |
+| [0.11](./0.11.md) | Refuse another route to the same alias/default loss                              | Failed whole decoding followed by successful final fieldwise construction  |
+| [0.12](./0.12.md) | Extend initial-constructor validation below an object                            | Unchanged direct-object ancestor fields                                    |
+| [0.13](./0.13.md) | Extend that validation through a parent union                                    | Closed members share the same field schema                                 |
+| [0.14](./0.14.md) | Extend that validation through positional ancestors                              | Stable dense array/tuple cells with matching output length                 |
+| [0.15](./0.15.md) | Preserve actual array layout and handle symbol keys                              | An inner rewrite previously compacted/dropped cells or misread metadata    |
+| [0.16](./0.16.md) | Validate aliases in the accepted remaining container profiles                    | Primitive alternatives, sparse own cells and exact native own iterators    |
+| [0.17](./0.17.md) | Validate aliases beside Effect's nested primitive alternatives                   | An unencoded union whose members are all primitive alternatives            |
+| [0.18](./0.18.md) | Validate aliases beside encoded primitive and array-shaped members               | Plain-transformation primitive codecs; a union's one list-reading member   |
+| [0.19](./0.19.md) | Keep or refuse every supplied field, and refuse values a writer cannot represent | Plain data the library can see; no schema shape is required                |
+| [0.20](./0.20.md) | Keep or refuse what an Option's payload and wrapper hold                         | Option codecs the library can see through, and native wrappers it is given |
 
 Thus 0.9, 0.11–0.14 and 0.16–0.18 extend one constructor-default repair, which 0.19 finishes.
 Versions 0.8 and 0.10 repair static types without changing runtime selection. Version 0.15 fixes

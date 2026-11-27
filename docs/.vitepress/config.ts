@@ -103,12 +103,13 @@ export default defineConfig({
         text: "Releases and project",
         items: [
           { text: "Versions", link: "/versions" },
-          { text: "What's in 0.19", link: "/release-notes/0.19" },
+          { text: "What's in 0.20", link: "/release-notes/0.20" },
           {
             text: "Release history",
             link: "/release-notes/",
             collapsed: true,
             items: [
+              { text: "What's in 0.19", link: "/release-notes/0.19" },
               { text: "What's in 0.18", link: "/release-notes/0.18" },
               { text: "What's in 0.17", link: "/release-notes/0.17" },
               { text: "What's in 0.16", link: "/release-notes/0.16" },
