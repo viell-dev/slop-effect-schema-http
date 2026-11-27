@@ -451,11 +451,12 @@ describe(`a union's fields at the wire (${lane.name})`, () => {
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/292
   it.live(
-    "[EXT-30j] currently a stray OptionFromNullOr payload key beside a visible union refuses before dispatch",
+    "[EXT-30j] a stray OptionFromNullOr payload key is left out, and the visible union beside it keeps its wider member",
     () =>
       Effect.gen(function* () {
-        const { error, ledger } = yield* refused(
+        const ledger = yield* sent(
           (origin) =>
             postTo(origin).pipe(
               Request.body(
@@ -470,15 +471,21 @@ describe(`a union's fields at the wire (${lane.name})`, () => {
           {
             body: {
               held: Option.some({ owner: "ada", stray: secret }),
-              filter: { owner: "grace", limit: secret },
+              filter: { owner: "grace", limit: "5" },
             },
           },
         );
-        expect(error._tag).toBe("SchemaError");
-        expect(error.message).toContain('["held"]["value"]["stray"]');
-        expect(error.message).not.toContain('["filter"]["limit"]');
-        expect(error.message).not.toContain(secret);
-        expect(ledger).toEqual([]);
+        expect(ledger).toHaveLength(1);
+        const [entry] = ledger;
+        expect(entry!.method).toBe("POST");
+        expect(entry!.target).toBe("/x");
+        expect(headerValues(entry!.lines, "content-type")).toEqual([
+          "application/json",
+        ]);
+        expect(bodyText(entry!)).toBe(
+          '{"held":{"owner":"ada"},"filter":{"owner":"grace","limit":"5"}}',
+        );
+        expect(bodyText(entry!)).not.toContain(secret);
       }),
   );
 

@@ -1106,20 +1106,13 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
           }
         }),
     );
-    for (const [order, schema, json] of [
-      [
-        "object first",
-        Schema.Union([Filter, Schema.Void], { mode: "oneOf" }),
-        defaulted,
-      ],
-      [
-        "Void first",
-        Schema.Union([Schema.Void, Filter], { mode: "oneOf" }),
-        voidRoot(binding),
-      ],
+    for (const [order, schema] of [
+      ["object first", Schema.Union([Filter, Schema.Void], { mode: "oneOf" })],
+      ["Void first", Schema.Union([Schema.Void, Filter], { mode: "oneOf" })],
     ] as const) {
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/276
       it.live(
-        `[EXT-49o] currently a fieldless oneOf sends the first member's output (${binding}, ${order})`,
+        `[EXT-49o] a fieldless oneOf that both members read is refused before dispatch (${binding}, ${order})`,
         () =>
           Effect.gen(function* () {
             const backend = yield* start();
@@ -1127,13 +1120,19 @@ describe(`nested primitive alternatives (${lane.name})`, () => {
             expect(Schema.decodeUnknownExit(schema)(input)._tag).toBe(
               "Failure",
             );
-            expect(
-              yield* operation(backend.origin, schema, binding)(input),
-            ).toBe("Not Found");
+            const actual = yield* operation(
+              backend.origin,
+              schema,
+              binding,
+            )(input).pipe(outcome);
             expect(input).toEqual({});
-            const ledger = yield* backend.ledger;
-            expect(ledger).toHaveLength(1);
-            wire(ledger[0]!, binding, json);
+            expect(yield* backend.ledger).toEqual([]);
+            expect(
+              "error" in actual && Schema.isSchemaError(actual.error),
+            ).toBe(true);
+            expect(String((actual as { error: unknown }).error)).toContain(
+              "Expected exactly one member to match",
+            );
           }),
       );
     }

@@ -2973,12 +2973,14 @@ records where the library says the rule stops.
   limit.
   - `[EXT-30i] limit: fields no member can hold together in text given as text are not refused, and the first member's go out`
   - `[EXT-30i] limit: fields no member can hold together inside Schema.Option are not refused, and the first member's go out`
-- **EXT-30j** A stray key inside `OptionFromNullOr` next to a visible wider union refuses with
-  `SchemaError` at `["held"]["value"]["stray"]` before dispatch. The old assertion named
-  `["filter"]["limit"]`, which 0.18.0 reports in addition to the Option path. There is no
-  dispatch on either version. [#274, item 2](https://github.com/viell-dev/slop-effect-schema-http/issues/274).
-  Status: defect.
-  - `[EXT-30j] currently a stray OptionFromNullOr payload key beside a visible union refuses before dispatch`
+- **EXT-30j** A stray key inside an `OptionFromNullOr` `Some` payload, next to a visible wider
+  union, is left out, and the union keeps its wider member: the body is
+  `{"held":{"owner":"ada"},"filter":{"owner":"grace","limit":"5"}}`. This holds since
+  [#298](https://github.com/viell-dev/slop-effect-schema-http/pull/298), for
+  [#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292).
+  0.18.0, 0.19.0 and `9b1b306` refused with `SchemaError` at `["held"]["value"]["stray"]` before
+  dispatch, and 0.18.0 also named `["filter"]["limit"]`. Status: tested.
+  - `[EXT-30j] a stray OptionFromNullOr payload key is left out, and the visible union beside it keeps its wider member`
 - **EXT-30k** A renamed struct takes its names from one side: `{ a, B }` is refused by name, with
   nothing sent, and each side alone goes out under the wire names. Status: tested.
   - `[EXT-30k] names from two sides of a renamed struct are refused, by name and never by value, and nothing is sent`
@@ -3232,8 +3234,9 @@ The neutral echo probe's [public contract](./README.md#the-neutral-echo-probe) s
 method, target, body bytes, relevant header lines and request counts. Refusals check `SchemaError`,
 field paths, value redaction and an empty ledger. Published `0.6.0` refuses nine intended successful
 calls at `["f"]["b"]`; its eighteen passing controls remain part of the regression evidence.
-EXT-30j uses `OptionFromNullOr`, whose encoded object is visible. Its refusal is tracked under
-[#274, item 2](https://github.com/viell-dev/slop-effect-schema-http/issues/274).
+EXT-30j uses `OptionFromNullOr`, whose encoded object is visible. Since
+[#298](https://github.com/viell-dev/slop-effect-schema-http/pull/298), its stray payload key is
+left out rather than refused ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)).
 
 - **EXT-35a** A direct `Option` with an extra opaque key does not prevent a visible nested union
   from keeping its wider member. Both a JSON body and a path renderer preserve `f.b`; the opaque
@@ -4395,13 +4398,17 @@ remain under `artifacts/void-member-5e8d57e-*`.
   - `[EXT-49n] ${binding} ${level.name} ${order} annotated and checked Void members keep valid aliases and refuse invalid ones`
   - `[EXT-49n] ${binding} a Void member yields supplied fields to an open member or a list`
 - **EXT-49o** Both orders beside a class and oneOf keep the valid populated input. The class
-  field also keeps it on either side. Invalid populated values and standalone Void refuse. An
-  ambiguous fieldless `oneOf` given `{}` sends `{"page_size":"25"}` with Filter first, and
-  `null` in JSON or `undefined` as path text with Void first. Effect alone refuses both orders.
-  The library at 0.18.0 refused with Filter first and wrote Void's output with Void first. [#276](https://github.com/viell-dev/slop-effect-schema-http/issues/276).
-  Status: defect.
+  field also keeps it on either side. Invalid populated values and standalone Void refuse. A
+  fieldless `{}` that both members of a `oneOf` read is refused in either order with
+  `SchemaError` (`Expected exactly one member to match`) and an empty ledger, as Effect alone
+  refuses it. This is the breaking change of
+  [#290](https://github.com/viell-dev/slop-effect-schema-http/pull/290), for
+  [#276](https://github.com/viell-dev/slop-effect-schema-http/issues/276). 0.19.0 and `9b1b306` sent
+  `{"page_size":"25"}` with Filter first, and `null` in JSON or `undefined` as path text with Void
+  first. The library at 0.18.0 refused with Filter first and wrote Void's output with Void first.
+  Status: tested.
   - `[EXT-49o] ${binding} class-backed and oneOf unions keep populated objects beside Void`
-  - `[EXT-49o] currently a fieldless oneOf sends the first member's output (${binding}, ${order})`
+  - `[EXT-49o] a fieldless oneOf that both members read is refused before dispatch (${binding}, ${order})`
 - **EXT-49p** A cast-only Void-first query or header group given invalid `"many"` or `null` is
   refused before dispatch with a `SchemaError` naming `["page_size"]`, before any check that the
   group's encoded value is a field record. At `36a6188` it was `Request.InvalidRequest` (the encoded
@@ -4752,9 +4759,10 @@ through its same-origin proxy and imports the packed package.
   preparing a struct containing the original `Counted` instance. Since
   [#293](https://github.com/viell-dev/slop-effect-schema-http/pull/293), that struct writes the
   instance through `Counted`, with or without a class-valued sibling; 0.18.0 and 0.19.0 refused at
-  `["item"]["a"]`. The loose writer still keeps the class member over a later open member. A class
-  whose field is renamed still refuses with `Filter` first, which #274 keeps open; it is not pinned
-  here. Status: tested.
+  `["item"]["a"]`. The loose writer still keeps the class member over a later open member. Since
+  [#304](https://github.com/viell-dev/slop-effect-schema-http/pull/304), which closed #274, the
+  library's changelog states that a class whose field is renamed is written through its class with
+  `Filter` first too. This suite does not pin that case. Status: tested.
   - `[EXT-59] Effect constructs the holder with the defaulted struct member before preparation`
   - `[EXT-59] a struct field writes a Counted instance beside Filter through its class`
   - `[EXT-59] a class instance beside a struct that would strip it is written through its class, beside a class-valued sibling`
@@ -4806,11 +4814,11 @@ The table counts only EXT-57–63. TypeScript assignability is checked separatel
 
 ### Retained mismatches on the 0.19 pin
 
-The current pins for EXT-30j and EXT-49o/r are linked from their catalogue entries. They
-distinguish a wrong refusal, order-dependent output, and incorrect diagnostics from losing a
-supplied value. EXT-59's pins became ordinary tests with #293. EXT-35j/o/t pin documented input limits. The original assertions at suite commit
-`208ed44` failed in 11 cases on the first Node run at `96e5163`, with the same case titles failing
-as in the historical standalone Node run below. The initial log is
+The current pins for EXT-49r are linked from its catalogue entry. They distinguish incorrect
+diagnostics from losing a supplied value. EXT-59's pins became ordinary tests with #293, EXT-30j's
+with #298 and EXT-49o's with #290. EXT-35j/o/t pin documented input limits. The original
+assertions at suite commit `208ed44` failed in 11 cases on the first Node run at `96e5163`, with
+the same case titles failing as in the historical standalone Node run below. The initial log is
 `artifacts/new-pin-initial-node.log`.
 
 The adjusted assertions were also run at `82f9da9` in Node. All retained mismatch pins pass
