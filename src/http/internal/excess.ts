@@ -719,16 +719,28 @@ const renamedBy = (
     ]),
   );
 
+/**
+ * A renamed struct: by its rename's own pairing, which also covers integer-like names, or else, for a
+ * link of the same shape, field by field in place.
+ */
+const renamedStruct = (
+  ast: SchemaAST.Objects,
+  link: SchemaAST.Link,
+): Renamed => {
+  const pairs = renamedPairs(ast, link);
+  if (pairs !== undefined) return [pairs];
+  return isKeyRename(ast) ? [renamedBy(ast, link.to)] : [];
+};
+
 /** A class read through its fields' struct, which `Schema.encodeKeys` then renames. */
 const renamedClass = (ast: Ast): Renamed => {
   const fields = classFields(ast);
   const rename = ast.encoding?.[1];
-  return fields?._tag === "Objects" &&
-    ast.encoding?.length === 2 &&
-    rename !== undefined &&
-    renamesKeys(fields, rename)
-    ? [renamedBy(fields, rename.to)]
-    : [];
+  const pairs =
+    fields !== undefined && ast.encoding?.length === 2 && rename !== undefined
+      ? renamedPairs(fields, rename)
+      : undefined;
+  return pairs === undefined ? [] : [pairs];
 };
 
 const renamedFields = (ast: Ast): Renamed => {
@@ -739,8 +751,8 @@ const renamedFields = (ast: Ast): Renamed => {
         ? ast.types.flatMap(renamedFields)
         : ast._tag === "Suspend"
           ? renamedFields(ast.thunk())
-          : ast._tag === "Objects" && isKeyRename(ast)
-            ? [renamedBy(ast, ast.encoding![0].to)]
+          : ast._tag === "Objects" && ast.encoding?.length === 1
+            ? renamedStruct(ast, ast.encoding[0])
             : renamedClass(ast);
     renamings.set(ast, renamed);
   }
@@ -1242,6 +1254,87 @@ const gettersOf = (
   if (transformation?._tag !== "Transformation") return undefined;
   const { decode, encode } = transformation;
   return [decode._tag, getterSource(decode), encode._tag, getterSource(encode)];
+};
+
+// Schema.encodeKeys renames through Struct.renameKeys in both directions.
+const encodeKeysGetters = gettersOf(
+  Schema.Struct({ a: Schema.String }).pipe(Schema.encodeKeys({ a: "b" })).ast
+    .encoding?.[0]?.transformation,
+);
+
+/** A key JavaScript lists before the others, in numeric order, whatever order it was added in. */
+const isIntegerKey = (key: PropertyKey): boolean => {
+  if (typeof key !== "string") return false;
+  const index = Number(key);
+  return (
+    Number.isInteger(index) &&
+    index >= 0 &&
+    index < 0xffff_ffff &&
+    String(index) === key
+  );
+};
+
+const projectsTo = (decoded: Ast, wire: Ast): boolean =>
+  SchemaAST.toEncoded(decoded) === wire ||
+  (decoded._tag === "Suspend" && wire._tag === "Suspend");
+
+const renamePairs = new WeakMap<
+  SchemaAST.Link,
+  ReadonlyMap<PropertyKey, Ast> | null
+>();
+
+/**
+ * Each name a `Schema.encodeKeys` rename writes, with the decoded field written there, where the
+ * link from `from` is one.
+ *
+ * @remarks
+ * The rename's mapping lives in a closure no schema node exposes, so it is recovered from the
+ * schemas. Effect builds the wire struct from the projections of the decoded fields in their order,
+ * and JavaScript keeps that order for every name but an integer-like one, which it lists first in
+ * numeric order. Without such names a field pairs with the one in its place. With them, a wire field
+ * pairs only with the one decoded field whose projection it is, and with none where several are.
+ * Any other transformation pairs nothing, since its callback alone knows which field it writes
+ * where. The rename is recognised by its getters, as configured Option codecs are, which a
+ * hand-written transformation spelled the same way would also match (#327).
+ */
+export const renamedPairs = (
+  from: Ast,
+  link: SchemaAST.Link,
+): ReadonlyMap<PropertyKey, Ast> | undefined => {
+  const known = renamePairs.get(link);
+  if (known !== undefined) return known ?? undefined;
+  const getters = gettersOf(link.transformation);
+  const { to } = link;
+  let pairs: Map<PropertyKey, Ast> | undefined;
+  if (
+    from._tag === "Objects" &&
+    to._tag === "Objects" &&
+    to.encoding === undefined &&
+    from.indexSignatures.length === 0 &&
+    to.indexSignatures.length === 0 &&
+    from.propertySignatures.length === to.propertySignatures.length &&
+    encodeKeysGetters?.every((part, index) => part === getters?.[index]) ===
+      true
+  ) {
+    const decoded = from.propertySignatures;
+    const wire = to.propertySignatures;
+    pairs = new Map();
+    if (wire.some(({ name }) => isIntegerKey(name))) {
+      for (const { name, type } of wire) {
+        const candidates = decoded.filter((field) =>
+          projectsTo(field.type, type),
+        );
+        if (candidates.length === 1) pairs.set(name, candidates[0]!.type);
+      }
+    } else if (
+      decoded.every((field, index) => projectsTo(field.type, wire[index]!.type))
+    )
+      for (const [index, { name }] of wire.entries())
+        pairs.set(name, decoded[index]!.type);
+    else pairs = undefined;
+  }
+  renamePairs.set(link, pairs ?? null);
+  return pairs;
 };
 
 const additionalOptionGetters = [
