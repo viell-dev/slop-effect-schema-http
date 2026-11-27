@@ -618,6 +618,25 @@ describe("normalising visible Some payloads", () => {
     });
   });
 
+  it("leaves out a payload's unstated keys beside a Void where no stated key is left", () => {
+    const Filter = Schema.Struct({ limit: Schema.optionalKey(text) });
+    for (const mode of ["anyOf", "oneOf"] as const) {
+      const schema = Schema.OptionFromNullOr(
+        Schema.Union([Filter, Schema.Void], { mode }),
+      );
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/310
+      for (const payload of [{ extra: 1 }, { zz: undefined }])
+        expect(
+          Excess.normalisedOptions(schema.ast, Option.some(payload)),
+        ).toEqual(Option.some({}));
+      // A stated key stays, set or not, and so does the stray key beside it.
+      for (const payload of [{ limit: "5", extra: 1 }, { limit: undefined }]) {
+        const input = Option.some(payload);
+        expect(Excess.normalisedOptions(schema.ast, input)).toBe(input);
+      }
+    }
+  });
+
   it("requires an Option declaration and the matching payload source", () => {
     const ast = Held.ast;
     if (ast._tag !== "Declaration" || ast.encoding === undefined)

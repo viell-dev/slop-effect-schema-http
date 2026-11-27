@@ -998,3 +998,180 @@ describe("enclosing union limits", () => {
       }),
   );
 });
+
+const spelled = (f: object) =>
+  JSON.stringify(f, (_key, value: unknown) => value ?? "undefined");
+const ambiguous = (at: string) =>
+  `SchemaError: Expected exactly one member to match\n  at ${at}`;
+
+describe("a Some payload beside Void", () => {
+  const strays = [{ extra: 1 }, { zz: undefined }, { a: "y" }];
+  // A key no member of the payload states is left out, as Effect leaves it out, so the payload
+  // gives the result of Some({}).
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/310
+  for (const [name, codec] of [
+    [
+      "OptionFromNullOr, Filter first",
+      Schema.OptionFromNullOr(oneOf(Filter, Schema.Void)),
+    ],
+    [
+      "OptionFromNullOr, Void first",
+      Schema.OptionFromNullOr(oneOf(Schema.Void, Filter)),
+    ],
+    [
+      "OptionFromUndefinedOr",
+      Schema.OptionFromUndefinedOr(oneOf(Filter, Schema.Void)),
+    ],
+  ] as const)
+    it.effect(`refuses a payload of unstated keys as Some({}), ${name}`, () =>
+      Effect.gen(function* () {
+        for (const payload of [{}, ...strays]) {
+          const label = spelled(payload);
+          expect(
+            yield* outcome(post(Schema.Struct({ f: codec })), {
+              f: Option.some(payload),
+            }),
+            label,
+          ).toBe(ambiguous('["f"]["value"]'));
+          expect(
+            yield* outcome(
+              post(Schema.Struct({ g: Schema.Struct({ f: codec }) })),
+              { g: { f: Option.some(payload) } },
+            ),
+            `nested, ${label}`,
+          ).toBe(ambiguous('["g"]["f"]["value"]'));
+          expect(
+            yield* outcome(post(codec), Option.some(payload)),
+            `whole body, ${label}`,
+          ).toBe(ambiguous('["value"]'));
+          for (const neighbour of [clean, stray]) {
+            const beside = `${label}, ${neighbour === stray ? "stray key" : "clean"}`;
+            expect(
+              yield* outcome(post(Schema.Struct({ f: codec, o: Opaque })), {
+                f: Option.some(payload),
+                o: neighbour(),
+              }),
+              `f declared first, ${beside}`,
+            ).toBe(ambiguous('["f"]["value"]'));
+            expect(
+              yield* outcome(post(Schema.Struct({ o: Opaque, f: codec })), {
+                o: neighbour(),
+                f: Option.some(payload),
+              }),
+              `f declared last, ${beside}`,
+            ).toBe(ambiguous('["f"]["value"]'));
+          }
+        }
+      }),
+    );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/310
+  it.effect("writes such a payload as its anyOf writes Some({})", () =>
+    Effect.gen(function* () {
+      for (const [members, sent] of [
+        [[Filter, Schema.Void], "{}"],
+        [[Schema.Void, Filter], "null"],
+      ] as const) {
+        const codec = Schema.OptionFromNullOr(Schema.Union(members));
+        for (const payload of [{}, ...strays]) {
+          const label = spelled(payload);
+          expect(
+            yield* outcome(post(Schema.Struct({ f: codec })), {
+              f: Option.some(payload),
+            }),
+            label,
+          ).toBe(`sent {"f":${sent}}`);
+          expect(
+            yield* outcome(post(Schema.Struct({ f: codec, o: Opaque })), {
+              f: Option.some(payload),
+              o: clean(),
+            }),
+            `f declared first, ${label}`,
+          ).toBe(`sent {"f":${sent},"o":${some}}`);
+          expect(
+            yield* outcome(post(Schema.Struct({ o: Opaque, f: codec })), {
+              o: clean(),
+              f: Option.some(payload),
+            }),
+            `f declared last, ${label}`,
+          ).toBe(`sent {"o":${some},"f":${sent}}`);
+        }
+      }
+    }),
+  );
+
+  it.effect("keeps a payload's stated field and None as before", () =>
+    Effect.gen(function* () {
+      const either = Schema.Struct({
+        f: Schema.OptionFromNullOr(Schema.Union([Filter, Schema.Void])),
+      });
+      expect(
+        yield* outcome(post(either), { f: Option.some({ limit: 5 }) }),
+      ).toBe('sent {"f":{"page_size":"5"}}');
+      expect(yield* outcome(post(either), { f: Option.none() })).toBe(
+        'sent {"f":null}',
+      );
+      const alone = Schema.Struct({ f: Schema.OptionFromNullOr(Filter) });
+      expect(
+        yield* outcome(post(alone), {
+          f: Option.some({ limit: 5, extra: 1 }),
+        }),
+      ).toBe('sent {"f":{"page_size":"5"}}');
+      const structs = Schema.Struct({
+        f: Schema.OptionFromNullOr(oneOf(Adef, B)),
+      });
+      expect(
+        yield* outcome(post(structs), { f: Option.some({ a: "y" }) }),
+      ).toBe('sent {"f":{"a":"y"}}');
+    }),
+  );
+
+  const U = Schema.OptionFromNullOr(oneOf(Filter, Schema.Void));
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/340
+  it.effect(
+    "currently writes null for a payload whose only key is a stated one set to undefined",
+    () =>
+      Effect.gen(function* () {
+        for (const payload of [{ limit: undefined }, { page_size: undefined }])
+          expect(
+            yield* outcome(post(Schema.Struct({ f: U })), {
+              f: Option.some(payload),
+            }),
+            spelled(payload),
+          ).toBe('sent {"f":null}');
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/340
+  it.effect.fails(
+    "refuses a payload whose only key is a stated one set to undefined, as Some({})",
+    () =>
+      Effect.gen(function* () {
+        for (const payload of [{ limit: undefined }, { page_size: undefined }])
+          expect(
+            yield* outcome(post(Schema.Struct({ f: U })), {
+              f: Option.some(payload),
+            }),
+            spelled(payload),
+          ).toBe(ambiguous('["f"]["value"]'));
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/341
+  it.effect(
+    "currently writes null for a payload with a stated field and an unstated key",
+    () =>
+      Effect.gen(function* () {
+        for (const members of [
+          Schema.Union([Filter, Schema.Void]),
+          oneOf(Filter, Schema.Void),
+        ])
+          expect(
+            yield* outcome(
+              post(Schema.Struct({ f: Schema.OptionFromNullOr(members) })),
+              { f: Option.some({ limit: 5, extra: 1 }) },
+            ),
+          ).toBe('sent {"f":null}');
+      }),
+  );
+});

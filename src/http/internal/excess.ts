@@ -1609,12 +1609,20 @@ const optionFrame = (type: Ast): Ast | undefined => {
   return eligible ? frame : undefined;
 };
 
-/** Structural alternatives left by the same literal-tag rule as an ordinary field. */
-const structuralFrames = (
+/**
+ * Structural alternatives left by the same literal-tag rule as an ordinary field. With `withVoid`,
+ * a Void alternative is known too: it reads any value as `undefined`, so it states and keeps
+ * nothing, and `voided` says whether one is left.
+ */
+const structuralAlternatives = (
   types: ReadonlyArray<Ast>,
   value: Record<PropertyKey, unknown>,
-): ReadonlyArray<Ast> | undefined => {
+  withVoid: boolean,
+):
+  | { readonly frames: ReadonlyArray<Ast>; readonly voided: boolean }
+  | undefined => {
   const frames: Ast[] = [];
+  let voided = false;
   const active = new Set<Ast>();
   const visit = (type: Ast, retained: boolean): boolean => {
     if (active.has(type)) return false;
@@ -1637,10 +1645,23 @@ const structuralFrames = (
       active.delete(type);
       return known;
     }
+    if (withVoid && type._tag === "Void" && type.encoding === undefined) {
+      voided ||= retained;
+      return true;
+    }
     return takesNoObject(type);
   };
-  return types.every((type) => visit(type, true)) ? frames : undefined;
+  return types.every((type) => visit(type, true))
+    ? { frames, voided }
+    : undefined;
 };
+
+/** {@link structuralAlternatives} where a Void, which could read any key, leaves them unknown. */
+const structuralFrames = (
+  types: ReadonlyArray<Ast>,
+  value: Record<PropertyKey, unknown>,
+): ReadonlyArray<Ast> | undefined =>
+  structuralAlternatives(types, value, false)?.frames;
 
 /**
  * Include names from either side. Where a rename leaves a name intact, its encoded field is a
@@ -1764,7 +1785,8 @@ export const mayWriteUnwrappedOption = (ast: Ast): boolean =>
 /**
  * Remove only unstated own fields inside a visible Some before the strict read. Using that read
  * also keeps the original member selection at siblings, including siblings that are opaque here.
- * An unknown alternative may hold the whole value. Keep every field where one can read it.
+ * An unknown alternative may hold the whole value. Keep every field where one can read it. A Void
+ * keeps none, so beside one a payload of only unstated fields is left empty, as Void reads it.
  */
 export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
   const active = new Set<object>();
@@ -1799,16 +1821,25 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
       return Object.is(next, payload) ? value : Option.some(next);
     }
     if (!isPlainData(value)) return value;
-    const sides = structuralFrames(types, value);
-    if (sides === undefined) return value;
     const list = Array.isArray(value);
-    const canStrip =
-      inSome && !list && sides.some(({ _tag }) => _tag === "Objects");
+    // Inside a Some, Void is Effect's own and reads any payload as `undefined`.
+    const found = structuralAlternatives(types, value, inSome && !list);
+    if (found === undefined) return value;
+    const { frames: sides, voided } = found;
     const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors).filter(
+      (key) => (Reflect.get(descriptors, key) as PropertyDescriptor).enumerable,
+    );
+    // Void could read any key, so beside one a payload stays as given unless no member states any
+    // of its keys. Then it holds nothing a member reads and is left empty.
+    if (voided && keys.some((key) => frameTypesAt(sides, key).length > 0))
+      return value;
+    const canStrip =
+      voided ||
+      (inSome && !list && sides.some(({ _tag }) => _tag === "Objects"));
     let changed = false;
-    for (const key of Reflect.ownKeys(descriptors)) {
+    for (const key of keys) {
       const descriptor = Reflect.get(descriptors, key) as PropertyDescriptor;
-      if (!descriptor.enumerable) continue;
       const children = frameTypesAt(sides, key);
       if (children.length === 0 && canStrip) {
         Reflect.deleteProperty(descriptors, key);

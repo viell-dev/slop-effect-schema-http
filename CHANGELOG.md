@@ -1,5 +1,22 @@
 # Change history
 
+## Unreleased
+
+- **Breaking:** inside a `Some` read through an unwrapping codec, give a payload of keys no member
+  states the result of `Some({})` beside a Void too
+  ([#310](https://github.com/viell-dev/slop-effect-schema-http/issues/310)). Under
+  `OptionFromNullOr(Union([Filter, Void], { mode: "oneOf" }))`, `Some({ extra: 1 })` sent `null`; it
+  now refuses as ambiguous, as `Some({})` does. Under `OptionFromNullOr(Union([Filter, Void]))` it
+  sent `null` and now sends `{}`, as `Some({})` and Effect's own encoding do. Such keys were already
+  left out beside members that state fields, but a Void member, which reads any payload, kept the
+  payload as given. Code that received `null` for these values now receives `{}` or a `SchemaError`.
+  A payload with a key a member states, set or not, is read as before: `Some({ limit: undefined })`
+  keeps 0.20.0's result ([#340](https://github.com/viell-dev/slop-effect-schema-http/issues/340)),
+  and `Some({ limit: 5, extra: 1 })` is still sent as `null`
+  ([#341](https://github.com/viell-dev/slop-effect-schema-http/issues/341)). Under the `anyOf` form,
+  beside a stray key in an opaque sibling, `Some({ extra: 1 })` still refuses where `Some({})` sends
+  `{}` ([#340](https://github.com/viell-dev/slop-effect-schema-http/issues/340)).
+
 ## 0.20.1 — 2026-11-28
 
 [What's in

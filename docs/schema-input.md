@@ -749,6 +749,19 @@ the schema does with it. These are the places where it cannot, and what happens 
   loose write even without a stray key. Choose the intended member directly or validate and supply
   the encoded representation
   ([#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312)).
+- Inside a `Some`, Void is the schema's own and reads any payload as `undefined`. Beside it, a
+  payload whose keys no member states is left as an empty one before the strict read. Under
+  `OptionFromNullOr(Union([Filter, Void], { mode: "oneOf" }))`, `Some({ extra: 1 })` therefore
+  refuses as ambiguous, as `Some({})` does, and under the `anyOf` form it sends `{}`. A stated key
+  stays, set or not, and so does every key beside it. Under the `oneOf` form,
+  `Some({ limit: undefined })` sends `null` where `Some({})` refuses, and
+  `Some({ page_size: undefined })` refuses only beside a stray key in an opaque sibling. Under the
+  `anyOf` form, such a stray key defeats the strict read, and `Some({ extra: 1 })` then refuses with
+  `The schema cannot keep this field with the rest of the value` where `Some({})` sends `{}`
+  ([#340](https://github.com/viell-dev/slop-effect-schema-http/issues/340)). A payload with a stated
+  field and a key no member states, such as `Some({ limit: 5, extra: 1 })`, sends `null` and loses
+  `limit`, where Effect's own encoding keeps it under `anyOf`. Leave out the unstated key
+  ([#341](https://github.com/viell-dev/slop-effect-schema-http/issues/341)).
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
   guard for native Options follows visible schema nodes into the encoded side of Option codecs,
   including hand-written ones. It cannot see a wrapper read inside an opaque declaration or inside a
