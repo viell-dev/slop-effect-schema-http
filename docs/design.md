@@ -855,10 +855,12 @@ recovery](./limits.md#what-a-client-does-with-a-request) records what was measur
 - When a reused connection ends with no response, Chromium sends the request again by itself, a POST
   included, so one attempt can make two commits. Node's clients do not. An idempotency key goes out
   with both sendings, so the browser's second sending replays.
-- A body cut off after the headers is a `Response.DecodeError` through `fetch`, not retried, and a
-  classifier has nothing portable to tell it from malformed JSON by. Through a provider such as
-  Node's `http` it is a transport error, retried. So one cut POST can duplicate through one provider
-  and not another. `Policy.transient` stays as it is, because it matches Effect's classification.
+- A body cut off after the headers is a `Response.DecodeError` through `fetch` and through Effect's
+  `NodeHttpClient` layers, which hand a response over at its headers, not retried, and a classifier
+  has nothing portable to tell it from malformed JSON by. Through a provider that reads the whole
+  response before handing it over, it is a transport error, retried. So one cut POST can duplicate
+  through one provider and not another. `Policy.transient` stays as it is, because it matches
+  Effect's classification.
 
 ### Variants
 

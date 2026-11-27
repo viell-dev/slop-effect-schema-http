@@ -139,18 +139,18 @@ attempt does this too, because the browser repeats the attempt it was given.
 The same failure on the wire reaches the library differently, depending on when the client hands a
 response over:
 
-| Client                                                                            | What the library receives                          | `Policy.transient` |
-| --------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------ |
-| `fetch`, in Node.js and in Chromium                                               | `Response.DecodeError`, with the response's status | Not retried        |
-| A client that reads the whole response first, such as a provider on Node's `http` | A `TransportError`, with no response metadata      | Retried            |
+| Client                                                                                                                                               | What the library receives                          | `Policy.transient` |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------ |
+| One that hands a response over at its headers: `fetch` in Node.js and in Chromium, and Effect's `NodeHttpClient` layers on `node:http` and on undici | `Response.DecodeError`, with the response's status | Not retried        |
+| A client that reads the whole response before handing it over, such as a hand-written provider that buffers it                                       | A `TransportError`, with no response metadata      | Retried            |
 
-`fetch` hands a response over at its headers, so the body fails later, as a body that does not
+These clients hand a response over at its headers, so the body fails later, as a body that does not
 decode. It has the same error, reason and status as malformed JSON, so a `while` classifier has
 nothing portable to tell them apart by.
 
 So one cut POST can duplicate through one provider and not another. With retries on and no key, a
 write the server committed before its answer was cut is repeated through the second kind of client
-and not through `fetch`. `Policy.transient` stays as it is, because it matches Effect's
+and not through the first. `Policy.transient` stays as it is, because it matches Effect's
 classification. Where a repeat would matter, send a key or keep that write off retries.
 
 #### A compressed body that stops early
