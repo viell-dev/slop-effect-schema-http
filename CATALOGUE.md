@@ -4772,8 +4772,8 @@ through its same-origin proxy and imports the packed package.
   root, in a field or at a list index. Open query and header records refuse Date. A class
   instance with own fields remains writable. Since
   [#311](https://github.com/viell-dev/slop-effect-schema-http/pull/311) each refusal names the
-  built-in and what the schema would rebuild it as, such as `The schema cannot keep this Map as a
-  record`. Status: tested.
+  built-in and what the schema would rebuild it as, such as
+  `The schema cannot keep this Map as a record`. Status: tested.
 - **EXT-61** [#262](https://github.com/viell-dev/slop-effect-schema-http/issues/262). A JSON refusal
   names the innermost lost list field, and a malformed second query pair names `$[1]` in both
   the cause and the top-level message since
