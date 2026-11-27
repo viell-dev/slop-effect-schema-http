@@ -1,6 +1,9 @@
 # Change history
 
-## Unreleased
+## 0.20.0 — 2026-11-27
+
+[What's in 0.20](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.20) gives each
+breaking change with its migration.
 
 - **Breaking:** read a `Some` through a configured `OptionFromOptionalNullOr`, such as
   `{ onNoneEncoding: null }`, and through codecs competing at one position that share one payload
@@ -12,11 +15,12 @@
   under a same-tag union, a list or another `Some` sent `limit` nowhere in 0.19.0, and elsewhere
   refused; it now sends `{ owner, limit }`. A key no member states is left out, so a key `a` beside
   a field `value` and a field only a member ruled out by a literal tag states are now left out, as
-  through `OptionFromNullOr`, where `main` refused them; 0.19.0 sent the outer `a` in their place. A
-  payload a check changes after the clean is still refused. Codecs competing with different payload
-  schemas keep 0.19.0's reading, which can still leave out `limit` beside a stray key, and so can a
-  configured codec inside another `Some` where the strict attempt fails for another reason. When the
-  cleaned attempt fails, a configured codec's checks now run as often as a built-in codec's.
+  through `OptionFromNullOr`, where a development build refused them; 0.19.0 sent the outer `a` in
+  their place. A payload a check changes after the clean is still refused. Codecs competing with
+  different payload schemas keep 0.19.0's reading, which can still leave out `limit` beside a stray
+  key, and so can a configured codec inside another `Some` where the strict attempt fails for
+  another reason. When the cleaned attempt fails, a configured codec's checks now run as often as a
+  built-in codec's.
 - **Breaking:** refuse a built-in that a struct rebuilds from its own fields
   ([#316](https://github.com/viell-dev/slop-effect-schema-http/issues/316)), as 0.19.0 does for
   records. For example, `{ held: new Date(0) }` under `held: Struct({ a: optionalKey(String) })`,
