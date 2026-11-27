@@ -16,6 +16,7 @@ import {
   hasHiddenContent,
   isOptionDeclaration,
   readsOptionPayload,
+  renamedPairs,
 } from "./excess.js";
 import { isPlainData } from "./plain.js";
 import { replaceEncoding } from "./schema-ast.js";
@@ -358,38 +359,12 @@ const projects = (decoded: SchemaAST.AST, wire: SchemaAST.AST): boolean =>
   SchemaAST.toEncoded(originOf(decoded)) === originOf(wire) ||
   (decoded._tag === "Suspend" && wire._tag === "Suspend");
 
-const renames = new WeakMap<SchemaAST.AST, boolean>();
-
-/**
- * Whether `layer` is written as `reference` by a rename of its fields, as `Schema.encodeKeys`
- * builds: its last encoding leads to `reference`, which has as many children, each in the same
- * place the projection of the decoded one. Only then do the two pair by place rather than by key.
- */
-const isRenameOf = (
-  layer: SchemaAST.AST,
-  reference: SchemaAST.AST,
-): boolean => {
-  const decoded = originOf(layer);
-  const wire = originOf(reference);
-  if (decoded.encoding?.at(-1)?.to !== wire) return false;
-  let known = renames.get(decoded);
-  if (known === undefined) {
-    const from = childrenOf(decoded);
-    const to = childrenOf(wire);
-    known =
-      wire._tag === "Objects" &&
-      from.length === to.length &&
-      from.every((child, at) => projects(child.type, to[at]!.type));
-    renames.set(decoded, known);
-  }
-  return known;
-};
-
 /**
  * The child of `layer` that `target`, the child of `reference` under `key`, is the projection of.
- * Across a rename the child in the same place; otherwise the child under the same key, since a
- * projection keeps its keys. Identity alone does not say which child a projection came from, as
- * unrelated children can share one, so no other child is guessed.
+ * Where `layer` is written as `reference` by its last encoding, only a rename's own pairing says
+ * which, and any other transformation pairs nothing. Otherwise `reference` is a projection, which
+ * keeps the keys. Identity alone does not say which child a projection came from, as unrelated
+ * children can share one, so no other child is guessed.
  */
 const counterpart = (
   layer: SchemaAST.AST,
@@ -397,15 +372,14 @@ const counterpart = (
   key: PropertyKey,
   target: SchemaAST.AST,
 ): SchemaAST.AST | undefined => {
-  const children = childrenOf(layer);
-  if (isRenameOf(layer, reference)) {
-    const at = childrenOf(reference).findIndex((child) => child.key === key);
-    const child = at < 0 ? undefined : children[at];
-    return child !== undefined && projects(child.type, target)
-      ? child.type
-      : undefined;
+  const decoded = originOf(layer);
+  const link = decoded.encoding?.at(-1);
+  if (link !== undefined && link.to === originOf(reference)) {
+    const from = classFields(decoded) ?? decoded;
+    const child = renamedPairs(from, link)?.get(key);
+    return child !== undefined && projects(child, target) ? child : undefined;
   }
-  return children.find(
+  return childrenOf(layer).find(
     (child) => child.key === key && projects(child.type, target),
   )?.type;
 };

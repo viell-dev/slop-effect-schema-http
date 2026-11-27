@@ -2680,6 +2680,72 @@ describe("an invalid Some payload keeps its decoded error", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/321
+  it.effect(
+    "pairs integer-like wire names by projection, and nothing across other transforms",
+    () =>
+      Effect.gen(function* () {
+        const Held = Schema.Any.pipe(
+          Schema.decodeTo(
+            Schema.Option(payload),
+            SchemaTransformation.transform({
+              decode: (value) => Option.some(value),
+              encode: (value) => (Option.isSome(value) ? value.value : null),
+            }),
+          ),
+        );
+        const below = (row: Schema.Top) =>
+          Schema.Struct({ row, n: Schema.String }).pipe(
+            Schema.encodeKeys({ n: "wire_n" }),
+          ) as unknown as typeof renamed;
+        // JavaScript lists "0" before "1", whatever order the rename wrote them in.
+        const numeric = below(
+          Schema.Struct({
+            held: Schema.OptionFromNullOr(payload),
+            other: Schema.String,
+          }).pipe(Schema.encodeKeys({ held: "1", other: "0" })),
+        );
+        const failure = yield* Effect.flip(
+          json(numeric, {
+            row: { "1": Option.none(), "0": "ok" },
+            wire_n: "x",
+          } as never),
+        );
+        expect(failure).toBeInstanceOf(Schema.SchemaError);
+        const some = Option.some({ b: "keep" });
+        const sentSome = { _id: "Option", _tag: "Some", value: { b: "keep" } };
+        const ambiguous = below(
+          Schema.Struct({ held: Held, other: Schema.Any }).pipe(
+            Schema.encodeKeys({ held: "1", other: "0" }),
+          ),
+        );
+        expect(
+          yield* json(ambiguous, {
+            row: { "1": { a: "a" }, "0": some },
+            wire_n: "x",
+          } as never),
+        ).toEqual({ row: { "0": sentSome, "1": { a: "a" } }, wire_n: "x" });
+        // A hand-written transformation between same-shaped structs is not a rename.
+        const swapped = below(
+          Schema.Struct({ x: Schema.Any, y: Schema.Any }).pipe(
+            Schema.decodeTo(
+              Schema.Struct({ held: Held, other: Schema.Any }),
+              SchemaTransformation.transform({
+                decode: ({ x, y }) => ({ held: y, other: x }),
+                encode: ({ held, other }) => ({ x: other, y: held }),
+              }),
+            ),
+          ),
+        );
+        expect(
+          yield* json(swapped, {
+            row: { x: some, y: { a: "a" } },
+            wire_n: "x",
+          } as never),
+        ).toEqual({ row: { x: sentSome, y: { a: "a" } }, wire_n: "x" });
+      }),
+  );
+
   it.effect("refuses an invalid Some under a hand-written codec", () =>
     Effect.gen(function* () {
       const held = Schema.NullOr(payload).pipe(
