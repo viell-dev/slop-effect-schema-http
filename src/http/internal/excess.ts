@@ -1134,11 +1134,17 @@ const additionalOptionGetters = [
 const unwrappingLink = (
   ast: Ast,
   loose: boolean,
+  throughMiddleware = false,
 ): SchemaAST.Link | undefined => {
   if (
     !isOptionDeclaration(ast) ||
     ast.typeParameters.length !== 1 ||
-    ast.encoding?.length !== 1
+    ast.encoding === undefined ||
+    (ast.encoding.length !== 1 &&
+      (!throughMiddleware ||
+        ast.encoding
+          .slice(1)
+          .some(({ transformation }) => transformation._tag !== "Middleware")))
   )
     return undefined;
   const link = ast.encoding[0];
@@ -1226,12 +1232,15 @@ export const writtenOptionSource = (
   if (
     !isOptionDeclaration(ast) ||
     ast.typeParameters.length !== 1 ||
-    ast.encoding?.length !== 1
+    ast.encoding === undefined
   )
     return undefined;
   const projected = ast.typeParameters[0]!;
-  const link = unwrappingLink(ast, true);
+  // A trailing middleware still lets the writer reach the known unwrapping link. The read
+  // comparison has no matching proof about a value that passes through that middleware.
+  const link = unwrappingLink(ast, true, true);
   if (link === undefined) {
+    if (ast.encoding.length !== 1) return undefined;
     // The tagged Some/None encoding has two object alternatives and neither is the payload.
     const { to, transformation } = ast.encoding[0];
     return transformation._tag === "Transformation" &&
