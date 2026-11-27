@@ -693,10 +693,15 @@ the schema does with it. These are the places where it cannot, and what happens 
   `Some({ owner: "b", limit: "l" })` can send as `{"_tag":"Some","value":{"owner":"b"}}`.
 - Inside a `Some`, a key no member of the payload states is left out before the strict read, through
   every built-in unwrapping codec, including a configured `OptionFromOptionalNullOr`, and between
-  codecs competing at one position when they share one payload schema. Competing codecs with
-  different payload schemas could each write the `Some`, so a stray key there refuses. A loose write
-  can select a wider member through an unwrapping codec. Data already narrowed by the read, a class
-  instance, or a custom writer can fall outside that recovery. Let
+  codecs competing at one position when they share one payload schema, or its optional copy as
+  `OptionFromOptionalKey` makes. Codecs competing with different payload schemas could each write
+  the `Some`, so there a relaxed read can still take a narrower member when a stray key defeats the
+  strict read: a same-tag union, a list of unions or a union inside another `Some` can lose `limit`,
+  and a direct union refuses. A configured codec inside another `Some` can lose a field the same way
+  where the strict attempt fails for another reason, such as a record member beside the union or a
+  wire name given in the payload. A loose write can select a wider member through an unwrapping
+  codec. Data already narrowed by the read, a class instance, or a custom writer can fall outside
+  that recovery. Let
   `Choice = Union([Struct({ owner: String }), Struct({ owner: String, limit: String })])`. Inside
   another `Some`, `Union([OptionFromNullOr(Choice), Struct({ z: String })])` can lose `limit` on a
   loose write even without a stray key. Choose the intended member directly or validate and supply
@@ -734,9 +739,9 @@ the schema does with it. These are the places where it cannot, and what happens 
   outer key, choose the intended member directly, or supply the encoded representation.
 - A stray key can also cause a refusal at an opaque Option position where the payload schema states
   a field called `value`, even if the given `value` would have been sent intact. This includes a
-  configured `OptionFromOptionalNullOr` and a native `Some` supplied as an object beside a competing
-  Option alternative. Remove the unstated key, rename the payload's `value` field, supply a plain
-  object to the struct, or use an unambiguous `OptionFromNullOr` where appropriate
+  native `Some` supplied as an object beside a competing Option alternative. Remove the unstated
+  key, rename the payload's `value` field, supply a plain object to the struct, or use an
+  unambiguous `OptionFromNullOr` where appropriate
   ([#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292)).
 - Inside a value with the union-wide reading, as [A list stays a list](#a-list-stays-a-list) gives,
   a list beside a record refuses a cell key the list member does not state, and an index-keyed
