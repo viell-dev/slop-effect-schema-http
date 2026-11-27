@@ -90,6 +90,9 @@ enum Received {
     Reset { code: String },
     /// GOAWAY before the response ended: a connection error (RFC 9113 section 5.4.1).
     GoAway { code: String, debug: String },
+    /// Informational heads, and then the end of the stream, which RFC 9113 section 8.1 makes a
+    /// malformed response: their statuses, in order.
+    Interim { statuses: Vec<u16> },
     /// The connection ended without a response, a reset or a GOAWAY.
     Closed,
 }
@@ -292,6 +295,7 @@ where
     let mut block = Vec::new();
     let mut ends_with_block = false;
     let mut head: Option<Head> = None;
+    let mut interim = Vec::new();
     let mut body = Vec::new();
     let mut away = None;
     let mut header = [0; 9];
@@ -347,7 +351,12 @@ where
                         .map_err(|error| format!("the response head: {error}"))?;
                     block.clear();
                     if head.is_none() {
-                        head = final_head(fields)?;
+                        let received = response_head(fields)?;
+                        if received.0 >= 200 {
+                            head = Some(received);
+                        } else {
+                            interim.push(received.0);
+                        }
                     }
                     ended = ends_with_block || (head_only && head.is_some());
                 }
@@ -364,7 +373,12 @@ where
             _ => {}
         }
         if ended {
-            let (status, fields) = head.ok_or("the stream ended without a response")?;
+            let Some((status, fields)) = head else {
+                if interim.is_empty() {
+                    return Err("the stream ended without a response".into());
+                }
+                return Ok(Received::Interim { statuses: interim });
+            };
             return Ok(Received::Response {
                 status,
                 fields,
@@ -380,6 +394,11 @@ where
 
 /// The status and fields of a final response head, or none for an informational one.
 pub(crate) fn final_head(fields: Vec<(Vec<u8>, Vec<u8>)>) -> Result<Option<Head>, Failure> {
+    response_head(fields).map(|head| (head.0 >= 200).then_some(head))
+}
+
+/// The status and fields of a response head.
+fn response_head(fields: Vec<(Vec<u8>, Vec<u8>)>) -> Result<Head, Failure> {
     let text = |bytes: Vec<u8>| bytes.into_iter().map(char::from).collect::<String>();
     let mut status = None;
     let mut rest = Vec::new();
@@ -391,7 +410,7 @@ pub(crate) fn final_head(fields: Vec<(Vec<u8>, Vec<u8>)>) -> Result<Option<Head>
         }
     }
     let status = status.ok_or("a response head without :status")?;
-    Ok((status >= 200).then_some((status, rest)))
+    Ok((status, rest))
 }
 
 /// The fragment of a frame with the PADDED flag, without its padding (RFC 9113 section 6.1).

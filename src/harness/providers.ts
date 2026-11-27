@@ -492,6 +492,8 @@ const describeReceived = (received: H2Received | H3Received): string => {
     case "go_away":
     case "close":
       return `the server closed the connection with ${received.code}`;
+    case "interim":
+      return `the stream ended after informational heads only (${received.statuses.join(", ")})`;
     case "closed":
       return "the server closed the connection without an answer";
     case "response":
@@ -519,9 +521,10 @@ const describeReceived = (received: H2Received | H3Received): string => {
  * - **Nothing is refused.** Uppercase names, a CR, LF or NUL in a value, and fields about the
  *   connection go out as given. A standard HTTP/2 client lowercases names and refuses the others.
  *
- * A reset stream, a GOAWAY or a closed connection fails the request as a transport error; the
- * exchange says which. A response ends the request, or for a request whose `:method` is
- * `CONNECT`, its head does. Like the line-preserving provider, it attaches the response's fields.
+ * A reset stream, a GOAWAY, a stream that ended after informational heads only, or a closed
+ * connection fails the request as a transport error; the exchange says which. A response ends the
+ * request, or for a request whose `:method` is `CONNECT`, its head does. Like the line-preserving
+ * provider, it attaches the response's fields.
  */
 export const h2Client = (
   origin: string,
