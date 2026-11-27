@@ -456,7 +456,9 @@ const atField = (name: PropertyKey, failure: FieldlessOneOf) =>
 
 /**
  * A field's failure, read on its own, at that field of the object holding it. It is still that
- * reading's failure, so a {@link reporting} read's stays one.
+ * reading's failure, so a {@link reporting} read's stays one. Today only readings with the caller's
+ * options reach here, so the mark is defensive: it keeps the rule if a strict read's failure is
+ * ever passed in.
  */
 const failureAtField = (name: PropertyKey, failure: Schema.SchemaError) => {
   const rooted = new Schema.SchemaError(
@@ -1053,6 +1055,7 @@ const decodedReading = <S extends Schema.Top>(
     const holders = Excess.misnamedAt([contract.ast], given, failure.issue);
     if (holders === undefined) return failure;
     for (const reading of readings) {
+      // Defensive: today every reading here was made with the caller's options.
       if (readStrictly.has(reading)) continue;
       const entries = Excess.failureWithin(
         reading.issue,

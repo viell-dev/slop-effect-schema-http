@@ -202,12 +202,13 @@ into, as an `Option` is. It has these consequences:
   refuses a value under its decoded name, that side's own error names the field. A value under its
   wire name that the encoded side refuses keeps the decoded side's message, except where the
   request's own reading strips a key the schema does not state and reports the value, or where a
-  field beside it under its decoded name cannot be read either and gives its own error. The other
-  fields it cannot keep are named too, with the generic message where nothing more is known, even
-  where correcting that value would keep them: the other side's reading of the whole value loses
-  them whether or not they are valid. Only a wire-named field that the reading read under its
-  decoded name is left out. A refusal stores no value the caller gave and adds none to its messages,
-  but a message the schema's author wrote, which can quote the value, reads as written.
+  field beside it under its decoded name cannot be read either and gives its own error, for its
+  decoded side, where the renamed struct is the value or a struct's field. The other fields it
+  cannot keep are named too, with the generic message where nothing more is known, even where
+  correcting that value would keep them: the other side's reading of the whole value loses them
+  whether or not they are valid. Only a wire-named field that the reading read under its decoded
+  name is left out. A refusal stores no value the caller gave and adds none to its messages, but a
+  message the schema's author wrote, which can quote the value, reads as written.
   [Limits](./limits.md#read-a-refusal-message) lists each message.
 
 ### Where it applies

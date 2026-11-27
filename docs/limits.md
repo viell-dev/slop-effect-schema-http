@@ -207,16 +207,24 @@ than sent without it, and the message says why where it can. In these examples `
   `{ limit: "x" }` reads `Expected number at ["limit"]`.
 - **A value under its wire name that the encoded side refuses** keeps the decoded side's message:
   `Missing key` at the decoded name for a required field, as `{ page_size: "many" }` reads
-  `Missing key at ["limit"]`, and the generic message below for an optional one. Only a strict read,
-  with other parse options than the request's own, reads such a value on its side, and Effect gives
-  a read's options to the decoders, checks and declarations it runs, which can then fail otherwise,
-  so that read's error is not shown. Where the value also holds a key the schema does not state, the
-  request's own reading, which strips that key, can report the value:
-  `{ page_size: "many", stray: "1" }` reads `Expected a finite number at ["page_size"]`. Where a
-  field beside it, given under its decoded name, cannot be read either, a required field's
-  `Missing key` gives way to that field's own error, from the request's own reading of it: with a
-  string field `term`, `{ page_size: "5", term: 1 }` reads `Expected string at ["term"]`, as
-  `{ limit: 5, term: 1 }` does.
+  `Missing key at ["limit"]`, and the generic message below for an optional one. The message is
+  taken only from readings with the request's own parse options, and in most schemas only a strict
+  read, with other options, reads such a value on its side. Effect gives a read's options to the
+  decoders, checks and declarations it runs, which can then fail otherwise, so that read's error is
+  not shown. Where the value also holds a key the schema does not state, the request's own reading,
+  which strips that key, can report the value: `{ page_size: "many", stray: "1" }` reads
+  `Expected a finite number at ["page_size"]`.
+- **A wire-named value beside a field that cannot be read either**: where the renamed struct is the
+  value itself or a field of a struct, and a field beside the wire-named one, given under its
+  decoded name, cannot be read, a required field's `Missing key` gives way to that field's own
+  error, from the request's own reading of it. With a string field `term`,
+  `{ page_size: "5", term: 1 }` reads `Expected string at ["term"]`, as `{ limit: 5, term: 1 }`
+  does. That error describes the field's decoded side, while `page_size` puts the object on its
+  encoded side: with `count: FiniteFromString` beside it, `{ page_size: "5", count: "x" }` reads
+  `Expected number at ["count"]`, but the fix that sends is the encoded form, `count: "3"`, and
+  `count: 3` reads `Missing key at ["limit"]`. Below a wrapper such as `Schema.optional`, `NullOr`,
+  a union, a list, a tuple or a record, and where only a field outside the renamed struct is
+  invalid, `Missing key` at the decoded name stays.
 - **A field beside a Void** that its union member refuses gets the member's own error, such as
   `Expected number at ["extra"]["a"]`. A wire-named field beside it that the reading read under its
   decoded name, such as `filter: { page_size: "05" }`, is not named.

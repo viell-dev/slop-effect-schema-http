@@ -12,13 +12,17 @@
   `extra: Union([Void, Struct({ a: Number })])`, `{ page_size: "5", extra: { a: "x" } }` named both
   `["page_size"]` and `["extra"]` with the generic message; it now reads
   `Expected number at ["extra"]["a"]` only. The error comes from the request's own reading of that
-  field, with its own parse options, and nothing is read again. Every request that refused still
-  refuses before dispatch with the same error class, every request that sent sends the same bytes,
-  and a schema's decoders, checks and defaults run as often as on 0.20.0. Without such a field, a
-  wire-named value the encoded side refuses keeps `Missing key at ["limit"]` for a required field
-  and `The schema cannot keep this field with the rest of the value` for an optional one, because no
-  reading with the request's own options reads that value on its side. Code that matches the text of
-  these refusals, such as `Missing key at ["limit"]`, needs updating.
+  field, with its own parse options, and nothing is read again. It describes the field's decoded
+  side: with a codec field such as `count: FiniteFromString`, `{ page_size: "5", count: "x" }` reads
+  `Expected number at ["count"]`, and the encoded form, `count: "3"`, is the one that sends beside
+  `page_size`. This applies where the renamed struct is the value or a field of a struct; below
+  `Schema.optional`, `NullOr`, a union, a list, a tuple or a record, `Missing key` stays. Every
+  request that refused still refuses before dispatch with the same error class, every request that
+  sent sends the same bytes, and a schema's decoders, checks and defaults run as often as on 0.20.0.
+  Without such a field, a wire-named value the encoded side refuses keeps `Missing key at ["limit"]`
+  for a required field and `The schema cannot keep this field with the rest of the value` for an
+  optional one. Code that matches the text of these refusals, such as `Missing key at ["limit"]`,
+  needs updating.
 
 ## 0.20.0 — 2026-11-27
 
