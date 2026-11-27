@@ -50,11 +50,10 @@
   body, it can now send the full payload or refuse the request naming the field. `Schema.Option(X)`
   uses Effect's own reading and member selection for its contents on every write route. Effect can
   drop a payload field there.
-- Checking Option payloads adds preparation work. On Linux with Node 24 and Effect 4.1.5, a
-  20,000-row body with an `OptionFromNullOr` of a union in each row took 0.90 s on the strict route,
-  up from 0.69 s in 0.19.0. The loose-write probe with narrow payloads took 2.60 s, up from 1.52 s.
-  [#298](https://github.com/viell-dev/slop-effect-schema-http/pull/298) records both probes and
-  their controls without Options.
+- Checking visible payloads in unwrapping codecs adds preparation work. The 20,000-row measurements
+  cover strict and loose writes, tagged Option payloads on the loose route, and controls without
+  Options. [#298](https://github.com/viell-dev/slop-effect-schema-http/pull/298) records the medians
+  on Effect 4.1.5 and 4.0.7.
 - **Breaking:** preserve a stated payload field such as `limit` where a narrower choice used to drop
   it in a tagged, nested or list payload
   ([#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)). If an unrelated strict

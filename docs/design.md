@@ -215,14 +215,15 @@ field called `value` to rewrite the wrapper. This can cause a refusal where an o
 `value` and the input has an unstated key, or where a struct beside an Option alternative would have
 read a native `Some` as an ordinary object.
 
-The loose writer follows built-in unwrapping codecs into the payload schema and its decoded
-projection. Every union it reaches there can try a member that holds the whole payload, including
-beneath an index-like rename whose field names cannot be paired by position. The relaxed route
-checks what the read held. Output comparison uses candidate wire names where they can be paired. An
-unpairable rename supplies no output evidence, and the writer can still select a wider member. A
-value that Void reads as nothing in place still holds its field. `Schema.Option(X)` uses Effect's
-own reading and member selection for its contents on every write route. A narrower member can drop a
-field there.
+The loose writer follows unwrapping codecs into the payload schema and its decoded projection. It
+can also follow a plain transformation whose wire shape exposes the same payload schema directly or
+in a field of a single-field struct. Every union it reaches there can try a member that holds the
+whole payload, including beneath an index-like rename whose field names cannot be paired by
+position. The relaxed route checks what the read held. Output comparison uses candidate wire names
+where they can be paired. An unpairable rename supplies no output evidence, and the writer can still
+select a wider member. A value that Void reads as nothing in place still holds its field.
+`Schema.Option(X)` uses Effect's own reading and member selection for its contents on every write
+route. A narrower member can drop a field there.
 
 The second rule: an empty struct, an open schema without a check, or, for a value that is not a
 list, an empty class keeps every key of the value it reads, at every depth, as an alternative of its

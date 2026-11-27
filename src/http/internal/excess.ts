@@ -1200,6 +1200,21 @@ const optionSource = (ast: Ast, loose = false): Ast | undefined => {
 const unwrapsOption = (ast: Ast): boolean =>
   optionSource(ast, true) !== undefined;
 
+/** A plain codec can place the same payload directly on the wire or wrap it in a field. */
+const linkedOptionPayload = (source: Ast, projected: Ast): Ast | undefined => {
+  if (SchemaAST.toType(source) === projected) return source;
+  const child =
+    source._tag === "Objects" &&
+    source.encoding === undefined &&
+    source.propertySignatures.length === 1 &&
+    source.indexSignatures.length === 0
+      ? source.propertySignatures[0]!.type
+      : onlyContent(source);
+  return child === undefined
+    ? undefined
+    : linkedOptionPayload(child, projected);
+};
+
 /**
  * The JSON codec can rebuild the encoded payload and its suspensions separately from the Some's
  * decoded projection. The writer can still follow the built-in link. Its source is used only to
@@ -1208,9 +1223,22 @@ const unwrapsOption = (ast: Ast): boolean =>
 export const writtenOptionSource = (
   ast: SchemaAST.Declaration,
 ): Ast | undefined => {
-  const link = unwrappingLink(ast, true);
-  if (link === undefined) return undefined;
+  if (
+    !isOptionDeclaration(ast) ||
+    ast.typeParameters.length !== 1 ||
+    ast.encoding?.length !== 1
+  )
+    return undefined;
   const projected = ast.typeParameters[0]!;
+  const link = unwrappingLink(ast, true);
+  if (link === undefined) {
+    // The tagged Some/None encoding has two object alternatives and neither is the payload.
+    const { to, transformation } = ast.encoding[0];
+    return transformation._tag === "Transformation" &&
+      transformation.encode._tag === "Transform"
+      ? linkedOptionPayload(to, projected)
+      : undefined;
+  }
   const matched = optionSource(ast, true);
   if (matched !== undefined) return matched;
   let source: Ast | undefined = link.to;
@@ -1233,7 +1261,7 @@ export const writtenOptionSource = (
 /** A union whose only object alternatives are opaque native Options. */
 export const choosesOpaqueOption = (ast: SchemaAST.Union): boolean => {
   const opaqueOption = (type: Ast) =>
-    isOptionDeclaration(type) && unwrappingLink(type, true) === undefined;
+    isOptionDeclaration(type) && writtenOptionSource(type) === undefined;
   return (
     ast.encoding === undefined &&
     ast.types.some(opaqueOption) &&

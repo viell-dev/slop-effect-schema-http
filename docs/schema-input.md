@@ -579,7 +579,8 @@ ruled out by a literal tag states nothing, just as for an ordinary field. If the
 fails, preparation uses the original input and checks for missing visible fields. If the whole write
 has to run loosely, unions the writer reaches through the Option's payload schema can try a member
 that keeps the whole value first. This includes a nested `Some` and a payload below a key renamed to
-an index-like name such as `"0"`.
+an index-like name such as `"0"`. A plain transformation can expose the same payload schema directly
+or in a single-field struct for loose writing.
 
 Use decoded names inside a `Some` that an unwrapping codec reads. For a payload that writes `limit`
 as `page_size`, pass `Some({ limit: "5" })`. To supply the wire name, pass the encoded value

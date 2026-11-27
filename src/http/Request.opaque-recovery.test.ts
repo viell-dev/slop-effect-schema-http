@@ -1298,6 +1298,45 @@ describe("loose writes inside Some", () => {
       }),
   );
 
+  it.effect(
+    "keeps wider fields through a plain codec that exposes the same Some payload",
+    () =>
+      Effect.gen(function* () {
+        const decoded = Schema.Option(Schema.toType(Filter));
+        const direct = Schema.NullOr(Filter).pipe(
+          Schema.decodeTo(
+            decoded,
+            SchemaTransformation.transform({
+              decode: (value) => Option.fromNullOr(value),
+              encode: (value) => Option.getOrNull(value),
+            }),
+          ),
+        );
+        const boxed = Schema.Struct({ v: Schema.NullOr(Filter) }).pipe(
+          Schema.decodeTo(
+            decoded,
+            SchemaTransformation.transform({
+              decode: ({ v }) => Option.fromNullOr(v),
+              encode: (value) => ({ v: Option.getOrNull(value) }),
+            }),
+          ),
+        );
+        const input = { held: Option.some(wide), who };
+        expect(
+          yield* json(Schema.Struct({ held: direct, who: Counted }), input),
+        ).toEqual({
+          held: wide,
+          who: writtenWho,
+        });
+        expect(
+          yield* json(Schema.Struct({ held: boxed, who: Counted }), input),
+        ).toEqual({
+          held: { v: wide },
+          who: writtenWho,
+        });
+      }),
+  );
+
   it.effect("compares caller names and values inside an unwrapping Some", () =>
     Effect.gen(function* () {
       for (const [payload, value, key] of [
