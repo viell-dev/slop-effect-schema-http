@@ -953,19 +953,17 @@ const prepareGroup = <
       const edited = candidates(value, draft.editedFields.get(shape));
       const initial = yield* read(value);
       const { output } = initial;
-      let lostFromInput = initial.lost;
-      let unwritten = initial.unwritten;
+      let reading: Inputs.Written<unknown> = initial;
       // An invalid output claims no fields. Another binding can still claim a root loss.
       const refuseInvalidOutput = (error: InvalidRequest) =>
-        lostFromInput.length === 0
+        reading.lost.length === 0
           ? Effect.fail(error)
           : Effect.flatMap(self.prepare(input, draft), (prepared) =>
               Effect.andThen(
                 Inputs.refuseLost(
                   contract,
-                  lostFromInput,
+                  reading,
                   takenElsewhere(prepared, token),
-                  unwritten,
                 ),
                 Effect.fail(error),
               ),
@@ -977,7 +975,7 @@ const prepareGroup = <
         refuseInvalidOutput,
       );
       let conflicts = filled(edited, snapshot);
-      const own = draft[takenKey] && taken(value, snapshot, lostFromInput);
+      const own = draft[takenKey] && taken(value, snapshot, reading.lost);
       let prepared = yield* self.prepare(
         input,
         own === undefined
@@ -987,26 +985,24 @@ const prepareGroup = <
               [takenKey]: Shapes.taking(draft[takenKey], own, token),
             },
       );
-      if (lostFromInput.length > 0) {
+      if (reading.lost.length > 0) {
         const recovered = yield* recover(
           value,
-          { output, lost: lostFromInput, snapshot },
+          { output, lost: reading.lost, snapshot },
           prepared[takenKey],
           token,
           taken,
         );
         if (recovered !== undefined) {
-          lostFromInput = recovered.reading.lost;
-          unwritten = recovered.reading.unwritten;
+          reading = recovered.reading;
           snapshot = recovered.snapshot;
           conflicts = filled(edited, snapshot);
           prepared = { ...prepared, [takenKey]: recovered.taken };
         }
         yield* Inputs.refuseLost(
           contract,
-          lostFromInput,
+          reading,
           takenElsewhere(prepared, token, snapshot),
-          unwritten,
         );
       }
       if (conflicts.length > 0)

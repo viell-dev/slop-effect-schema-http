@@ -1,5 +1,5 @@
 import { Equal, Option, Schema, SchemaAST, SchemaIssue } from "effect";
-import { stateOf } from "./object-brand.js";
+import { isBox, stateOf } from "./object-brand.js";
 import { isPlainData, statesPrototypeName } from "./plain.js";
 import { extraArrayField } from "./writer-error.js";
 import { stageRefuses } from "./primitive.js";
@@ -113,22 +113,29 @@ const isPlain = (value: unknown): value is Record<PropertyKey, unknown> => {
 };
 
 /**
- * Whether an object holds content outside its own fields, as a `Map` does, which an object rebuilt
- * from them loses. A typed array and a boxed string hold theirs at enumerable positions. An instance
- * with no fields that writes itself with `toJSON`, as a `URL` does, holds all of it elsewhere.
+ * The kind of content an object holds outside its own fields, as a `Map` does, which an object
+ * rebuilt from them loses: the built-in's kind, `null` where nothing names it, or `undefined` where
+ * the content is the fields. A typed array and a boxed string hold theirs at enumerable positions.
+ * An instance with no fields that writes itself with `toJSON`, as a `URL` does, holds all of it
+ * elsewhere.
  */
-export const hasHiddenContent = (value: object): boolean => {
-  if (isPlain(value)) return false;
+const hiddenContent = (value: object): string | null | undefined => {
+  if (isPlain(value)) return undefined;
   const state = stateOf(value, Reflect.ownKeys(value).length === 0);
   if (state !== undefined)
-    return (
-      state !== "String" && (state === "DataView" || !ArrayBuffer.isView(value))
-    );
-  return (
-    Object.keys(value).length === 0 &&
+    return state !== "String" &&
+      (state === "DataView" || !ArrayBuffer.isView(value))
+      ? state
+      : undefined;
+  return Object.keys(value).length === 0 &&
     typeof (value as { readonly toJSON?: unknown }).toJSON === "function"
-  );
+    ? null
+    : undefined;
 };
+
+/** Whether an object holds content outside its own fields, as {@link hiddenContent} finds it. */
+export const hasHiddenContent = (value: object): boolean =>
+  hiddenContent(value) !== undefined;
 
 /** An actual array position, rather than a property whose spelling merely converts to a number. */
 const arrayIndex = (key: PropertyKey): number | undefined => {
@@ -1061,6 +1068,64 @@ const writtenNames = (
   };
 };
 
+/**
+ * The schemas at the end of a path through a value, as {@link missing} reaches them, with the value
+ * there and the view of the value holding it. Undefined where the path leaves the value's objects.
+ */
+const along = (
+  types: ReadonlyArray<Ast>,
+  given: unknown,
+  path: Path,
+):
+  | {
+      readonly types: ReadonlyArray<Ast>;
+      readonly value: Record<PropertyKey, unknown>;
+      readonly within: View | undefined;
+    }
+  | undefined => {
+  let level = types;
+  let value = given;
+  let within: View | undefined;
+  for (const key of path) {
+    if (!isObject(value)) return undefined;
+    within = viewAt(level, value, within);
+    level = heldAt(within, key);
+    value = value[key];
+  }
+  return isObject(value) ? { types: level, value, within } : undefined;
+};
+
+/**
+ * The other name of the field at the end of `path`, where the value holding it holds that name
+ * too: a key rename there reads the field under one name and writes it under the other, and no
+ * other field there reads or writes either name.
+ */
+const otherName = (
+  types: ReadonlyArray<Ast>,
+  given: unknown,
+  path: Path,
+): Naming | undefined => {
+  const key = path.at(-1);
+  const holder = along(types, given, path.slice(0, -1));
+  if (key === undefined || holder === undefined || Array.isArray(holder.value))
+    return undefined;
+  const names = namesAt(holder.types);
+  const naming = names?.find(
+    ([read, written]) => read !== written && (key === read || key === written),
+  );
+  if (naming === undefined) return undefined;
+  const [read, written] = naming;
+  const other = key === read ? written : read;
+  return has(holder.value, other) &&
+    names!.every(
+      ([name, as]) =>
+        (name === read && as === written) ||
+        (name !== read && name !== written && as !== read && as !== written),
+    )
+    ? naming
+    : undefined;
+};
+
 /** Whether a value keeps its names through a schema, as one with no encoding of its own does. */
 const keepsNames = (ast: Ast): boolean =>
   ast.encoding === undefined
@@ -1831,12 +1896,24 @@ const unwritten = (
   });
 };
 
+/** What a comparison found lost, and why, where it can say. */
+export interface Losses {
+  readonly lost: ReadonlyArray<Path>;
+  readonly causes: ReadonlyArray<Cause>;
+}
+
+/** {@link Losses} as a comparison collects them. */
+interface Found {
+  readonly lost: Path[];
+  readonly causes: Cause[];
+}
+
 /** Compares what went into a schema step at a position with what came out there. */
 type RebuildCheck = (
   supplied: unknown,
   result: unknown,
   path: PropertyKey[],
-  lost: Path[],
+  found: Found,
 ) => void;
 
 /**
@@ -1847,7 +1924,7 @@ function ownLostSymbols(
   supplied: object,
   result: object,
   path: ReadonlyArray<PropertyKey>,
-  lost: Path[],
+  found: Found,
   declared?: ReadonlySet<PropertyKey>,
 ) {
   for (const key of Object.getOwnPropertySymbols(supplied))
@@ -1857,15 +1934,36 @@ function ownLostSymbols(
       Object.prototype.propertyIsEnumerable.call(supplied, key) &&
       Reflect.get(supplied, key) !== undefined
     )
-      lost.push([...path, key]);
+      found.lost.push([...path, key]);
 }
 
-/** Whether an object was rebuilt from another's own fields and lost the content outside them. */
-const lostHiddenContent = (supplied: object, result: object): boolean =>
-  hasHiddenContent(supplied) &&
-  isPlain(result) &&
-  !Array.isArray(result) &&
-  Reflect.ownKeys(result).every((key) => Object.hasOwn(supplied, key));
+/**
+ * Where an object was rebuilt from another's own fields as `rebuilt` says, and lost the content
+ * outside them, record the loss with the kind of value that held it. Returns whether it was lost.
+ */
+const lostHiddenContent = (
+  supplied: object,
+  result: object,
+  path: ReadonlyArray<PropertyKey>,
+  found: Found,
+  rebuilt: "record" | "object",
+): boolean => {
+  const kind = hiddenContent(supplied);
+  if (
+    kind === undefined ||
+    !isPlain(result) ||
+    Array.isArray(result) ||
+    !Reflect.ownKeys(result).every((key) => Object.hasOwn(supplied, key))
+  )
+    return false;
+  found.lost.push([...path]);
+  found.causes.push({
+    at: [...path],
+    kind: "place",
+    issue: contentNotHeld(kind, rebuilt),
+  });
+  return true;
+};
 
 /** Descend one position, keeping the shared path stack balanced. */
 const within = (
@@ -1874,10 +1972,10 @@ const within = (
   result: unknown,
   path: PropertyKey[],
   key: PropertyKey,
-  lost: Path[],
+  found: Found,
 ) => {
   path.push(key);
-  check(supplied, result, path, lost);
+  check(supplied, result, path, found);
   path.pop();
 };
 
@@ -1906,7 +2004,7 @@ export const uniquePaths = (paths: ReadonlyArray<Path>): ReadonlyArray<Path> =>
             ),
       );
 
-type Comparison = (supplied: unknown, result: unknown) => ReadonlyArray<Path>;
+type Comparison = (supplied: unknown, result: unknown) => Losses;
 
 const rebuildChecks = {
   schema: new WeakMap<Ast, Comparison | null>(),
@@ -1953,31 +2051,31 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
           .map(({ name }) => name)
           .filter((name) => typeof name === "symbol"),
       );
-      return (supplied, result, path, lost) => {
+      return (supplied, result, path, found) => {
         if (
           supplied !== result &&
           isObject(supplied) &&
           isObject(result) &&
           !Array.isArray(supplied)
         ) {
-          if (lostHiddenContent(supplied, result)) lost.push([...path]);
-          else ownLostSymbols(supplied, result, path, lost, declared);
+          if (!lostHiddenContent(supplied, result, path, found, "record"))
+            ownLostSymbols(supplied, result, path, found, declared);
         }
       };
     }
     if (!json || node._tag !== "ObjectKeyword" || node.encoding !== undefined)
       return undefined;
-    return (supplied, result, path, lost) => {
+    return (supplied, result, path, found) => {
       if (supplied === result || !isObject(supplied) || !isObject(result))
         return;
       if (!Array.isArray(supplied)) {
-        if (lostHiddenContent(supplied, result)) lost.push([...path]);
-        else ownLostSymbols(supplied, result, path, lost);
+        if (!lostHiddenContent(supplied, result, path, found, "object"))
+          ownLostSymbols(supplied, result, path, found);
         return;
       }
       const extra = extraArrayField(supplied, supplied.length);
       if (extra !== undefined && !Object.hasOwn(result, extra))
-        lost.push([...path, extra]);
+        found.lost.push([...path, extra]);
     };
   };
   const inner = (node: Ast): RebuildCheck | undefined => {
@@ -1996,22 +2094,22 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
           return check === undefined ? [] : [check];
         });
         if (properties.length === 0 && indexes.length === 0) return undefined;
-        return (supplied, result, path, lost) => {
+        return (supplied, result, path, found) => {
           if (supplied === result || !isObject(supplied) || !isObject(result))
             return;
           for (const [name, check] of properties)
-            within(check, supplied[name], result[name], path, name, lost);
+            within(check, supplied[name], result[name], path, name, found);
           if (indexes.length > 0)
             for (const name of Object.keys(supplied))
               for (const check of indexes)
-                within(check, supplied[name], result[name], path, name, lost);
+                within(check, supplied[name], result[name], path, name, found);
         };
       }
       case "Arrays": {
         const fixed = node.elements.map(build);
         const rest = node.rest.map(build);
         if (!fixed.some(Boolean) && !rest.some(Boolean)) return undefined;
-        return (supplied, result, path, lost) => {
+        return (supplied, result, path, found) => {
           if (
             supplied === result ||
             !Array.isArray(supplied) ||
@@ -2023,18 +2121,25 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
           for (let index = 0; index < head; index++) {
             const check = fixed[index];
             if (check)
-              within(check, supplied[index], result[index], path, index, lost);
+              within(check, supplied[index], result[index], path, index, found);
           }
           if (rest.length === 0) return;
           const end = Math.max(fixed.length, length - rest.length + 1);
           const spread = rest[0];
           if (spread)
             for (let index = fixed.length; index < end; index++)
-              within(spread, supplied[index], result[index], path, index, lost);
+              within(
+                spread,
+                supplied[index],
+                result[index],
+                path,
+                index,
+                found,
+              );
           for (let index = end; index < length; index++) {
             const check = rest[index - end + 1];
             if (check)
-              within(check, supplied[index], result[index], path, index, lost);
+              within(check, supplied[index], result[index], path, index, found);
           }
         };
       }
@@ -2044,18 +2149,18 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
           return check === undefined ? [] : [[member, check] as const];
         });
         if (members.length === 0) return undefined;
-        return (supplied, result, path, lost) => {
+        return (supplied, result, path, found) => {
           for (const [member, check] of members)
             if (!ruledOut(member, supplied))
-              check(supplied, result, path, lost);
+              check(supplied, result, path, found);
         };
       }
       case "Suspend": {
         // Building a request must not force the thunk, whose target may be assigned later.
         let target: RebuildCheck | undefined | null = null;
-        return (supplied, result, path, lost) => {
+        return (supplied, result, path, found) => {
           if (target === null) target = build(node.thunk());
-          target?.(supplied, result, path, lost);
+          target?.(supplied, result, path, found);
         };
       }
       default:
@@ -2066,22 +2171,50 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
     const first = here(node);
     const second = inner(node);
     if (first === undefined || second === undefined) return first ?? second;
-    return (supplied, result, path, lost) => {
-      first(supplied, result, path, lost);
-      second(supplied, result, path, lost);
+    return (supplied, result, path, found) => {
+      first(supplied, result, path, found);
+      second(supplied, result, path, found);
     };
   };
   const check = build(ast);
   const compare =
     check &&
-    ((supplied: unknown, result: unknown): ReadonlyArray<Path> => {
-      const lost: Path[] = [];
-      check(supplied, result, [], lost);
-      return uniquePaths(lost);
+    ((supplied: unknown, result: unknown): Losses => {
+      const found: Found = { lost: [], causes: [] };
+      check(supplied, result, [], found);
+      return { lost: uniquePaths(found.lost), causes: found.causes };
     });
   memo.set(ast, compare ?? null);
   return compare;
 }
+
+/**
+ * Why a field cannot be kept, where more is known than that it is lost: an issue rooted at `at`,
+ * which holds no value the caller gave.
+ *
+ * @remarks
+ * A `names` or a `place` issue says why the field at `at` itself is lost: it is given under both of
+ * its names, the items of its list or record use different sides, or it is a built-in whose content
+ * the object rebuilt from it cannot hold. A `failure` is how another reading of the value at `at`
+ * failed. It explains a loss there or below with that reading's own error at the lost field or
+ * inside it, as the encoded side's error explains a wire-named value the decoded side lost.
+ */
+export interface Cause {
+  readonly at: Path;
+  readonly kind: "names" | "place" | "failure";
+  readonly issue: SchemaIssue.Issue;
+}
+
+const startsWith = (path: Path, prefix: Path): boolean =>
+  prefix.length <= path.length &&
+  prefix.every((key, index) => path[index] === key);
+
+const samePath = (path: Path, other: Path): boolean =>
+  path.length === other.length && startsWith(path, other);
+
+/** A key as a path writes it. */
+const keyName = (key: PropertyKey): string =>
+  typeof key === "string" ? JSON.stringify(key) : String(key);
 
 const notHeld = new SchemaIssue.InvalidValue({
   message: "The schema cannot keep this field with the rest of the value",
@@ -2091,20 +2224,347 @@ const valueNotHeld = new SchemaIssue.InvalidValue({
   message: "The schema cannot keep the content of this value",
 });
 
-const notHeldAt = (path: Path) =>
-  path.length === 0 ? valueNotHeld : new SchemaIssue.Pointer(path, notHeld);
+const givenTwice = ([read, written]: Naming) =>
+  new SchemaIssue.InvalidValue({
+    message: `This field is given under both ${keyName(read)} and ${keyName(written)}; give it under one name`,
+  });
 
-/** A refusal that names the fields and, like any other schema failure here, leaves out values. */
+const itemsOnBothSides = new SchemaIssue.InvalidValue({
+  message:
+    "The items of this field's list or record use different sides; give every item on one side",
+});
+
+function contentNotHeld(
+  kind: string | null,
+  rebuilt: "record" | "object",
+): SchemaIssue.Issue {
+  const as = rebuilt === "record" ? "a record" : "an object";
+  return new SchemaIssue.InvalidValue({
+    message:
+      kind === null
+        ? `The schema cannot keep the content of this value as ${as}`
+        : `The schema cannot keep this ${isBox(kind) ? `boxed ${kind.toLowerCase()}` : kind} as ${as}`,
+  });
+}
+
+/**
+ * An issue as Effect builds it without `reportInput`: the same messages and paths, without the value
+ * a parse with that option keeps on each node and its messages then show.
+ */
+const withoutInput = (issue: SchemaIssue.Issue): SchemaIssue.Issue => {
+  switch (issue._tag) {
+    case "Filter":
+      return new SchemaIssue.Filter(issue.filter, withoutInput(issue.issue));
+    case "Encoding":
+      return new SchemaIssue.Encoding(issue.ast, withoutInput(issue.issue));
+    case "Pointer":
+      return new SchemaIssue.Pointer(issue.path, withoutInput(issue.issue));
+    case "Composite": {
+      const [first, ...others] = issue.issues;
+      return new SchemaIssue.Composite(issue.ast, [
+        withoutInput(first),
+        ...others.map(withoutInput),
+      ]);
+    }
+    case "AnyOf":
+      return new SchemaIssue.AnyOf(issue.ast, issue.issues.map(withoutInput));
+    case "InvalidType":
+      return new SchemaIssue.InvalidType(issue.ast);
+    case "InvalidValue":
+      return new SchemaIssue.InvalidValue(issue.annotations);
+    case "UnexpectedKey":
+      return new SchemaIssue.UnexpectedKey(issue.ast);
+    case "Forbidden":
+      return new SchemaIssue.Forbidden(issue.annotations);
+    case "OneOf":
+      return new SchemaIssue.OneOf(issue.ast, issue.successes);
+    case "MissingKey":
+      return issue;
+  }
+};
+
+/** The {@link Cause} another reading's failure of the value at `at` gives. */
+export const failureCause = (
+  { issue }: Schema.SchemaError,
+  at: Path = [],
+): Cause => ({ at, kind: "failure", issue: withoutInput(issue) });
+
+/** Where each field lost at these paths was given under both its names, as {@link otherName} finds. */
+export const nameCauses = (
+  types: ReadonlyArray<Ast>,
+  given: unknown,
+  paths: ReadonlyArray<Path>,
+): ReadonlyArray<Cause> =>
+  paths.flatMap((path) => {
+    const naming = otherName(types, given, path);
+    return naming === undefined
+      ? []
+      : [{ at: path, kind: "names", issue: givenTwice(naming) } as const];
+  });
+
+/**
+ * Whether two keys of the value at `path` are items read with the whole value, not fields read on
+ * their own: cells of a list, or keys of a record that no field states.
+ */
+const holdsItems = (
+  types: ReadonlyArray<Ast>,
+  given: unknown,
+  path: Path,
+  keys: readonly [PropertyKey, PropertyKey],
+): boolean => {
+  const holder = along(types, given, path);
+  if (holder === undefined) return false;
+  if (Array.isArray(holder.value)) return true;
+  const { sides } = viewAt(holder.types, holder.value, holder.within);
+  return (
+    sides.some(isIndexed) &&
+    keys.every(
+      (key) =>
+        !sides.some((side) => fieldsOf(side).some(({ name }) => name === key)),
+    )
+  );
+};
+
+/**
+ * Where the decoded side lost these fields and the encoded side lost others, under different items
+ * of one list or record. The items then use different sides, and neither side can read them all.
+ */
+export const mixedSides = (
+  types: ReadonlyArray<Ast>,
+  given: unknown,
+  decodedSide: ReadonlyArray<Path>,
+  encodedSide: ReadonlyArray<Path>,
+): ReadonlyArray<Cause> =>
+  decodedSide
+    .filter((path) =>
+      encodedSide.some((other) => {
+        const split = path.findIndex((key, index) => other[index] !== key);
+        return (
+          split >= 0 &&
+          split < other.length &&
+          holdsItems(types, given, path.slice(0, split), [
+            path[split]!,
+            other[split]!,
+          ])
+        );
+      }),
+    )
+    .map((path) => ({ at: path, kind: "place", issue: itemsOnBothSides }));
+
+/**
+ * The objects where a reading's failure reports only fields missing that the caller gave under their
+ * wire names, as `Missing key` at a decoded name the caller did not use: each missing key is read by
+ * a key rename there, which writes it under a name the value holds. Undefined where the failure
+ * reports anything else.
+ */
+export const misnamedAt = (
+  types: ReadonlyArray<Ast>,
+  given: unknown,
+  issue: SchemaIssue.Issue,
+): ReadonlyArray<Path> | undefined => {
+  const holders: Array<Path> = [];
+  const visit = (issue: SchemaIssue.Issue, path: Path): boolean => {
+    switch (issue._tag) {
+      case "Pointer":
+        return visit(issue.issue, [...path, ...issue.path]);
+      case "Composite":
+        return issue.issues.every((inner) => visit(inner, path));
+      case "MissingKey": {
+        const naming = otherName(types, given, path);
+        if (naming === undefined || naming[0] !== path.at(-1)) return false;
+        holders.push(path.slice(0, -1));
+        return true;
+      }
+      default:
+        return false;
+    }
+  };
+  return visit(issue, []) ? uniquePaths(holders) : undefined;
+};
+
+/** An entry of a refusal: an issue, and where it is. */
+interface Entry {
+  readonly path: Path;
+  readonly issue: SchemaIssue.Issue;
+}
+
+/** A Void declining what it would erase, which does not say why the value is refused. */
+const declinesAsVoid = (issue: SchemaIssue.Issue): boolean =>
+  issue._tag === "InvalidType" && issue.ast._tag === "Void";
+
+/** Whether the caller gave the field a key rename at `holder` reads as `naming` under its wire name. */
+type GivenAs = (holder: Path, naming: Naming) => boolean;
+
+/**
+ * An issue a key rename's struct reports for one of its fields, under the name the caller gave it.
+ * Effect decodes a field's own encoding after the rename, so it names the decoded name even where
+ * the caller gave the wire name.
+ */
+const asGivenAt = (
+  issue: SchemaIssue.Issue,
+  names: ReadonlyArray<Naming> | undefined,
+  holder: Path,
+  givenAs: GivenAs,
+): SchemaIssue.Issue => {
+  if (issue._tag !== "Pointer" || names === undefined) return issue;
+  const [key, ...rest] = issue.path;
+  const naming = names.find(
+    ([read, written]) => read === key && read !== written,
+  );
+  return naming !== undefined && givenAs(holder, naming)
+    ? new SchemaIssue.Pointer([naming[1], ...rest], issue.issue)
+    : issue;
+};
+
+/**
+ * The parts of a failure, found at `path`, that are at `target` or inside it, as Effect reports them,
+ * each under the names the caller gave. A union member's own failure stays. A Void declining the
+ * value, a key the reading does not state, and the lost key itself reported as missing do not say why
+ * the field is lost.
+ */
+const failureAt = (
+  issue: SchemaIssue.Issue,
+  path: Path,
+  target: Path,
+  into: Array<Entry>,
+  givenAs: GivenAs,
+): void => {
+  const reached = path.length >= target.length;
+  switch (issue._tag) {
+    case "Pointer": {
+      const next = [...path, ...issue.path];
+      if (startsWith(next, target) || startsWith(target, next))
+        failureAt(issue.issue, next, target, into, givenAs);
+      return;
+    }
+    case "Composite": {
+      const names = namesOf(issue.ast);
+      for (const inner of issue.issues)
+        failureAt(
+          asGivenAt(inner, names, path, givenAs),
+          path,
+          target,
+          into,
+          givenAs,
+        );
+      return;
+    }
+    case "AnyOf":
+      if (issue.issues.length === 0) break;
+      for (const member of issue.issues)
+        failureAt(member, path, target, into, givenAs);
+      return;
+    case "Encoding":
+      failureAt(issue.issue, path, target, into, givenAs);
+      return;
+    case "Filter":
+      if (reached) break;
+      failureAt(issue.issue, path, target, into, givenAs);
+      return;
+    case "UnexpectedKey":
+      return;
+    case "MissingKey":
+      if (path.length === target.length) return;
+      break;
+    case "InvalidType":
+      if (declinesAsVoid(issue)) return;
+      break;
+  }
+  if (reached) into.push({ path, issue });
+};
+
+/**
+ * The entries that name a field lost at `path`: what its own names or place say, or else the first
+ * failure of another reading that says something at the field or inside it, or else that the schema
+ * cannot keep it.
+ */
+const explained = (
+  path: Path,
+  causes: ReadonlyArray<Cause>,
+): ReadonlyArray<Entry> => {
+  for (const kind of ["names", "place"] as const) {
+    const cause = causes.find(
+      (cause) => cause.kind === kind && samePath(cause.at, path),
+    );
+    if (cause !== undefined) return [{ path, issue: cause.issue }];
+  }
+  // The lost field is the caller's own, so a name the lost path takes there is the one they gave.
+  const givenAs: GivenAs = (holder, [, written]) =>
+    path[holder.length] === written;
+  for (const cause of causes) {
+    if (cause.kind !== "failure" || !startsWith(path, cause.at)) continue;
+    const found: Array<Entry> = [];
+    failureAt(cause.issue, cause.at, path, found, givenAs);
+    if (found.length > 0) return found;
+  }
+  return [{ path, issue: path.length === 0 ? valueNotHeld : notHeld }];
+};
+
+/** Whether `causes` say more about a field lost at `path` than that the schema cannot keep it. */
+export const explains = (path: Path, causes: ReadonlyArray<Cause>): boolean =>
+  causes.length > 0 &&
+  explained(path, causes).some(
+    ({ issue }) => issue !== notHeld && issue !== valueNotHeld,
+  );
+
+/** Issues at their places, each once, as a schema error would carry them. */
+export const entriesError = (
+  ast: Ast,
+  entries: ReadonlyArray<Entry>,
+): Schema.SchemaError => {
+  const [first, ...others] = entries
+    .filter(
+      (entry, index) =>
+        entries.findIndex(
+          (other) =>
+            other.issue === entry.issue && samePath(other.path, entry.path),
+        ) === index,
+    )
+    .map(({ path, issue }) =>
+      path.length === 0 ? issue : new SchemaIssue.Pointer(path, issue),
+    );
+  return new Schema.SchemaError(
+    new SchemaIssue.Composite(ast, [first!, ...others]),
+  );
+};
+
+/**
+ * A refusal that names the fields and, like any other schema failure here, leaves out values. Each
+ * field is named with what `causes` say about it, or else as one the schema cannot keep.
+ */
 export const refusal = (
   ast: Ast,
-  [first, ...others]: readonly [Path, ...ReadonlyArray<Path>],
+  paths: readonly [Path, ...ReadonlyArray<Path>],
+  causes: ReadonlyArray<Cause> = [],
 ): Schema.SchemaError =>
-  new Schema.SchemaError(
-    new SchemaIssue.Composite(ast, [
-      notHeldAt(first),
-      ...others.map(notHeldAt),
-    ]),
+  entriesError(
+    ast,
+    paths.flatMap((path) => explained(path, causes)),
   );
+
+/**
+ * The parts of a failure at or inside each of these places, as {@link failureAt} keeps them, that
+ * name a value the caller gave. Empty where the failure says nothing of the caller's values there.
+ */
+export const failureWithin = (
+  issue: SchemaIssue.Issue,
+  given: unknown,
+  places: ReadonlyArray<Path>,
+): ReadonlyArray<Entry> =>
+  places.flatMap((place) => {
+    const valueAt = (path: Path): unknown =>
+      path.reduce<unknown>(
+        (value, key) => (isObject(value) ? value[key] : undefined),
+        given,
+      );
+    const givenAs: GivenAs = (holder, [read, written]) => {
+      const value = valueAt(holder);
+      return has(value, written) && !has(value, read);
+    };
+    const found: Array<Entry> = [];
+    failureAt(withoutInput(issue), [], place, found, givenAs);
+    return found.filter(({ path }) => valueAt(path) !== undefined);
+  });
 
 /** Whether a schema holds a choice of member, which only a stacked schema can settle for it. */
 export const choosesMember = holding(isMemberChoice);

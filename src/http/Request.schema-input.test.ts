@@ -1470,60 +1470,77 @@ describe("a field a part lost under a parent read field by field", () => {
   const n = Schema.FiniteFromString;
   const Inner = Schema.Struct({ m: n, f: Filter });
   const Cursor = Schema.Struct({ cursor: Schema.String });
-  /** A decoded `n: 1` beside the part makes its parent read field by field. */
+  /**
+   * A decoded `n: 1` beside the part makes its parent read field by field. Each refusal gives the
+   * decoded side's own error, except where the item it is in also holds an encoded value, which
+   * stops the decoded side before it reaches the field.
+   */
   const decodedLost = [
     [
       Schema.Struct({ n, f: Filter }),
       { n: 1, f: { limit: "x" } },
       '["f"]["limit"]',
+      "Expected number",
     ],
     [
       Schema.Struct({ n, f: Schema.optionalKey(Filter) }),
       { n: 1, f: { limit: "x" } },
       '["f"]["limit"]',
+      "Expected number",
     ],
     [
       Schema.Struct({ n, r: Schema.Record(Schema.String, Filter) }),
       { n: 1, r: { a: { limit: "x" } } },
       '["r"]["a"]["limit"]',
+      "Expected number",
     ],
     [
       Schema.Struct({ n, t: Schema.Tuple([Filter]) }),
       { n: 1, t: [{ limit: "x" }] },
       '["t"][0]["limit"]',
+      "Expected number",
     ],
     [
       Schema.Struct({ n, items: Schema.Array(Inner) }),
       { n: 1, items: [{ m: "1", f: { limit: "x" } }] },
       '["items"][0]["f"]["limit"]',
+      "The schema cannot keep this field with the rest of the value",
     ],
     [
       Schema.Struct({ n, inner: Inner }),
       { n: 1, inner: { m: 1, f: { limit: "x" } } },
       '["inner"]["f"]["limit"]',
+      "Expected number",
     ],
     [
       Schema.Struct({ n, f: Schema.Union([Filter, Cursor]) }),
       { n: 1, f: { limit: "x" } },
       '["f"]["limit"]',
+      "Expected number",
     ],
     [
       Schema.Union([Schema.Struct({ n, f: Filter }), Cursor]),
       { n: 1, f: { limit: "x" } },
       '["f"]["limit"]',
+      "Expected number",
     ],
   ] as const;
-  /** Encoded names throughout, which the part's own constructor reads as excess keys. */
+  /**
+   * Encoded names throughout, which the part's own constructor reads as excess keys. Each refusal
+   * gives the encoded side's own error.
+   */
   const encodedLost = [
     [
       Schema.Struct({ n, f: Filter }),
       { n: "1", f: { page_size: "many" } },
       '["f"]["page_size"]',
+      "Expected a finite number",
     ],
     [
       Schema.Struct({ n, items: Schema.Array(Filter) }),
       { n: "1", items: [{ page_size: "many" }] },
       '["items"][0]["page_size"]',
+      "Expected a finite number",
     ],
   ] as const;
   /** Valid fields on either side, and defaults for fields the caller left out. */
@@ -1556,14 +1573,16 @@ describe("a field a part lost under a parent read field by field", () => {
     ],
   ] as const;
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/275
   it.effect("refuses the field the part lost, as at the root", () =>
     Effect.gen(function* () {
-      for (const [schema, input, field] of [...decodedLost, ...encodedLost])
+      for (const [schema, input, field, message] of [
+        ...decodedLost,
+        ...encodedLost,
+      ])
         expect(
           yield* schemaFailure(posted(schema), { body: input } as never),
-        ).toBe(
-          `The schema cannot keep this field with the rest of the value\n  at ${field}`,
-        );
+        ).toBe(`${message}\n  at ${field}`);
       const pathed = Request.get("").pipe(
         Request.path(decodedLost[0][0], () => "/x"),
       );
@@ -1615,6 +1634,7 @@ describe("a field a part lost under a parent read field by field", () => {
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/275
   it.effect(
     "keeps a member's loss when another member reads the field loosely",
     () =>
@@ -1637,9 +1657,7 @@ describe("a field a part lost under a parent read field by field", () => {
             yield* schemaFailure(posted(schema), {
               body: { n: 1, m: "1", f: wrap({ page_size: "many" }) },
             } as never),
-          ).toBe(
-            `The schema cannot keep this field with the rest of the value\n  at ${field}["page_size"]`,
-          );
+          ).toBe(`Expected a finite number\n  at ${field}["page_size"]`);
           expect(
             JSON.parse(
               (yield* sentBy(schema, {
@@ -2166,6 +2184,7 @@ describe("a field a part lost under a parent read field by field", () => {
     }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/275
   it.effect("refuses a field given under both names", () =>
     Effect.gen(function* () {
       const Wire = Schema.Struct({ text: Schema.String, a: n }).pipe(
@@ -2177,7 +2196,7 @@ describe("a field a part lost under a parent read field by field", () => {
           body: parent.body({ text: "x", label: "y", a: "5" }),
         }),
       ).toBe(
-        'The schema cannot keep this field with the rest of the value\n  at ["f"]["label"]',
+        'This field is given under both "text" and "label"; give it under one name\n  at ["f"]["label"]',
       );
     }),
   );

@@ -96,6 +96,8 @@ interface Decoded<A> {
   readonly ambiguity?: FieldlessOneOf | undefined;
   /** Where a constructor lost fields, and what kept the decoder from reading them instead. */
   readonly refused?: ReadonlyArray<Refused> | undefined;
+  /** Why fields in `lost` were lost, where more is known than the loss. */
+  readonly causes?: ReadonlyArray<Excess.Cause> | undefined;
   /** What Effect reads in its place, for a write that can only be relaxed. */
   readonly forRelaxedWrite?: Effect.Effect<Decoded<A>, ReadFailure, unknown>;
 }
@@ -373,6 +375,30 @@ const afterAmbiguity = (
   ambiguity: read.ambiguity ?? ambiguity,
 });
 
+/** What these readings' failures say about another reading's losses, each failure once. */
+const failureCauses = (
+  ...failures: ReadonlyArray<Schema.SchemaError>
+): ReadonlyArray<Excess.Cause> =>
+  failures
+    .filter(
+      (failure, index) =>
+        failure !== noRoute &&
+        failure !== provisional &&
+        failures.indexOf(failure) === index,
+    )
+    .map((failure) => Excess.failureCause(failure));
+
+/** A reading that lost fields, with the failures of the readings it stands beside as causes. */
+const explainedBy =
+  (...failures: ReadonlyArray<Schema.SchemaError>) =>
+  (read: Decoded<unknown>): Decoded<unknown> => {
+    if (read.lost.length === 0) return read;
+    const causes = failureCauses(...failures);
+    return causes.length === 0
+      ? read
+      : { ...read, causes: [...(read.causes ?? []), ...causes] };
+  };
+
 /** Only a complete reading can supersede the ambiguity. */
 const keepWholeAlternative = (
   failure: FieldlessOneOf,
@@ -582,6 +608,7 @@ const decodedReading = <S extends Schema.Top>(
     ) as never;
     const lost: Array<Excess.Path> = [];
     const refused: Array<Refused> = [];
+    const causes: Array<Excess.Cause> = [];
     let ambiguity: FieldlessOneOf | undefined;
     for (const { name, type } of Excess.fieldsOf(contract.ast)) {
       if (fields[name] === undefined) continue;
@@ -613,6 +640,8 @@ const decodedReading = <S extends Schema.Top>(
           at: [name, ...fieldPath],
           holders: holders.map((path) => [name, ...path]),
         });
+      for (const cause of field.causes ?? [])
+        causes.push({ ...cause, at: [name, ...cause.at] });
     }
     // The constructor runs again over each part's result. Strictly, a union there keeps the member
     // the part was read by instead of taking an earlier one that strips it; loosely, as Effect would.
@@ -636,7 +665,7 @@ const decodedReading = <S extends Schema.Top>(
       : make(output, parseOptions, input);
     if (given !== undefined)
       lost.push(...unkept(input, withoutFields(given, read), value, false));
-    return { value, lost, refused, ambiguity };
+    return { value, lost, refused, ambiguity, causes };
   });
   const byMember = (
     input: object,
@@ -818,21 +847,30 @@ const decodedReading = <S extends Schema.Top>(
           part && stripped !== undefined && stripped.length > 0
             ? ([fieldwise, loose] as const)
             : ([loose, fieldwise] as const);
+        // Where a route loses a field, the other side's own error can say why.
+        const explain = explainedBy(failure, refused);
         if (read?.lost.length === 0)
           return Effect.succeed<Decoded<unknown>>({
             ...read,
             // Unlike the strict read, a loose one can take a member that strips names unseen.
-            forRelaxedWrite: Excess.choosesMemberResolved(contract.ast)
-              ? fieldwise
-              : chooseReading(routes, false),
+            forRelaxedWrite: Effect.map(
+              Excess.choosesMemberResolved(contract.ast)
+                ? fieldwise
+                : chooseReading(routes, false),
+              explain,
+            ),
           });
         // After a constructor every field means what it meant to that, so the route that keeps most
         // can be taken. Otherwise a field both sides could hold can mean something else to each.
-        return chooseReading(routes, constructed);
+        return Effect.map(chooseReading(routes, constructed), explain);
       },
     });
   };
-  /** The failure of every route, naming the fields where only an unguarded Void could read them. */
+  /**
+   * The failure of every route, naming the fields where only an unguarded Void could read them. A
+   * field is named with the failure's own error inside it, as the member that refused it reports it,
+   * where the failure has one.
+   */
   const erased = (
     input: unknown,
     given: unknown,
@@ -846,11 +884,19 @@ const decodedReading = <S extends Schema.Top>(
           {
             onFailure: () => Effect.fail(failure),
             onSuccess: (value) => {
-              const [first, ...others] = unkept(input, given, value, false);
+              const lost = unkept(input, given, value, false);
+              if (lost.length === 0) return Effect.fail(failure);
+              const causes = failureCauses(failure);
+              // The unguarded decoder read the whole value as encoded, so a field given on the
+              // decoded side can look lost beside the one the failure names. Where the failure
+              // explains some losses, those are the ones to name.
+              const explained = lost.filter((path) =>
+                Excess.explains(path, causes),
+              );
+              const [first, ...others] =
+                explained.length > 0 ? explained : lost;
               return Effect.fail(
-                first === undefined
-                  ? failure
-                  : Excess.refusal(contract.ast, [first, ...others]),
+                Excess.refusal(contract.ast, [first!, ...others], causes),
               );
             },
           },
@@ -879,8 +925,11 @@ const decodedReading = <S extends Schema.Top>(
             ? []
             : unkept(input, given, value, false);
         const made = { value, lost };
-        const constructed = (refused?: ReadonlyArray<Refused>) =>
-          Effect.succeed<Decoded<S["Type"]>>({ value, lost, refused });
+        const constructed = (
+          refused?: ReadonlyArray<Refused>,
+          causes?: ReadonlyArray<Excess.Cause>,
+        ) =>
+          Effect.succeed<Decoded<S["Type"]>>({ value, lost, refused, causes });
         if (lost.length === 0) return constructed();
         // Strictly, the constructor takes a union's first member that keeps everything.
         const strictly = Effect.map(
@@ -907,16 +956,23 @@ const decodedReading = <S extends Schema.Top>(
           onSuccess: (read) =>
             losesLess(read, made)
               ? Effect.succeed({ ...read, forRelaxedWrite: constructed() })
-              : constructed(read.refused),
+              : constructed(read.refused, [
+                  // The decoded side lost these, and the encoded side lost the others.
+                  ...Excess.mixedSides([contract.ast], given, lost, read.lost),
+                  ...(read.causes ?? []),
+                ]),
           onFailure: (failure) =>
-            constructed([
-              {
-                at: [],
-                holders: namedPaths(failure.issue).map((path) =>
-                  path.slice(0, -1),
-                ),
-              },
-            ]),
+            constructed(
+              [
+                {
+                  at: [],
+                  holders: namedPaths(failure.issue).map((path) =>
+                    path.slice(0, -1),
+                  ),
+                },
+              ],
+              failureCauses(failure),
+            ),
         });
       },
       onFailure: (failure) =>
@@ -1029,6 +1085,8 @@ const fromPart = (
 export interface Written<A> {
   readonly output: A;
   readonly lost: ReadonlyArray<Excess.Path>;
+  /** Why fields in `lost` were lost, where more is known than the loss. */
+  readonly causes?: ReadonlyArray<Excess.Cause> | undefined;
   readonly ambiguity?: FieldlessOneOf | undefined;
   /**
    * The fields in `lost` that only the write lost, after the first member that could not write the
@@ -1225,11 +1283,18 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   // The same positions, compared on the way in and on the way out of the schema.
   const readLoss = Excess.rebuildLoss(ast, false);
   const writeLoss = Excess.rebuildLoss(ast, canonicalJson);
-  const losses = (input: unknown, value: unknown, output: unknown) =>
-    Excess.uniquePaths([
-      ...(readLoss?.(input, value) ?? []),
-      ...(writeLoss?.(value, output) ?? []),
-    ]);
+  const losses = (
+    input: unknown,
+    value: unknown,
+    output: unknown,
+  ): Excess.Losses => {
+    const read = readLoss?.(input, value);
+    const wrote = writeLoss?.(value, output);
+    return {
+      lost: Excess.uniquePaths([...(read?.lost ?? []), ...(wrote?.lost ?? [])]),
+      causes: [...(read?.causes ?? []), ...(wrote?.causes ?? [])],
+    };
+  };
   const written = (
     input: unknown,
     reading: ReturnType<typeof decoded>,
@@ -1238,7 +1303,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     Effect.flatMap(reading, (value) =>
       Effect.map(write(value, options), (output): Written<A> => ({
         output,
-        lost: losses(input, value, output),
+        ...losses(input, value, output),
       })),
     );
   if (!Excess.choosing(ast))
@@ -1265,10 +1330,37 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   // The root is accounted for where its value is plain data and its schema names nothing every
   // object has; its parts are then each checked as they are. The schema is asked on the first read,
   // so building an encoder runs no suspended schema.
-  const readDecoded = (input: Input<S>, given: unknown, caller: Input<S>) =>
-    readingFrom(input, caller)(input, {
-      given: accountable(input, ast) ? given : undefined,
+  const readDecoded = (input: Input<S>, given: unknown, caller: Input<S>) => {
+    const accounted = accountable(input, ast) ? given : undefined;
+    return Effect.catchTag(
+      readingFrom(input, caller)(input, { given: accounted }),
+      "SchemaError",
+      (failure) => onEncodedSide(failure, accounted),
+    );
+  };
+  // The schema as a reading meets it, with every visible Void guarded.
+  const decodeAll = Schema.decodeUnknownEffect(Schema.make<S>(guardVoids(ast)));
+  /**
+   * A failure that reports only decoded names missing where the caller gave their wire names, with
+   * the encoded side's own errors about the caller's values in those objects instead: the caller
+   * gave them on the encoded side, where `Missing key` names a field they did not leave out.
+   */
+  const onEncodedSide = (failure: Schema.SchemaError, given: unknown) => {
+    const holders =
+      given === undefined
+        ? undefined
+        : Excess.misnamedAt([ast], given, failure.issue);
+    if (holders === undefined) return Effect.fail(failure);
+    return Effect.matchEffect(decodeAll(given, { errors: "all" }), {
+      onSuccess: () => Effect.fail(failure),
+      onFailure: (encoded) => {
+        const entries = Excess.failureWithin(encoded.issue, given, holders);
+        return Effect.fail(
+          entries.length === 0 ? failure : Excess.entriesError(ast, entries),
+        );
+      },
     });
+  };
   // A custom writer is the caller's own. Only the schema's own writer can note its members.
   const recordingAst =
     custom === undefined || strictWriter !== write
@@ -1368,18 +1460,19 @@ const readerForCodec = <S extends Schema.Top, A, R>(
           output,
           strict,
           writers,
-          read: { value, lost: lostByRead, refused, ambiguity },
+          read: { value, lost: lostByRead, refused, ambiguity, causes: read },
         }): Written<A> => {
           // A field more than one comparison reports is named once.
           const isHeld = (path: Excess.Path) =>
             !readsNothing(given, value, path);
+          const rebuilt = losses(input, value, output);
           const lost = causing(
             mergePaths(
               // What a strict read kept as given, only what was written can say it holds.
               Excess.missing([ast], given, value, output, {
                 written: strictly !== undefined,
               }).filter(isHeld),
-              losses(input, value, output),
+              rebuilt.lost,
               lostByRead,
               visibleOptions ||
                 (custom === undefined &&
@@ -1400,12 +1493,23 @@ const readerForCodec = <S extends Schema.Top, A, R>(
             strict === undefined || writers === undefined
               ? []
               : droppedBy(guarded, { given, value, caller: input }, writers);
-          if (dropped.length === 0) return { output, lost, ambiguity };
           const paths = dropped.map(({ path }) => path);
+          const all = mergePaths(lost, paths);
+          // What is known of why each field is lost, from its names, its place or another reading.
+          const causes =
+            all.length === 0
+              ? undefined
+              : [
+                  ...Excess.nameCauses([ast], given, all),
+                  ...rebuilt.causes,
+                  ...(read ?? []),
+                ];
+          if (dropped.length === 0) return { output, lost, causes, ambiguity };
           const failure = writeFailure(ast, dropped);
           return {
             output,
-            lost: mergePaths(lost, paths),
+            lost: all,
+            causes,
             ambiguity,
             ...(failure !== undefined && {
               unwritten: { lost: paths, failure },
@@ -1429,18 +1533,22 @@ const readerForCodec = <S extends Schema.Top, A, R>(
         readingFrom(from, input)(from, { parseOptions: Excess.strict }),
         (read) =>
           Effect.match(strictWriter(read.value, Excess.strict), {
-            onSuccess: (output): Kept => ({
-              written: {
-                output,
-                lost: mergePaths(
-                  losses(from, read.value, output),
-                  changed
-                    ? Excess.optionLoss(ast, from, read.value, output, false)
-                    : [],
-                ),
-                ambiguity: read.ambiguity,
-              },
-            }),
+            onSuccess: (output): Kept => {
+              const rebuilt = losses(from, read.value, output);
+              return {
+                written: {
+                  output,
+                  lost: mergePaths(
+                    rebuilt.lost,
+                    changed
+                      ? Excess.optionLoss(ast, from, read.value, output, false)
+                      : [],
+                  ),
+                  causes: rebuilt.causes,
+                  ambiguity: read.ambiguity,
+                },
+              };
+            },
             onFailure: (failure): Kept => ({ read, failure }),
           }),
       );
@@ -1609,13 +1717,17 @@ export const reorderedReaders = <S extends Schema.Top>(contract: S) => {
  * innermost fields, so it never names a field beside one inside it.
  *
  * Where only the write lost them, the refusal is the failure of the member that could not write
- * them, as that member alone would refuse.
+ * them, as that member alone would refuse. Otherwise each field is named with what the reading's
+ * `causes` say about it, or else as one the schema cannot keep.
  */
 export const refuseLost = (
   contract: Schema.Top,
-  lost: ReadonlyArray<Excess.Path>,
+  {
+    lost,
+    unwritten,
+    causes,
+  }: Pick<Written<unknown>, "lost" | "unwritten" | "causes">,
   taken?: (name: PropertyKey) => boolean,
-  unwritten?: Written<unknown>["unwritten"],
 ): Effect.Effect<void, Schema.SchemaError> => {
   const remaining = lost.filter(
     (path) => path.length > 1 || taken?.(path[0]!) !== true,
@@ -1638,7 +1750,7 @@ export const refuseLost = (
   // Separate checks can report a field and one inside it. Naming the inner one says both.
   const named = pathSet(remaining);
   const [first, ...others] = remaining.filter((path) => !named.leadsOn(path));
-  return Effect.fail(Excess.refusal(contract.ast, [first!, ...others]));
+  return Effect.fail(Excess.refusal(contract.ast, [first!, ...others], causes));
 };
 
 /** Bring a value to the schema's decoded side and write it, with nothing else to hold what it loses. */
@@ -1665,9 +1777,9 @@ const encodeWith = <S extends Schema.Top, A, R, B, E, R2>(
   return (input: Input<S>) =>
     Effect.flatMap(
       publicRead(read(input)),
-      ({ output, lost, unwritten, ambiguity }) =>
+      ({ output, ambiguity, ...reading }) =>
         Effect.flatMap(
-          refuseLost(contract, lost, undefined, unwritten),
+          refuseLost(contract, reading),
           (): Effect.Effect<B, E | Schema.SchemaError, R2> =>
             ambiguity === undefined
               ? finish(output)

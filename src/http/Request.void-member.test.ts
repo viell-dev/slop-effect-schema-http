@@ -1277,6 +1277,7 @@ describe("request preparation beside Void", () => {
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/275
   it.effect(
     "names an invalid alias beside a valid decoded sibling when Void is last",
     () =>
@@ -1297,9 +1298,8 @@ describe("request preparation beside Void", () => {
             Request.path(schema, () => "/sent"),
           );
           const value = { n: 1, filter };
-          const expected =
-            "The schema cannot keep this field with the rest of the value\n  at " +
-            field;
+          // The encoded side's own error, at the name the caller gave.
+          const expected = "Expected a finite number\n  at " + field;
           expect(
             yield* schemaFailure(post(schema), { body: value } as never),
           ).toBe(expected);
