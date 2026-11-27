@@ -2622,6 +2622,64 @@ describe("an invalid Some payload keeps its decoded error", () => {
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/321
+  it.effect("pairs renamed fields by their place in the rename", () =>
+    Effect.gen(function* () {
+      const held = Schema.suspend(() => Schema.OptionFromNullOr(payload));
+      const below = (row: Schema.Top) =>
+        Schema.Struct({ row, n: Schema.String }).pipe(
+          Schema.encodeKeys({ n: "wire_n" }),
+        );
+      for (const fields of [
+        { held, other: Schema.suspend(() => Schema.String) },
+        { other: Schema.suspend(() => Schema.String), held },
+      ]) {
+        const renamedAway = below(
+          Schema.Struct(fields).pipe(
+            Schema.encodeKeys({ held: "wire_held", other: "wire_other" }),
+          ),
+        );
+        const failure = yield* Effect.flip(
+          json(
+            renamedAway as unknown as typeof renamed,
+            {
+              row: { wire_held: Option.none(), wire_other: "ok" },
+              wire_n: "x",
+            } as never,
+          ),
+        );
+        expect(failure).toBeInstanceOf(Schema.SchemaError);
+      }
+      // Swapped names: the wire `held` is the decoded `other`, an open schema.
+      for (const fields of [
+        { held, other: Schema.suspend(() => Schema.Any) },
+        { other: Schema.suspend(() => Schema.Any), held },
+      ]) {
+        const swapped = below(
+          Schema.Struct(fields).pipe(
+            Schema.encodeKeys({ held: "other", other: "held" }),
+          ),
+        );
+        for (const option of [Option.none(), Option.some({ b: "keep" })])
+          expect(
+            yield* json(
+              swapped as unknown as typeof renamed,
+              {
+                row: { other: { a: "a" }, held: option },
+                wire_n: "x",
+              } as never,
+            ),
+          ).toEqual({
+            row: {
+              other: { a: "a" },
+              held: JSON.parse(JSON.stringify(option)),
+            },
+            wire_n: "x",
+          });
+      }
+    }),
+  );
+
   it.effect("refuses an invalid Some under a hand-written codec", () =>
     Effect.gen(function* () {
       const held = Schema.NullOr(payload).pipe(
