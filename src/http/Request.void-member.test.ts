@@ -1310,6 +1310,54 @@ describe("request preparation beside Void", () => {
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/275
+  it.effect(
+    "names a member's own error beside a valid alias, not the alias",
+    () =>
+      Effect.gen(function* () {
+        const A = Schema.Struct({ a: Schema.Number });
+        for (const extra of [
+          Schema.Union([Schema.Void, A]),
+          Schema.Union([A, Schema.Void]),
+        ]) {
+          const schema = Schema.Struct({ extra, filter: Filter });
+          const path = Request.get("").pipe(
+            Request.path(schema, () => "/sent"),
+          );
+          for (const filter of [{ page_size: "05" }, { limit: 5 }]) {
+            const value = { extra: { a: "x" }, filter };
+            const expected = 'Expected number\n  at ["extra"]["a"]';
+            expect(
+              yield* schemaFailure(post(schema), { body: value } as never),
+            ).toBe(expected);
+            expect(yield* schemaFailure(path, { path: value } as never)).toBe(
+              expected,
+            );
+            // Where only the Void is tried, its own error names the field.
+            expect(
+              yield* schemaFailure(post(schema), {
+                body: { extra: "x", filter },
+              } as never),
+            ).toBe('Expected void\n  at ["extra"]');
+            expect(
+              yield* bodyOf(post(schema), {
+                body: { extra: { a: 1 }, filter },
+              } as never),
+            ).toBe('{"extra":{"a":1},"filter":{"page_size":"5"}}');
+          }
+        }
+        // A Void under a renamed key gives its error under the name the caller gave.
+        const Renamed = Schema.Struct({ v: Schema.Void }).pipe(
+          Schema.encodeKeys({ v: "w" }),
+        );
+        expect(
+          yield* schemaFailure(post(Renamed), {
+            body: { w: { a: 1 } },
+          } as never),
+        ).toBe('Expected void\n  at ["w"]');
+      }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/143
   it.effect(
     "keeps a read object or array whose cells decode to undefined",

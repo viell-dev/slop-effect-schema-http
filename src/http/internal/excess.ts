@@ -2411,12 +2411,12 @@ export const misnamedAt = (
   issue: SchemaIssue.Issue,
 ): ReadonlyArray<Path> | undefined => {
   const holders: Array<Path> = [];
-  const visit = (issue: SchemaIssue.Issue, path: Path): boolean => {
-    switch (issue._tag) {
+  const visit = (node: SchemaIssue.Issue, path: Path): boolean => {
+    switch (node._tag) {
       case "Pointer":
-        return visit(issue.issue, [...path, ...issue.path]);
+        return visit(node.issue, [...path, ...node.path]);
       case "Composite":
-        return issue.issues.every((inner) => visit(inner, path));
+        return node.issues.every((inner) => visit(inner, path));
       case "MissingKey":
         if (wireNameAt(types, given, path) === undefined) return false;
         holders.push(path.slice(0, -1));
@@ -2455,12 +2455,12 @@ interface Caller {
 /** The caller as a reading's schemas and what it was given at `at` show them. */
 const callerOf = (
   { types, given }: NonNullable<Cause["reading"]>,
-  at: Path,
+  root: Path,
 ): Caller => ({
-  wireName: (path) => wireNameAt(types, given, path.slice(at.length)),
+  wireName: (path) => wireNameAt(types, given, path.slice(root.length)),
   gave: (path) =>
     path
-      .slice(at.length)
+      .slice(root.length)
       .reduce<unknown>(
         (value, key) => (isObject(value) ? value[key] : undefined),
         given,
@@ -2571,7 +2571,7 @@ interface Explained {
 const explained = (path: Path, causes: ReadonlyArray<Cause>): Explained => {
   for (const kind of ["names", "place"] as const) {
     const cause = causes.find(
-      (cause) => cause.kind === kind && samePath(cause.at, path),
+      (candidate) => candidate.kind === kind && samePath(candidate.at, path),
     );
     if (cause !== undefined)
       return { entries: [{ path, issue: cause.issue }], by: kind };
@@ -2621,12 +2621,15 @@ export const entriesError = (
  */
 const renamedBeside = (path: Path, causes: ReadonlyArray<Cause>): boolean =>
   causes.some(
-    ({ kind, at, reading }) =>
-      kind === "failure" &&
-      reading !== undefined &&
-      startsWith(path, at) &&
-      renamedAt(reading.types, reading.given, path.slice(at.length)) !==
-        undefined,
+    (cause) =>
+      cause.kind === "failure" &&
+      cause.reading !== undefined &&
+      startsWith(path, cause.at) &&
+      renamedAt(
+        cause.reading.types,
+        cause.reading.given,
+        path.slice(cause.at.length),
+      ) !== undefined,
   );
 
 /**

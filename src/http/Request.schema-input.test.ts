@@ -2331,3 +2331,200 @@ describe("a field a part lost under a parent read field by field", () => {
       }),
   );
 });
+
+/** A request that binds the schema in each place a group can be, and what each refuses. */
+const bindings = (schema: Schema.Top) =>
+  [
+    (value: object) =>
+      schemaFailure(posted(schema as never), { body: value } as never),
+    (value: object) =>
+      schemaFailure(queried(schema as never), { query: value } as never),
+    (value: object) =>
+      schemaFailure(Request.get("/x").pipe(Request.headers(schema as never)), {
+        headers: value,
+      } as never),
+    (value: object) =>
+      schemaFailure(
+        Request.get("").pipe(Request.path(schema as never, () => "/sent")),
+        { path: value } as never,
+      ),
+  ] as const;
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/275
+describe("a refusal says why it cannot keep a field", () => {
+  const Filter = Schema.Struct({
+    limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+      Schema.withConstructorDefault(Effect.succeed(25)),
+    ),
+  }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+  const Required = Schema.Struct({
+    limit: Schema.FiniteFromString,
+    count: Schema.FiniteFromString,
+  }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+  it.effect("names both names of a field given under both", () =>
+    Effect.gen(function* () {
+      for (const refuse of bindings(Filter))
+        for (const value of [
+          { limit: 5, page_size: "6" },
+          { limit: 5, page_size: "5" },
+        ])
+          expect(yield* refuse(value)).toBe(
+            'This field is given under both "limit" and "page_size"; give it under one name\n  at ["page_size"]',
+          );
+    }),
+  );
+
+  it.effect(
+    "gives the encoded side's own error for a wire-named value it refuses",
+    () =>
+      Effect.gen(function* () {
+        // Optional, the field would be lost; required, the decoded side would report its name missing.
+        for (const schema of [Filter, Required])
+          for (const refuse of bindings(schema))
+            expect(yield* refuse({ page_size: "many", count: "1" })).toBe(
+              'Expected a finite number\n  at ["page_size"]',
+            );
+        for (const refuse of bindings(Required))
+          expect(yield* refuse({ page_size: "5", count: "x" })).toBe(
+            'Expected a finite number\n  at ["count"]',
+          );
+        for (const schema of [Filter, Required])
+          expect(
+            yield* schemaFailure(posted(schema), {
+              body: { page_size: 5, count: "1" },
+            } as never),
+          ).toBe('Expected string\n  at ["page_size"]');
+        // A whole object read as encoded, where a decoded value beside the wire name is not text.
+        expect(
+          yield* schemaFailure(posted(Required), {
+            body: { page_size: "5", count: 3 },
+          } as never),
+        ).toBe('Expected string\n  at ["count"]');
+      }),
+  );
+
+  it.effect(
+    "gives the decoded side's own error for a decoded-named value",
+    () =>
+      Effect.gen(function* () {
+        for (const refuse of bindings(Filter))
+          expect(yield* refuse({ limit: "x" })).toBe(
+            'Expected number\n  at ["limit"]',
+          );
+      }),
+  );
+
+  it.effect(
+    "leaves out a renamed field the other side's error does not explain",
+    () =>
+      Effect.gen(function* () {
+        const Two = Schema.Struct({
+          a: Schema.optionalKey(Schema.String),
+          b: Schema.optionalKey(Schema.String),
+        }).pipe(Schema.encodeKeys({ a: "A", b: "B" }));
+        // `A` is valid on the encoded side, which only `B` keeps from reading.
+        expect(
+          yield* schemaFailure(posted(Two), {
+            body: { A: "x", B: 5 },
+          } as never),
+        ).toBe('Expected string\n  at ["B"]');
+        expect(
+          yield* schemaFailure(posted(Two), {
+            body: { a: 5, b: "x" },
+          } as never),
+        ).toBe('Expected string\n  at ["a"]');
+        expect(
+          yield* schemaFailure(posted(Schema.Array(Filter)), {
+            body: [{ limit: 5 }, { limit: "x" }],
+          } as never),
+        ).toBe('Expected number\n  at [1]["limit"]');
+        // Names from both sides in one object have no more specific cause.
+        expect(
+          yield* schemaFailure(posted(Two), {
+            body: { a: "x", B: "y" },
+          } as never),
+        ).toBe(
+          'The schema cannot keep this field with the rest of the value\n  at ["B"]',
+        );
+      }),
+  );
+
+  it.effect("says that the items of a list or record use different sides", () =>
+    Effect.gen(function* () {
+      const message =
+        "The items of this field's list or record use different sides; give every item on one side";
+      for (const [schema, body, at] of [
+        [Schema.Array(Filter), [{ limit: 5 }, { page_size: "6" }], "[1]"],
+        [Schema.Array(Filter), [{ page_size: "6" }, { limit: 5 }], "[0]"],
+        [
+          Schema.Tuple([Filter, Filter]),
+          [{ limit: 5 }, { page_size: "6" }],
+          "[1]",
+        ],
+        [
+          Schema.Record(Schema.String, Filter),
+          { a: { limit: 5 }, b: { page_size: "6" } },
+          '["b"]',
+        ],
+        [
+          Schema.Struct({
+            n: Schema.FiniteFromString,
+            items: Schema.Array(Filter),
+          }),
+          { n: 1, items: [{ limit: 5 }, { page_size: "6" }] },
+          '["items"][1]',
+        ],
+      ] as const)
+        expect(
+          yield* schemaFailure(posted(schema as Schema.Codec<unknown>), {
+            body: body as never,
+          }),
+        ).toBe(`${message}\n  at ${at}["page_size"]`);
+      // Items on one side that the encoded side refuses report its own error instead.
+      expect(
+        yield* schemaFailure(posted(Schema.Array(Filter)), {
+          body: [{ page_size: "many" }, { page_size: "x" }],
+        } as never),
+      ).toBe(
+        'Expected a finite number\n  at [0]["page_size"]\nExpected a finite number\n  at [1]["page_size"]',
+      );
+    }),
+  );
+
+  it.effect("names the kind of a built-in a record cannot rebuild", () =>
+    Effect.gen(function* () {
+      const record = Schema.Record(Schema.String, Schema.Number);
+      expect(
+        yield* schemaFailure(posted(record), {
+          body: new Map([["a", 1]]),
+        } as never),
+      ).toBe("The schema cannot keep this Map as a record");
+      expect(
+        yield* schemaFailure(posted(Schema.Struct({ r: record })), {
+          body: { r: new Set([1]) },
+        } as never),
+      ).toBe('The schema cannot keep this Set as a record\n  at ["r"]');
+    }),
+  );
+
+  it.effect("names no value the caller gave", () =>
+    Effect.gen(function* () {
+      const secret = "s3cret-value";
+      const record = Schema.Record(Schema.String, Schema.String);
+      for (const [schema, body] of [
+        [Filter, { page_size: secret }],
+        [Filter, { limit: secret }],
+        [Filter, { limit: 5, page_size: secret }],
+        [Required, { page_size: secret, count: "1" }],
+        [Schema.Array(Filter), [{ limit: 5 }, { page_size: secret }]],
+        [record, new Map([[secret, secret]])],
+      ] as const) {
+        const message = yield* schemaFailure(
+          posted(schema as Schema.Codec<unknown>),
+          { body: body as never },
+        );
+        expect(message).not.toContain(secret);
+      }
+    }),
+  );
+});

@@ -1332,11 +1332,14 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     value: unknown,
     output: unknown,
   ): Excess.Losses => {
-    const read = readLoss?.(input, value);
-    const wrote = writeLoss?.(value, output);
+    const onRead = readLoss?.(input, value);
+    const onWrite = writeLoss?.(value, output);
     return {
-      lost: Excess.uniquePaths([...(read?.lost ?? []), ...(wrote?.lost ?? [])]),
-      causes: [...(read?.causes ?? []), ...(wrote?.causes ?? [])],
+      lost: Excess.uniquePaths([
+        ...(onRead?.lost ?? []),
+        ...(onWrite?.lost ?? []),
+      ]),
+      causes: [...(onRead?.causes ?? []), ...(onWrite?.causes ?? [])],
     };
   };
   const written = (
@@ -1477,7 +1480,13 @@ const readerForCodec = <S extends Schema.Top, A, R>(
           output,
           strict,
           writers,
-          read: { value, lost: lostByRead, refused, ambiguity, causes: read },
+          read: {
+            value,
+            lost: lostByRead,
+            refused,
+            ambiguity,
+            causes: causesByRead,
+          },
         }): Written<A> => {
           // A field more than one comparison reports is named once.
           const isHeld = (path: Excess.Path) =>
@@ -1519,7 +1528,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
               : [
                   ...Excess.nameCauses([ast], given, all),
                   ...rebuilt.causes,
-                  ...(read ?? []),
+                  ...(causesByRead ?? []),
                 ];
           if (dropped.length === 0) return { output, lost, causes, ambiguity };
           const failure = writeFailure(ast, dropped);
@@ -1792,24 +1801,22 @@ const encodeWith = <S extends Schema.Top, A, R, B, E, R2>(
   }
   const read = readerForCodec(contract, codec, undefined, canonicalJson);
   return (input: Input<S>) =>
-    Effect.flatMap(
-      publicRead(read(input)),
-      ({ output, ambiguity, ...reading }) =>
-        Effect.flatMap(
-          refuseLost(contract, reading),
-          (): Effect.Effect<B, E | Schema.SchemaError, R2> =>
-            ambiguity === undefined
-              ? finish(output)
-              : Effect.mapError(finish(output), (failure) => {
-                  const cause =
-                    failure instanceof Error ? failure.cause : undefined;
-                  return isWriterError(cause) &&
-                    isBodyWriteError(cause) &&
-                    failsAtAmbiguity(ambiguity, cause.path)
-                    ? publicAmbiguity(ambiguity)
-                    : failure;
-                }),
-        ),
+    Effect.flatMap(publicRead(read(input)), ({ output, ambiguity, ...loss }) =>
+      Effect.flatMap(
+        refuseLost(contract, loss),
+        (): Effect.Effect<B, E | Schema.SchemaError, R2> =>
+          ambiguity === undefined
+            ? finish(output)
+            : Effect.mapError(finish(output), (failure) => {
+                const cause =
+                  failure instanceof Error ? failure.cause : undefined;
+                return isWriterError(cause) &&
+                  isBodyWriteError(cause) &&
+                  failsAtAmbiguity(ambiguity, cause.path)
+                  ? publicAmbiguity(ambiguity)
+                  : failure;
+              }),
+      ),
     );
 };
 
