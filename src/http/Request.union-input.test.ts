@@ -3813,3 +3813,221 @@ describe("values at the edge of the known alternatives", () => {
     );
   });
 });
+
+/** A oneOf query group whose first member checks `c`, stacked after a sibling, and its checks. */
+const countedOneOf = () => {
+  const runs: Array<number> = [];
+  const c = Schema.optionalKey(
+    Schema.FiniteFromString.check(
+      Schema.makeFilter((value) => {
+        runs.push(value);
+        return true;
+      }),
+    ),
+  );
+  const union = Schema.Union(
+    [
+      Schema.Struct({
+        c,
+        tags: Schema.optionalKey(Schema.Array(Schema.String)),
+        at: Schema.optionalKey(Schema.Date),
+        // Its decoded side is an `Option`, which is not plain data.
+        note: Schema.optionalKey(
+          Schema.fromJsonString(
+            Schema.OptionFromNullOr(
+              Schema.Struct({ text: Schema.optionalKey(Schema.String) }),
+            ),
+          ),
+        ),
+        bytes: Schema.optionalKey(Schema.Uint8ArrayFromBase64),
+      }).pipe(Schema.encodeKeys({ c: "c_w" })),
+      Schema.Struct({ d: Schema.String, b: Schema.StringFromBase64 }).pipe(
+        Schema.encodeKeys({ d: "d_w", b: "b_w" }),
+      ),
+    ],
+    { mode: "oneOf" },
+  );
+  // The sibling takes `b_w`, which the union's first member does not state.
+  const sibling = Schema.Struct({ b: Schema.String }).pipe(
+    Schema.encodeKeys({ b: "b_w" }),
+  );
+  return { runs, request: stacked(sibling, union) };
+};
+
+/** A oneOf whose members both read a value with no fields. */
+const EitherOptional = Schema.Union(
+  [
+    Schema.Struct({ a: Schema.optionalKey(Schema.String) }),
+    Schema.Struct({ b: Schema.optionalKey(Schema.String) }),
+  ],
+  { mode: "oneOf" },
+);
+
+/** A oneOf whose members both read a value with no fields, one by its constructor default. */
+const EitherByDefault = Schema.Union(
+  [
+    Schema.Struct({
+      a: Schema.optionalKey(Schema.String).pipe(
+        Schema.withConstructorDefault(Effect.succeed("x")),
+      ),
+    }),
+    Schema.Struct({ b: Schema.optionalKey(Schema.String) }),
+  ],
+  { mode: "oneOf" },
+);
+
+/** An `Option` neighbour whose payload holds a key it does not state, which fails the strict pass. */
+const opaqueNeighbour = {
+  schema: Schema.Option(Schema.Struct({ a: Schema.String })),
+  value: () => Option.some({ a: "x", extra: 1 }),
+};
+
+// Under a oneOf, the value without its unstated and undefined-valued keys is constructed first, to
+// find an ambiguity, only where it holds an object or list with no fields at any depth, also inside
+// a value that is not plain data, as only such a value can read as ambiguous. Elsewhere it is
+// constructed only where the value as given fails, as on 0.19.0, whose runs these are.
+// https://github.com/viell-dev/slop-effect-schema-http/issues/331
+describe("constructor runs of a oneOf beside a key it does not state", () => {
+  it.effect("constructs a oneOf as often as before beside a stray key", () =>
+    Effect.gen(function* () {
+      for (const [query, suffix, count] of [
+        [{ b_w: "q", c: 2 }, "", 4],
+        [{ b_w: "q", c: 2, stray: "1" }, "", 5],
+        [{ b_w: "q", c: 2, d: undefined }, "", 5],
+        // A `Date` is not plain data and holds no field.
+        [
+          { b_w: "q", c: 2, at: new Date(0), stray: "1" },
+          "&at=1970-01-01T00%3A00%3A00.000Z",
+          5,
+        ],
+        // Nor does what this `Some` holds, once looked into.
+        [
+          { b_w: "q", c: 2, note: Option.some({ text: "n" }), stray: "1" },
+          "&note=%7B%22text%22%3A%22n%22%7D",
+          5,
+        ],
+      ] as const) {
+        const { runs, request } = countedOneOf();
+        expect(yield* urlOf(request, { query } as never)).toBe(
+          `/x?b_w=q&c_w=2${suffix}`,
+        );
+        expect(runs).toEqual(Array<number>(count).fill(2));
+      }
+    }),
+  );
+
+  // Decided: a value that can read as ambiguous is constructed without the keys it does not state
+  // before it is constructed as given, so its checks run once more than on 0.19.0.
+  it.effect(
+    "constructs a oneOf once more where it may hold a value with no fields",
+    () =>
+      Effect.gen(function* () {
+        for (const [query, suffix, count] of [
+          [{ b_w: "q", c: 2, tags: [] }, "", 4],
+          [{ b_w: "q", c: 2, tags: [], stray: "1" }, "", 6],
+          // The empty payload inside the `Some`, though the `Some` is not plain data.
+          [
+            { b_w: "q", c: 2, note: Option.some({}), stray: "1" },
+            "&note=%7B%7D",
+            6,
+          ],
+          // Bytes count as possibly holding one, as their indexes are not listed.
+          [
+            { b_w: "q", c: 2, bytes: new Uint8Array([1]), stray: "1" },
+            "&bytes=AQ%3D%3D",
+            6,
+          ],
+        ] as const) {
+          const { runs, request } = countedOneOf();
+          expect(yield* urlOf(request, { query } as never)).toBe(
+            `/x?b_w=q&c_w=2${suffix}`,
+          );
+          expect(runs).toEqual(Array<number>(count).fill(2));
+        }
+      }),
+  );
+
+  it.effect(
+    "still refuses a value with no fields that two members read beside a stray key",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Struct({
+          f: EitherOptional,
+          n: Schema.String,
+        }).pipe(Schema.encodeKeys({ n: "N_w" }));
+        for (const body of [
+          { f: { stray: 1 }, n: "x" },
+          { f: {}, N_w: "x", zz: 1 },
+          { f: { a: undefined }, n: "x" },
+        ])
+          expect(yield* schemaFailure(post(schema), { body } as never)).toBe(
+            'Expected exactly one member to match\n  at ["f"]',
+          );
+      }),
+  );
+
+  // Each value is empty once its undefined-valued keys are left out, below a field, a list item or
+  // a record entry, while an opaque neighbour's key fails the strict pass.
+  it.effect(
+    "still refuses a value with no fields below the top level beside an opaque neighbour",
+    () =>
+      Effect.gen(function* () {
+        const unset = { a: undefined, b: undefined };
+        for (const [g, value, at] of [
+          [Schema.Struct({ f: EitherByDefault }), { f: unset }, '["g"]["f"]'],
+          [Schema.Array(EitherByDefault), [unset], '["g"][0]'],
+          [
+            Schema.Record(Schema.String, EitherByDefault),
+            { k: unset },
+            '["g"]["k"]',
+          ],
+        ] as const) {
+          const schema = Schema.Struct({
+            w: Schema.Struct({ o: opaqueNeighbour.schema }),
+            g,
+          });
+          const body = { w: { o: opaqueNeighbour.value() }, g: value };
+          expect(yield* schemaFailure(post(schema), { body } as never)).toBe(
+            `Expected exactly one member to match\n  at ${at}`,
+          );
+        }
+      }),
+  );
+
+  // Looking for such a value takes no stack and visits each object once, however the value nests.
+  it.effect(
+    "prepares a deep or cyclic value beside a key the schema does not state",
+    () =>
+      Effect.gen(function* () {
+        const schema = Schema.Struct({
+          blob: Schema.Unknown,
+          f: EitherOptional,
+          o: opaqueNeighbour.schema,
+        });
+        const request = Request.get("").pipe(
+          Request.path(schema, () => "/sent"),
+        );
+        let chain: unknown = { leaf: 1 };
+        let list: unknown = [1];
+        for (let depth = 0; depth < 20_000; depth++) {
+          chain = { next: chain };
+          list = [list];
+        }
+        const cycle: Record<string, unknown> = { leaf: 1 };
+        cycle["self"] = cycle;
+        cycle["list"] = [cycle];
+        for (const blob of [chain, list, cycle])
+          for (const unstated of [{ zz: 1 }, { limit: undefined }])
+            expect(
+              yield* urlOf(request, {
+                path: {
+                  blob,
+                  f: { a: "x" },
+                  o: opaqueNeighbour.value(),
+                  ...unstated,
+                },
+              } as never),
+            ).toBe("/sent");
+      }),
+  );
+});

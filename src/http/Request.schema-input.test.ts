@@ -3022,3 +3022,130 @@ describe("a refusal says why it cannot keep a field", () => {
     }),
   );
 });
+
+/** A number whose check records every value it reads. */
+const counting = () => {
+  const runs: Array<number> = [];
+  const Counted = Schema.Number.check(
+    Schema.makeFilter((value) => {
+      runs.push(value);
+      return true;
+    }),
+  );
+  return { runs, Counted };
+};
+
+/** What a request sends for the value: its JSON body, or the value its path is rendered from. */
+const prepared = (schema: Schema.Top, input: object, kind: "body" | "path") => {
+  if (kind === "body")
+    return Effect.map(
+      bodyOf(posted(schema as never), { body: input } as never),
+      (text) => JSON.parse(text!) as unknown,
+    );
+  let output: unknown;
+  const request = Request.get("").pipe(
+    Request.path(schema as never, (value) => {
+      output = value;
+      return "/sent";
+    }),
+  );
+  return Effect.map(compile(request, { path: input } as never), () => output);
+};
+
+// A strict read of a value's exposed spelling runs only where the read of its normalised value does
+// not write. These are 0.19.0's runs; 0.20.0 also read the exposed value up front, beside any key
+// the schema does not state, and ran a check once more.
+// https://github.com/viell-dev/slop-effect-schema-http/issues/331
+describe("check runs beside a key the schema does not state", () => {
+  const Owner = Schema.Struct({ owner: Schema.String }).pipe(
+    Schema.encodeKeys({ owner: "OWNER_w" }),
+  );
+  for (const kind of ["body", "path"] as const) {
+    it.effect(
+      `runs a check as often as before beside a renamed struct with a stray key, ${kind}`,
+      () =>
+        Effect.gen(function* () {
+          const { runs, Counted } = counting();
+          const schema = Schema.Struct({ c: Counted, b: Owner });
+          expect(
+            yield* prepared(schema, { c: 1, b: { OWNER_w: "x", zz: 1 } }, kind),
+          ).toEqual({ c: 1, b: { OWNER_w: "x" } });
+          expect(runs).toEqual([1, 1, 1]);
+        }),
+    );
+
+    it.effect(
+      `runs a check as often as before beside a union member with a stray key, ${kind}`,
+      () =>
+        Effect.gen(function* () {
+          const { runs, Counted } = counting();
+          const schema = Schema.Struct({
+            c: Counted,
+            u: Schema.Union([
+              Schema.Struct({ a: Schema.String }),
+              Schema.Struct({ b: Schema.String }),
+            ]),
+          });
+          expect(
+            yield* prepared(schema, { c: 1, u: { b: "x", zz: 1 } }, kind),
+          ).toEqual({ c: 1, u: { b: "x" } });
+          expect(runs).toEqual([1, 1]);
+          runs.length = 0;
+          // Its renamed member is chosen the same way, with the same runs as the struct above.
+          const renamed = Schema.Struct({
+            c: Counted,
+            b: Schema.Union([Owner, Schema.Struct({ id: Schema.String })]),
+          });
+          expect(
+            yield* prepared(
+              renamed,
+              { c: 1, b: { OWNER_w: "x", zz: 1 } },
+              kind,
+            ),
+          ).toEqual({ c: 1, b: { OWNER_w: "x" } });
+          expect(runs).toEqual([1, 1, 1]);
+        }),
+    );
+  }
+
+  // Decided: a loose read that fails on a value holding a key the schema does not state is tried
+  // once more without that key, which may be what failed it, so a decoder runs once more there.
+  it.effect(
+    "reads a value once more where its loose read fails beside a stray key",
+    () =>
+      Effect.gen(function* () {
+        const reads: Array<string> = [];
+        const Limit = Schema.String.pipe(
+          Schema.decodeTo(Schema.String, {
+            decode: SchemaGetter.transform((text) => {
+              reads.push(text);
+              return text;
+            }),
+            encode: SchemaGetter.transform((text) => text),
+          }),
+          Schema.decodeTo(Schema.FiniteFromString),
+        );
+        // `token` takes the value `limit` cannot read, under the same wire name.
+        const request = stacked(
+          Schema.Struct({ limit: Schema.optionalKey(Limit) }).pipe(
+            Schema.encodeKeys({ limit: "page_size" }),
+          ),
+          Schema.Struct({ token: Schema.StringFromBase64 }).pipe(
+            Schema.encodeKeys({ token: "page_size" }),
+          ),
+        );
+        expect(
+          yield* urlOf(request, { query: { page_size: "eA==" } } as never),
+        ).toBe("/x?page_size=eA%3D%3D");
+        expect(reads).toEqual(["eA==", "eA=="]);
+        reads.length = 0;
+        expect(
+          yield* urlOf(request, {
+            query: { page_size: "eA==", stray: "1" },
+          } as never),
+        ).toBe("/x?page_size=eA%3D%3D");
+        // 0.19.0 read it three times here.
+        expect(reads).toEqual(["eA==", "eA==", "eA==", "eA=="]);
+      }),
+  );
+});

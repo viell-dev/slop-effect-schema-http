@@ -149,16 +149,20 @@ const arrayIndex = (key: PropertyKey): number | undefined => {
     : undefined;
 };
 
+/**
+ * Whether an own key offers a parser a field: a list's index or an object's enumerable key, holding
+ * something other than `undefined`.
+ */
+export const definesField = (value: object, key: PropertyKey): boolean =>
+  (Array.isArray(value)
+    ? arrayIndex(key) !== undefined
+    : Object.prototype.propertyIsEnumerable.call(value, key)) &&
+  (value as Record<PropertyKey, unknown>)[key] !== undefined;
+
 /** The fields offered to a parser. Array metadata and holes do not supply cells. */
 export const hasDefinedFields = (value: unknown): boolean =>
   isObject(value) &&
-  Reflect.ownKeys(value).some(
-    (key) =>
-      (Array.isArray(value)
-        ? arrayIndex(key) !== undefined
-        : Object.prototype.propertyIsEnumerable.call(value, key)) &&
-      value[key] !== undefined,
-  );
+  Reflect.ownKeys(value).some((key) => definesField(value, key));
 
 /** A value's own keys with their descriptors, each read once, in the order the value gives them. */
 interface OwnDescriptors {

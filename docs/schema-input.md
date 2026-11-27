@@ -192,7 +192,11 @@ into, as an `Option` is. It has these consequences:
   never counted as lost. A value that middleware or a transformation puts in the caller's place, as
   `Schema.catchDecoding` does, is the schema's own reading.
 - **Defaults, checks, decoders and services can run more than once**, because a later route can be
-  tried after one that lost a field. Routes that read one field read it once.
+  tried after one that lost a field or failed. Routes that read one field read it once. Beside a key
+  the schema does not state, or a key set to `undefined`, a read runs again only to decide whether
+  the value is kept or refused, as [a stripped
+  key](#a-key-no-member-states-is-stripped-as-a-struct-strips-it) and [a
+  oneOf](#a-fieldless-value-must-match-exactly-one-member-under-oneof) describe.
 - **A refusal names every field it cannot keep, at the innermost level.** Where one check finds a
   whole field lost and another finds a field inside it lost, only the inner one is named. Each item
   that cannot be kept is named on its own: under `Schema.Array(Filter)`,
@@ -401,6 +405,18 @@ enclosing `anyOf` takes the first complete reading. An enclosing `oneOf` needs e
 reading. If none reads the value, the failure names the ambiguous path and omits the input. This
 applies within optional fields, lists, and query or header groups that receive an empty record
 because the group was omitted or stacked with another binding.
+
+To find an ambiguity, a value that holds an unstated or undefined-valued key is constructed without
+those keys before it is constructed as given, so the constructor's defaults and checks run once more
+there. This happens only under a schema with a `oneOf` union or a suspended schema, which can hold
+one, and only where the value, once those keys are left out, is or holds a plain object or list with
+no fields, since only such a value can read as ambiguous. Such a value is looked for at any depth,
+including content the schema does not describe and the own data fields of a value that is not plain
+data, such as an `Option`, where a read can find it too. Bytes, such as a `Uint8Array`, are not
+looked into and count as possibly holding one. Any other value is constructed without those keys
+only where the value as given fails. Where a `oneOf` whose members can hold a `oneOf` is read member
+by member, every member reads the value, since it needs exactly one complete reading. A later
+member's steps therefore run where an `anyOf` would stop at the first member that reads it.
 
 When a whole struct's decoder reports ambiguity at a named field, preparation can read the field on
 its decoded side. If that succeeds, another field's failure does not make the first field ambiguous.
@@ -623,6 +639,18 @@ preparation does the same, under a struct alone and under a union. A misspelled 
 excess-property check catches such a key in an object literal written in place, but not reliably in
 a value built elsewhere. Validate input of unknown shape against the schema before preparation if an
 unexpected key should be an error.
+
+Leaving such a key out runs no schema step of its own, but a value that holds one, or a key set to
+`undefined`, can be read more than once to decide whether it is kept or refused. Where the value is
+read strictly, as [A union keeps what the caller gave](#a-union-keeps-what-the-caller-gave)
+describes, it is read without those keys first. Where that read fails, or reads the value but cannot
+write it strictly, the value as given is read strictly too. Where the reading that follows fails,
+the value can be read once more without those keys, since they may be what made it fail. A failed
+decode of the whole value is retried this way before the value is read field by field. A JSON body
+whose reading fails is read again from the value without those keys, and that reading is used only
+where it keeps every field. The decoders and checks of each such read run again. Under a `oneOf`,
+the constructor can run once more as well, as [A fieldless value must match exactly one member under
+oneOf](#a-fieldless-value-must-match-exactly-one-member-under-oneof) describes.
 
 Under a union, a key only a member with another tag states is unstated too, because the tag has
 already chosen. With `Comment` and `Reschedule` from [What will be sent](#what-will-be-sent),
