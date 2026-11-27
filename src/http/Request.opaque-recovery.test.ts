@@ -2282,6 +2282,22 @@ const fromUndefined = <S extends Schema.Top>(payload: S) =>
     ),
   );
 
+/** A hand-written codec that can omit its key, as OptionFromOptional's encoder does. */
+const optionalKey = <S extends Schema.Top>(payload: S) =>
+  Schema.optional(payload).pipe(
+    Schema.decodeTo(
+      Schema.Option(Schema.toType(payload)),
+      SchemaTransformation.transformOptional<
+        Option.Option<S["Type"]>,
+        S["Type"]
+      >({
+        decode: (value) =>
+          Option.some(Option.flatMap(value, Option.fromUndefinedOr)),
+        encode: (value) => Option.flatMap(value, (some) => some),
+      }),
+    ),
+  );
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/334
 describe("a codec only the writer follows keeps or refuses its payload's fields", () => {
   const TaggedOwner = Schema.TaggedStruct("A", Owner.fields);
@@ -2593,22 +2609,6 @@ describe("a codec only the writer follows keeps or refuses its payload's fields"
         expect(failure.message).toContain('["held"]["value"]["limit"]');
       }),
   );
-
-  /** A hand-written codec that can omit its key, as OptionFromOptional's encoder does. */
-  const optionalKey = <S extends Schema.Top>(payload: S) =>
-    Schema.optional(payload).pipe(
-      Schema.decodeTo(
-        Schema.Option(Schema.toType(payload)),
-        SchemaTransformation.transformOptional<
-          Option.Option<S["Type"]>,
-          S["Type"]
-        >({
-          decode: (value) =>
-            Option.some(Option.flatMap(value, Option.fromUndefinedOr)),
-          encode: (value) => Option.flatMap(value, (some) => some),
-        }),
-      ),
-    );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/364
   it.effect(
