@@ -1317,9 +1317,14 @@ const isIntegerKey = (key: PropertyKey): boolean => {
   );
 };
 
+/**
+ * Whether `wire` is the very node `toEncoded` returns for `decoded`, as `Schema.encodeKeys` builds
+ * each wire field. Effect memoizes `toEncoded`, suspensions included, so a suspended field pairs only
+ * with its own wire field. Checked on Effect 4.0.7 and 4.1.5; revisit when a peer update stops
+ * memoizing it.
+ */
 const projectsTo = (decoded: Ast, wire: Ast): boolean =>
-  SchemaAST.toEncoded(decoded) === wire ||
-  (decoded._tag === "Suspend" && wire._tag === "Suspend");
+  SchemaAST.toEncoded(decoded) === wire;
 
 /** A rename's pairs, and the names it could have written from several decoded fields. */
 export interface RenamePairing {

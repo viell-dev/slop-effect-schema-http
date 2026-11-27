@@ -1133,6 +1133,27 @@ it("does not pair a reordered wire name by position after a loose write", () => 
   ).toEqual([]);
 });
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/361
+it("pairs each suspended field under an integer-like name with its own wire field", () => {
+  const left = Schema.suspend(() => Schema.String);
+  const right = Schema.suspend(() => Schema.Number);
+  const row = Schema.Struct({ left, right }).pipe(
+    Schema.encodeKeys({ left: "1", right: "0" }),
+  );
+  const pairing = Excess.renamedPairs(row.ast, row.ast.encoding![0]!);
+  expect(pairing?.pairs.get("1")).toBe(left.ast);
+  expect(pairing?.pairs.get("0")).toBe(right.ast);
+  expect(pairing?.ambiguous.size).toBe(0);
+  // One suspension given as both fields has one wire side, so either could be written at each name.
+  const twice = Schema.Struct({ left, right: left }).pipe(
+    Schema.encodeKeys({ left: "1", right: "0" }),
+  );
+  const shared = Excess.renamedPairs(twice.ast, twice.ast.encoding![0]!);
+  expect(shared?.pairs.size).toBe(0);
+  expect(shared?.ambiguous.get("0")).toEqual([left.ast, left.ast]);
+  expect(shared?.ambiguous.get("1")).toEqual([left.ast, left.ast]);
+});
+
 it("does not pair a reordered decoded name from a handwritten link", () => {
   const field = Schema.optionalKey(Schema.String);
   const payload = Schema.Struct({ B: field, zero: field }).pipe(

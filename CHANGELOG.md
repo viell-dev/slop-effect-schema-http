@@ -199,14 +199,40 @@ gives the compatible fixes, with a checked example of a `Schema.Error` body that
   to `"1"` and `"0"`, can each be the one written under either name. 0.20.0 refused a wrapper at
   such a name, but with `Box = Struct({ held: OptionFromNullOr(P) })` a `None` given at `held` below
   `"1"` was sent as `{"held":{}}`. Each field's schema is now followed below the name, so that
-  refuses, also through a list, tuple, record, union, nested rename, suspension or renamed class.
-  Where none of the fields holds an Option codec at the position, an `Option` keeps the schema's own
-  reading. Give the field on its decoded side, as `left`, or its encoded payload.
-- **Breaking:** refuse a native `Option` in a suspended field of a renamed struct below another
-  renamed struct ([#344](https://github.com/viell-dev/slop-effect-schema-http/issues/344)). With
+  refuses, also through a list, tuple, record, union, nested rename, suspension or renamed class,
+  and below a suspended field, which 0.20.0 took as one it could not tell apart from the others
+  ([#361](https://github.com/viell-dev/slop-effect-schema-http/issues/361)). Where none of the
+  fields holds an Option codec at the position, an `Option` keeps the schema's own reading. Give the
+  field on its decoded side, as `left`, or its encoded payload.
+- **Breaking:** refuse a native `Option` in a suspended field of a renamed struct whose wire side
+  Effect builds again ([#344](https://github.com/viell-dev/slop-effect-schema-http/issues/344)), as
+  it does below a renamed ancestor and below the first level of a recursive renamed struct. With
   `held: suspend(() => OptionFromNullOr(P))` in a struct renamed below a renamed ancestor, a `None`
-  given at `held` on the encoded side was sent as `{"held":{}}`; it now refuses, as it did without
-  the ancestor's rename. Give the field on its decoded side or its encoded payload.
+  given at `held` on the encoded side was sent as `{"held":{}}`. With
+  `Node = Struct({ held: OptionFromNullOr(P), kids: Array(suspend(() => Node)) })` renamed by
+  `encodeKeys({ held: "h" })`, a `None` at `h` two or more levels down, as in
+  `{ h: null, kids: [{ h: null, kids: [{ h: Option.none(), kids: [] }] }] }`, was sent as `"h":{}`,
+  with no ancestor rename. Both now refuse, as a `None` one level down already did. Give the field
+  on its decoded side or its encoded payload.
+- **Message change:** a `Some` given on the encoded side in those positions was refused already,
+  naming the caller's field, as in
+  `The schema cannot keep this field with the rest of the value at ["row"]["1"]`. It now names the
+  decoded field, as in `Missing key at ["row"]["left"]`, as a wrapper given at a renamed key does
+  ([#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328),
+  [#344](https://github.com/viell-dev/slop-effect-schema-http/issues/344)). Code that matches the
+  text of these refusals needs updating.
+- Pair each suspended field of a struct renamed to integer-like names with its own wire field
+  ([#361](https://github.com/viell-dev/slop-effect-schema-http/issues/361)). 0.20.0 took every
+  suspended field as one that could have been written under any such name. With
+  `left: suspend(() => Any)` and `right: suspend(() => OptionFromNullOr(P))` renamed to `"1"` and
+  `"0"`, `{ "1": Option.some(1), "0": null }` refused with `Expected no excess property at ["0"]`;
+  it now sends the `Option` as `Any` reads it, as 0.19.0 did. A key that only the other field's
+  decoded side states is left out, as beside a field that is not suspended, where 0.20.0 refused
+  with `The schema cannot keep this field with the rest of the value`. Preparing a recursive schema
+  through such fields took time exponential in the value's depth, about 4 s at depth 20 for a tree
+  with keys `"0"` and `"1"`, and ran out of memory at 24; it now takes tens of milliseconds there,
+  as on 0.19.0. A wrapper where the field written there holds an Option codec still refuses, and one
+  suspension given as two fields still has one wire side, so a rename cannot tell them apart.
 
 ## 0.20.0 — 2026-11-27
 

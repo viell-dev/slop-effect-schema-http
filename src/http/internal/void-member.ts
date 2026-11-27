@@ -366,39 +366,27 @@ const origins = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
 const originOf = (ast: SchemaAST.AST): SchemaAST.AST => origins.get(ast) ?? ast;
 
 /**
- * Whether `wire` is the projection of `decoded`: the very node `toEncoded` returns for it.
+ * The child of `layer` that the child of `reference` under `key` is the projection of. Where
+ * `layer` is written as `reference` by its last encoding, only a rename's own pairing says which,
+ * by identity with `toEncoded`'s node, and any other transformation pairs nothing. Otherwise
+ * `reference` is a projection, which keeps the keys. Identity alone does not say which child a
+ * projection came from, as unrelated children can share one, so no other child is guessed.
  *
  * @remarks
- * Effect builds some wire schemas, such as `Schema.encodeKeys`'s, from `toEncoded` projections of
- * the decoded fields, which drop every Option codec. Effect memoizes `toEncoded`, so a projected
- * node is the very node `toEncoded` returns for its decoded counterpart. Checked on Effect 4.0.7
- * and 4.1.6. Revisit when a peer update stops memoizing it. A guard's copies are compared as the
- * nodes they stand for. A projected suspension is a new one each time, and its target may not
- * exist yet, so a suspension stands for one in the same place; its target is paired when read.
- */
-const projects = (decoded: SchemaAST.AST, wire: SchemaAST.AST): boolean =>
-  SchemaAST.toEncoded(originOf(decoded)) === originOf(wire) ||
-  (decoded._tag === "Suspend" && wire._tag === "Suspend");
-
-/**
- * The child of `layer` that `target`, the child of `reference` under `key`, is the projection of.
- * Where `layer` is written as `reference` by its last encoding, only a rename's own pairing says
- * which, and any other transformation pairs nothing. Otherwise `reference` is a projection, which
- * keeps the keys. Identity alone does not say which child a projection came from, as unrelated
- * children can share one, so no other child is guessed.
- *
- * @remarks
- * Below a projection the child under the same key is taken without comparing it with `target`.
+ * Below a projection the child under the same key is taken without comparing their nodes.
  * `toEncoded` of a projected node that holds a suspension builds new copies of every node above
- * it, since Effect builds a new suspension each time, so `target` need not be the node `toEncoded`
- * returns for that child. Each layer is the projection of the next or written as it, from the
- * rename where the layers start, so the keys still pair them.
+ * it, since Effect builds a new suspension each time, so the child of `reference` need not be the
+ * node `toEncoded` returns for that of `layer`. The keys still pair them because each layer is the
+ * projection of the next or written as it, down from a rename's own pairing. So layers start only
+ * where a node is written as its wire node by its last encoding, where only a rename pairs
+ * anything, and they continue into a suspension's target only where the suspension has no encoding
+ * of its own. A suspension written as another by a transformation says nothing of how their
+ * targets' children correspond.
  */
 const counterpart = (
   layer: SchemaAST.AST,
   reference: SchemaAST.AST,
   key: PropertyKey,
-  target: SchemaAST.AST,
 ):
   | SchemaAST.AST
   | { readonly ambiguous: ReadonlyArray<SchemaAST.AST> }
@@ -406,12 +394,9 @@ const counterpart = (
   const decoded = originOf(layer);
   const link = decoded.encoding?.at(-1);
   if (link !== undefined && link.to === originOf(reference)) {
-    const from = classFields(decoded) ?? decoded;
-    const pairing = renamedPairs(from, link);
+    const pairing = renamedPairs(classFields(decoded) ?? decoded, link);
     const ambiguous = pairing?.ambiguous.get(key);
-    if (ambiguous !== undefined) return { ambiguous };
-    const child = pairing?.pairs.get(key);
-    return child !== undefined && projects(child, target) ? child : undefined;
+    return ambiguous !== undefined ? { ambiguous } : pairing?.pairs.get(key);
   }
   return childrenOf(layer).find((child) => child.key === key)?.type;
 };
@@ -443,14 +428,32 @@ const interning = <A extends object>() => {
 const internLayers = interning<SchemaAST.AST>();
 const internAlternatives = interning<Layers>();
 
-/** One projection per set of the same alternatives, each interned, without empty ones. */
+/**
+ * The layers without those the next one makes redundant. A layer with no encoding of its own before
+ * another such layer is that one's projection: it holds no Option codec and writes no name, and the
+ * keys pair through it unchanged. One before a layer with an encoding stays, as a rename pairs only
+ * with its own wire struct. Effect builds a new copy of a recursive schema's wire side for each
+ * level, so keeping every projection would add a layer per level of a value.
+ */
+const withoutProjections = (layers: Layers): Layers =>
+  layers.filter(
+    (layer, at) =>
+      at === layers.length - 1 ||
+      layer.encoding !== undefined ||
+      layers[at + 1]!.encoding !== undefined,
+  );
+
+/**
+ * One projection per sequence of alternatives, each interned, without repeats or empty ones. The
+ * same alternatives found in another order intern apart, which only costs a cache entry.
+ */
 const internProjection = (
   alternatives: ReadonlyArray<Layers>,
 ): Projection | undefined =>
   internAlternatives([
     ...new Set(
       alternatives.flatMap((layers) => {
-        const interned = internLayers(layers);
+        const interned = internLayers(withoutProjections(layers));
         return interned === undefined ? [] : [interned];
       }),
     ),
@@ -466,61 +469,60 @@ interface Projected {
  *
  * @remarks
  * Where a rename could have written several fields under `key`, each of them continues as its own
- * alternative, and the wrapper is refused if any of them may unwrap an Option, here or below.
+ * alternative, and the wrapper is refused if any of them may unwrap an Option, here or below. No
+ * layer above such a rename pairs anything: it is written as the renamed struct, which is no wire
+ * struct a rename could pair with.
  */
 const projectChild = (
-  alternatives: Projection | undefined,
+  projection: Projection | undefined,
   wire: SchemaAST.AST,
   key: PropertyKey,
-  child: SchemaAST.AST,
 ): Projected => {
   const next: Layers[] = [];
   let unwraps = false;
-  /** Follow `layers` below `above`, whose child under `key` is `below`, after the nodes `found`. */
-  const follow = (
-    layers: Layers,
-    above: SchemaAST.AST,
-    below: SchemaAST.AST,
-    found: Layers,
-  ): void => {
-    const nodes = [...found];
-    let reference = above;
-    let target = below;
-    for (const [at, layer] of layers.entries()) {
-      const decoded = counterpart(layer, reference, key, target);
+  for (const layers of projection ?? []) {
+    const nodes: SchemaAST.AST[] = [];
+    let candidates: ReadonlyArray<SchemaAST.AST> | undefined;
+    let reference = wire;
+    for (const layer of layers) {
+      const decoded = counterpart(layer, reference, key);
       if (decoded === undefined) break;
       if ("ambiguous" in decoded) {
-        // Any of these fields could be the one written here, so each continues as an alternative,
-        // and the wrapper is refused if any of them may unwrap an Option. Here a suspension's
-        // target is not known yet.
-        for (const type of decoded.ambiguous) {
-          const chain = chainOf(type);
-          unwraps ||= type._tag === "Suspend" || chain.unwraps;
-          follow(layers.slice(at + 1), layer, type, [...nodes, ...chain.nodes]);
-        }
-        return;
+        candidates = decoded.ambiguous;
+        break;
       }
       const chain = chainOf(decoded);
       nodes.push(...chain.nodes);
       unwraps ||= chain.unwraps;
       reference = layer;
-      target = decoded;
     }
-    next.push(nodes);
-  };
-  for (const layers of alternatives ?? []) follow(layers, wire, child, []);
+    if (candidates === undefined) next.push(nodes);
+    // Any of these fields could be the one written here, so each continues as an alternative,
+    // and the wrapper is refused if any of them may unwrap an Option. Here a suspension's target
+    // is not known yet.
+    else
+      for (const type of candidates) {
+        const chain = chainOf(type);
+        unwraps ||= type._tag === "Suspend" || chain.unwraps;
+        next.push([...nodes, ...chain.nodes]);
+      }
+  }
   return { projection: internProjection(next), unwraps };
 };
 
-/** The layers a projected suspension's target is read with, in each alternative. */
-const projectThunk = (alternatives: Projection | undefined): Projected => {
+/**
+ * The layers a projected suspension's target is read with, in each alternative. A suspension with
+ * an encoding of its own still marks its wire reader as a source where its target unwraps an
+ * Option, as a codec there would, but its target adds no layers (see `counterpart`).
+ */
+const projectThunk = (projection: Projection | undefined): Projected => {
   let unwraps = false;
-  const next = (alternatives ?? []).map((layers) =>
+  const next = (projection ?? []).map((layers) =>
     layers.flatMap((layer) => {
       if (layer._tag !== "Suspend") return [];
       const chain = chainOf(layer.thunk());
       unwraps ||= chain.unwraps;
-      return chain.nodes;
+      return layer.encoding === undefined ? chain.nodes : [];
     }),
   );
   return { projection: internProjection(next), unwraps };
@@ -532,35 +534,35 @@ const projectedCaches = new WeakMap<
 >();
 
 const projectedCache = (
-  alternatives: Projection,
+  projection: Projection,
   position: WrapperPosition,
 ): WeakMap<SchemaAST.AST, SchemaAST.AST> => {
-  let caches = projectedCaches.get(alternatives);
+  let caches = projectedCaches.get(projection);
   if (caches === undefined) {
     caches = {
       source: new WeakMap(),
       rival: new WeakMap(),
       none: new WeakMap(),
     };
-    projectedCaches.set(alternatives, caches);
+    projectedCaches.set(projection, caches);
   }
   return caches[position ?? "none"];
 };
 
 const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
   /**
-   * Visit a node. While reading, `alternatives` hold the decoded nodes whose children `ast`'s
+   * Visit a node. While reading, `projection` holds the decoded nodes whose children `ast`'s
    * children are encoded projections of, so an Option codec dropped by the projection still marks
    * its wire reader as a source.
    */
   const visit = (
     ast: SchemaAST.AST,
     position?: WrapperPosition,
-    alternatives?: Projection,
+    projection?: Projection,
   ): SchemaAST.AST => {
     const cache =
-      alternatives !== undefined
-        ? projectedCache(alternatives, position)
+      projection !== undefined
+        ? projectedCache(projection, position)
         : position === "source"
           ? guardedOptionSources
           : position === "rival"
@@ -570,7 +572,7 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
               : guardedVoids;
     const known = cache.get(ast);
     if (known !== undefined) return known;
-    const rewritten = rewrite(ast, position, alternatives);
+    const rewritten = rewrite(ast, position, projection);
     // Follow unions and suspensions to their actual wire reader. A native Option schema
     // can legitimately take the wrapper as its own value, even inside another Option codec.
     const result =
@@ -588,21 +590,20 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
   const rewrite = (
     ast: SchemaAST.AST,
     position: WrapperPosition,
-    alternatives: Projection | undefined,
+    projection: Projection | undefined,
   ): SchemaAST.AST => {
     /** Visit a child, as a source if it projects a decoded Option codec's wire side. */
     const visitChild = (
       key: PropertyKey,
       child: SchemaAST.AST,
       childPosition?: WrapperPosition,
-    ) => {
-      const projected = projectChild(alternatives, ast, key, child);
-      return visit(
+      projected = projectChild(projection, ast, key),
+    ) =>
+      visit(
         child,
         projected.unwraps ? "source" : childPosition,
         projected.projection,
       );
-    };
     if (!reading && isPlainVoid(ast)) return guardVoid(ast);
     const struct = ast._tag === "Objects";
     const list = ast._tag === "Arrays";
@@ -649,7 +650,7 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
         () => {
           if (target !== undefined) return target;
           // A projected suspension reads the projection of its decoded counterpart's target.
-          const projected = reading ? projectThunk(alternatives) : undefined;
+          const projected = reading ? projectThunk(projection) : undefined;
           return (target = visit(
             ast.thunk(),
             projected?.unwraps === true ? "source" : raw,
@@ -727,15 +728,21 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
           );
     }
     if (!union) return replaceEncoding(ast, encoding);
+    const projected = ast.types.map((_, at) =>
+      projectChild(projection, ast, at),
+    );
     const hasOption =
       reading &&
       ast.types.some(
-        (member, at) =>
-          readsOptionPayload(member) ||
-          projectChild(alternatives, ast, at, member).unwraps,
+        (member, at) => readsOptionPayload(member) || projected[at]!.unwraps,
       );
     const members = mapSame(ast.types, (member, at) =>
-      visitChild(at, member, raw ?? (hasOption ? "rival" : undefined)),
+      visitChild(
+        at,
+        member,
+        raw ?? (hasOption ? "rival" : undefined),
+        projected[at],
+      ),
     );
     if (encoding === ast.encoding && members === ast.types) return ast;
     const rewritten = new SchemaAST.Union(

@@ -232,9 +232,13 @@ each field keeps its own side; a whole union, which this would read member by me
 whose fields cannot be read that way, reports the decoded failure. A relaxed read can use the plain
 payload itself where both sides accept an empty struct and the payload holds none of their fields.
 
-The guard caches the rewritten schema per AST. An observed decode carries a flag in its parse
-options, tests the inputs at the guarded positions, and gives each tried union member a local flag
-so a failed member leaves no note. There is no additional schema parse. A refusal can end
+The guard caches the rewritten schema per AST and, below a rename, per the decoded layers it reads
+it with. Effect builds a new copy of a recursive renamed schema's wire side for each level, so the
+guard rewrites one copy per level of the value it reads. It keeps only the layers that hold an
+encoding and those just before one, so the layers do not grow with depth. Below fields that a rename
+cannot tell apart, each level of recursion adds one alternative. An observed decode carries a flag
+in its parse options, tests the inputs at the guarded positions, and gives each tried union member a
+local flag so a failed member leaves no note. There is no additional schema parse. A refusal can end
 preparation before later callbacks would have run on a lossy reading. A note from a failed read
 inside decoding middleware is kept, so preparation can refuse input even when `Schema.catchDecoding`
 supplies a recovery value.
