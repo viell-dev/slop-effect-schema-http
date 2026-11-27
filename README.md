@@ -19,8 +19,10 @@ family, HTTP version, transport security and host.
 
 It also tests the library against services built on Warded: route tables shaped like real APIs,
 whose handlers answer with the conventions real services use, such as odd statuses, error shapes
-that differ by status, and repeated `Set-Cookie` lines. The tests check what the library decodes
-or refuses of each answer, and the records show what the server did with it on the way. The
+that differ by status, repeated `Set-Cookie` lines, JSONP, challenges and redirects, and whose
+routes match the way such services read a request, such as by forwarded fields or `;` queries.
+The tests check what the library decodes or refuses of each answer, and the records show what the
+server did with it on the way. The
 [hostile suite](https://github.com/viell-dev/slop-effect-schema-http/tree/hostile-servers-test)
 keeps the rest: its own servers write what Hyper does not let a handler write, such as truncated
 replies and malformed status lines, and it imitates many more services with their bodies and
@@ -103,29 +105,32 @@ captures, the way an application reads a record by its id. Each table, route and
 convention it imitates, with synthetic names and data. The consumer side, the library's
 description of the same API, sits beside it.
 
-| Table                                 | What it imitates                                                                                                                                                          |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`parcels.ts`](./src/apis/parcels.ts) | A parcel-tracking API behind an edge proxy: error shapes by status and layer, statuses from 100 to 999, `Set-Cookie` lines with a clearing cookie of the same name, PURGE |
+| Table                                 | What it imitates                                                                                                                                                                                                            |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`parcels.ts`](./src/apis/parcels.ts) | A parcel-tracking API behind an edge proxy: error shapes by status and layer, statuses from 100 to 999, `Set-Cookie` lines with a clearing cookie of the same name, PURGE                                                   |
+| [`reports.ts`](./src/apis/reports.ts) | A CGI-style reporting gateway: a report for a trusted forwarded hop only, `;` queries, JSONP, a Digest challenge, and temporary, permanent, relative, cross-origin and looping redirects, with an archive on another origin |
 
-| File                                                                       | What it checks                                                            |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| [`paths.test.ts`](./src/scenarios/paths.test.ts)                           | Path values, templates and renderers against `exact_path` and `path`      |
-| [`queries.test.ts`](./src/scenarios/queries.test.ts)                       | Query writers against `param_pair` and `param_present`                    |
-| [`methods.test.ts`](./src/scenarios/methods.test.ts)                       | Method helpers and method names against Warded's method conditions        |
-| [`headers.test.ts`](./src/scenarios/headers.test.ts)                       | Header declarations and automatic headers against header conditions       |
-| [`negotiation.test.ts`](./src/scenarios/negotiation.test.ts)               | Automatic `Accept` and declared languages against offer sets              |
-| [`negotiation-edges.test.ts`](./src/scenarios/negotiation-edges.test.ts)   | Wildcards, weights, repeated fields and strict negotiation errors         |
-| [`limits.test.ts`](./src/scenarios/limits.test.ts)                         | Path captures and negotiation field boundaries                            |
-| [`transport.test.ts`](./src/scenarios/transport.test.ts)                   | Version, transport security and host                                      |
-| [`selection.test.ts`](./src/scenarios/selection.test.ts)                   | Variants against ordered routes, fallthrough, fallbacks and errors        |
-| [`raw.node.test.ts`](./src/scenarios/raw.node.test.ts)                     | Requests only the raw provider sends                                      |
-| [`hostile-heads.node.test.ts`](./src/scenarios/hostile-heads.node.test.ts) | Malformed HTTP/1.1 heads, the server's host rules and false lengths       |
-| [`http2-heads.node.test.ts`](./src/scenarios/http2-heads.node.test.ts)     | Malformed HTTP/2 heads, `:authority` against `Host`, split cookies, h2c   |
-| [`http3-heads.node.test.ts`](./src/scenarios/http3-heads.node.test.ts)     | The same heads over HTTP/3                                                |
-| [`head-limits.node.test.ts`](./src/scenarios/head-limits.node.test.ts)     | Head limits over HTTP/2 and HTTP/3, their SETTINGS, negotiation fields    |
-| [`http3.browser.test.ts`](./src/scenarios/http3.browser.test.ts)           | The same conditions over HTTP/3                                           |
-| [`parcels.test.ts`](./src/scenarios/parcels.test.ts)                       | The parcels table through every provider: what the library decodes        |
-| [`parcels.node.test.ts`](./src/scenarios/parcels.node.test.ts)             | What the servers wrote for those answers, through the recording providers |
+| File                                                                       | What it checks                                                                     |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [`paths.test.ts`](./src/scenarios/paths.test.ts)                           | Path values, templates and renderers against `exact_path` and `path`               |
+| [`queries.test.ts`](./src/scenarios/queries.test.ts)                       | Query writers against `param_pair` and `param_present`                             |
+| [`methods.test.ts`](./src/scenarios/methods.test.ts)                       | Method helpers and method names against Warded's method conditions                 |
+| [`headers.test.ts`](./src/scenarios/headers.test.ts)                       | Header declarations and automatic headers against header conditions                |
+| [`negotiation.test.ts`](./src/scenarios/negotiation.test.ts)               | Automatic `Accept` and declared languages against offer sets                       |
+| [`negotiation-edges.test.ts`](./src/scenarios/negotiation-edges.test.ts)   | Wildcards, weights, repeated fields and strict negotiation errors                  |
+| [`limits.test.ts`](./src/scenarios/limits.test.ts)                         | Path captures and negotiation field boundaries                                     |
+| [`transport.test.ts`](./src/scenarios/transport.test.ts)                   | Version, transport security and host                                               |
+| [`selection.test.ts`](./src/scenarios/selection.test.ts)                   | Variants against ordered routes, fallthrough, fallbacks and errors                 |
+| [`raw.node.test.ts`](./src/scenarios/raw.node.test.ts)                     | Requests only the raw provider sends                                               |
+| [`hostile-heads.node.test.ts`](./src/scenarios/hostile-heads.node.test.ts) | Malformed HTTP/1.1 heads, the server's host rules and false lengths                |
+| [`http2-heads.node.test.ts`](./src/scenarios/http2-heads.node.test.ts)     | Malformed HTTP/2 heads, `:authority` against `Host`, split cookies, h2c            |
+| [`http3-heads.node.test.ts`](./src/scenarios/http3-heads.node.test.ts)     | The same heads over HTTP/3                                                         |
+| [`head-limits.node.test.ts`](./src/scenarios/head-limits.node.test.ts)     | Head limits over HTTP/2 and HTTP/3, their SETTINGS, negotiation fields             |
+| [`http3.browser.test.ts`](./src/scenarios/http3.browser.test.ts)           | The same conditions over HTTP/3                                                    |
+| [`parcels.test.ts`](./src/scenarios/parcels.test.ts)                       | The parcels table through every provider: what the library decodes                 |
+| [`parcels.node.test.ts`](./src/scenarios/parcels.node.test.ts)             | What the servers wrote for those answers, through the recording providers          |
+| [`reports.test.ts`](./src/scenarios/reports.test.ts)                       | The reports table through every provider: what each decodes, follows or hands over |
+| [`reports.node.test.ts`](./src/scenarios/reports.node.test.ts)             | Its repeated fields and redirects over HTTP/2 and HTTP/3, as both sides wrote them |
 
 ## Running the suite
 
