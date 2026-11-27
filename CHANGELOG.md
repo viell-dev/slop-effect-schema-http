@@ -5,17 +5,18 @@
 - **Breaking:** read a `Some` through a configured `OptionFromOptionalNullOr`, such as
   `{ onNoneEncoding: null }`, and through codecs competing at one position that share one payload
   schema, such as `Union([OptionFromNullOr(Filter), OptionFromUndefinedOr(Filter)])` or
-  `OptionFromOptionalKey(Filter)` beside `OptionFromNullOr(Filter)`, as `OptionFromNullOr` reads it
+  `OptionFromOptionalKey(Filter)` beside `OptionFromNullOr(Filter)` where the payload has no
+  encoding of its own, as `OptionFromNullOr` reads it
   ([#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312)). With
   `Filter = Union([Struct({ owner }), Struct({ owner, limit })])`, `Some({ owner, limit, stray })`
   under a same-tag union, a list or another `Some` sent `limit` nowhere in 0.19.0, and elsewhere
   refused; it now sends `{ owner, limit }`. A key no member states is left out, so a key `a` beside
   a field `value` and a field only a member ruled out by a literal tag states are now left out, as
-  through `OptionFromNullOr`, where these codecs refused them. A payload that a check changes is
-  still compared with what is written. Codecs competing with different payload schemas keep 0.19.0's
-  reading, which can still leave out `limit` beside a stray key, and so can a configured codec
-  inside another `Some` where the strict attempt fails for another reason. When the cleaned attempt
-  fails, a configured codec's checks now run as often as a built-in codec's.
+  through `OptionFromNullOr`, where `main` refused them; 0.19.0 sent the outer `a` in their place. A
+  payload a check changes after the clean is still refused. Codecs competing with different payload
+  schemas keep 0.19.0's reading, which can still leave out `limit` beside a stray key, and so can a
+  configured codec inside another `Some` where the strict attempt fails for another reason. When the
+  cleaned attempt fails, a configured codec's checks now run as often as a built-in codec's.
 - **Breaking:** refuse a built-in that a struct rebuilds from its own fields
   ([#316](https://github.com/viell-dev/slop-effect-schema-http/issues/316)), as 0.19.0 does for
   records. For example, `{ held: new Date(0) }` under `held: Struct({ a: optionalKey(String) })`,

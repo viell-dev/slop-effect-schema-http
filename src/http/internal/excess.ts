@@ -1744,7 +1744,8 @@ export const optionLoss = (
     if (Option.isOption(given)) {
       const unwrapped = sourceAt(types, looseRead);
       // Codecs with different payloads competing here, and codecs followed by the writer, can
-      // show what the read must hold without proving wire names. Schema.Option remains opaque even when its payload matches.
+      // show what the read must hold without proving wire names. Schema.Option remains opaque
+      // even when its payload matches.
       const source =
         unwrapped ?? (checkWrite ? sourceAt(types, true, true) : undefined);
       const some = ownSome(given);

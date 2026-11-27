@@ -693,15 +693,17 @@ the schema does with it. These are the places where it cannot, and what happens 
   `Some({ owner: "b", limit: "l" })` can send as `{"_tag":"Some","value":{"owner":"b"}}`.
 - Inside a `Some`, a key no member of the payload states is left out before the strict read, through
   every built-in unwrapping codec, including a configured `OptionFromOptionalNullOr`, and between
-  codecs competing at one position when they share one payload schema, or its optional copy as
-  `OptionFromOptionalKey` makes. Codecs competing with different payload schemas could each write
-  the `Some`, so there a relaxed read can still take a narrower member when a stray key defeats the
-  strict read: a same-tag union, a list of unions or a union inside another `Some` can lose `limit`,
-  and a direct union refuses. A configured codec inside another `Some` can lose a field the same way
-  where the strict attempt fails for another reason, such as a record member beside the union or a
-  wire name given in the payload. A loose write can select a wider member through an unwrapping
-  codec. Data already narrowed by the read, a class instance, or a custom writer can fall outside
-  that recovery. Let
+  codecs competing at one position when they share one payload schema, or, for a payload without an
+  encoding of its own, the optional copy `OptionFromOptionalKey` makes of it. Beside
+  `OptionFromOptionalKey`, a payload with its own encoding, such as a renamed struct or a class,
+  stays opaque and can lose `limit` there. Codecs competing with different payload schemas could
+  each write the `Some`, so there a relaxed read can still take a narrower member when a stray key
+  defeats the strict read: a same-tag union, a list of unions or a union inside another `Some` can
+  lose `limit`, and a direct union refuses. A configured codec, alone or in a pair with one payload
+  schema, inside another `Some` can lose a field the same way where the strict attempt fails for
+  another reason, such as a record member beside the union or a wire name given in the payload. A
+  loose write can select a wider member through an unwrapping codec. Data already narrowed by the
+  read, a class instance, or a custom writer can fall outside that recovery. Let
   `Choice = Union([Struct({ owner: String }), Struct({ owner: String, limit: String })])`. Inside
   another `Some`, `Union([OptionFromNullOr(Choice), Struct({ z: String })])` can lose `limit` on a
   loose write even without a stray key. Choose the intended member directly or validate and supply

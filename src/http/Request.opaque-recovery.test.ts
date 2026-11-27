@@ -2153,6 +2153,28 @@ describe("configured and same-payload Option codecs read a Some as the built-in 
       }),
   );
 
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/312
+  it.effect(
+    "leaves a payload with its own encoding opaque beside OptionFromOptionalKey",
+    () =>
+      Effect.gen(function* () {
+        const P = Schema.Struct({ f: Filter }).pipe(
+          Schema.encodeKeys({ f: "F" }),
+        );
+        const held = Schema.Union([
+          Schema.OptionFromNullOr(P),
+          Schema.OptionFromOptionalKey(P),
+        ]);
+        const failure = yield* Effect.flip(
+          json(Schema.Struct({ held, filter: Filter }), {
+            held: Option.some({ f: wide, stray: "x" }),
+            filter,
+          } as never),
+        );
+        expect(failure.message).toContain('["held"]["value"]["f"]["limit"]');
+      }),
+  );
+
   it.effect("checks a cleaned payload's write as the built-in codecs do", () =>
     Effect.gen(function* () {
       const Payload = Schema.Struct({

@@ -203,9 +203,9 @@ A native `Some` whose codec writes the payload directly, such as `Schema.OptionF
 expose the payload's declared fields. Preparation follows plain structural parents, including
 renamed structs and plain constructor input to a stated class. A same-named wire field of a rename
 is the projection of its decoded field. Independent alternatives still count. More than one possible
-Option codec makes the position opaque unless they share one payload schema, or its optional copy,
-since whichever Effect writes through, the payload is read the same way. A suspension is resolved
-when a value reaches it.
+Option codec makes the position opaque unless they share one payload schema, or its optional copy
+where the payload has no encoding of its own, since whichever Effect writes through, the payload is
+read the same way. A suspension is resolved when a value reaches it.
 
 Preparation copies a payload only to remove keys that neither side of any remaining member states. A
 member ruled out by its literal tag supplies no names, and an open alternative can hold any key.
