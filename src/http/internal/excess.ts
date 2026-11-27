@@ -1840,30 +1840,64 @@ export const holdsNothing = (value: unknown): boolean =>
   value === null || (isObject(value) && !hasDefinedFields(value));
 
 /**
- * Where a value holds any of these targets, through plain data only, so finding them runs no
- * accessor. A list's cells are named by their indexes, and an object held in several places is
- * searched once.
+ * The nodes that can read a value where these do: every step of each one's encoding, a union's
+ * members and a suspension's target, as a reading of either side uses them.
+ */
+const readersOf = (types: ReadonlyArray<Ast>): ReadonlyArray<Ast> => {
+  const readers = new Set<Ast>();
+  const add = (ast: Ast): void => {
+    if (readers.has(ast)) return;
+    readers.add(ast);
+    for (const { to } of ast.encoding ?? []) add(to);
+    if (ast._tag === "Union") ast.types.forEach(add);
+    else if (ast._tag === "Suspend") add(ast.thunk());
+  };
+  types.forEach(add);
+  return [...readers];
+};
+
+/**
+ * Where a value read with `schema` holds any of these targets, at a place where one of its readers
+ * `takes` it, and the whole value if a target is held nowhere this can see.
+ *
+ * @remarks
+ * Identity alone would not say where a target was read: `Option.none()` is one object, so every
+ * `None` a value holds would be found. A place is found only where a reader there could have taken
+ * the target, and the search stops where no schema reads the value further, as inside
+ * `Schema.Any`. It goes through plain data and a native Some's own payload only, so it runs no
+ * accessor, and searches an object held in several places at each of them. A list's cells are
+ * named by their indexes.
  */
 export const placesOf = (
+  schema: Ast,
   value: unknown,
   targets: ReadonlySet<unknown>,
+  takes: (reader: Ast) => boolean,
 ): Array<Path> => {
-  const found: Array<Path> = [];
-  const searched = new Set<object>();
-  const visit = (held: unknown, path: Path): void => {
-    if (targets.has(held)) {
-      found.push(path);
-      return;
+  const places: Array<Path> = [];
+  const found = new Set<unknown>();
+  const active = new Set<object>();
+  const visit = (types: ReadonlyArray<Ast>, held: unknown, path: Path) => {
+    if (types.length === 0 || !isObject(held) || active.has(held)) return;
+    const readers = readersOf(types);
+    if (targets.has(held) && readers.some(takes)) {
+      places.push(path);
+      found.add(held);
     }
-    if (!isObject(held) || searched.has(held) || !isPlainData(held)) return;
-    searched.add(held);
+    if (!isPlainData(held) && ownSome(held) === undefined) return;
+    active.add(held);
     const list = Array.isArray(held);
     for (const key of Reflect.ownKeys(held))
       if (Object.prototype.propertyIsEnumerable.call(held, key))
-        visit(held[key], [...path, list ? (arrayIndex(key) ?? key) : key]);
+        visit(typesAt(readers, key), held[key], [
+          ...path,
+          list ? (arrayIndex(key) ?? key) : key,
+        ]);
+    active.delete(held);
   };
-  visit(value, []);
-  return found;
+  visit([schema], value, []);
+  if ([...targets].some((target) => !found.has(target))) places.push([]);
+  return places;
 };
 
 const optionNames = new WeakMap<

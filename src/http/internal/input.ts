@@ -1,4 +1,5 @@
 import {
+  Array as Arr,
   Effect,
   type Option,
   Result,
@@ -29,6 +30,7 @@ import {
 import {
   guardReading,
   guardVoids,
+  notesWrapper,
   recordingWrapperInto,
 } from "./void-member.js";
 import { isBodyWriteError, isWriterError } from "./writer-error.js";
@@ -1565,16 +1567,22 @@ const readerForCodec = <S extends Schema.Top, A, R>(
    * The strict pass's refusal of the native Options its decoder took as wire values, which no later
    * route reads again. It carries the strict constructor's failure, and no reading with the caller's
    * own parse options runs on this route, so each wrapper is named where it was given, as one the
-   * schema cannot keep with the rest of the value, or the whole value where plain data does not hold
-   * it.
+   * schema cannot keep with the rest of the value. Only a place where a reader of the guarded schema
+   * notes wrappers counts, since every `None` is one object. A wrapper found nowhere, such as one
+   * behind an accessor, names the whole value.
    */
   const strictWrapperRefusal = (
     from: unknown,
     { wrappers }: OptionWrapperRead,
   ): OptionWrapperRead => {
-    const [first = [], ...others] = Excess.placesOf(from, wrappers);
+    const places = Excess.placesOf(
+      guardReading(guardVoids(ast)),
+      from,
+      wrappers,
+      notesWrapper,
+    );
     return new OptionWrapperRead({
-      failure: Excess.refusal(ast, [first, ...others]),
+      failure: Excess.refusal(ast, Arr.isArrayNonEmpty(places) ? places : [[]]),
       wrappers,
     });
   };

@@ -19,6 +19,7 @@ import {
   renamedPairs,
 } from "./excess.js";
 import { isPlainData } from "./plain.js";
+import { stageRefuses } from "./primitive.js";
 import { replaceEncoding } from "./schema-ast.js";
 import { extraArrayField } from "./writer-error.js";
 
@@ -122,16 +123,29 @@ const noteWrapper = Schema.makeFilter((input, _ast, options: ReadOptions) => {
   return true;
 });
 
+/** The guarded nodes that note a native Option they read. */
+const notingNodes = new WeakSet<SchemaAST.AST>();
+
 // On a successful wire parse, Effect applies encodingChecks to the original input, where the
 // wrapper is still visible. Checked on Effect 4.0.7 and 4.1.5. Revisit when Effect exposes a public
 // hook for this input or a peer update changes where these checks run.
-const notingWrapper = (ast: SchemaAST.AST): SchemaAST.AST =>
-  copyAst(ast, {
+const notingWrapper = (ast: SchemaAST.AST): SchemaAST.AST => {
+  const noting = copyAst(ast, {
     encodingChecks: [
       ...("encodingChecks" in ast ? (ast.encodingChecks ?? []) : []),
       noteWrapper,
     ],
   });
+  notingNodes.add(noting);
+  return noting;
+};
+
+/**
+ * Whether a node of a {@link guardReading} schema can note a native Option it reads: it records the
+ * wrappers it takes, and it takes objects, as an open schema or a struct does and text does not.
+ */
+export const notesWrapper = (ast: SchemaAST.AST): boolean =>
+  notingNodes.has(ast) && !stageRefuses(ast, "record");
 
 /** Observe parser success without changing Effect's synchronous parser result. */
 const onSuccess = (

@@ -8,6 +8,7 @@ import {
 } from "effect";
 import * as Excess from "./excess.js";
 import * as Shapes from "./shape.js";
+import { guardReading, notesWrapper } from "./void-member.js";
 
 const text = Schema.String;
 const Either = Schema.Union([
@@ -360,6 +361,51 @@ describe("Excess.normalised", () => {
     const value = JSON.parse('{"__proto__":"x","gone":null}');
     delete value.gone;
     expect(Excess.normalised([Open.ast], value)).toBe(value);
+  });
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/351
+describe("Excess.placesOf", () => {
+  const Held = Schema.Struct({
+    held: Schema.OptionFromNullOr(Schema.Any),
+    other: Schema.Option(text),
+  });
+  const reading = guardReading(Held.ast);
+  const none = Option.none();
+
+  it("finds a target only where a reader takes it, at each place it is held", () => {
+    const shared = { held: none, other: none };
+    expect(
+      Excess.placesOf(
+        guardReading(Schema.Struct({ x: Held, y: Held }).ast),
+        { x: shared, y: shared },
+        new Set([none]),
+        notesWrapper,
+      ),
+    ).toEqual([
+      ["x", "held"],
+      ["y", "held"],
+    ]);
+    expect(
+      Excess.placesOf(
+        reading,
+        { held: null, other: none },
+        new Set([none]),
+        notesWrapper,
+      ),
+    ).toEqual([[]]);
+  });
+
+  it("runs no accessor, and names the whole value for a target behind one", () => {
+    const value = Object.defineProperty({ other: none }, "held", {
+      enumerable: true,
+      get: () => {
+        throw new Error("read");
+      },
+    });
+    expect(
+      Excess.placesOf(reading, value, new Set([none]), notesWrapper),
+    ).toEqual([[]]);
   });
 });
 
