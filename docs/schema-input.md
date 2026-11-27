@@ -398,15 +398,19 @@ needs that side.
 The writer still makes its own choice. For example, suppose only member `K` reads
 `{ f: {}, n: "5" }` and returns `{ f: {}, n: 5 }`. If member `M` can write that result with a number
 and `K` writes it with a string, `anyOf[M,K]` sends `{"f":{},"n":5}` and `anyOf[K,M]` sends
-`{"f":{},"n":"5"}`. An enclosing `oneOf` can refuse at the root if its writer finds multiple
-matches.
+`{"f":{},"n":"5"}`. An enclosing `oneOf` can refuse at its own position if its writer finds multiple
+matches. For a union in a named field, the error points to that field.
 
-When preparation has to read some fields on each schema side, reassembling the fields can still
-count an ambiguous inner member in an enclosing `oneOf`. For example, a field with an
-undefined-valued key can fail at the enclosing union when that union holds both an optional
-struct/Void `oneOf` and an empty struct. The order of an enclosing `anyOf` can still matter for an
-undefined-valued key beside an opaque sibling with an unstated key, when the other member reads only
-on its encoded side.
+For objects with an undefined-valued key,
+[#310](https://github.com/viell-dev/slop-effect-schema-http/issues/310) tracks two cases where the
+same field can be written as `null` or `{}`.
+
+- In an enclosing `oneOf`, swapping two struct members can change the JSON field from `null` to `{}`
+  when one member reads the field through an optional-field struct/Void `oneOf` and the other reads
+  it as an empty struct.
+- In a field-level `anyOf` with an optional-field struct/Void `oneOf` first and a member that reads
+  only on its encoded side second, a stray key in an opaque sibling can let Void read alone. JSON
+  then contains `null` for the field where it sends `{}` beside a clean sibling.
 
 An ambiguity is a `SchemaError`. If you handled an `InvalidRequest` or `HttpBodyError` for one of
 these inputs, handle the schema failure too. A writer failure at or below the ambiguous position can
