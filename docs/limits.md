@@ -207,7 +207,8 @@ than sent without it, and the message says why where it can. In these examples `
   gave. `{ page_size: "many" }` reads `Expected a finite number at ["page_size"]`, whether the field
   is optional or required, and `{ limit: "x" }` reads `Expected number at ["limit"]`.
 - **A field beside a Void** that its union member refuses gets the member's own error, such as
-  `Expected number at ["extra"]["a"]`, and the valid fields beside it are not named.
+  `Expected number at ["extra"]["a"]`. A wire-named field beside it that the reading read under its
+  decoded name, such as `filter: { page_size: "05" }`, is not named.
 - **The items of a list or a record given on different sides**, such as
   `[{ limit: 5 }, { page_size: "6" }]`:
   `The items of this field's list or record use different sides; give every item on one side at [1]["page_size"]`.
@@ -216,33 +217,38 @@ than sent without it, and the message says why where it can. In these examples `
   where a string-keyed record or `Schema.ObjectKeyword` would rebuild it from its fields:
   `The schema cannot keep this Map as a record`, or `as an object` for `Schema.ObjectKeyword`.
 
-A reading of a whole value on one side loses every renamed field given on the other, valid there or
-not. So where the other side's error explains a loss, a renamed field it does not explain is left
-out of the message. If the field is still lost after the explained ones are corrected, the next
-refusal names it.
+Every other field the refusal cannot keep is named too, even one that would be kept once another
+named value is corrected, because no reading shows that it would be. A reading of the whole value on
+one side loses every renamed field given on the other, valid there or not. So with `a` written as
+`A` and `b` as `B`, both strings, `{ a: 5, b: "x" }` names `["a"]` with `Expected string` and
+`["b"]` with the generic message below.
 
 Where nothing more is known, the message is the library's own
 `The schema cannot keep this field with the rest of the value`, or, at the top of the value with no
 field to name, `The schema cannot keep the content of this value`. Under a union, it names a field
 no member can hold with the rest. It also names a field whose object mixes the two sides' names,
-such as `{ a: "x", B: "y" }` where `b` is written as `B`, and a decoded name below a parent given
-under its wire name.
+such as `{ a: "x", B: "y" }`, and a decoded name below a parent given under its wire name.
 
-| Message                                                                             | Cause                                                                                                          | What to change                                                                                         |
-| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `This field is given under both "…" and "…"; give it under one name`                | One field under its decoded name and its wire name                                                             | Give the field under one name                                                                          |
-| `The items of this field's list or record use different sides; …`                   | Items of one list, tuple or record, some on the decoded side and some on the encoded side                      | Give every item on one side                                                                            |
-| `The schema cannot keep this Map as a record`, or another kind, or `as an object`   | A built-in whose content is not in its own fields, where a record or `Schema.ObjectKeyword` rebuilds it        | Convert the value to plain data first, or use `Schema.Any` to let the JSON writer refuse or convert it |
-| `The schema cannot keep this field with the rest of the value`                      | No union member can hold the field with the rest, or the object mixes the two sides' names                     | Choose the union member that states the field, or give the whole object on one side                    |
-| `Missing key` at a decoded name the caller did not use                              | A required renamed field given under its wire name in an object that also gives a decoded name                 | Give the whole object on one side; elsewhere, the message means a required field was left out          |
-| `Expected exactly one member to match`                                              | Multiple `oneOf` members match, or all enclosing members fail and an inner `oneOf` is ambiguous                | Supply an unambiguous value, or use `anyOf` for first fit. For undefined-valued keys, see [#310][310]. |
-| `Expected void`                                                                     | A value other than `undefined`, `null`, `{}` or `[]` where only `Schema.Void` can take it                      | Leave the field empty, or add a union member that takes the value                                      |
-| `Expected JSON value`                                                               | A value under `Schema.Unknown`, or in a string-keyed record of it, that is not already JSON, such as a `Date`  | Convert it first, or use `Schema.Any` to let the JSON writer convert it                                |
-| `The query field "…" must encode a scalar value or a list of scalar values`         | A query value that is an object other than a `Date`, a function, a symbol or a nested list                     | Encode the value to text, a number, a boolean or a `Date`, or a flat list of them                      |
-| `The header field "…" must have a string value`                                     | A header value that is not text or a list of text                                                              | Encode the value to text in the schema                                                                 |
-| `The query schema must encode a field record or field pairs: …`, or the header form | A query or header schema whose output is neither a record of fields nor a list of name-value pairs             | Make the schema encode to one of those; the rest of the message names what is malformed                |
-| `JSON body at $[…] must be a finite number`, or `cannot encode …`                   | A value the JSON writer would drop or replace, passed on by `Body.json` or an open schema such as `Schema.Any` | Use `Schema.Finite` or a schema that converts the value, or leave the value out                        |
-| `Multipart body at $[…] …`, or `URL-encoded body at $[…] …`                         | A form value the form writer cannot send as an entry, such as a number or `null`                               | Encode the value to text in the schema                                                                 |
+A refusal stores no value the caller gave, and the library adds none to its messages, including the
+`got …` text Effect can add to its own. A message a schema's author wrote is shown as written, as on
+any other schema failure: a check whose message quotes the value it refuses, such as
+`` `Rejected ${value}` ``, shows that value.
+
+| Message                                                                             | Cause                                                                                                                                                  | What to change                                                                                                           |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `This field is given under both "…" and "…"; give it under one name`                | One field under its decoded name and its wire name                                                                                                     | Give the field under one name                                                                                            |
+| `The items of this field's list or record use different sides; …`                   | Items of one list, tuple or record, some on the decoded side and some on the encoded side                                                              | Give every item on one side                                                                                              |
+| `The schema cannot keep this Map as a record`, or another kind, or `as an object`   | A built-in whose content is not in its own fields, where a record or `Schema.ObjectKeyword` rebuilds it                                                | Convert the value to plain data first, or use `Schema.Any` to let the JSON writer refuse or convert it                   |
+| `The schema cannot keep this field with the rest of the value`                      | No union member can hold the field with the rest, the object mixes the two sides' names, or another named value puts the whole value on the other side | Choose the union member that states the field, give the whole object on one side, or correct the other named value first |
+| `Missing key` at a decoded name the caller did not use                              | A required renamed field given under its wire name in an object that also gives a decoded name                                                         | Give the whole object on one side; elsewhere, the message means a required field was left out                            |
+| `Expected exactly one member to match`                                              | Multiple `oneOf` members match, or all enclosing members fail and an inner `oneOf` is ambiguous                                                        | Supply an unambiguous value, or use `anyOf` for first fit. For undefined-valued keys, see [#310][310].                   |
+| `Expected void`                                                                     | A value other than `undefined`, `null`, `{}` or `[]` where only `Schema.Void` can take it                                                              | Leave the field empty, or add a union member that takes the value                                                        |
+| `Expected JSON value`                                                               | A value under `Schema.Unknown`, or in a string-keyed record of it, that is not already JSON, such as a `Date`                                          | Convert it first, or use `Schema.Any` to let the JSON writer convert it                                                  |
+| `The query field "…" must encode a scalar value or a list of scalar values`         | A query value that is an object other than a `Date`, a function, a symbol or a nested list                                                             | Encode the value to text, a number, a boolean or a `Date`, or a flat list of them                                        |
+| `The header field "…" must have a string value`                                     | A header value that is not text or a list of text                                                                                                      | Encode the value to text in the schema                                                                                   |
+| `The query schema must encode a field record or field pairs: …`, or the header form | A query or header schema whose output is neither a record of fields nor a list of name-value pairs                                                     | Make the schema encode to one of those; the rest of the message names what is malformed                                  |
+| `JSON body at $[…] must be a finite number`, or `cannot encode …`                   | A value the JSON writer would drop or replace, passed on by `Body.json` or an open schema such as `Schema.Any`                                         | Use `Schema.Finite` or a schema that converts the value, or leave the value out                                          |
+| `Multipart body at $[…] …`, or `URL-encoded body at $[…] …`                         | A form value the form writer cannot send as an entry, such as a number or `null`                                                                       | Encode the value to text in the schema                                                                                   |
 
 The [input reference](./schema-input.md#what-will-be-sent) gives the value behind each of these.
 
