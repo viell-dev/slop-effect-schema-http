@@ -212,7 +212,9 @@ where the payload has no encoding of its own, since whichever Effect writes thro
 read the same way. A suspension is resolved when a value reaches it.
 
 Preparation copies a payload only to remove keys that neither side of any remaining member states. A
-member ruled out by its literal tag supplies no names, and an open alternative can hold any key.
+member ruled out by its literal tag supplies no names, and an open alternative can hold any key. A
+Void member reads any payload as `undefined`, so it supplies no names and could hold any key: beside
+one, the copy is made only where no member states any of the payload's keys, and it is then empty.
 Only the whole strict read and write can use the copy. If that attempt fails with a schema error,
 the ordinary reader starts from the caller's input. This keeps the ordinary reader's treatment of
 opaque neighbours. The wrapper's `value` adds a step to the caller's path. On the wire the payload
