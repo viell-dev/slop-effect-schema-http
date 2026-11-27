@@ -8,6 +8,7 @@ import {
 } from "effect";
 import { HttpBody, UrlParams } from "effect/http";
 import { isBlob, isBox, stateOf } from "./object-brand.js";
+import { replaceEncoding } from "./schema-ast.js";
 import {
   BodyWriteError,
   bodyError,
@@ -26,13 +27,6 @@ import {
  * peer that CI tests; the public API has no operation that replaces one link of an encoding.
  * Reconsider when Effect exposes one, or when a peer update changes either operation.
  */
-const { replaceEncoding } = SchemaAST as typeof SchemaAST & {
-  replaceEncoding(
-    ast: SchemaAST.AST,
-    encoding: SchemaAST.Encoding | undefined,
-  ): SchemaAST.AST;
-};
-
 type Recurring = SchemaAST.AST & {
   recur?: (map: (child: SchemaAST.AST) => SchemaAST.AST) => SchemaAST.AST;
 };

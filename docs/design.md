@@ -215,6 +215,11 @@ field called `value` to rewrite the wrapper. This can cause a refusal where an o
 `value` and the input has an unstated key, or where a struct beside an Option alternative would have
 read a native `Some` as an ordinary object.
 
+A built-in unwrapping Option codec's encoded struct declines a native Option wrapper. If the decoded
+reading fails and the whole encoded read would pass by taking the wrapper as a struct, preparation
+reports the decoded failure. A relaxed read can use the plain payload itself when both sides accept
+an empty struct and the payload holds none of their fields.
+
 The loose writer follows unwrapping codecs into the payload schema and its decoded projection. It
 can also follow a plain transformation whose wire shape exposes the same payload schema directly or
 in a field of a single-field struct. Every union it reaches there can try a member that holds the

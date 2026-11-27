@@ -37,6 +37,13 @@
   `got …` text; a message the schema's author wrote is shown as written, as on any other schema
   failure, so a refusal can now show text such as `Rejected <value>` where the generic message
   stood.
+- **Breaking:** refuse an invalid `Some` payload when an unwrapping Option codec used to read the
+  wrapper as its encoded struct. For example, `Some({ a: 5, b: "keep" })` now reports
+  `["held"]["value"]["a"]` when `held` wraps a struct with optional string fields `a` and `b`.
+  Previously it could send `{"held":{}}`. A mixed input can also refuse if reading the enclosing
+  value as encoded would have substituted a wrapper for its payload. Supply a valid payload to
+  `Some` and use decoded values for its siblings, or pass the encoded payload directly as a plain
+  object ([#309](https://github.com/viell-dev/slop-effect-schema-http/issues/309)).
 - Tell the author of a provider that writes bytes to refuse a header name that is not a token, and a
   NUL in a header value, as well as a carriage return or line feed
   ([#302](https://github.com/viell-dev/slop-effect-schema-http/issues/302)). A colon in a name such
