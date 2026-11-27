@@ -215,10 +215,18 @@ field called `value` to rewrite the wrapper. This can cause a refusal where an o
 `value` and the input has an unstated key, or where a struct beside an Option alternative would have
 read a native `Some` as an ordinary object.
 
-A built-in unwrapping Option codec's encoded struct declines a native Option wrapper. If the decoded
-reading fails and the whole encoded read would pass by taking the wrapper as a struct, preparation
-reports the decoded failure. A relaxed read can use the plain payload itself when both sides accept
-an empty struct and the payload holds none of their fields.
+An encoded read through a codec whose decoded side declares an Option records whether it used a
+native wrapper as the wire value. This includes custom codecs and open wire schemas such as `Any`. A
+native or tagged `Schema.Option` explicitly declared on the wire side keeps its own reading. A
+struct alternative beside an unwrapping Option also records a wrapper it took. If the decoded
+reading fails and a whole encoded read succeeds with that note, preparation reports the decoded
+failure. A relaxed read can use the plain payload itself where both sides accept an empty struct and
+the payload holds none of their fields.
+
+The guard caches the rewritten schema per AST. An observed decode carries a flag in its parse
+options, tests the inputs at the guarded positions, and gives each tried union member a local flag
+so a failed member leaves no note. There is no additional schema parse. A refusal can end
+preparation before later callbacks would have run on a lossy reading.
 
 The loose writer follows unwrapping codecs into the payload schema and its decoded projection. It
 can also follow a plain transformation whose wire shape exposes the same payload schema directly or

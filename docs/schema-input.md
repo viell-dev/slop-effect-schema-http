@@ -594,14 +594,14 @@ or in a single-field struct for loose writing.
 
 Use decoded names inside a `Some` that an unwrapping codec reads. For a payload that writes `limit`
 as `page_size`, pass `Some({ limit: "5" })`. To supply the wire name, pass the encoded value
-`{ page_size: "5" }` at the Option's position. If the decoded payload fails validation, the
-unwrapping codec's encoded struct will refuse the native wrapper. The error can point into
-`["value"]`, which is where the caller gave the payload. If an encoded sibling makes the whole
-encoded read take the wrapper as a struct, use the decoded sibling value or supply the encoded
-payload directly. A field called `value` inside the payload belongs to the payload.
-`Schema.Option(X)` uses Effect's own reading and member selection on every write route. Effect can
-read X's encoded names and values from a `Some` at runtime, though the typed input expects decoded
-contents. A narrower member can drop a payload field without a refusal.
+`{ page_size: "5" }` at the Option's position. If the decoded payload fails validation, the encoded
+read through an unwrapping codec refuses to take the native wrapper as the wire value. The error can
+point into `["value"]`, which is where the caller gave the payload. If an encoded sibling makes the
+whole read use the encoded side of the enclosing object, give the sibling on its decoded side or
+supply the encoded payload directly. A field called `value` inside the payload belongs to the
+payload. `Schema.Option(X)` uses Effect's own reading and member selection on every write route.
+Effect can read X's encoded names and values from a `Some` at runtime, though the typed input
+expects decoded contents. A narrower member can drop a payload field without a refusal.
 
 ### The reading of Effect is tested, not checked at run time
 
@@ -699,10 +699,12 @@ the schema does with it. These are the places where it cannot, and what happens 
   the encoded representation
   ([#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312)).
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
-  recovery's value is not checked against what it was given: a `Schema.catchDecoding` record beside
-  a list member can take a list whose cells hold a key the list member does not state, and what it
-  recovers is sent. In `Union([Opaque, Title])`, where `Opaque` is a declaration that cannot be
-  written as JSON, `Title` can drop `meta`.
+  guard for native Options follows visible schema nodes into the encoded side of Option codecs,
+  including hand-written ones. It cannot see a wrapper read inside an opaque declaration or inside a
+  middleware callback. A recovery's value is not checked against what it was given: a
+  `Schema.catchDecoding` record beside a list member can take a list whose cells hold a key the list
+  member does not state, and what it recovers is sent. In `Union([Opaque, Title])`, where `Opaque`
+  is a declaration that cannot be written as JSON, `Title` can drop `meta`.
 - A union that chooses again on a transformed copy, behind a transformation or middleware on the
   union itself or on the encoded side of a renamed struct, is the schema's own choice, because no
   caller field can be traced to the copy. `Union([Coded, Title]).pipe(Schema.middlewareDecoding(…))`

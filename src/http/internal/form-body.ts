@@ -19,14 +19,7 @@ import {
   type Path,
 } from "./writer-error.js";
 
-/*
- * Rebuilding a schema node keeps its checks, context and annotations only through Effect's own
- * rebuild operations: `SchemaAST.replaceEncoding`, exported but marked internal, and each node's
- * undeclared `recur`, which maps its children and wraps a `Suspend` thunk without forcing it.
- * Both exist with these signatures in Effect 4.0.7 and 4.1.4, the peer floor and the current
- * peer that CI tests; the public API has no operation that replaces one link of an encoding.
- * Reconsider when Effect exposes one, or when a peer update changes either operation.
- */
+/** Effect's internal child traversal also maps a suspended thunk without forcing it. */
 type Recurring = SchemaAST.AST & {
   recur?: (map: (child: SchemaAST.AST) => SchemaAST.AST) => SchemaAST.AST;
 };

@@ -2222,6 +2222,7 @@ describe("an invalid Some payload keeps its decoded error", () => {
         Schema.OptionFromOptionalNullOr(payload, { onNoneEncoding: null }),
         Schema.OptionFromOptionalNullOr(payload, { onNoneEncoding: undefined }),
         Schema.Option(payload),
+        Schema.toCodecJson(Schema.Option(payload)),
       ]) {
         const schema = Schema.Struct({ held });
         for (const invalid of [{ a: 5 }, { a: 5, b: "keep" }]) {
@@ -2234,28 +2235,209 @@ describe("an invalid Some payload keeps its decoded error", () => {
     }),
   );
 
+  it.effect("names the field through a list and either union order", () =>
+    Effect.gen(function* () {
+      const choice = Schema.OptionFromNullOr(payload);
+      for (const held of [
+        Schema.Union([choice, Schema.String]),
+        Schema.Union([Schema.String, choice]),
+      ]) {
+        const schema = Schema.Struct({ rows: Schema.Array(held) });
+        const failure = yield* Effect.flip(
+          json(schema, { rows: [Option.some({ a: 5, b: "keep" })] } as never),
+        );
+        expect(failure.message).toContain('["rows"][0]["value"]["a"]');
+        expect(
+          yield* json(schema, { rows: [Option.some({ a: "a", b: "keep" })] }),
+        ).toEqual({ rows: [{ a: "a", b: "keep" }] });
+      }
+    }),
+  );
+
+  it.effect("refuses an invalid Some under a hand-written codec", () =>
+    Effect.gen(function* () {
+      const held = Schema.NullOr(payload).pipe(
+        Schema.decodeTo(
+          Schema.Option(payload),
+          SchemaTransformation.transform({
+            decode: (value) =>
+              value === null ? Option.none() : Option.some(value),
+            encode: (option) => (Option.isSome(option) ? option.value : null),
+          }),
+        ),
+      );
+      const schema = Schema.Struct({ held });
+      const failure = yield* Effect.flip(
+        json(schema, { held: Option.some({ a: 5, b: "keep" }) } as never),
+      );
+      expect(failure.message).toContain('["held"]["value"]["a"]');
+      expect(yield* json(schema, { held: { a: "a", b: "keep" } })).toEqual({
+        held: { a: "a", b: "keep" },
+      });
+      expect(yield* json(schema, { held: Option.none() })).toEqual({
+        held: null,
+      });
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/319
   it.effect(
-    "names the field through a list, a rename and either union order",
+    "refuses the wrapper even when the encoded side accepts any object",
     () =>
       Effect.gen(function* () {
-        const renamed = payload.pipe(Schema.encodeKeys({ b: "wire_b" }));
-        const choice = Schema.OptionFromNullOr(renamed);
-        const withUnrelated = [
-          Schema.Union([choice, Schema.String]),
-          Schema.Union([Schema.String, choice]),
-        ];
-        for (const held of withUnrelated) {
-          const schema = Schema.Struct({ rows: Schema.Array(held) });
-          const failure = yield* Effect.flip(
-            json(schema, { rows: [Option.some({ a: 5, b: "keep" })] } as never),
-          );
-          expect(failure.message).toContain('["rows"][0]["value"]["a"]');
+        for (const wire of [
+          Schema.Any,
+          Schema.ObjectKeyword,
+          Schema.Union([Schema.String, Schema.ObjectKeyword]),
+        ]) {
+          const schema = Schema.Struct({
+            held: Schema.OptionFromNullOr(wire),
+            count: Schema.FiniteFromString,
+          });
+          for (const held of [Option.some({ a: 1 }), Option.none()]) {
+            const failure = yield* Effect.flip(
+              json(schema, { held, count: "2" } as never),
+            );
+            expect(failure).toBeInstanceOf(Schema.SchemaError);
+            expect(failure.message).toContain('["count"]');
+          }
           expect(
-            yield* json(schema, { rows: [Option.some({ a: "a", b: "keep" })] }),
-          ).toEqual({ rows: [{ a: "a", wire_b: "keep" }] });
+            yield* json(schema, { held: Option.some({ a: 1 }), count: 2 }),
+          ).toEqual({
+            held: { a: 1 },
+            count: "2",
+          });
+          expect(yield* json(schema, { held: { a: 1 }, count: "2" })).toEqual({
+            held: { a: 1 },
+            count: "2",
+          });
         }
       }),
   );
+
+  it.effect("keeps a native Option explicitly declared on the wire side", () =>
+    Effect.gen(function* () {
+      const schema = Schema.Struct({
+        held: Schema.OptionFromNullOr(Schema.Option(Schema.String)),
+      });
+      const held = Option.some("keep");
+      expect(yield* json(schema, { held })).toEqual({
+        held: { _tag: "Some", value: "keep" },
+      });
+      expect(yield* json(schema, { held: Option.some(held) })).toEqual({
+        held: { _tag: "Some", value: "keep" },
+      });
+    }),
+  );
+
+  it.effect("discards wrapper notes from a failed union member", () =>
+    Effect.gen(function* () {
+      let checked = 0;
+      const count = Schema.FiniteFromString;
+      const unwrapped = Schema.Struct({
+        held: Schema.OptionFromNullOr(Schema.Any),
+        count,
+      }).check(
+        Schema.makeFilter(() => {
+          checked++;
+          return false;
+        }),
+      );
+      const tagged = Schema.Struct({ held: Schema.Option(payload), count });
+      const schema = Schema.Union([unwrapped, tagged]);
+      expect(
+        yield* json(schema, {
+          held: Option.some({ a: "a" }),
+          count: "2",
+        } as never),
+      ).toEqual({
+        held: { _tag: "Some", value: { a: "a" } },
+        count: "2",
+      });
+      expect(checked).toBeGreaterThan(0);
+    }),
+  );
+
+  for (const binding of ["body", "path", "query", "headers"] as const) {
+    it.effect(`runs each reading once for ${binding} preparation`, () =>
+      Effect.gen(function* () {
+        let decoderRuns = 0;
+        let defaultRuns = 0;
+        const counted = Schema.String.pipe(
+          Schema.decodeTo(
+            Schema.Number,
+            SchemaTransformation.transformEffect({
+              decode: (value) =>
+                Effect.sync(() => {
+                  if (++decoderRuns > 2) throw new Error("repeated decoder");
+                  return Number(value);
+                }),
+              encode: (value) => Effect.succeed(String(value)),
+            }),
+          ),
+        );
+        const flatPayload = Schema.Any.pipe(
+          Schema.decodeTo(
+            payload,
+            SchemaTransformation.transform({
+              decode: () => ({}),
+              encode: (decoded) => JSON.stringify(decoded),
+            }),
+          ),
+        );
+        const schema = Schema.Struct({
+          pre: counted,
+          held: Schema.OptionFromOptionalKey(flatPayload),
+          post: Schema.FiniteFromString,
+          dflt: Schema.optionalKey(Schema.String).pipe(
+            Schema.withConstructorDefault(
+              Effect.sync(() => {
+                defaultRuns++;
+                return "7";
+              }),
+            ),
+          ),
+        });
+        const base = Request.post("/x");
+        const compile = (held: Option.Option<unknown>) => {
+          const supplied = { pre: "1", held, post: 2 } as never;
+          switch (binding) {
+            case "body":
+              return Request.compile(
+                base.pipe(Request.body(Body.jsonSchema(schema))),
+                { body: supplied },
+              );
+            case "path":
+              return Request.compile(
+                base.pipe(
+                  Request.path(schema, ({ pre, post }) => `/${pre}/${post}`),
+                ),
+                { path: supplied },
+              );
+            case "query":
+              return Request.compile(base.pipe(Request.query(schema)), {
+                query: supplied,
+              });
+            case "headers":
+              return Request.compile(base.pipe(Request.headers(schema)), {
+                headers: supplied,
+              });
+          }
+        };
+        yield* compile(Option.none());
+        expect([decoderRuns, defaultRuns]).toEqual([2, 1]);
+
+        decoderRuns = 0;
+        defaultRuns = 0;
+        const failure = yield* Effect.flip(
+          compile(Option.some({ a: 5, b: "keep" })),
+        );
+        expect(failure).toBeInstanceOf(Schema.SchemaError);
+        expect(failure.message).toContain('["pre"]');
+        expect([decoderRuns, defaultRuns]).toEqual([2, 0]);
+      }),
+    );
+  }
 
   it.effect("refuses the payload before rendering query, headers or path", () =>
     Effect.gen(function* () {

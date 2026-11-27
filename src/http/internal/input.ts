@@ -5,6 +5,7 @@ import {
   FieldlessOneOf,
   hasPlainWitness,
   matchRead,
+  OptionWrapperRead,
   publicAmbiguity,
   publicRead,
   readFailure,
@@ -20,7 +21,7 @@ import {
 import {
   guardReading,
   guardVoids,
-  refusedOptionSource,
+  recordingWrapperInto,
 } from "./void-member.js";
 import { isBodyWriteError, isWriterError } from "./writer-error.js";
 import {
@@ -115,12 +116,6 @@ interface Refused {
 }
 
 const whole = <A>(value: A): Decoded<A> => ({ value, lost: [] });
-
-/** Keep the decoded issue when the only encoded reading would reinterpret a native Option. */
-const wrapperRefusals = new WeakSet<Schema.SchemaError>();
-
-const wrapperBlocked = (failure: Schema.SchemaError) =>
-  wrapperRefusals.has(failure) || refusedOptionSource(failure.issue);
 
 /** Parse options for a strict read that reports every issue with the object it was found in. */
 const reporting: SchemaAST.ParseOptions = {
@@ -243,11 +238,10 @@ const chooseReading = (
   keepMost: boolean,
   enclosingUnion?: SchemaAST.Union,
   countReaders = false,
-  stopOnWrapper = false,
 ) =>
   Effect.gen(function* () {
     let most: Decoded<unknown> | undefined;
-    let failure: Schema.SchemaError | undefined;
+    let failure: Schema.SchemaError | OptionWrapperRead | undefined;
     let ambiguity: FieldlessOneOf | undefined;
     let first: Decoded<unknown> | undefined;
     let complete: Decoded<unknown> | undefined;
@@ -262,10 +256,6 @@ const chooseReading = (
         if (result.failure._tag === "FieldlessOneOf") {
           ambiguity ??= result.failure;
           provisional ||= result.failure.afterAlternative === true;
-        } else if (stopOnWrapper && wrapperBlocked(result.failure)) {
-          // This whole read would have accepted the wrapper in place of its payload.
-          // Refuse it here so a later preparation route cannot change the output.
-          return yield* result.failure;
         } else if (!keepMost || failure === undefined) {
           failure = result.failure;
         }
@@ -573,35 +563,38 @@ const decodedReading = <S extends Schema.Top>(
     );
   };
   const guardedReading = guardReading(guarded);
-  const decodeBeforeWrapperCheck = Schema.decodeUnknownEffect(schema);
-  const decodeUnknown = Schema.decodeUnknownEffect(
+  const parse = Schema.decodeUnknownEffect(
     guardedReading === guarded ? schema : Schema.make<S>(guardedReading),
   );
-  const checkWrapperFailure = (
-    input: unknown,
-    options: SchemaAST.ParseOptions | undefined,
-    failure: Schema.SchemaError,
-  ) =>
-    refusedOptionSource(failure.issue)
-      ? // A filter or transformation later in the encoded read may also fail. Only
-        // a read that otherwise succeeds could displace a legitimate fieldwise route.
-        Effect.flatMap(decodeBeforeWrapperCheck(input, options), () =>
-          Effect.fail(failure),
-        )
-      : Effect.fail(failure);
   const decode = (
     input: unknown,
     parseOptions?: SchemaAST.ParseOptions,
     caller = input,
-  ) =>
-    Effect.mapError(
-      Effect.catchTag(
-        decodeUnknown(input, parseOptions),
-        "SchemaError",
-        (failure) => checkWrapperFailure(input, parseOptions, failure),
-      ),
-      (failure) => classify(failure, input, caller),
-    );
+  ) => {
+    const read = (opts: SchemaAST.ParseOptions | undefined) =>
+      Effect.mapError(parse(input, opts), (failure) =>
+        classify(failure, input, caller),
+      );
+    if (guardedReading === guarded) return read(parseOptions);
+    return Effect.suspend(() => {
+      const note = { used: false };
+      return Effect.flatMap(
+        read(recordingWrapperInto(note, parseOptions)),
+        (value) =>
+          note.used
+            ? Effect.fail(
+                new OptionWrapperRead({
+                  failure: new Schema.SchemaError(
+                    new SchemaIssue.InvalidValue({
+                      message: "Expected a payload without an Option wrapper",
+                    }),
+                  ),
+                }),
+              )
+            : Effect.succeed(value),
+      );
+    });
+  };
   /** Check the normalised input for ambiguity before a raw constructor can choose a member. */
   const constructing = (
     input: unknown,
@@ -768,10 +761,7 @@ const decodedReading = <S extends Schema.Top>(
     Effect.matchEffect(decode(input, parseOptions), {
       onSuccess: (value) => Effect.succeed(whole(value)),
       onFailure: (failure) => {
-        if (
-          !isKeyed(input) ||
-          (failure._tag === "SchemaError" && wrapperBlocked(failure))
-        )
+        if (!isKeyed(input) || failure._tag === "OptionWrapperRead")
           return Effect.fail(failure);
         if (failure._tag !== "FieldlessOneOf")
           return byMember(input, failure, undefined, parseOptions);
@@ -806,7 +796,9 @@ const decodedReading = <S extends Schema.Top>(
               Effect.fail(
                 own._tag === "FieldlessOneOf"
                   ? atField(field.name, own)
-                  : afterAlternative(failure),
+                  : own._tag === "OptionWrapperRead"
+                    ? own
+                    : afterAlternative(failure),
               ),
             onSuccess: (read) =>
               Effect.map(
@@ -833,17 +825,22 @@ const decodedReading = <S extends Schema.Top>(
   ) {
     let read: Decoded<unknown> | undefined;
     let stripped: ReadonlyArray<Excess.Path> | undefined;
-    let refused: Schema.SchemaError | undefined;
+    let refused: Schema.SchemaError | OptionWrapperRead | undefined;
     for (const from of given === input ? [given] : [given, input]) {
-      const result = yield* attemptRead(
-        decode(from, { ...parseOptions, ...reporting }, input),
+      const result = yield* Effect.catchTag(
+        attemptRead(decode(from, { ...parseOptions, ...reporting }, input)),
+        "OptionWrapperRead",
+        (failure) => Effect.succeed(Result.fail(failure)),
       );
       if (result._tag === "Failure") {
-        readStrictly.add(result.failure);
-        refused ??= result.failure;
-        stripped ??= strippedFrom(result.failure.issue, from, input)?.filter(
-          (path) => valueAt(given, path) !== undefined,
-        );
+        const { failure } = result;
+        refused ??= failure;
+        if (failure._tag === "SchemaError") {
+          readStrictly.add(failure);
+          stripped ??= strippedFrom(failure.issue, from, input)?.filter(
+            (path) => valueAt(given, path) !== undefined,
+          );
+        }
         continue;
       }
       const value: unknown = result.success;
@@ -888,18 +885,23 @@ const decodedReading = <S extends Schema.Top>(
           ? settled(keepWholeAlternative(ambiguity, fields))
           : Effect.fail(ambiguity),
       onSuccess: ({ read, stripped, refused = failure }) => {
-        if (!constructed && read === undefined && wrapperBlocked(refused))
-          return Effect.fail(refused);
+        if (
+          !constructed &&
+          read === undefined &&
+          refused._tag === "OptionWrapperRead"
+        )
+          return Effect.fail(new OptionWrapperRead({ failure }));
         // A loose read can take another union member than a strict one and strip its names unseen.
         // If only an opaque neighbour kept the strict decoder from reading, retry a failed loose
         // read without undefined keys before deciding the encoded side cannot take the value.
         // An enclosing oneOf can also miscount on the raw spelling, so retry that count.
-        const retryNormalised = (failure: ReadFailure) =>
-          failure._tag === "FieldlessOneOf" &&
-          !changedAtAmbiguity(failure, given, input)
-            ? Effect.fail(failure)
+        const retryNormalised = (error: ReadFailure) =>
+          error._tag === "OptionWrapperRead" ||
+          (error._tag === "FieldlessOneOf" &&
+            !changedAtAmbiguity(error, given, input))
+            ? Effect.fail(error)
             : recoverRead(decode(given, parseOptions, input), () =>
-                Effect.fail(failure),
+                Effect.fail(error),
               );
         // This read has the caller's own options, so its failure says what they report.
         let looseFailure: Schema.SchemaError | undefined;
@@ -914,7 +916,11 @@ const decodedReading = <S extends Schema.Top>(
         const loose =
           stripped === undefined
             ? read === undefined
-              ? Effect.fail(constructed ? refused : failure)
+              ? Effect.fail(
+                  constructed && refused._tag === "SchemaError"
+                    ? refused
+                    : failure,
+                )
               : Effect.succeed(read)
             : constructed && Excess.choosesMemberResolved(contract.ast)
               ? Effect.fail(failure)
@@ -928,13 +934,19 @@ const decodedReading = <S extends Schema.Top>(
                     byDecoder: true,
                   }),
                 );
+
+        const looseRoute = constructed
+          ? Effect.catchTag(loose, "OptionWrapperRead", (refusal) =>
+              Effect.fail(refusal.failure),
+            )
+          : loose;
         const fieldwise = fields();
         // The whole comes before its fields, as it does for Effect, unless a part's decoder would
         // strip what its fields could hold.
         const routes =
           part && stripped !== undefined && stripped.length > 0
-            ? ([fieldwise, loose] as const)
-            : ([loose, fieldwise] as const);
+            ? ([fieldwise, looseRoute] as const)
+            : ([looseRoute, fieldwise] as const);
         // Where a route loses a field, the constructor's own error can say why.
         const explain = explainedBy(contract.ast, given, failure);
         if (read?.lost.length === 0)
@@ -950,8 +962,17 @@ const decodedReading = <S extends Schema.Top>(
           });
         // After a constructor every field means what it meant to that, so the route that keeps most
         // can be taken. Otherwise a field both sides could hold can mean something else to each.
+        const chosen = Effect.map(chooseReading(routes, constructed), explain);
         return settled(
-          Effect.map(chooseReading(routes, constructed, undefined, false, !constructed), explain),
+          constructed
+            ? Effect.catchTag(chosen, "OptionWrapperRead", (refusal) =>
+                Effect.fail(refusal.failure),
+              )
+            : Effect.mapError(chosen, (error) =>
+                error._tag === "OptionWrapperRead"
+                  ? new OptionWrapperRead({ failure })
+                  : error,
+              ),
           () => looseFailure,
         );
       },
@@ -1115,27 +1136,30 @@ const decodedReading = <S extends Schema.Top>(
                   : accounted(input, given, noRoute, parts, at, parseOptions),
               )
             : Effect.fail(failure)
-          : given === undefined
-            ? recoverRead(unaccounted(input, parseOptions), (rejected) => {
-                if (wrapperBlocked(rejected)) wrapperRefusals.add(failure);
-                return Effect.fail(failure);
-              })
-            : accounted(
-                input,
-                given,
-                failure,
-                parts,
-                at,
-                parseOptions,
-                false,
-                (loose) =>
-                  erased(
-                    input,
-                    given,
-                    onEncodedSide(failure, given, loose),
-                    parseOptions,
-                  ),
-              ),
+          : failure._tag === "OptionWrapperRead"
+            ? Effect.fail(failure)
+            : given === undefined
+              ? Effect.catchTags(unaccounted(input, parseOptions), {
+                  SchemaError: () => Effect.fail(failure),
+                  OptionWrapperRead: () =>
+                    Effect.fail(new OptionWrapperRead({ failure })),
+                })
+              : accounted(
+                  input,
+                  given,
+                  failure,
+                  parts,
+                  at,
+                  parseOptions,
+                  false,
+                  (loose) =>
+                    erased(
+                      input,
+                      given,
+                      onEncodedSide(failure, given, loose),
+                      parseOptions,
+                    ),
+                ),
     }) as Effect.Effect<Decoded<S["Type"]>, ReadFailure, S["DecodingServices"]>;
 };
 
@@ -1707,9 +1731,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
         // The exposed value is not read after a provisional ambiguity: read strictly, its
         // undefined-valued keys make members fail, and the one left would be chosen.
         onFailure: (failure) =>
-          failure === provisional || wrapperRefusals.has(failure)
-            ? Effect.fail(failure)
-            : second,
+          failure === provisional ? Effect.fail(failure) : second,
         // Keep the normalized read if it settled an ambiguity. The exposed input could make a
         // member of the ambiguous union fail on an undefined-valued key and admit the other.
         // Otherwise the first read stands where the second does not write strictly either.
@@ -1735,23 +1757,19 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       );
     const loose = () => compared(input, given);
     return matchRead(attempt(), {
-      onFailure: (failure) =>
-        wrapperRefusals.has(failure)
-          ? Effect.fail(failure)
-          : canonicalJson && given !== input
-            ? recoverRead(loose(), (failure) =>
-                wrapperRefusals.has(failure)
-                  ? Effect.fail(failure)
-                  : recoverRead(
-                      Effect.filterOrFail(
-                        compared(input, given, undefined, given as Input<S>),
-                        ({ lost }) => lost.length === 0,
-                        () => noRoute,
-                      ),
-                      () => Effect.fail(failure),
-                    ),
-              )
-            : loose(),
+      onFailure: () =>
+        canonicalJson && given !== input
+          ? recoverRead(loose(), (failure) =>
+              recoverRead(
+                Effect.filterOrFail(
+                  compared(input, given, undefined, given as Input<S>),
+                  ({ lost }) => lost.length === 0,
+                  () => noRoute,
+                ),
+                () => Effect.fail(failure),
+              ),
+            )
+          : loose(),
       onSuccess: (strict) => {
         if ("written" in strict) return Effect.succeed(strict.written);
         const loosely = loose();
@@ -1762,10 +1780,8 @@ const readerForCodec = <S extends Schema.Top, A, R>(
         // object has, the read would guess what Effect 4.0.7 and 4.1.4 read differently.
         if (statesPrototypeNameAnywhere(ast)) return loosely;
         return Effect.flatMap(attemptRead(loosely), (result) => {
-          return (result._tag === "Success" &&
-            result.success.lost.length === 0) ||
-            (result._tag === "Failure" && wrapperRefusals.has(result.failure))
-            ? Effect.fromResult(result)
+          return result._tag === "Success" && result.success.lost.length === 0
+            ? Effect.succeed(result.success)
             : recoverRead(
                 Effect.filterOrFail(
                   compared(input, given, strict),
@@ -1785,11 +1801,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     if (cleaned === input) return reading(input, input);
     // A typed failure from the strict attempt may come from an opaque neighbour. Only the
     // caller's original input may use the ordinary reader and its relaxed route.
-    return recoverRead(reading(input, cleaned), (failure) =>
-      wrapperRefusals.has(failure)
-        ? Effect.fail(failure)
-        : reading(input, input),
-    );
+    return recoverRead(reading(input, cleaned), () => reading(input, input));
   };
 };
 
