@@ -983,24 +983,46 @@ it("does not pair a reordered decoded name from a handwritten link", () => {
   ).toEqual([]);
 });
 
-it("checks an encoded name against its paired decoded field inside Schema.Option", () => {
+it("stops the loose comparison at Schema.Option", () => {
   const owner = Schema.Struct({ owner: text });
   const wide = Schema.Struct({ owner: text, limit: text }).pipe(
     Schema.encodeKeys({ limit: "page_size" }),
   );
   const schema = Schema.Option(Schema.Union([owner, wide]));
   const given = Option.some({ owner: "a", page_size: "5" });
-  const complete = Option.some({ owner: "a", limit: "5" });
   const narrowed = Option.some({ owner: "a" });
-  expect(
-    Excess.optionLoss(schema.ast, given, complete, undefined, true),
-  ).toEqual([]);
+  expect(Excess.mayWriteUnwrappedOption(schema.ast)).toBe(false);
   expect(
     Excess.optionLoss(schema.ast, given, narrowed, undefined, true),
-  ).toEqual([["value", "page_size"]]);
+  ).toEqual([]);
 });
 
-it("compares opaque Option reads only on the loose route", () => {
+it("recognizes built-in unwrapping getters without running a custom getter", () => {
+  const OptionalNull = Schema.optional(Schema.NullOr(text));
+  const custom = OptionalNull.pipe(
+    Schema.decodeTo(
+      Schema.Option(text),
+      SchemaTransformation.transformOptional({
+        decode: () => Option.some(Option.some("custom")),
+        encode: () => {
+          throw new Error("preparation invoked a custom getter");
+        },
+      }),
+    ),
+  );
+  expect(Excess.mayWriteUnwrappedOption(custom.ast)).toBe(false);
+  for (const codec of [
+    Schema.OptionFromOptional(text),
+    Schema.OptionFromNullishOr(text),
+    Schema.OptionFromNullishOr(text, { onNoneEncoding: null }),
+    Schema.OptionFromOptionalNullOr(text, { onNoneEncoding: null }),
+    Schema.OptionFromOptionalNullOr(text, { onNoneEncoding: undefined }),
+  ]) {
+    expect(Excess.mayWriteUnwrappedOption(codec.ast)).toBe(true);
+  }
+});
+
+it("compares configured unwrapping codecs on the loose route", () => {
   const payload = Schema.Union([
     Schema.Struct({ a: Schema.String }),
     Schema.Struct({ a: Schema.String, b: Schema.String }),

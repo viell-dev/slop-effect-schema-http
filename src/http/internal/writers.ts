@@ -1,6 +1,10 @@
 import { Effect, Schema, SchemaAST, SchemaIssue, SchemaParser } from "effect";
 import { candidates } from "./candidates.js";
-import { classFields, isOptionDeclaration } from "./excess.js";
+import {
+  choosesOpaqueOption,
+  classFields,
+  writtenOptionSource,
+} from "./excess.js";
 import { isPlainData, statesPrototypeName } from "./plain.js";
 import { stageRefuses } from "./primitive.js";
 
@@ -247,10 +251,16 @@ const noting = (
 
 function mapSame<A>(
   items: readonly [A, ...A[]],
-  map: (item: A) => A,
+  map: (item: A, index: number) => A,
 ): readonly [A, ...A[]];
-function mapSame<A>(items: readonly A[], map: (item: A) => A): readonly A[];
-function mapSame<A>(items: readonly A[], map: (item: A) => A): readonly A[] {
+function mapSame<A>(
+  items: readonly A[],
+  map: (item: A, index: number) => A,
+): readonly A[];
+function mapSame<A>(
+  items: readonly A[],
+  map: (item: A, index: number) => A,
+): readonly A[] {
   const mapped = items.map(map);
   return mapped.every((item, index) => item === items[index]) ? items : mapped;
 }
@@ -261,53 +271,94 @@ function mapSame<A>(items: readonly A[], map: (item: A) => A): readonly A[] {
  * @remarks
  * Each union pre-selects and orders its members by the installed Effect's rules, so it writes what
  * the plain writer writes when it can keep the whole value. It follows suspensions when written,
- * classes into their structs, and Option declarations into their payloads. A transformation or
+ * classes into their structs, and unwrapping Option codecs into their payloads. A transformation or
  * middleware on a union itself makes Effect choose again on a transformed copy. That choice is
  * noted against the copy and remains the schema's own.
  */
 export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
-  const cache = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
-  const visit = (ast: SchemaAST.AST): SchemaAST.AST => {
-    const cached = cache.get(ast);
-    if (cached !== undefined) return cached;
-    const result = rewrite(ast);
-    cache.set(ast, result);
-    return result;
+  type Visit = (ast: SchemaAST.AST, source?: SchemaAST.AST) => SchemaAST.AST;
+  const walker = (inPayload: boolean): Visit => {
+    const cache = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
+    const projections = new WeakMap<
+      SchemaAST.AST,
+      WeakMap<SchemaAST.AST, SchemaAST.AST>
+    >();
+    const visit = (ast: SchemaAST.AST, source = ast): SchemaAST.AST => {
+      if (source === ast) {
+        const cached = cache.get(ast);
+        if (cached !== undefined) return cached;
+        const result = rewrite(ast, source, visit, inPayload);
+        cache.set(ast, result);
+        return result;
+      }
+      let projected = projections.get(source);
+      if (projected === undefined) {
+        projected = new WeakMap();
+        projections.set(source, projected);
+      }
+      const cached = projected.get(ast);
+      if (cached !== undefined) return cached;
+      const result = rewrite(ast, source, visit, inPayload);
+      projected.set(ast, result);
+      return result;
+    };
+    return visit;
   };
-  const rewrite = (ast: SchemaAST.AST): SchemaAST.AST => {
+  // Effect parses a Some against the decoded projection before unwrapping it. Carry the
+  // source through that projection so a nested unwrapping codec keeps its provenance.
+  // A plain Schema.Option encountered along either path remains an opaque declaration.
+  const rewrite = (
+    ast: SchemaAST.AST,
+    source: SchemaAST.AST,
+    visit: Visit,
+    inPayload: boolean,
+  ): SchemaAST.AST => {
+    // A synthetic strict attempt would change which member Effect writes inside a tagged Option.
+    if (inPayload && source._tag === "Union" && choosesOpaqueOption(source))
+      return ast;
     if (ast._tag === "Suspend") {
       // Follow a suspended schema only when it is written, so a recursive one stays finite.
       let target: SchemaAST.AST | undefined;
       return new SchemaAST.Suspend(
-        () => (target ??= visit(ast.thunk())),
+        () =>
+          (target ??= visit(
+            ast.thunk(),
+            source !== ast && source._tag === "Suspend"
+              ? source.thunk()
+              : undefined,
+          )),
         ast.annotations,
         undefined,
         ast.encoding,
         ast.context,
       );
     }
-    const option: boolean = isOptionDeclaration(ast);
+    const payload =
+      source._tag === "Declaration" ? writtenOptionSource(source) : undefined;
     if (
       ast._tag !== "Objects" &&
       ast._tag !== "Arrays" &&
       ast._tag !== "Union" &&
       classFields(ast) === undefined &&
-      !option
+      payload === undefined
     )
       return ast;
     const encoding =
       ast.encoding &&
       mapSame(ast.encoding, (link) => {
-        const target = visit(link.to);
+        const target = (payload === undefined ? visit : visitPayload)(link.to);
         return target === link.to
           ? link
           : new SchemaAST.Link(target, link.transformation);
       });
     if (ast._tag === "Declaration") {
       // Effect parses the native Some's payload before applying the codec's encoding links.
-      const typeParameters = option
-        ? mapSame(ast.typeParameters, visit)
-        : ast.typeParameters;
+      const typeParameters =
+        payload === undefined
+          ? ast.typeParameters
+          : mapSame(ast.typeParameters, (parameter) =>
+              visitPayload(parameter, payload),
+            );
       return encoding === ast.encoding && typeParameters === ast.typeParameters
         ? ast
         : new SchemaAST.Declaration(
@@ -322,14 +373,24 @@ export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
           );
     }
     if (ast._tag === "Objects") {
-      const properties = mapSame(ast.propertySignatures, (property) => {
-        const type = visit(property.type);
+      const properties = mapSame(ast.propertySignatures, (property, index) => {
+        const type = visit(
+          property.type,
+          source._tag === "Objects"
+            ? source.propertySignatures[index]?.type
+            : undefined,
+        );
         return type === property.type
           ? property
           : new SchemaAST.PropertySignature(property.name, type);
       });
-      const indexes = mapSame(ast.indexSignatures, (index) => {
-        const type = visit(index.type);
+      const indexes = mapSame(ast.indexSignatures, (index, position) => {
+        const type = visit(
+          index.type,
+          source._tag === "Objects"
+            ? source.indexSignatures[position]?.type
+            : undefined,
+        );
         return type === index.type
           ? index
           : new SchemaAST.IndexSignature(index.parameter, type);
@@ -349,8 +410,18 @@ export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
           );
     }
     if (ast._tag === "Arrays") {
-      const elements = mapSame(ast.elements, visit);
-      const rest = mapSame(ast.rest, visit);
+      const elements = mapSame(ast.elements, (element, index) =>
+        visit(
+          element,
+          source._tag === "Arrays" ? source.elements[index] : undefined,
+        ),
+      );
+      const rest = mapSame(ast.rest, (element, index) =>
+        visit(
+          element,
+          source._tag === "Arrays" ? source.rest[index] : undefined,
+        ),
+      );
       return encoding === ast.encoding &&
         elements === ast.elements &&
         rest === ast.rest
@@ -367,10 +438,20 @@ export const recordingWriter = (root: SchemaAST.AST): SchemaAST.AST => {
           );
     }
     return ast._tag === "Union"
-      ? noting(ast, ast.types.map(visit), encoding)
+      ? noting(
+          ast,
+          ast.types.map((member, index) =>
+            visit(
+              member,
+              source._tag === "Union" ? source.types[index] : undefined,
+            ),
+          ),
+          encoding,
+        )
       : ast;
   };
-  return visit(root);
+  const visitPayload = walker(true);
+  return walker(false)(root);
 };
 
 /** Any object or list, whose keys can be read. */
