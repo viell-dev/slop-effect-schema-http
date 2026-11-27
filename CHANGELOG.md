@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Say why a refused field cannot be kept, and name the field at fault
+  ([#275](https://github.com/viell-dev/slop-effect-schema-http/issues/275)). Every request that
+  refused still refuses before dispatch, and every request that sent sends the same bytes; only the
+  `SchemaError`'s messages and paths change. With `limit` written as `page_size`,
+  `{ limit: 5, page_size: "6" }` now reads
+  `This field is given under both "limit" and "page_size"; give it under one name`. A wire-named
+  value the encoded side refuses, such as `{ page_size: "many" }`, reads that side's own error,
+  `Expected a finite number at ["page_size"]`, where an optional field read
+  `The schema cannot keep this field with the rest of the value` and a required one
+  `Missing key at ["limit"]`; a decoded-named value the decoded side refuses reads its error too.
+  Items of a list or record on different sides read
+  `The items of this field's list or record use different sides; give every item on one side`, and a
+  built-in such as a `Map` where a record would rebuild it reads
+  `The schema cannot keep this Map as a record`. Beside a Void,
+  `{ extra: { a: "x" }, filter: { page_size: "05" } }` under
+  `extra: Union([Void, Struct({ a: Number })])` names only `["extra"]["a"]`, with `Expected number`,
+  and no longer the valid `["filter"]["page_size"]`. Where the other side's error explains a loss, a
+  renamed field it does not explain is left out of the message. The generic message remains where
+  nothing more is known.
 - Tell the author of a provider that writes bytes to refuse a header name that is not a token, and a
   NUL in a header value, as well as a carriage return or line feed
   ([#302](https://github.com/viell-dev/slop-effect-schema-http/issues/302)). A colon in a name such

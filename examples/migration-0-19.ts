@@ -219,7 +219,7 @@ const written = Request.compile(raw, {
 // #endregion json
 assert.match(await refused(notANumber, "HttpBodyError"), /\["v"\]/);
 assert.match(await refused(map, "HttpBodyError"), /\["v"\]/);
-assert.match(await refused(rebuilt), /cannot keep the content of this value/);
+assert.match(await refused(rebuilt), /cannot keep this Map as a record/);
 assert.equal(await prepared(written), '{"v":{"k":"v"}}');
 
 // #region group-values
