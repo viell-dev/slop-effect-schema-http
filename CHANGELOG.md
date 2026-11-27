@@ -78,8 +78,13 @@
   in the other order it still sends that. Reading field by field runs the fields' decoders and
   checks again after the whole read, as the other recovery routes do. Supply the enclosing value and
   its siblings on their decoded side, or give the encoded payload or absence directly at the
-  Option's wire position. A rename on the enclosing struct or an ancestor can still let the encoded
-  read take the wrapper as the payload
+  Option's wire position. The same holds below a
+  struct with renamed keys: with `held` renamed to `wire_held`, a `Some` or `None` given at
+  `wire_held`, or beside a renamed sibling or below a renamed ancestor on the encoded side, now
+  refuses where 0.19.0 sent `{"wire_held":{}}`, and a record payload there refuses where 0.19.0 sent
+  `{"wire_held":{"value":{...}}}`. The refusal can read `Missing key` at the decoded name
+  ([#313](https://github.com/viell-dev/slop-effect-schema-http/issues/313)); give the field on its
+  decoded side, as `held`, or its encoded payload at `wire_held`
   ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)).
 - Tell the author of a provider that writes bytes to refuse a header name that is not a token, and a
   NUL in a header value, as well as a carriage return or line feed

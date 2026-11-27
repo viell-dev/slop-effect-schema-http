@@ -2436,31 +2436,72 @@ describe("an invalid Some payload keeps its decoded error", () => {
   }).pipe(Schema.encodeKeys({ held: "wire_held" }));
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/321
-  it.effect(
-    "currently sends an empty payload for a wrapper at a renamed key",
-    () =>
-      Effect.gen(function* () {
-        for (const wire_held of [
-          Option.some({ a: 5, b: "keep" }),
-          Option.some({ a: "a", b: "keep" }),
-          Option.none(),
-        ]) {
-          expect(yield* jsonText(renamed, { wire_held } as never)).toBe(
-            '{"wire_held":{}}',
-          );
-        }
-      }),
+  it.effect("refuses a wrapper given under a renamed key", () =>
+    Effect.gen(function* () {
+      const record = Schema.Struct({
+        held: Schema.OptionFromNullOr(
+          Schema.Record(Schema.String, Schema.Number),
+        ),
+      }).pipe(Schema.encodeKeys({ held: "wire_held" }));
+      for (const [schema, wire_held] of [
+        [renamed, Option.some({ a: 5, b: "keep" })],
+        [renamed, Option.some({ a: "a", b: "keep" })],
+        [renamed, Option.none()],
+        [record, Option.some({ a: 1 })],
+      ] as const) {
+        const failure = yield* Effect.flip(
+          json(schema, { wire_held } as never),
+        );
+        expect(failure).toBeInstanceOf(Schema.SchemaError);
+      }
+      expect(
+        yield* json(renamed, { held: Option.some({ a: "a", b: "keep" }) }),
+      ).toEqual({ wire_held: { a: "a", b: "keep" } });
+      expect(yield* json(renamed, { held: Option.none() })).toEqual({
+        wire_held: null,
+      });
+      expect(yield* json(renamed, { wire_held: { a: "a" } } as never)).toEqual({
+        wire_held: { a: "a" },
+      });
+      expect(yield* json(renamed, { wire_held: null } as never)).toEqual({
+        wire_held: null,
+      });
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/321
-  it.effect.fails("refuses an invalid Some at a renamed key", () =>
-    Effect.gen(function* () {
-      const failure = yield* Effect.flip(
-        json(renamed, { wire_held: Option.some({ a: 5, b: "keep" }) } as never),
-      );
-      expect(failure).toBeInstanceOf(Schema.SchemaError);
-      expect(failure.message).toContain('["a"]');
-    }),
+  it.effect(
+    "refuses a wrapper beside a renamed sibling or below a renamed parent",
+    () =>
+      Effect.gen(function* () {
+        const sibling = Schema.Struct({
+          held: Schema.OptionFromNullOr(payload),
+          n: Schema.String,
+        }).pipe(Schema.encodeKeys({ n: "wire_n" }));
+        const parent = Schema.Struct({
+          row: Schema.Struct({
+            held: Schema.OptionFromNullOr(payload),
+            m: Schema.String,
+          }),
+          n: Schema.String,
+        }).pipe(Schema.encodeKeys({ n: "wire_n" }));
+        for (const [schema, body] of [
+          [sibling, { held: Option.none(), wire_n: "3" }],
+          [sibling, { held: Option.some({ a: "a", b: "keep" }), wire_n: "3" }],
+          [parent, { row: { held: Option.none(), m: "1" }, wire_n: "2" }],
+        ] as const) {
+          const failure = yield* Effect.flip(json(schema, body as never));
+          expect(failure).toBeInstanceOf(Schema.SchemaError);
+        }
+        // On the decoded side the wrapper is the field's own value.
+        expect(yield* json(sibling, { held: Option.none(), n: "3" })).toEqual({
+          held: null,
+          wire_n: "3",
+        });
+        expect(
+          yield* json(parent, { row: { held: Option.none(), m: "1" }, n: "2" }),
+        ).toEqual({ row: { held: null, m: "1" }, wire_n: "2" });
+      }),
   );
 
   it.effect("refuses an invalid Some under a hand-written codec", () =>

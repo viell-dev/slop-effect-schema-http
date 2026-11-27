@@ -712,10 +712,10 @@ the schema does with it. These are the places where it cannot, and what happens 
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
   guard for native Options follows visible schema nodes into the encoded side of Option codecs,
   including hand-written ones. It cannot see a wrapper read inside an opaque declaration or inside a
-  middleware callback. The encoded read of a struct with renamed keys can still take a native Option
-  as its payload and lose content, even if the rename is on a sibling or an ancestor of the Option's
-  field. For example, with `held` renamed to `wire_held`, an `OptionFromNullOr` of an optional-field
-  struct can send `{"wire_held":{}}` for a native `Some` or `None` at `wire_held`
+  middleware callback. Below a struct with renamed keys, it pairs each wire field with the decoded
+  field it was projected from, so a native Option given there is refused as well. With `held`
+  renamed to `wire_held`, a `Some` or `None` at `wire_held`, or beside a renamed sibling or below a
+  renamed ancestor on the encoded side, refuses instead of sending `{"wire_held":{}}`
   ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)). A recovery's value is
   not checked against what it was given: a `Schema.catchDecoding` record beside a list member can
   take a list whose cells hold a key the list member does not state, and what it recovers is sent.

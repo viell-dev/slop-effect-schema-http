@@ -254,22 +254,96 @@ export const guardReading = (root: SchemaAST.AST): SchemaAST.AST =>
 
 type WrapperPosition = "source" | "rival" | undefined;
 
+/**
+ * A decoded node's type, after the encodings it reads through, and whether one of them unwraps an
+ * Option. Its encoded projection is the same node as the projection of the node itself.
+ */
+const projectedType = (
+  ast: SchemaAST.AST,
+): { readonly type: SchemaAST.AST; readonly unwraps: boolean } => {
+  let type = ast;
+  let unwraps = false;
+  while (type.encoding !== undefined) {
+    unwraps ||= readsOptionPayload(type);
+    type = type.encoding.at(-1)!.to;
+  }
+  return { type, unwraps };
+};
+
+/**
+ * The decoded child of `structure` that `child` is the encoded projection of, if any.
+ *
+ * @remarks
+ * Effect builds some wire schemas, such as `Schema.encodeKeys`'s, from `toEncoded` projections of
+ * the decoded fields, which drop every Option codec. Effect memoizes `toEncoded`, so a projected
+ * child is the very node `toEncoded` returns for its decoded counterpart. Checked on Effect 4.0.7
+ * and 4.1.6. Revisit when a peer update stops memoizing it.
+ */
+const projectionOf = (
+  structure: SchemaAST.AST | undefined,
+  child: SchemaAST.AST,
+  candidates: (structure: SchemaAST.AST) => ReadonlyArray<SchemaAST.AST>,
+): SchemaAST.AST | undefined =>
+  structure === undefined
+    ? undefined
+    : candidates(structure).find(
+        (decoded) => SchemaAST.toEncoded(decoded) === child,
+      );
+
+const propertyTypes = (ast: SchemaAST.AST) =>
+  ast._tag === "Objects" ? ast.propertySignatures.map(({ type }) => type) : [];
+const indexTypes = (ast: SchemaAST.AST) =>
+  ast._tag === "Objects" ? ast.indexSignatures.map(({ type }) => type) : [];
+const elementTypes = (ast: SchemaAST.AST) =>
+  ast._tag === "Arrays" ? [...ast.elements, ...ast.rest] : [];
+const memberTypes = (ast: SchemaAST.AST) =>
+  ast._tag === "Union" ? ast.types : [];
+
+const projectedCaches = new WeakMap<
+  SchemaAST.AST,
+  Record<"source" | "rival" | "none", WeakMap<SchemaAST.AST, SchemaAST.AST>>
+>();
+
+const projectedCache = (
+  structure: SchemaAST.AST,
+  position: WrapperPosition,
+): WeakMap<SchemaAST.AST, SchemaAST.AST> => {
+  let caches = projectedCaches.get(structure);
+  if (caches === undefined) {
+    caches = {
+      source: new WeakMap(),
+      rival: new WeakMap(),
+      none: new WeakMap(),
+    };
+    projectedCaches.set(structure, caches);
+  }
+  return caches[position ?? "none"];
+};
+
 const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
+  /**
+   * Visit a node. While reading, `structure` is the decoded node whose own children `ast`'s
+   * children are encoded projections of, so an Option codec dropped by the projection still marks
+   * its wire reader as a source.
+   */
   const visit = (
     ast: SchemaAST.AST,
     position?: WrapperPosition,
+    structure?: SchemaAST.AST,
   ): SchemaAST.AST => {
     const cache =
-      position === "source"
-        ? guardedOptionSources
-        : position === "rival"
-          ? guardedOptionRivals
-          : reading
-            ? guardedReads
-            : guardedVoids;
+      structure !== undefined
+        ? projectedCache(structure, position)
+        : position === "source"
+          ? guardedOptionSources
+          : position === "rival"
+            ? guardedOptionRivals
+            : reading
+              ? guardedReads
+              : guardedVoids;
     const known = cache.get(ast);
     if (known !== undefined) return known;
-    const rewritten = rewrite(ast, position);
+    const rewritten = rewrite(ast, position, structure);
     // Follow unions and suspensions to their actual wire reader. A native Option schema
     // can legitimately take the wrapper as its own value, even inside another Option codec.
     const result =
@@ -286,7 +360,23 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
   const rewrite = (
     ast: SchemaAST.AST,
     position: WrapperPosition,
+    structure: SchemaAST.AST | undefined,
   ): SchemaAST.AST => {
+    /** Visit a child, as a source if it projects a decoded Option codec's wire side. */
+    const visitChild = (
+      child: SchemaAST.AST,
+      candidates: (structure: SchemaAST.AST) => ReadonlyArray<SchemaAST.AST>,
+      childPosition?: WrapperPosition,
+    ) => {
+      const decoded = projectionOf(structure, child, candidates);
+      if (decoded === undefined) return visit(child, childPosition);
+      const projected = projectedType(decoded);
+      return visit(
+        child,
+        projected.unwraps ? "source" : childPosition,
+        projected.type,
+      );
+    };
     if (!reading && isPlainVoid(ast)) return guardVoid(ast);
     const struct = ast._tag === "Objects";
     const list = ast._tag === "Arrays";
@@ -305,9 +395,14 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
     const encoding =
       (reading || !suspended) && ast.encoding
         ? mapSame(ast.encoding, (link) => {
+            // A wire schema built from the decoded fields' projections, as Schema.encodeKeys
+            // builds one, pairs its children with this node's own.
             let target = visit(
               link.to,
               link === last ? wirePosition : undefined,
+              reading && link === last && link.to._tag === ast._tag
+                ? ast
+                : undefined,
             );
             if (unwraps && ast.encoding?.length === 1)
               target = readFieldlessPayload(ast, link.to, target);
@@ -346,13 +441,13 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
           );
     if (struct) {
       const properties = mapSame(ast.propertySignatures, (property) => {
-        const type = visit(property.type);
+        const type = visitChild(property.type, propertyTypes);
         return type === property.type
           ? property
           : new SchemaAST.PropertySignature(property.name, type);
       });
       const indexes = mapSame(ast.indexSignatures, (index) => {
-        const type = visit(index.type);
+        const type = visitChild(index.type, indexTypes);
         return type === index.type
           ? index
           : new SchemaAST.IndexSignature(index.parameter, type);
@@ -372,8 +467,12 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
           );
     }
     if (list) {
-      const elements = mapSame(ast.elements, (element) => visit(element));
-      const rest = mapSame(ast.rest, (element) => visit(element));
+      const elements = mapSame(ast.elements, (element) =>
+        visitChild(element, elementTypes),
+      );
+      const rest = mapSame(ast.rest, (element) =>
+        visitChild(element, elementTypes),
+      );
       return encoding === ast.encoding &&
         elements === ast.elements &&
         rest === ast.rest
@@ -390,9 +489,15 @@ const guard = (root: SchemaAST.AST, reading: boolean): SchemaAST.AST => {
           );
     }
     if (!union) return replaceEncoding(ast, encoding);
-    const hasOption = reading && ast.types.some(readsOptionPayload);
+    const hasOption =
+      reading &&
+      ast.types.some((member) => {
+        if (readsOptionPayload(member)) return true;
+        const decoded = projectionOf(structure, member, memberTypes);
+        return decoded !== undefined && projectedType(decoded).unwraps;
+      });
     const members = mapSame(ast.types, (member) =>
-      visit(member, raw ?? (hasOption ? "rival" : undefined)),
+      visitChild(member, memberTypes, raw ?? (hasOption ? "rival" : undefined)),
     );
     if (encoding === ast.encoding && members === ast.types) return ast;
     const rewritten = new SchemaAST.Union(
