@@ -1337,6 +1337,24 @@ describe("loose writes inside Some", () => {
       }),
   );
 
+  it.effect(
+    "keeps a wider payload when encoding middleware follows an unwrapping link",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.OptionFromNullOr(Filter).pipe(
+          Schema.catchEncoding(() => Effect.succeedSome(null)),
+        );
+        const schema = Schema.Struct({ held, who: Counted, filter: Filter });
+        expect(
+          yield* json(schema, { held: Option.some(wide), who, filter: wide }),
+        ).toEqual({
+          held: wide,
+          who: writtenWho,
+          filter: wide,
+        });
+      }),
+  );
+
   it.effect("compares caller names and values inside an unwrapping Some", () =>
     Effect.gen(function* () {
       for (const [payload, value, key] of [
