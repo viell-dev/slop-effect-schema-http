@@ -6,6 +6,7 @@ import {
   Option,
   Schema,
   SchemaTransformation,
+  Struct,
 } from "effect";
 import * as Body from "./Body.js";
 import * as Inputs from "./internal/input.js";
@@ -2710,6 +2711,152 @@ describe("a codec only the writer follows keeps or refuses its payload's fields"
   );
 });
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/327
+describe("a hand-written Option codec is read by its own transformation", () => {
+  type FilterValue = typeof Filter.Type;
+  type Encoder<A> = (value: Option.Option<A>) => A | null;
+  const wide = { ...owner, limit: "l" };
+  // Decoded as OptionFromNullishOr decodes, so only the encoder tells them apart.
+  const handWritten = (encode: Encoder<FilterValue>) =>
+    Schema.NullOr(Filter).pipe(
+      Schema.decodeTo(
+        Schema.Option(Filter),
+        SchemaTransformation.transform({
+          decode: Option.fromNullishOr,
+          encode,
+        }),
+      ),
+    );
+  /** A hand-written codec over any payload, decoded as OptionFromNullishOr decodes. */
+  const nullishCodec = <S extends Schema.Top>(
+    payload: S,
+    encode: Encoder<S["Type"]>,
+  ) =>
+    Schema.NullOr(payload).pipe(
+      Schema.decodeTo(
+        Schema.Option(Schema.toType(payload)),
+        SchemaTransformation.transform<
+          Option.Option<S["Type"]>,
+          S["Type"] | null
+        >({ decode: Option.fromNullishOr, encode }),
+      ),
+    );
+  const narrowing = {
+    onNone: () => null,
+    onSome: (value: FilterValue) => ({ owner: value.owner }),
+  };
+  // These data-last calls return a wrapper with the text of `Option.getOrNull`, which
+  // `OptionFromNullishOr` encodes with; the arrow functions do the same with other text.
+  const spellings: ReadonlyArray<readonly [Encoder<FilterValue>, FilterValue]> =
+    [
+      [Option.getOrElse(() => null), wide],
+      [(value) => Option.getOrElse(value, () => null), wide],
+      [Option.match(narrowing), owner],
+      [(value) => Option.match(value, narrowing), owner],
+    ];
+
+  it.effect("refuses a stray key however its encoder is written", () =>
+    Effect.gen(function* () {
+      for (const [encode, written] of spellings) {
+        const schema = Schema.Struct({
+          held: handWritten(encode),
+          filter: Filter,
+        });
+        const sent = (held: Option.Option<object>) =>
+          json(schema, { held, filter } as never);
+        expect(yield* sent(Option.some(wide))).toEqual({
+          held: written,
+          filter,
+        });
+        expect(yield* sent(Option.none())).toEqual({ held: null, filter });
+        const lost = yield* Effect.flip(
+          sent(Option.some({ ...wide, stray: "x" })),
+        );
+        expect(lost.message).toContain('["held"]["value"]["limit"]');
+        expect(lost.message).toContain('["held"]["value"]["stray"]');
+        const unstated = yield* Effect.flip(
+          sent(Option.some({ ...owner, stray: "x" })),
+        );
+        expect(unstated.message).toContain('["held"]["value"]["stray"]');
+      }
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/334
+  it.effect(
+    "refuses a stated field a stray key costs below a same-tag union, a list or another Some, however its encoder is written",
+    () =>
+      Effect.gen(function* () {
+        const Tagged = Schema.Union([
+          Schema.TaggedStruct("A", Owner.fields),
+          Schema.TaggedStruct("A", Wide.fields),
+        ]);
+        const wideStray = { ...wide, stray: "x" };
+        // Before #327 the data-last spelling was read as OptionFromNullishOr and kept `limit`.
+        for (const encode of [
+          Option.getOrElse(() => null),
+          <A>(value: Option.Option<A>) => Option.getOrElse(value, () => null),
+        ]) {
+          const cases = [
+            [
+              nullishCodec(Tagged, encode),
+              Option.some({ _tag: "A", ...wideStray }),
+              '["held"]["value"]["limit"]',
+            ],
+            [
+              nullishCodec(Schema.Array(Filter), encode),
+              Option.some([wideStray]),
+              '["held"]["value"][0]["limit"]',
+            ],
+            [
+              Schema.OptionFromNullOr(
+                Schema.Struct({ inner: nullishCodec(Filter, encode) }),
+              ),
+              Option.some({ inner: Option.some(wideStray) }),
+              '["held"]["value"]["inner"]["value"]["limit"]',
+            ],
+          ] as const;
+          for (const [held, given, at] of cases) {
+            const failure = yield* Effect.flip(
+              json(
+                Schema.Struct({ held }) as Schema.Codec<unknown, unknown>,
+                {
+                  held: given,
+                } as never,
+              ),
+            );
+            expect(failure.message).toContain(at);
+            expect(failure.message).not.toContain("stray");
+          }
+        }
+      }),
+  );
+
+  it.effect(
+    "leaves out a stray key through the built-in codecs and Effect's own encoders",
+    () =>
+      Effect.gen(function* () {
+        for (const held of [
+          Schema.OptionFromNullishOr(Filter),
+          Schema.OptionFromNullishOr(Filter, { onNoneEncoding: null }),
+          Schema.OptionFromOptionalNullOr(Filter, { onNoneEncoding: null }),
+          Schema.OptionFromOptionalNullOr(Filter, {
+            onNoneEncoding: undefined,
+          }),
+          Schema.OptionFromOptional(Filter),
+          // The encoder Effect shares decides what is written, whoever wrote the codec.
+          handWritten(Option.getOrNull),
+        ])
+          expect(
+            yield* json(Schema.Struct({ held, filter: Filter }), {
+              held: Option.some({ ...wide, stray: "x" }),
+              filter,
+            } as never),
+          ).toEqual({ held: wide, filter });
+      }),
+  );
+});
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/299
 it.effect("refuses wrapper collisions at opaque Option positions", () =>
   Effect.gen(function* () {
@@ -3240,6 +3387,82 @@ describe("an invalid Some payload keeps its decoded error", () => {
             wire_n: "x",
           } as never),
         ).toEqual({ row: { x: sentSome, y: { a: "a" } }, wire_n: "x" });
+      }),
+  );
+
+  // The documented reading of a transformation no schema node tells apart from a rename.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/327
+  it.effect(
+    "pairs a Struct.renameKeys transformation by place, as Schema.encodeKeys",
+    () =>
+      Effect.gen(function* () {
+        type Wire = { readonly x: unknown; readonly y: unknown };
+        type Fields = { readonly held: unknown; readonly other: unknown };
+        // The schema nodes are those Schema.encodeKeys({ held: "x", other: "y" }) builds, but
+        // these functions write `held` at `y` and `other` at `x`.
+        const crossing = (
+          content: Schema.Top,
+          [decode, encode]: readonly [
+            (wire: Wire) => Fields,
+            (fields: Fields) => Wire,
+          ],
+        ) => {
+          const held = Schema.OptionFromNullOr(content);
+          const wire = Schema.toEncoded(held);
+          const row = Schema.Struct({ x: wire, y: wire }).pipe(
+            Schema.decodeTo(
+              Schema.Struct({ held, other: wire }),
+              SchemaTransformation.transform({ decode, encode }),
+            ),
+          );
+          // The renamed sibling puts the row on its encoded side.
+          return Schema.Struct({ row, n: Schema.String }).pipe(
+            Schema.encodeKeys({ n: "wire_n" }),
+          ) as unknown as typeof renamed;
+        };
+        const renameKeys = [
+          Struct.renameKeys<Wire, { x: "other"; y: "held" }>({
+            x: "other",
+            y: "held",
+          }),
+          Struct.renameKeys<Fields, { other: "x"; held: "y" }>({
+            other: "x",
+            held: "y",
+          }),
+        ] as const;
+        const arrows = [
+          ({ x, y }: Wire) => ({ held: y, other: x }),
+          ({ held, other }: Fields) => ({ x: other, y: held }),
+        ] as const;
+        const some = Option.some({ b: "keep" });
+        // A wrapper at `y`, where `held` is written, keeps the schema's own reading and is lost
+        // through either spelling: Struct.renameKeys pairs `y` with `other`, arrows pair nothing.
+        for (const functions of [renameKeys, arrows])
+          expect(
+            yield* json(crossing(payload, functions), {
+              row: { x: { a: "a" }, y: some },
+              wire_n: "x",
+            } as never),
+          ).toEqual({ row: { x: { a: "a" }, y: {} }, wire_n: "x" });
+        // At `x`, where `other` is written as `Any`, the wrapper is kept as given by the arrow
+        // functions, but refused through Struct.renameKeys as if `held` were written there.
+        const at = { row: { x: some, y: { a: "a" } }, wire_n: "x" };
+        expect(yield* json(crossing(Schema.Any, arrows), at as never)).toEqual({
+          row: {
+            x: { _id: "Option", _tag: "Some", value: { b: "keep" } },
+            y: { a: "a" },
+          },
+          wire_n: "x",
+        });
+        const refused = yield* Effect.flip(
+          json(crossing(Schema.Any, renameKeys), at as never),
+        );
+        expect(refused).toBeInstanceOf(Schema.SchemaError);
+        // The strict read's message names the renamed sibling
+        // (https://github.com/viell-dev/slop-effect-schema-http/issues/351).
+        expect(refused.message).toBe(
+          'Expected no excess property\n  at ["wire_n"]',
+        );
       }),
   );
 

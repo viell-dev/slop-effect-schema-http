@@ -4,6 +4,7 @@ import {
   Option,
   Schema,
   SchemaAST,
+  SchemaGetter,
   SchemaTransformation,
 } from "effect";
 import * as Excess from "./excess.js";
@@ -1051,6 +1052,91 @@ it("recognizes built-in unwrapping getters without running a custom getter", () 
   ]) {
     expect(Excess.mayWriteUnwrappedOption(codec.ast)).toBe(true);
   }
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/327
+it("does not take a data-last encoder for a built-in one by its text", () => {
+  const Named = Schema.Struct({ a: text });
+  type Payload = typeof Named.Type;
+  const input = Option.some({ a: "a", stray: "x" });
+  const left = (codec: Schema.Top) => {
+    const output = Excess.normalisedOptions(codec.ast, input);
+    return output === input ? undefined : output;
+  };
+  const handWritten = (
+    encode: (value: Option.Option<Payload>) => Payload | null | undefined,
+  ) =>
+    Schema.NullishOr(Named).pipe(
+      Schema.decodeTo(
+        Schema.Option(Named),
+        SchemaTransformation.transform({
+          decode: Option.fromNullishOr,
+          encode,
+        }),
+      ),
+    );
+  // These share the text of Option.getOrNull and Option.getOrUndefined, which are data-last
+  // calls too, but not their identity, so their payload keeps the codec's own reading.
+  for (const encode of [
+    Option.getOrElse(() => null),
+    Option.getOrElse(() => undefined),
+    Option.match({ onNone: () => null, onSome: (value: Payload) => value }),
+  ])
+    expect(left(handWritten(encode))).toBeUndefined();
+  // OptionFromOptional's own decoder beside a data-last encoder: its getters' text matched
+  // OptionFromOptional's before #327.
+  const flatMapped = Schema.optional(Named).pipe(
+    Schema.decodeTo(
+      Schema.Option(Named),
+      new SchemaTransformation.Transformation(
+        SchemaTransformation.optionFromOptional<Payload>().decode,
+        SchemaGetter.transformOptional<
+          Payload | undefined,
+          Option.Option<Payload>
+        >(Option.flatMap((value) => value)),
+      ),
+    ),
+  );
+  expect(left(flatMapped)).toBeUndefined();
+  for (const codec of [
+    handWritten(Option.getOrNull),
+    handWritten(Option.getOrUndefined),
+    Schema.OptionFromNullishOr(Named),
+    Schema.OptionFromOptional(Named),
+    Schema.OptionFromOptionalNullOr(Named, { onNoneEncoding: null }),
+  ])
+    expect(left(codec)).toEqual(Option.some({ a: "a" }));
+});
+
+/** The source text of a codec's first link's two getters. */
+const getterTexts = (schema: Schema.Top) => {
+  const transformation = schema.ast.encoding?.[0]?.transformation;
+  if (transformation?._tag !== "Transformation")
+    throw new Error("expected a transformation");
+  return [transformation.decode, transformation.encode].map((getter) =>
+    "transform" in getter && typeof getter.transform === "function"
+      ? Function.prototype.toString.call(getter.transform)
+      : "",
+  );
+};
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/327
+it("compares Option codecs by text only where it names what they do", () => {
+  // Preparation recognises these codecs by their getters' text, because Effect builds them on each
+  // call. A text that names no operation, like the wrapper data-last calls share, would match
+  // unrelated codecs, so a new Effect that builds them that way must fail here.
+  for (const onNoneEncoding of [null, undefined]) {
+    const [decode, encode] = getterTexts(
+      Schema.OptionFromOptionalNullOr(text, { onNoneEncoding }),
+    );
+    expect(decode).toMatch(/\bfilter\b/);
+    expect(decode).toMatch(/\bisNotNullish\b/);
+    expect(encode).toMatch(/\bgetOrElse\b/);
+    expect(encode).toMatch(/\bflatten\b/);
+  }
+  const [decode, encode] = getterTexts(Schema.toCodecJson(Schema.Option(text)));
+  expect(decode).toMatch(/"None"/);
+  expect(encode).toMatch(/"Some"/);
 });
 
 it("compares configured unwrapping codecs on the loose route", () => {

@@ -582,17 +582,25 @@ can win. A stray key in those opaque contents can fail that read and make prepar
 Effect's first fit. The [recovery routes](#recovery-beside-an-opaque-value) account for the visible
 fields.
 
-Codecs such as `Schema.OptionFromNullOr` write a native `Some` by unwrapping its payload. When the
-codec is unambiguous at that position, preparation can see plain payloads under structural parents,
-including renamed structs and plain inputs to a stated class. A scalar, null or undefined
-alternative that cannot read the `Some` does not make the codec ambiguous. Before the whole strict
-read and write, preparation leaves out keys neither side of any remaining member states. A member
-ruled out by a literal tag states nothing, just as for an ordinary field. If the strict attempt
-fails, preparation uses the original input and checks for missing visible fields. If the whole write
-has to run loosely, unions the writer reaches through the Option's payload schema can try a member
-that keeps the whole value first. This includes a nested `Some` and a payload below a key renamed to
-an index-like name such as `"0"`. A plain transformation can expose the same payload schema directly
-or in a single-field struct for loose writing.
+Codecs such as `Schema.OptionFromNullOr` write a native `Some` by unwrapping its payload.
+Preparation recognises a built-in one by the function it encodes with, which Effect shares between
+them: `Option.getOrNull`, `Option.getOrUndefined`, or `Option.flatten` for those that can omit the
+key. A configured `OptionFromOptionalNullOr`, whose functions Effect builds on each call, is
+recognised by their source text, which only a copy of them matches. Any other codec is read by its
+own transformation, however its functions are written. One that encodes with
+`Option.getOrElse(() => null)` is not taken for `OptionFromNullishOr`, although that call returns a
+function with the same text as `Option.getOrNull`
+([#327](https://github.com/viell-dev/slop-effect-schema-http/issues/327)). When the codec is
+unambiguous at that position, preparation can see plain payloads under structural parents, including
+renamed structs and plain inputs to a stated class. A scalar, null or undefined alternative that
+cannot read the `Some` does not make the codec ambiguous. Before the whole strict read and write,
+preparation leaves out keys neither side of any remaining member states. A member ruled out by a
+literal tag states nothing, just as for an ordinary field. If the strict attempt fails, preparation
+uses the original input and checks for missing visible fields. If the whole write has to run
+loosely, unions the writer reaches through the Option's payload schema can try a member that keeps
+the whole value first. This includes a nested `Some` and a payload below a key renamed to an
+index-like name such as `"0"`. A plain transformation can expose the same payload schema directly or
+in a single-field struct for loose writing.
 
 Some codecs that unwrap a `Some` are followed only by the writer: a hand-written codec whose encoder
 writes a value in the field's place, a built-in one behind middleware, and an explicit
@@ -733,7 +741,10 @@ the schema does with it. These are the places where it cannot, and what happens 
 - A hand-written codec whose encoder can omit its key, a `transformOptional` as in
   `OptionFromOptional`, is not followed by the writer. Beside a key no member states in its `Some`,
   a same-tag union, a list of unions or a union inside another `Some` can lose `limit`, and a direct
-  union refuses. Use `Schema.OptionFromOptional`, or leave the key out
+  union refuses. That includes a codec with `OptionFromOptional`'s own decoder and an encoder such
+  as `Option.flatMap((value) => value)`
+  ([#327](https://github.com/viell-dev/slop-effect-schema-http/issues/327)). Use
+  `Schema.OptionFromOptional`, or leave the key out
   ([#364](https://github.com/viell-dev/slop-effect-schema-http/issues/364)).
 - Inside a `Some` that a hand-written codec, or another codec only the writer follows, reads, a
   nested Option codec, built-in or hand-written, can lose `limit` wherever the strict attempt fails:
@@ -756,11 +767,16 @@ the schema does with it. These are the places where it cannot, and what happens 
   is not. Below such a field, a nested Option keeps the schema's own reading and can be sent as `{}`
   ([#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328)). A field written by
   another transformation keeps the schema's own reading
-  ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)). A recovery's value is
-  not checked against what it was given: a `Schema.catchDecoding` record beside a list member can
-  take a list whose cells hold a key the list member does not state, and what it recovers is sent.
-  In `Union([Opaque, Title])`, where `Opaque` is a declaration that cannot be written as JSON,
-  `Title` can drop `meta`.
+  ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)). Nothing in the schema
+  tells a rename apart from a transformation between structs of its shape whose two functions are
+  both data-last Effect calls with one argument, such as `Struct.renameKeys(…)` in each direction,
+  so that is paired the same way, by place. Where its mapping crosses those places, a wrapper given
+  where it writes an Option codec keeps the schema's own reading, as through any other
+  transformation ([#327](https://github.com/viell-dev/slop-effect-schema-http/issues/327)). A
+  recovery's value is not checked against what it was given: a `Schema.catchDecoding` record beside
+  a list member can take a list whose cells hold a key the list member does not state, and what it
+  recovers is sent. In `Union([Opaque, Title])`, where `Opaque` is a declaration that cannot be
+  written as JSON, `Title` can drop `meta`.
 - A union that chooses again on a transformed copy, behind a transformation or middleware on the
   union itself or on the encoded side of a renamed struct, is the schema's own choice, because no
   caller field can be traced to the copy. `Union([Coded, Title]).pipe(Schema.middlewareDecoding(…))`
@@ -779,6 +795,11 @@ the schema does with it. These are the places where it cannot, and what happens 
   under `value`. Preparation can refuse at that path
   ([#299](https://github.com/viell-dev/slop-effect-schema-http/issues/299)). Remove the unstated
   outer key, choose the intended member directly, or supply the encoded representation.
+- Through a transformation that `Struct.renameKeys(…)` writes, with a mapping that crosses the
+  fields' places, a wrapper given where it writes a field that is not an Option codec refuses when
+  an Option codec has that field's place, even where the field written there, such as `Schema.Any`,
+  would keep the wrapper ([#327](https://github.com/viell-dev/slop-effect-schema-http/issues/327)).
+  Use `Schema.encodeKeys`, or write the transformation's functions yourself.
 - A stray key can also cause a refusal at an opaque Option position where the payload schema states
   a field called `value`, even if the given `value` would have been sent intact. This includes a
   native `Some` supplied as an object beside a competing Option alternative. Remove the unstated
@@ -822,13 +843,17 @@ the schema does with it. These are the places where it cannot, and what happens 
   cannot leave the key out without knowing what the encoder writes. With `Choice` as above,
   `Some({ owner, limit, stray })` refuses at `limit` under a same-tag union, a list of `Choice` or a
   `Choice` inside another `Some`
-  ([#334](https://github.com/viell-dev/slop-effect-schema-http/issues/334)). Under `Choice` itself,
-  a struct holding it, or such a codec beside a scalar or another codec, the refusal also names the
-  unstated key, and `Some({ owner, stray })` refuses at `stray`
-  ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)). Leave unstated keys out
-  of the `Some`, or use a built-in codec such as `OptionFromNullOr`, without middleware or an
-  explicit `Schema.toCodecJson`. Where something else makes the strict attempt fail, such as a stray
-  key in a sibling `Schema.Option`, `OptionFromNullOr` refuses the field too.
+  ([#334](https://github.com/viell-dev/slop-effect-schema-http/issues/334)). Where the payload is
+  `Choice`, a struct holding it or a renamed struct, or where a field beside the codec holds a union
+  or another Option codec competes with it, the refusal also names the unstated key, and refuses it
+  where nothing stated is lost: `Some({ owner, stray })` refuses at `stray`, and so does
+  `Some({ owner, limit, stray })` with the wider member first or under a renamed struct
+  ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)). A codec that encodes
+  with a data-last call such as `Option.getOrElse(() => null)` is hand-written too, and refuses the
+  same way ([#327](https://github.com/viell-dev/slop-effect-schema-http/issues/327)). Leave unstated
+  keys out of the `Some`, or use a built-in codec such as `OptionFromNullOr`, without middleware or
+  an explicit `Schema.toCodecJson`. Where something else makes the strict attempt fail, such as a
+  stray key in a sibling `Schema.Option`, `OptionFromNullOr` refuses the field too.
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
   either binding order. Bounded [stacked-union
   recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;

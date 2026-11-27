@@ -29,6 +29,39 @@
   the refusal also names the unstated key, and refuses it even where nothing stated is lost
   ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)).
 
+- **Breaking:** read a hand-written Option codec by its own transformation, however its encoder is
+  written ([#327](https://github.com/viell-dev/slop-effect-schema-http/issues/327)). Preparation
+  compared a codec's functions with those of `OptionFromNullishOr` and `OptionFromOptional` by their
+  source text as well as by identity, and every data-last Effect call with one argument returns a
+  function with the same text. So a codec decoded with `Option.fromNullishOr` and encoded with
+  `Option.getOrElse(() => null)` or `Option.match(…)` was read as `OptionFromNullishOr`, and the
+  same codec written with arrow functions was not. It now reads as the arrow-function codec does, as
+  a codec only the writer follows, so the refusal above reaches it. With
+  `Filter = Union([Struct({ owner }), Struct({ owner, limit })])`, `Some({ owner, limit, stray })`
+  under `Filter`, a same-tag union, a list of `Filter` or a `Filter` inside another `Some`, which
+  0.20.0 sent with `limit`, now refuses at `limit`. Where the payload is a union, a struct holding
+  one or a renamed struct, or where a field beside the codec holds a union or another Option codec
+  competes with it, a key no member states is refused too, even where nothing stated is lost:
+  `Some({ owner, stray })` under `Filter`, which 0.20.0 sent as `{"owner":…}`, refuses at `stray`.
+  That refusal is the one the arrow-function codec already gives
+  ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)). Two of the losses the
+  arrow-function codec has also reach these codecs, so a field 0.20.0 kept can go with no error:
+  inside their `Some`, a nested Option codec beside a stray key
+  ([#347](https://github.com/viell-dev/slop-effect-schema-http/issues/347)), and a look-alike of
+  `OptionFromOptional`, with its decoder and an encoder such as `Option.flatMap((value) => value)`,
+  which now reads as a hand-written codec that can omit its key and can lose `limit` beside a stray
+  key under a same-tag union, a list or another `Some`
+  ([#364](https://github.com/viell-dev/slop-effect-schema-http/issues/364)). Remove the stray key,
+  or use a built-in codec. Every built-in codec reads as before, and so does a codec that encodes
+  with `Option.getOrNull`, `Option.getOrUndefined` or `Option.flatten` itself. A configured
+  `OptionFromOptionalNullOr` is still recognised by the text of the functions Effect builds for it,
+  which only a copy of them matches. A transformation between structs of one shape whose two
+  functions are data-last Effect calls with one argument, such as `Struct.renameKeys`, still reads
+  as a `Schema.encodeKeys` rename, by place, because nothing in the schema tells them apart; the
+  [active
+  limits](https://viell-dev.github.io/slop-effect-schema-http/schema-input#active-limits-and-recovery)
+  give what that can lose or refuse.
+
 - **Message change:** a required renamed field given under its wire name no longer reports
   `Missing key` at its decoded name where a field beside it, given under its decoded name, cannot be
   read either. That field's own error names it instead

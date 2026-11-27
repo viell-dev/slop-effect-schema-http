@@ -1250,22 +1250,70 @@ const statesOption = (types: ReadonlyArray<Ast>): boolean => {
   return types.some(visit);
 };
 
-// Some built-in codecs close over their choice of None encoding. Compare those getters
-// with the installed Effect's own getters without invoking any of the schema's callbacks.
-const getterSource = (getter: object): string | undefined =>
+/** A getter, as its tag and the source text of its function. */
+interface GetterText {
+  readonly tag: string;
+  readonly source: string;
+}
+
+/** A transformation's two getters, as text. */
+interface Getters {
+  readonly decode: GetterText;
+  readonly encode: GetterText;
+}
+
+const getterText = (getter: {
+  readonly _tag: string;
+}): GetterText | undefined =>
   "transform" in getter && typeof getter.transform === "function"
-    ? Function.prototype.toString.call(getter.transform)
+    ? {
+        tag: getter._tag,
+        source: Function.prototype.toString.call(getter.transform),
+      }
     : undefined;
 
+/**
+ * The getters of a transformation that has a function in each direction.
+ *
+ * @remarks
+ * Effect builds the getters of a few codecs on each call, closed over a choice such as the None
+ * encoding, so they have no identity to compare. Their text can be compared with that of the
+ * installed Effect's own getters without invoking any of the schema's callbacks. Text tells
+ * functions apart only where it states what they do. Many functions share one text whatever they
+ * were given: every data-last Effect call with one argument, such as `Option.getOrElse(() => null)`,
+ * `Struct.renameKeys(mapping)` or `Option.getOrNull` itself, returns the same wrapper, and so does
+ * every `flow` (#327).
+ */
 const gettersOf = (
   transformation: SchemaAST.Link["transformation"] | undefined,
-) => {
+): Getters | undefined => {
   if (transformation?._tag !== "Transformation") return undefined;
-  const { decode, encode } = transformation;
-  return [decode._tag, getterSource(decode), encode._tag, getterSource(encode)];
+  const decode = getterText(transformation.decode);
+  const encode = getterText(transformation.encode);
+  return decode === undefined || encode === undefined
+    ? undefined
+    : { decode, encode };
 };
 
-// Schema.encodeKeys renames through Struct.renameKeys in both directions.
+const sameText = (one: GetterText, other: GetterText): boolean =>
+  one.tag === other.tag && one.source === other.source;
+
+/** Whether a transformation's getters have the tags and text of the `known` ones. */
+const sameGetters = (
+  transformation: SchemaAST.Link["transformation"],
+  known: Getters | undefined,
+): boolean => {
+  const getters = gettersOf(transformation);
+  return (
+    known !== undefined &&
+    getters !== undefined &&
+    sameText(getters.decode, known.decode) &&
+    sameText(getters.encode, known.encode)
+  );
+};
+
+// Schema.encodeKeys renames through Struct.renameKeys in both directions. Both getters are
+// data-last wrappers, whose text other calls share; renamedPairs states what that admits.
 const encodeKeysGetters = gettersOf(
   Schema.Struct({ a: Schema.String }).pipe(Schema.encodeKeys({ a: "b" })).ast
     .encoding?.[0]?.transformation,
@@ -1307,8 +1355,15 @@ const renamePairs = new WeakMap<SchemaAST.Link, RenamePairing | null>();
  * pairs only with the one decoded field whose projection it is; where several are, it lists them
  * all, so a caller can refuse what any of them would refuse rather than guess.
  * Any other transformation pairs nothing, since its callback alone knows which field it writes
- * where. The rename is recognised by its getters, as configured Option codecs are, which a
- * hand-written transformation spelled the same way would also match (#327).
+ * where.
+ *
+ * Nothing tells the rename apart from such a transformation for certain. Effect builds both of its
+ * getters on each call, as `Struct.renameKeys` wrappers closed over the mapping, and their text is
+ * the one every data-last Effect call with one argument shares. A transformation between structs of
+ * this shape whose two getters are both such calls, such as `Struct.renameKeys` with a mapping that
+ * crosses the fields' places, is read as a rename, by place (#327). Its schema nodes are the ones
+ * `Schema.encodeKeys` builds for a mapping that keeps the places, so no schema-level check can
+ * separate them without also changing how that rename is read.
  */
 export const renamedPairs = (
   from: Ast,
@@ -1316,7 +1371,6 @@ export const renamedPairs = (
 ): RenamePairing | undefined => {
   const known = renamePairs.get(link);
   if (known !== undefined) return known ?? undefined;
-  const getters = gettersOf(link.transformation);
   const { to } = link;
   let pairing: RenamePairing | undefined;
   if (
@@ -1326,8 +1380,7 @@ export const renamedPairs = (
     from.indexSignatures.length === 0 &&
     to.indexSignatures.length === 0 &&
     from.propertySignatures.length === to.propertySignatures.length &&
-    encodeKeysGetters?.every((part, index) => part === getters?.[index]) ===
-      true
+    sameGetters(link.transformation, encodeKeysGetters)
   ) {
     const decoded = from.propertySignatures;
     const wire = to.propertySignatures;
@@ -1354,13 +1407,28 @@ export const renamedPairs = (
   return pairing;
 };
 
-const additionalOptionGetters = [
-  Schema.OptionFromOptional(Schema.String).ast,
-  Schema.OptionFromOptionalNullOr(Schema.String, { onNoneEncoding: null }).ast,
-  Schema.OptionFromNullishOr(Schema.String).ast,
-].map((ast) => gettersOf(ast.encoding?.[0]?.transformation));
+/**
+ * The getters of `OptionFromOptionalNullOr` with a `null` or `undefined` None encoding.
+ *
+ * @remarks
+ * Effect builds both on each call, closed over the None encoding, which changes only what a None
+ * writes, so one text serves either encoding. Their text states what they do, so a hand-written
+ * codec matches only with the same source. A test holds that for every Effect version the project
+ * is tested with, and fails for one that builds them as a wrapper other functions share.
+ */
+const configuredOptionGetters = gettersOf(
+  Schema.OptionFromOptionalNullOr(Schema.String, { onNoneEncoding: null }).ast
+    .encoding?.[0]?.transformation,
+);
 
-/** The single encoding link where a built-in codec exposes its Some payload. */
+/**
+ * The single encoding link where a built-in codec exposes its Some payload.
+ *
+ * @remarks
+ * Every built-in unwrapping codec but a configured `OptionFromOptionalNullOr` encodes with a
+ * function Effect shares, so its encoder is recognised by identity. On the loose route that
+ * configured codec is recognised by its getters' text (#327).
+ */
 const unwrappingLink = (
   ast: Ast,
   loose: boolean,
@@ -1388,17 +1456,13 @@ const unwrappingLink = (
     (encode._tag === "TransformOptional" && encode.transform === Option.flatten)
   )
     return link;
-  if (!loose) return undefined;
-  const getters = gettersOf(link.transformation);
-  return additionalOptionGetters.some(
-    (known) =>
-      known?.every((item, index) => item === getters?.[index]) === true,
-  )
+  return loose && sameGetters(transformation, configuredOptionGetters)
     ? link
     : undefined;
 };
 
 // JSON and other canonical codecs can give Schema.Option its own tagged wire representation.
+// Effect builds its getters on each call; their text states what they do.
 const taggedOption = gettersOf(
   Schema.toCodecJson(Schema.Option(Schema.String)).ast.encoding?.[0]
     ?.transformation,
@@ -1416,12 +1480,7 @@ export const readsOptionPayload = (ast: Ast): ast is SchemaAST.Declaration => {
       transformation.encode._tag === "Passthrough"
     )
       continue;
-    const getters = gettersOf(transformation);
-    if (
-      tagged ||
-      !taggedOption?.every((part, index) => part === getters?.[index])
-    )
-      return true;
+    if (tagged || !sameGetters(transformation, taggedOption)) return true;
     tagged = true;
   }
   return !tagged && !isOptionDeclaration(ast.encoding.at(-1)!.to);
