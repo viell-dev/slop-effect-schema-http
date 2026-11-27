@@ -1316,17 +1316,27 @@ describe("request preparation beside Void", () => {
     () =>
       Effect.gen(function* () {
         const A = Schema.Struct({ a: Schema.Number });
-        for (const extra of [
-          Schema.Union([Schema.Void, A]),
-          Schema.Union([A, Schema.Void]),
-        ]) {
-          const schema = Schema.Struct({ extra, filter: Filter });
-          const path = Request.get("").pipe(
-            Request.path(schema, () => "/sent"),
-          );
-          for (const filter of [{ page_size: "05" }, { limit: 5 }]) {
+        const member = 'Expected number\n  at ["extra"]["a"]';
+        // The wire name is read under the decoded one, so only its name is lost to a comparison. The
+        // decoded name is stripped where the whole value is read as encoded, and nothing shows that
+        // the decoded side would keep it, so it is still named.
+        for (const [filter, beside] of [
+          [{ page_size: "05" }, ""],
+          [
+            { limit: 5 },
+            '\nThe schema cannot keep this field with the rest of the value\n  at ["filter"]["limit"]',
+          ],
+        ] as const)
+          for (const extra of [
+            Schema.Union([Schema.Void, A]),
+            Schema.Union([A, Schema.Void]),
+          ]) {
+            const schema = Schema.Struct({ extra, filter: Filter });
+            const path = Request.get("").pipe(
+              Request.path(schema, () => "/sent"),
+            );
             const value = { extra: { a: "x" }, filter };
-            const expected = 'Expected number\n  at ["extra"]["a"]';
+            const expected = member + beside;
             expect(
               yield* schemaFailure(post(schema), { body: value } as never),
             ).toBe(expected);
@@ -1338,14 +1348,13 @@ describe("request preparation beside Void", () => {
               yield* schemaFailure(post(schema), {
                 body: { extra: "x", filter },
               } as never),
-            ).toBe('Expected void\n  at ["extra"]');
+            ).toBe('Expected void\n  at ["extra"]' + beside);
             expect(
               yield* bodyOf(post(schema), {
                 body: { extra: { a: 1 }, filter },
               } as never),
             ).toBe('{"extra":{"a":1},"filter":{"page_size":"5"}}');
           }
-        }
         // A Void under a renamed key gives its error under the name the caller gave.
         const Renamed = Schema.Struct({ v: Schema.Void }).pipe(
           Schema.encodeKeys({ v: "w" }),
@@ -1355,6 +1364,42 @@ describe("request preparation beside Void", () => {
             body: { w: { a: 1 } },
           } as never),
         ).toBe('Expected void\n  at ["w"]');
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/275
+  it.effect(
+    "names a field given under both names beside a member's own error",
+    () =>
+      Effect.gen(function* () {
+        const A = Schema.Struct({ a: Schema.Number });
+        const twice =
+          'This field is given under both "limit" and "page_size"; give it under one name\n  at ["filter"]["page_size"]';
+        for (const extra of [
+          Schema.Union([Schema.Void, A]),
+          Schema.Union([A, Schema.Void]),
+        ]) {
+          const schema = Schema.Struct({ extra, filter: Filter });
+          const path = Request.get("").pipe(
+            Request.path(schema, () => "/sent"),
+          );
+          const filter = { limit: 5, page_size: "6" };
+          // Correcting `extra` alone would not keep the filter, so both faults are named.
+          for (const [value, expected] of [
+            [
+              { extra: { a: "x" }, filter },
+              `Expected number\n  at ["extra"]["a"]\n${twice}`,
+            ],
+            [{ extra: { a: 1 }, filter }, twice],
+          ] as const) {
+            expect(
+              yield* schemaFailure(post(schema), { body: value } as never),
+            ).toBe(expected);
+            expect(yield* schemaFailure(path, { path: value } as never)).toBe(
+              expected,
+            );
+          }
+        }
       }),
   );
 

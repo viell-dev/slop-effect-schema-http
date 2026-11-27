@@ -1197,3 +1197,88 @@ describe("Excess.refusal", () => {
     ).toBe('Expected string\n  at ["x"]["b"]');
   });
 });
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/275
+describe("Excess.readUnderOtherName", () => {
+  const Filter = Schema.Struct({
+    limit: Schema.optionalKey(Schema.FiniteFromString),
+  }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+  const Outer = Schema.Struct({ filter: Filter });
+  const readUnder = (given: unknown, value: unknown) =>
+    Excess.readUnderOtherName([Outer.ast], given, value, [
+      ["filter", "page_size"],
+      ["filter", "limit"],
+    ]);
+
+  it("finds a wire-named field the reading holds under its decoded name", () => {
+    expect(
+      readUnder({ filter: { page_size: "6" } }, { filter: { limit: 6 } }),
+    ).toEqual([["filter", "page_size"]]);
+  });
+
+  it("finds nothing the reading did not read, or a field under both names", () => {
+    expect(readUnder({ filter: { page_size: "6" } }, { filter: {} })).toEqual(
+      [],
+    );
+    expect(readUnder({ filter: { limit: 5 } }, { filter: {} })).toEqual([]);
+    expect(
+      readUnder(
+        { filter: { limit: 5, page_size: "6" } },
+        { filter: { limit: 6 } },
+      ),
+    ).toEqual([]);
+  });
+
+  it("leaves such a field out only beside another reading's error", () => {
+    const given = { extra: "x", filter: { page_size: "6" } };
+    const Wire = Schema.Struct({ extra: Schema.Number, filter: Filter });
+    const failure = Effect.runSync(
+      Effect.flip(Schema.decodeUnknownEffect(Wire)(given)),
+    );
+    const paths = [["extra"], ["filter", "page_size"]] as const;
+    const readPaths = [["filter", "page_size"]] as const;
+    expect(
+      Excess.refusal(
+        Wire.ast,
+        paths,
+        [Excess.failureCause(failure, [Wire.ast], given)],
+        readPaths,
+      ).message,
+    ).toBe('Expected number\n  at ["extra"]');
+    // Without an error that explains the refusal, every lost field is named.
+    const generic =
+      "The schema cannot keep this field with the rest of the value";
+    expect(Excess.refusal(Wire.ast, paths, [], readPaths).message).toBe(
+      `${generic}\n  at ["extra"]\n${generic}\n  at ["filter"]["page_size"]`,
+    );
+  });
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/275
+describe("Excess.failureWithin", () => {
+  it("reads a strict failure as a loose read would fail", () => {
+    const Wire = Schema.Struct({
+      n: Schema.Number,
+      u: Schema.Union([
+        Schema.Struct({ a: Schema.Number }),
+        Schema.Struct({ a: Schema.String }),
+      ]),
+    });
+    const given = { n: "x", u: { a: 1, z: 2 } };
+    const strict = Effect.runSync(
+      Effect.flip(
+        Schema.decodeUnknownEffect(Wire)(given, {
+          errors: "all",
+          onExcessProperty: "error",
+          reportInput: true,
+        }),
+      ),
+    );
+    // A loose read takes the first member, which the strict read refused only for `z`.
+    expect(
+      Excess.failureWithin(strict.issue, [Wire.ast], given, [[]]).map(
+        ({ path }) => path,
+      ),
+    ).toEqual([["n"]]);
+  });
+});
