@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Prepare a recursive struct with a renamed key without repeating work at each level of the value
+  ([#355](https://github.com/viell-dev/slop-effect-schema-http/issues/355)). On 0.20.0, each level
+  below a renamed field read the schemas there twice as often as the level above it. With `held`
+  renamed to `wire_held` beside `child: NullOr(suspend(() => Row))`, 20 levels took about 2 seconds
+  and each further level doubled that, on either side, with an `Option` codec field, through a list
+  of children and in a union of rows. Each level now reads each of its schemas once: 200 levels take
+  about 0.1 seconds, where 0.19.0 took about 1 second. Every request sends the same bytes or refuses
+  with the same error as on 0.20.0, and a schema's decoders, checks and defaults run as often. The
+  time still grows faster than the depth
+  ([#366](https://github.com/viell-dev/slop-effect-schema-http/issues/366)).
 - **Message change:** a required renamed field given under its wire name no longer reports
   `Missing key` at its decoded name where a field beside it, given under its decoded name, cannot be
   read either. That field's own error names it instead
