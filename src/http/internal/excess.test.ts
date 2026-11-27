@@ -20,6 +20,36 @@ const read = (value: unknown) => Excess.normalised([Either.ast], value);
 const gone = (given: object, value: object, output: object) =>
   Excess.missing([Either.ast], given, value, output);
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/355
+describe("normalising a recursive union", () => {
+  it("passes each member schema to the next level once", () => {
+    // An untagged union of two recursive structs names the same field schemas once per member, so
+    // a walk that passed on every occurrence would read each level twice as often as the one
+    // above it. Counting reads of the self-reference measures that without timing it.
+    const depth = 16;
+    let reads = 0;
+    const self = Schema.suspend((): Schema.Codec<unknown, unknown> => Node);
+    const target = self.ast.thunk;
+    Object.assign(self.ast, {
+      thunk: () => {
+        reads++;
+        return target();
+      },
+    });
+    const Node: Schema.Codec<unknown, unknown> = Schema.Union([
+      Schema.Struct({ a: text, next: Schema.NullOr(self) }),
+      Schema.Struct({ b: text, next: Schema.NullOr(self) }),
+    ]);
+    let value: unknown = null;
+    for (let at = depth - 1; at >= 0; at--)
+      value = { a: `x${at}`, next: value };
+    expect(Excess.normalised([Node.ast], value)).toEqual(value);
+    // Two reads a level; without passing each schema once it was 2^depth − 1.
+    expect(reads).toBeGreaterThanOrEqual(depth);
+    expect(reads).toBeLessThanOrEqual(4 * depth);
+  });
+});
+
 // The library reads Effect's schema structure, which a newer Effect could change. A reading that
 // came back empty would fall back to Effect's own reading with no error, so these say it held. They
 // run in CI, on the oldest Effect in release qualification, and on each Dependabot bump.
