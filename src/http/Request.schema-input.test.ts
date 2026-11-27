@@ -290,7 +290,7 @@ describe("a schema-backed input takes either side of its schema", () => {
   );
 
   it.effect(
-    "prepares a deep recursive struct with a renamed key in linear work, on either side",
+    "prepares a deep recursive struct with a renamed key reading its self-reference a fixed number of times a level, on either side",
     () =>
       Effect.gen(function* () {
         // 0.20.0 read each level below a renamed field about twice as often as the level above it,
@@ -356,6 +356,9 @@ describe("a schema-backed input takes either side of its schema", () => {
                 `${kind}, ${list ? "list" : "nullable"}, ${side}`,
               ).toBe(sent);
               expect(reads).toBeLessThanOrEqual(budget);
+              // At least once a level, so the count measures the walk and a cache in front of
+              // the thunk cannot pass this unmeasured.
+              expect(reads).toBeGreaterThanOrEqual(depth);
             }
       }),
     // The budget above is the check. This limit only leaves room for slow machines: the eight
