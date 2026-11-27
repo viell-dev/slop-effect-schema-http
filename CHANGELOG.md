@@ -1,5 +1,25 @@
 # Change history
 
+## Unreleased
+
+- **Message change:** a required renamed field given under its wire name no longer reports
+  `Missing key` at its decoded name where a field beside it, given under its decoded name, cannot be
+  read either. That field's own error names it instead
+  ([#313](https://github.com/viell-dev/slop-effect-schema-http/issues/313)). With `limit` written as
+  `page_size` beside a string field `term`, `{ page_size: "5", term: 1 }` read
+  `Missing key at ["limit"]`; it now reads `Expected string at ["term"]`, as `{ limit: 5, term: 1 }`
+  does, and a parent read field by field keeps the path, as in `["f"]["term"]`. Beside a field
+  `extra: Union([Void, Struct({ a: Number })])`, `{ page_size: "5", extra: { a: "x" } }` named both
+  `["page_size"]` and `["extra"]` with the generic message; it now reads
+  `Expected number at ["extra"]["a"]` only. The error comes from the request's own reading of that
+  field, with its own parse options, and nothing is read again. Every request that refused still
+  refuses before dispatch with the same error class, every request that sent sends the same bytes,
+  and a schema's decoders, checks and defaults run as often as on 0.20.0. Without such a field, a
+  wire-named value the encoded side refuses keeps `Missing key at ["limit"]` for a required field
+  and `The schema cannot keep this field with the rest of the value` for an optional one, because no
+  reading with the request's own options reads that value on its side. Code that matches the text of
+  these refusals, such as `Missing key at ["limit"]`, needs updating.
+
 ## 0.20.0 — 2026-11-27
 
 [What's in 0.20](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.20) gives each
