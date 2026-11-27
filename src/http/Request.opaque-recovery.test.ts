@@ -5,6 +5,7 @@ import {
   Exit,
   Option,
   Schema,
+  SchemaGetter,
   SchemaTransformation,
 } from "effect";
 import * as Body from "./Body.js";
@@ -2316,7 +2317,13 @@ const fromUndefined = <S extends Schema.Top>(payload: S) =>
   );
 
 /** A hand-written codec that can omit its key, as OptionFromOptional's encoder does. */
-const optionalKey = <S extends Schema.Top>(payload: S) =>
+const optionalKey = <S extends Schema.Top>(
+  payload: S,
+  encode: (
+    value: Option.Option<Option.Option<S["Type"]>>,
+  ) => Option.Option<S["Type"]> = (value) =>
+    Option.flatMap(value, (some) => some),
+) =>
   Schema.optional(payload).pipe(
     Schema.decodeTo(
       Schema.Option(Schema.toType(payload)),
@@ -2326,13 +2333,17 @@ const optionalKey = <S extends Schema.Top>(payload: S) =>
       >({
         decode: (value) =>
           Option.some(Option.flatMap(value, Option.fromUndefinedOr)),
-        encode: (value) => Option.flatMap(value, (some) => some),
+        encode,
       }),
     ),
   );
 
+/** A `held` Some holding `inner` in a Some of its own. */
+const inSome = (inner: object) =>
+  ({ held: Option.some({ inner: Option.some(inner) }) }) as never;
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/334
-describe("a codec only the writer follows keeps or refuses its payload's fields", () => {
+describe("a codec whose payload preparation cannot find keeps or refuses its payload's fields", () => {
   const TaggedOwner = Schema.TaggedStruct("A", Owner.fields);
   const TaggedWide = Schema.TaggedStruct("A", Wide.fields);
   const Tagged = Schema.Union([TaggedOwner, TaggedWide]);
@@ -2395,8 +2406,9 @@ describe("a codec only the writer follows keeps or refuses its payload's fields"
       inner: codec(choice),
     });
   };
-  // A built-in codec behind middleware is followed only by the writer, as a hand-written one is.
-  const codecs = [fromNull, fromUndefined, caught] as const;
+  // Preparation cannot find the payload of a built-in codec behind middleware on the wire, as it
+  // cannot find a hand-written one's, including one that can omit its key.
+  const codecs = [fromNull, fromUndefined, caught, optionalKey] as const;
   const send = ({ held, give }: Position, payload: object) =>
     json(Schema.Struct({ held }), { held: give(payload) } as never);
   /** A same-tag Some holding a stray key beside `limit` and the given fields. */
@@ -2640,29 +2652,214 @@ describe("a codec only the writer follows keeps or refuses its payload's fields"
           json(direct, { held: Option.some(withStray) } as never),
         );
         expect(failure.message).toContain('["held"]["value"]["limit"]');
+        // An encoder that can omit the key narrows in the same way.
+        const omitting = positions({
+          tagged: optionalKey(Tagged, (value) =>
+            Option.map(Option.flatten(value), (some) => ({
+              _tag: some._tag,
+              owner: some.owner,
+            })),
+          ),
+          list: optionalKey(Schema.Array(Filter), (value) =>
+            Option.map(Option.flatten(value), (items) => items.map(ownerOnly)),
+          ),
+          inner: optionalKey(Filter, (value) =>
+            Option.map(Option.flatten(value), ownerOnly),
+          ),
+        });
+        for (const position of omitting) {
+          expect(yield* send(position, wide)).toEqual({
+            held: position.sent(owner),
+          });
+          const refused = yield* Effect.flip(send(position, withStray));
+          expect(refused.message).toContain(position.limit);
+        }
+      }),
+  );
+
+  // A sibling whose encoder adds a key its wire struct does not state fails the strict write of a
+  // value the strict read kept whole, so the value is written loosely.
+  const extra = { extra: "e" };
+  const Adds = Schema.Struct({ a: Schema.String }).pipe(
+    Schema.encodeTo(
+      Schema.Struct({ a: Schema.String }),
+      SchemaTransformation.transform({
+        decode: (value) => value,
+        encode: (value) => ({ ...value, ...extra }),
+      }),
+    ),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/364
+  it.effect(
+    "keeps what the read kept when a sibling's strict write fails",
+    () =>
+      Effect.gen(function* () {
+        for (const codec of codecs)
+          for (const position of through(codec))
+            expect(
+              yield* json(Schema.Struct({ held: position.held, s: Adds }), {
+                held: position.give(wide),
+                s: { a: "a" },
+              } as never),
+            ).toEqual({ held: position.sent(wide), s: { a: "a" } });
+      }),
+  );
+
+  /** A codec the loose writer does not follow: its encoder is effectful. */
+  const effectful = (payload: Codec) =>
+    Schema.NullOr(payload).pipe(
+      Schema.decodeTo(
+        Schema.Option(Schema.toType(payload)),
+        new SchemaTransformation.Transformation(
+          SchemaGetter.transform<Option.Option<unknown>, unknown>(
+            Option.fromNullOr,
+          ),
+          SchemaGetter.transformEffect<unknown, Option.Option<unknown>>(
+            (value) => Effect.succeed(Option.getOrElse(value, () => null)),
+          ),
+        ),
+      ),
+    );
+  const besideAdds = (position: Position) =>
+    json(Schema.Struct({ held: position.held, s: Adds }), {
+      held: position.give(wide),
+      s: { a: "a" },
+    } as never);
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/364
+  it.effect(
+    "refuses a stated field a stray key costs through a codec the writer does not follow",
+    () =>
+      Effect.gen(function* () {
+        // What its encoder writes plays no part in the check, so the codec need not be followed.
+        for (const position of through(effectful)) {
+          const failure = yield* Effect.flip(send(position, withStray));
+          expect(failure.message).toContain(position.limit);
+          expect(failure.message).not.toContain("stray");
+          expect(yield* send(position, wide)).toEqual({
+            held: position.sent(wide),
+          });
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/378
+  it.effect(
+    "currently loses what the read kept through a codec the writer does not follow when a sibling's strict write fails",
+    () =>
+      Effect.gen(function* () {
+        for (const position of through(effectful))
+          expect(yield* besideAdds(position)).toEqual({
+            held: position.sent(owner),
+            s: { a: "a" },
+          });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/378
+  it.effect.fails(
+    "keeps or refuses what the read kept through a codec the writer does not follow when a sibling's strict write fails",
+    () =>
+      Effect.gen(function* () {
+        for (const position of through(effectful))
+          yield* Effect.match(besideAdds(position), {
+            onSuccess: (body) =>
+              expect(body).toEqual({
+                held: position.sent(wide),
+                s: { a: "a" },
+              }),
+            onFailure: (failure) =>
+              expect(failure.message).toContain(position.limit),
+          });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/379
+  it.effect(
+    "currently loses a stated field through a codec that writes its payload as text",
+    () =>
+      Effect.gen(function* () {
+        const asText = Schema.String.pipe(
+          Schema.decodeTo(
+            Schema.Option(Schema.toType(Tagged)),
+            SchemaTransformation.transform<
+              Option.Option<typeof Tagged.Type>,
+              string
+            >({
+              decode: (text) =>
+                text === ""
+                  ? Option.none()
+                  : Option.some(JSON.parse(text) as typeof Tagged.Type),
+              encode: (value) =>
+                Option.match(value, {
+                  onNone: () => "",
+                  onSome: (some) => JSON.stringify(some),
+                }),
+            }),
+          ),
+        );
+        expect(
+          yield* json(Schema.Struct({ held: asText }), {
+            held: Option.some({ _tag: "A" as const, ...wide }),
+          }),
+        ).toEqual({ held: JSON.stringify({ _tag: "A", ...owner }) });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/380
+  it.effect(
+    "currently names a given field where a codec that can omit its key has its own field renamed",
+    () =>
+      Effect.gen(function* () {
+        for (const codec of [Schema.OptionFromOptional, optionalKey]) {
+          const schema = Schema.Struct({
+            held: codec(Wide),
+            n: Schema.String,
+          }).pipe(Schema.encodeKeys({ held: "h" }));
+          const failure = yield* Effect.flip(
+            json(schema, { held: Option.some(owner), n: "n" } as never),
+          );
+          expect(failure.message).toContain('["held"]["value"]["owner"]');
+          expect(failure.message).not.toContain("Missing key");
+        }
       }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/364
   it.effect(
-    "currently loses a stated field a stray key costs through a codec that can omit its key",
+    "refuses through a renamed struct holding a codec that can omit its key",
     () =>
       Effect.gen(function* () {
-        for (const position of through(optionalKey))
-          expect(yield* send(position, withStray)).toEqual({
-            held: position.sent(owner),
-          });
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/364
-  it.effect.fails(
-    "refuses a stated field a stray key costs through a codec that can omit its key",
-    () =>
-      Effect.gen(function* () {
-        for (const position of through(optionalKey)) {
-          const failure = yield* Effect.flip(send(position, withStray));
-          expect(failure.message).toContain(position.limit);
+        const held = optionalKey(Tagged);
+        const renamed = [
+          [
+            Schema.Struct({ held, n: Schema.String }).pipe(
+              Schema.encodeKeys({ held: "h" }),
+            ),
+            (sent: object) => ({ h: sent, n: "n" }),
+          ],
+          [
+            Schema.Struct({ held, n: Schema.String }).pipe(
+              Schema.encodeKeys({ n: "wire_n" }),
+            ),
+            (sent: object) => ({ held: sent, wire_n: "n" }),
+          ],
+        ] as const;
+        for (const [schema, sent] of renamed) {
+          const failure = yield* Effect.flip(
+            json(schema, {
+              held: Option.some({ _tag: "A", ...withStray }),
+              n: "n",
+            } as never),
+          );
+          expect(failure.message).toContain('["held"]["value"]["limit"]');
+          expect(
+            yield* json(schema, {
+              held: Option.some({ _tag: "A", ...wide }),
+              n: "n",
+            } as never),
+          ).toEqual(sent({ _tag: "A", ...wide }));
         }
       }),
   );
@@ -2685,60 +2882,181 @@ describe("a codec only the writer follows keeps or refuses its payload's fields"
     }),
   );
 
-  const inside = [Schema.OptionFromNullOr(Filter), fromNull(Filter)].map(
-    (inner) =>
-      Schema.Struct({
-        held: fromNull(Schema.Struct({ inner })),
-        o: Schema.Option(Owner),
-      }),
-  );
-  // A stray key in the inner Some, or only in a sibling Schema.Option, defeats the strict read.
-  const nested = [
+  /** A codec inside a Some that a hand-written codec reads, over a union, a same-tag union and a list. */
+  const insideHandWritten = (
+    outer: (payload: Codec) => Codec,
+    inner: (payload: Codec) => Codec,
+  ): ReadonlyArray<Position> =>
     [
+      { payload: Filter, place: (given: object) => given, at: "" },
       {
-        held: Option.some({ inner: Option.some(withStray) }),
-        o: Option.none(),
+        payload: Tagged,
+        place: (given: object) => ({ _tag: "A", ...given }),
+        at: "",
       },
-      { _tag: "None" },
-    ],
-    [
       {
-        held: Option.some({ inner: Option.some(wide) }),
-        o: Option.some({ ...owner, zz: "z" }),
+        payload: Schema.Array(Filter),
+        place: (given: object) => [given],
+        at: "[0]",
       },
-      { _tag: "Some", value: owner },
-    ],
+    ].map(({ payload, place, at }) => ({
+      held: outer(Schema.Struct({ inner: inner(payload) })),
+      give: (given) => Option.some({ inner: Option.some(place(given)) }),
+      sent: (given) => ({ inner: place(given) }),
+      limit: `["held"]["value"]["inner"]["value"]${at}["limit"]`,
+    }));
+  const outers = [fromNull, optionalKey] as const;
+  const inners = [
+    Schema.OptionFromNullOr,
+    (payload: Codec) =>
+      Schema.OptionFromOptionalNullOr(payload, { onNoneEncoding: null }),
+    fromNull,
+    optionalKey,
   ] as const;
+  const nestedPositions = outers.flatMap((outer) =>
+    inners.flatMap((inner) => insideHandWritten(outer, inner)),
+  );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/347
   it.effect(
-    "currently loses a stated field in a codec inside a hand-written Some",
+    "refuses a stated field a codec inside a hand-written Some loses, whatever made the strict attempt fail",
     () =>
       Effect.gen(function* () {
-        for (const schema of inside)
-          for (const [given, o] of nested)
-            expect(yield* json(schema, given as never)).toEqual({
-              held: { inner: owner },
-              o,
+        // A stray key in the inner Some, or only in a sibling Schema.Option, defeats the strict
+        // read, and nothing leaves a key out of a Some a hand-written codec reads.
+        const triggers = [
+          [withStray, Option.none()],
+          [wide, Option.some({ ...owner, zz: "z" })],
+        ] as const;
+        for (const position of nestedPositions)
+          for (const [held, o] of triggers) {
+            const failure = yield* Effect.flip(
+              json(
+                Schema.Struct({ held: position.held, o: Schema.Option(Owner) }),
+                { held: position.give(held), o } as never,
+              ),
+            );
+            expect(failure.message).toContain(position.limit);
+            expect(failure.message).not.toContain("stray");
+          }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/347
+  it.effect(
+    "keeps every stated field a codec inside a hand-written Some reads",
+    () =>
+      Effect.gen(function* () {
+        for (const position of nestedPositions) {
+          expect(yield* send(position, wide)).toEqual({
+            held: position.sent(wide),
+          });
+          expect(yield* send(position, { ...owner, stray: "x" })).toEqual({
+            held: position.sent(owner),
+          });
+        }
+        // With the wider member first, the read keeps `limit` and leaves out the stray key.
+        for (const outer of outers) {
+          const schema = Schema.Struct({
+            held: outer(
+              Schema.Struct({
+                inner: Schema.OptionFromNullOr(Schema.Union([Wide, Owner])),
+              }),
+            ),
+          });
+          expect(
+            yield* json(schema, {
+              held: Option.some({ inner: Option.some(withStray) }),
+            } as never),
+          ).toEqual({ held: { inner: wide } });
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/347
+  it.effect(
+    "leaves a Schema.Option inside a hand-written Some to Effect's reading",
+    () =>
+      Effect.gen(function* () {
+        // A codec's decoded side given as a schema of its own reads as Schema.Option does.
+        for (const inner of [
+          Schema.Option(Filter),
+          Schema.toType(Schema.OptionFromNullOr(Filter)),
+        ])
+          for (const outer of [...outers, Schema.OptionFromNullOr])
+            expect(
+              yield* json(
+                Schema.Struct({ held: outer(Schema.Struct({ inner })) }),
+                {
+                  held: Option.some({ inner: Option.some(withStray) }),
+                } as never,
+              ),
+            ).toEqual({
+              held: { inner: { _tag: "Some", value: owner } },
             });
       }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/347
-  it.effect.fails(
-    "keeps or refuses a stated field in a codec inside a hand-written Some",
+  it.effect(
+    "compares a renamed payload inside a codec in a hand-written Some under its decoded names",
     () =>
       Effect.gen(function* () {
-        for (const schema of inside)
-          for (const [given, o] of nested)
-            yield* Effect.match(json(schema, given as never), {
-              onSuccess: (body) =>
-                expect(body).toEqual({ held: { inner: wide }, o }),
-              onFailure: (failure) =>
-                expect(failure.message).toContain(
-                  '["held"]["value"]["inner"]["value"]["limit"]',
-                ),
-            });
+        const Renamed = Wide.pipe(Schema.encodeKeys({ limit: "page_size" }));
+        const schema = Schema.Struct({
+          held: fromNull(
+            Schema.Struct({
+              inner: Schema.OptionFromNullOr(Schema.Union([Owner, Renamed])),
+            }),
+          ),
+        });
+        const failure = yield* Effect.flip(json(schema, inSome(withStray)));
+        expect(failure.message).toContain(
+          '["held"]["value"]["inner"]["value"]["limit"]',
+        );
+        expect(yield* json(schema, inSome(wide))).toEqual({
+          held: { inner: { ...owner, page_size: "l" } },
+        });
+        // Its decoded side does not state the wire name, so the read leaves it out, as before.
+        expect(
+          yield* json(schema, inSome({ ...owner, page_size: "l", stray: "x" })),
+        ).toEqual({ held: { inner: owner } });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/347
+  it.effect(
+    "finds a codec behind a suspension in a hand-written Some, resolving no other suspension",
+    () =>
+      Effect.gen(function* () {
+        let unread = 0;
+        const Other = Schema.Struct({
+          kind: Schema.Literal("other"),
+          x: Schema.suspend(() => {
+            unread += 1;
+            return Schema.String;
+          }),
+        });
+        const schema = Schema.Struct({
+          held: fromNull(
+            Schema.Union([
+              Schema.Struct({
+                inner: Schema.suspend(() => Schema.OptionFromNullOr(Filter)),
+              }),
+              Other,
+            ]),
+          ),
+        });
+        const failure = yield* Effect.flip(
+          json(schema, {
+            held: Option.some({ inner: Option.some(withStray) }),
+          } as never),
+        );
+        expect(failure.message).toContain(
+          '["held"]["value"]["inner"]["value"]["limit"]',
+        );
+        // The member the value does not take is never resolved, as the read never resolves it.
+        expect(unread).toBe(0);
       }),
   );
 });
