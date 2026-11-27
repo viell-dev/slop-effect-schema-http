@@ -30,21 +30,28 @@ breaking change with its migration.
   refuses too. A `Map`, `Set`, `RegExp`, `Error`, `URL` and the other values the record check
   refuses are refused the same way. Class instances with fields, typed arrays, an `Option.some`, a
   `Result` and plain objects are read as before, by their own fields, and an empty struct keeps the
-  value as given. Convert the value to plain data first.
+  value as given. Convert the value to plain data first. The refusal applies where the struct is
+  read on its own. Beside a union of structs, below a rename, through a suspension, with a
+  constructor default, or as an `Option.some` payload, the built-in can still be sent as `{}` or as
+  the struct's defaults, as on 0.19.0
+  ([#330](https://github.com/viell-dev/slop-effect-schema-http/issues/330)).
 - Run a schema's decoders and checks as often as before the message change below
   ([#317](https://github.com/viell-dev/slop-effect-schema-http/issues/317)). That change decoded the
   value an extra time wherever the constructor could not keep all of it, even where no route used
   that read. A field or union member read field by field, a list in one, and a union beside another
   query or header group ran an effectful decoder or check more often as a result, including where
   the request was sent. Defaults ran as often as before, and the change's messages stay as they are.
-  No release carried the extra runs.
+  No release carried the extra runs. A value that holds a key the schema does not state can still
+  run a check once more than on 0.19.0
+  ([#331](https://github.com/viell-dev/slop-effect-schema-http/issues/331)).
 - **Message change:** say why a refused field cannot be kept, and name the field at fault, where the
   field's names or place, or a reading with the request's own parse options, shows why
   ([#275](https://github.com/viell-dev/slop-effect-schema-http/issues/275)). Every request that
   refused still refuses before dispatch with the same error class, every request that sent sends the
-  same bytes, and a schema's decoders, checks and defaults run as often as before; only the messages
-  and paths below change, and every other refusal reads as before. Code that matches the text of
-  these refusals, such as `The schema cannot keep this field with the rest of the value` or
+  same bytes, and a schema's decoders, checks and defaults run as often as before, apart from
+  [#331](https://github.com/viell-dev/slop-effect-schema-http/issues/331); only the messages and
+  paths below change, and every other refusal reads as before. Code that matches the text of these
+  refusals, such as `The schema cannot keep this field with the rest of the value` or
   `Missing key at ["limit"]`, needs updating. With `limit` written as `page_size`,
   `{ limit: 5, page_size: "6" }` now reads
   `This field is given under both "limit" and "page_size"; give it under one name`. Items of a list,
@@ -79,14 +86,16 @@ breaking change with its migration.
   ([#318](https://github.com/viell-dev/slop-effect-schema-http/issues/318)). A union of whole
   structs can still refuse there, and under a `oneOf` that lists the Option's struct before one that
   reads `held` as a plain struct, a `None` now refuses as ambiguous where 0.19.0 sent `{"held":{}}`;
-  in the other order it still sends that. Reading field by field runs the fields' decoders and
-  checks again after the whole read, as the other recovery routes do. Supply the enclosing value and
-  its siblings on their decoded side, or give the encoded payload or absence directly at the
-  Option's wire position. The #309 refusal also holds below a struct with renamed keys: with `held`
-  renamed to `wire_held`, a `Some` or `None` given at `wire_held`, or beside a renamed sibling or
-  below a renamed ancestor on the encoded side, including through a suspension, a recursive schema,
-  a nested rename, a renamed class, or a list or union below that ancestor, with the exceptions the
-  [active
+  in the other order it refuses because the plain struct cannot keep it. Under a `Schema.Class`, and
+  as an item of a list, tuple or record, the fields are not read one by one, so the encoded sibling
+  is refused, naming it, where 0.19.0 sent `{"held":{}}`. Reading field by field runs the fields'
+  decoders and checks again after the whole read, as the other recovery routes do. Supply the
+  enclosing value and its siblings on their decoded side, or give the encoded payload or absence
+  directly at the Option's wire position. The #309 refusal also holds below a struct with renamed
+  keys: with `held` renamed to `wire_held`, a `Some` or `None` given at `wire_held`, or beside a
+  renamed sibling or below a renamed ancestor on the encoded side, including through a suspension, a
+  recursive schema, a nested rename, a renamed class, or a list or union below that ancestor, with
+  the exceptions the [active
   limits](https://viell-dev.github.io/slop-effect-schema-http/schema-input#active-limits-and-recovery)
   list ([#327](https://github.com/viell-dev/slop-effect-schema-http/issues/327),
   [#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328)), now refuses where 0.19.0

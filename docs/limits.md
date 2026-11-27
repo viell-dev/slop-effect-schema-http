@@ -17,7 +17,7 @@ by this project's tests.
 
 ### Tested configurations
 
-The release checks run on Node.js 24.22.2 and the newest Node.js 26, with Effect 4.0.7 and 4.1.4 and
+The release checks run on Node.js 24.22.2 and the newest Node.js 26, with Effect 4.0.7 and 4.1.5 and
 strict TypeScript consumers using 6.0.3 and 7.0.2. These are verification results, not additional
 packages to install. The [contributor
 guide](https://github.com/viell-dev/slop-effect-schema-http/blob/main/CONTRIBUTING.md#hostile-server-integration-tests)
@@ -223,7 +223,9 @@ than sent without it, and the message says why where it can. In these examples `
 - **A built-in whose content is not in its own fields**, such as a `Map`, a `Set` or a `Date`, given
   where a string-keyed record, `Schema.ObjectKeyword` or a struct would rebuild it from its fields:
   `The schema cannot keep this Map as a record`, or `as an object` for `Schema.ObjectKeyword` and a
-  struct.
+  struct. A struct refuses only where it is read on its own; see
+  [#330](https://github.com/viell-dev/slop-effect-schema-http/issues/330) for the schemas where a
+  built-in is still sent as `{}`.
 
 Every other field the refusal cannot keep is named too, even one that would be kept once another
 named value is corrected, because no reading shows that it would be. A reading of the whole value on
