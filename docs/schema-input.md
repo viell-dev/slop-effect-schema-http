@@ -34,9 +34,10 @@ instead. A `SchemaError`, `HttpBodyError` or `Request.InvalidRequest` fails befo
 | The caller gives                                                    | Under                                      | Result                                                                                            |
 | ------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------- |
 | `{ limit: 5, count: "3" }`: decoded names, values on either side    | `Page`                                     | `{"page_size":"5","count":"3"}`                                                                   |
-| `{ page_size: "5", count: 3 }`: a wire name beside a decoded value  | `Page`                                     | `Expected string at ["count"]`; the whole object is read as encoded, where `3` is not text        |
+| `{ page_size: "5", count: 3 }`: a wire name beside a decoded value  | `Page`                                     | `Missing key at ["limit"]`; the whole object is read as encoded, where `3` is not text            |
 | `{ limit: 5, page_size: "5", count: 3 }`: one field under two names | `Page`                                     | `This field is given under both "limit" and "page_size"; …` at `["page_size"]`, though they agree |
-| `{ page_size: "many", count: "3" }`: an invalid wire-named value    | `Page`, required or `optionalKey`          | `Expected a finite number at ["page_size"]`, the encoded side's own error                         |
+| `{ page_size: "many", count: "3" }`: an invalid wire-named value    | `Page`, whose fields are required          | `Missing key at ["limit"]`, the decoded name                                                      |
+|                                                                     | The same field made `optionalKey`          | `The schema cannot keep this field … at ["page_size"]`                                            |
 | `[{ limit: 5 }, { page_size: "6" }]`: list items on different sides | A list of `Page` with `optionalKey` fields | `The items of this field's list or record use different sides; …` at `[1]["page_size"]`           |
 | `{ ids: [5, "6"] }`: scalar list items on different sides           | `Ids`                                      | `Expected number at ["ids"][1]`; `["5", "6"]` and `[5, 6]` both work                              |
 | `{ _tag: "Comment", text: "x", due: "d" }`: another variant's field | `Union([Comment, Reschedule])`             | `{"_tag":"Comment","text":"x"}`, with no error                                                    |
@@ -153,7 +154,7 @@ const search = Request.get("https://api.example.test/things").pipe(
 // Input: { query: {} }; URL query: ?page_size=25
 // Input: { query: { limit: 5 } } or { query: { page_size: "05" } }; URL query: ?page_size=5
 // Input: { query: { page_size: "many" } }
-// SchemaError: Expected a finite number at ["page_size"]
+// SchemaError: The schema cannot keep this field ... at ["page_size"]
 
 const Page = Schema.Struct({
   n: Schema.FiniteFromString,
@@ -197,16 +198,16 @@ into, as an `Option` is. It has these consequences:
   that cannot be kept is named on its own: under `Schema.Array(Filter)`,
   `[{ limit: 1, page_size: "02" }, { page_size: "25" }]` refuses at `[0]["page_size"]` and at
   `[1]["page_size"]`, and a record names each entry the same way. A schema's own error, such as
-  `Expected number`, is Effect's, which reports the first failure it meets. Where the side a value
-  was given on refuses it, that side's own error names the field, under the name the caller gave,
-  unless a step that sees the parse options runs on the way to a wire-named field. The other fields
-  it cannot keep are named too, with the generic message where nothing more is known, even where
-  correcting that value would keep them: the other side's reading of the whole value loses them
-  whether or not they are valid. Only a wire-named field that the reading read under its decoded
-  name is left out. A refusal stores no value the caller gave and adds none to its messages, but a
-  message the schema's author wrote, which can quote the value, reads as written.
-  [Limits](./limits.md#read-a-refusal-message) lists each message and the steps that see the parse
-  options.
+  `Expected number`, is Effect's, which reports the first failure it meets. Where the decoded side
+  refuses a value under its decoded name, that side's own error names the field. A value under its
+  wire name that the encoded side refuses keeps the decoded side's message, except where the
+  request's own reading strips a key the schema does not state and reports the value. The other
+  fields it cannot keep are named too, with the generic message where nothing more is known, even
+  where correcting that value would keep them: the other side's reading of the whole value loses
+  them whether or not they are valid. Only a wire-named field that the reading read under its
+  decoded name is left out. A refusal stores no value the caller gave and adds none to its messages,
+  but a message the schema's author wrote, which can quote the value, reads as written.
+  [Limits](./limits.md#read-a-refusal-message) lists each message.
 
 ### Where it applies
 
@@ -275,9 +276,8 @@ the names of two renamed fields, is a `SchemaError`. Which field it names depend
   `The schema cannot keep this field with the rest of the value at ["B"]`.
 - With required fields, it is `Missing key at ["b"]`, the decoded name the caller did not use. The
   value fits neither side, so the decoded side's error is reported, and on that side `b` is missing.
-  A wire-named value the encoded side refuses, in an object that gives no decoded name, reports that
-  side's own error instead: `{ page_size: "many" }` under a required `limit` reports
-  `Expected a finite number at ["page_size"]`.
+  The same goes for a wire-named value the encoded side refuses, such as `{ page_size: "many" }`
+  under a required `limit`, which reports `Missing key at ["limit"]`.
 
 ```ts
 import { Schema } from "effect";

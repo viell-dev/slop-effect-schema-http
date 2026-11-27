@@ -43,6 +43,7 @@ const outcome = async (
   const { _tag, message } = error as { _tag: string; message: string };
   return `${_tag}: ${message.replace(/\n\s*/g, " ")}`;
 };
+const kept = "The schema cannot keep this field with the rest of the value";
 const bothNames =
   'This field is given under both "limit" and "page_size"; give it under one name';
 
@@ -57,7 +58,7 @@ assert.equal(
       body: { page_size: "5", count: 3 } as never,
     }),
   ),
-  'SchemaError: Expected string at ["count"]',
+  'SchemaError: Missing key at ["limit"]',
 );
 assert.equal(
   await outcome(
@@ -71,7 +72,7 @@ assert.equal(
   await outcome(
     Request.compile(sendPage, { body: { page_size: "many", count: "3" } }),
   ),
-  'SchemaError: Expected a finite number at ["page_size"]',
+  'SchemaError: Missing key at ["limit"]',
 );
 const OptionalPage = Schema.Struct({
   limit: Schema.optionalKey(Schema.FiniteFromString),
@@ -80,7 +81,7 @@ assert.equal(
   await outcome(
     Request.compile(json(OptionalPage), { body: { page_size: "many" } }),
   ),
-  'SchemaError: Expected a finite number at ["page_size"]',
+  `SchemaError: ${kept} at ["page_size"]`,
 );
 assert.equal(
   await outcome(
