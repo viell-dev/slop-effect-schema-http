@@ -57,74 +57,16 @@ import {
   semicolons,
   unwrapped,
 } from "../apis/reports-client.js";
-import { bodyText, type Exchange, values } from "../harness/evidence.js";
+import { bodyText, values } from "../harness/evidence.js";
 import type { Client, Listener } from "../harness/lane.js";
-import { cases, serve } from "../harness/matrix.js";
-import { collect, type Sent, send } from "../harness/send.js";
+import { cases, onHttp3, serve } from "../harness/matrix.js";
+import { collect, expectHops, type Sent, send } from "../harness/send.js";
 import type { Table } from "../harness/table.js";
 
-/** One request of a call, as the routes saw and answered it. */
-interface Hop {
-  readonly route: string;
-  readonly path: string;
-  readonly status: number;
-  readonly method?: string;
-  readonly query?: string;
-  readonly captures?: Readonly<Record<string, string>>;
-}
-
 /**
- * Check every request a call made, in order: its request line on a cleartext wire, the head the
- * server saw, the route `select` chose with its captures, the handler that ran with the captures
- * the server decoded, and the status that handler answered.
- */
-const expectHops = (
-  table: Table,
-  sent: Sent,
-  listener: Listener,
-  hops: ReadonlyArray<Hop>,
-): ReadonlyArray<Exchange> => {
-  const context = JSON.stringify(sent);
-  const line = ({ method = "GET", path, query }: Hop) => [
-    method,
-    query === undefined ? path : `${path}?${query}`,
-  ];
-  if (listener !== "https")
-    expect(
-      sent.wire.map((request) => [request.method, request.target]),
-      context,
-    ).toEqual(hops.map(line));
-  expect(sent.exchanges, context).toHaveLength(hops.length);
-  hops.forEach((hop, at) => {
-    const { route, path, status, method = "GET", captures = {} } = hop;
-    const exchange = sent.exchanges[at]!;
-    expect(exchange.seen, context).toMatchObject({
-      method,
-      path,
-      query: hop.query ?? null,
-    });
-    expect(exchange.verdict, context).toEqual({
-      is: "selected",
-      index: table.definition.routes.findIndex(
-        (candidate) => candidate.name === route,
-      ),
-      captures,
-    });
-    expect(exchange.dispatched, context).toMatchObject({
-      route,
-      captures,
-      params: { Ok: captures },
-    });
-    expect(exchange.status, context).toBe(status);
-  });
-  return sent.exchanges;
-};
-
-/**
- * Open the archive and the gateway that redirects to it, on the same kind of listener. Chromium on
- * `https` starts on HTTP/2 and moves to HTTP/3 once it has learned the server's `Alt-Svc`, and at
- * the move it can send one request over both. These tests count every request a call makes, so
- * there the gateway is used until the move has happened.
+ * Open the archive and the gateway that redirects to it, on the same kind of listener. These tests
+ * count every request a call makes, so in a browser on `https` the gateway is used until Chromium
+ * has moved to HTTP/3.
  */
 const open = (
   client: Client,
@@ -137,17 +79,12 @@ const open = (
   Effect.gen(function* () {
     const archived = yield* serve(archive);
     const routes = yield* serve(gateway(archived.origins[listener]));
-    if (lane.name === "browser" && listener === "https") {
-      const settle = Operation.make(
-        Request.get("/reports/daily"),
-        reportAnswers,
-      );
-      for (let attempt = 1; ; attempt++) {
-        const sent = yield* send(routes, listener, client, settle, undefined);
-        if (sent.exchanges.some(({ seen }) => seen.version === "HTTP/3")) break;
-        expect(attempt, "Chromium did not move to HTTP/3").toBeLessThan(10);
-      }
-    }
+    yield* onHttp3(
+      routes,
+      listener,
+      client,
+      Operation.make(Request.get("/reports/daily"), reportAnswers),
+    );
     return { routes, archived };
   });
 

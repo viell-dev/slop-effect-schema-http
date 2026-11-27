@@ -248,6 +248,8 @@ const reply = (response: ServerResponse, status: number, value: unknown) => {
  * - `POST /tables` with a route table opens it, and answers its id and origins;
  * - `GET /tables/<id>` answers its exchanges and what crossed its cleartext sockets since the last
  *   `GET`;
+ * - `GET /tables/<id>/settle?within=<ms>` answers once its streamed replies have ended, or after
+ *   `within` milliseconds;
  * - `DELETE /tables/<id>` closes it.
  */
 export const startControl = async (root: URL): Promise<Control> => {
@@ -271,7 +273,8 @@ export const startControl = async (root: URL): Promise<Control> => {
       });
       return response.end();
     }
-    const [, collection, id] = (request.url ?? "").split("/");
+    const url = new URL(request.url ?? "/", "http://control.invalid");
+    const [, collection, id, action] = url.pathname.split("/");
     if (collection !== "tables")
       return reply(response, 404, "no such resource");
     if (request.method === "POST" && id === undefined) {
@@ -305,6 +308,15 @@ export const startControl = async (root: URL): Promise<Control> => {
     }
     const open = tables.get(Number(id));
     if (open === undefined) return reply(response, 404, `no table ${id}`);
+    if (request.method === "GET" && action === "settle") {
+      await host.perform({
+        do: "settle",
+        table: Number(id),
+        within: Number(url.searchParams.get("within")),
+      });
+      return reply(response, 200, null);
+    }
+    if (action !== undefined) return reply(response, 404, "no such resource");
     if (request.method === "GET") {
       const { taken } = open;
       const { value } = await host.perform({

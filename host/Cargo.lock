@@ -1729,6 +1729,7 @@ version = "0.0.0"
 dependencies = [
  "axum",
  "base64",
+ "futures-util",
  "http-body-util",
  "loona-hpack",
  "quinn",
