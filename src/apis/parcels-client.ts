@@ -10,6 +10,7 @@ import {
   Request,
   Response,
 } from "viell-effect-schema-http";
+import { mediaType } from "./metadata.js";
 
 export const Parcel = Schema.Struct({
   id: Schema.String,
@@ -34,10 +35,6 @@ export const Problem = Schema.Struct({
     Schema.Array(Schema.Struct({ name: Schema.String, reason: Schema.String })),
   ),
 });
-
-/** The media type of a response, without parameters. */
-export const mediaType = (info: Response.Metadata): string =>
-  (info.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
 
 /**
  * Every answer of a parcel read. A status alone does not say which layer answered, so each error

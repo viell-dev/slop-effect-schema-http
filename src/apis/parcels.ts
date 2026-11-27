@@ -20,14 +20,7 @@ import {
   type Reply,
   route,
 } from "../harness/routes.js";
-
-type Lines = ReadonlyArray<readonly [string, string]>;
-
-const json = (status: number, value: unknown, headers: Lines = []): Reply => ({
-  status,
-  headers: [["content-type", "application/json"], ...headers],
-  body: JSON.stringify(value),
-});
+import { json, type Lines } from "./replies.js";
 
 /** RFC 9457 problem details, whose `status` repeats the response's. */
 const problem = (status: number, fields: Record<string, unknown>): Reply => ({
