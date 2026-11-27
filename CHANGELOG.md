@@ -2,32 +2,34 @@
 
 ## Unreleased
 
-- **Message change:** say why a refused field cannot be kept, and name the field at fault
+- **Message change:** say why a refused field cannot be kept, and name the field at fault, where the
+  field's names or place, or a reading with the request's own parse options, shows why
   ([#275](https://github.com/viell-dev/slop-effect-schema-http/issues/275)). Every request that
   refused still refuses before dispatch with the same error class, every request that sent sends the
   same bytes, and a schema's decoders and constructor defaults run as often as before; only the
-  `SchemaError`'s messages and paths change. Code that matches the text of a refusal, such as
-  `The schema cannot keep this field with the rest of the value` or `Missing key at ["limit"]`,
-  needs updating. With `limit` written as `page_size`, `{ limit: 5, page_size: "6" }` now reads
-  `This field is given under both "limit" and "page_size"; give it under one name`. A wire-named
-  value the encoded side refuses, such as `{ page_size: "many" }`, reads that side's own error,
-  `Expected a finite number at ["page_size"]`, where an optional field read
-  `The schema cannot keep this field with the rest of the value` and a required one
-  `Missing key at ["limit"]`; a decoded-named value the decoded side refuses reads its error too.
-  Where a step that Effect gives the parse options to, such as a decoder that can fail or a check
-  the schema's author wrote, runs on the way to a wire-named field, the earlier message stays. Items
-  of a list or record on different sides read
+  messages and paths below change, and every other refusal reads as before. Code that matches the
+  text of these refusals, such as `The schema cannot keep this field with the rest of the value` or
+  `Missing key at ["limit"]`, needs updating. With `limit` written as `page_size`,
+  `{ limit: 5, page_size: "6" }` now reads
+  `This field is given under both "limit" and "page_size"; give it under one name`. Items of a list,
+  tuple or record on different sides read
   `The items of this field's list or record use different sides; give every item on one side`, and a
   built-in such as a `Map` where a record would rebuild it reads
-  `The schema cannot keep this Map as a record`. Beside a Void,
-  `{ extra: { a: "x" }, filter: { page_size: "05" } }` under
+  `The schema cannot keep this Map as a record`. A decoded-named value the decoded side refuses,
+  such as `{ limit: "x" }`, reads that side's own error, `Expected number at ["limit"]`. Beside a
+  Void, `{ extra: { a: "x" }, filter: { page_size: "05" } }` under
   `extra: Union([Void, Struct({ a: Number })])` names only `["extra"]["a"]`, with `Expected number`,
-  and no longer the valid `["filter"]["page_size"]`, which the reading read under `limit`. Every
+  and no longer the valid `["filter"]["page_size"]`, which the reading read under `limit`. Where the
+  value also holds a key the schema does not state, the request's own reading, which strips that
+  key, can name a wire-named value it refuses: `{ page_size: "many", stray: "1" }` reads
+  `Expected a finite number at ["page_size"]`. Otherwise a wire-named value the encoded side refuses
+  keeps its earlier message, `Missing key at ["limit"]` for a required field and
+  `The schema cannot keep this field with the rest of the value` for an optional one, and every
   other field a refusal cannot keep is still named, with the generic message where nothing more is
-  known, even where it would be kept once the other error is corrected. A refusal stores no value
-  the caller gave and adds none to its messages, including Effect's `got …` text; a message the
-  schema's author wrote is shown as written, as on any other schema failure, so the side's own error
-  can now show text such as `Rejected <value>` where the generic message stood.
+  known. A refusal stores no value the caller gave and adds none to its messages, including Effect's
+  `got …` text; a message the schema's author wrote is shown as written, as on any other schema
+  failure, so a refusal can now show text such as `Rejected <value>` where the generic message
+  stood.
 - Tell the author of a provider that writes bytes to refuse a header name that is not a token, and a
   NUL in a header value, as well as a carriage return or line feed
   ([#302](https://github.com/viell-dev/slop-effect-schema-http/issues/302)). A colon in a name such
