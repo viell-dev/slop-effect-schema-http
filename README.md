@@ -60,8 +60,8 @@ breaking release. Read [What's in
 0.20](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.20) before updating from
 `0.19`: `Option` values now keep or refuse what they are given too. A payload keeps the fields its
 schema states, a native `Option` where its encoded payload belongs is no longer sent as `{}`, a
-built-in a struct would rebuild refuses, and a fieldless value several `oneOf` members read refuses
-as ambiguous.
+built-in a plain struct would rebuild refuses, and a fieldless value several `oneOf` members read
+refuses as ambiguous.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
