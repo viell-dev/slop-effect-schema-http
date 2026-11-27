@@ -46,10 +46,16 @@
   elsewhere in the body can force a loose write. The payload writer can now keep wider fields in
   nested Options and renamed payloads, including configured `OptionFromOptionalNullOr` with a
   renamed parent and a same-tag or list payload. A union member that writes one field under
-  another's name no longer wins those cases. If preparation previously refused or sent a narrowed
-  body, it can now send the full payload or refuse the request naming the field. `Schema.Option(X)`
-  uses Effect's own reading and member selection for its contents on every write route. Effect can
-  drop a payload field there.
+  another's name no longer wins those cases. The loose read comparison also checks codecs that
+  expose the same payload directly or in a single field, and unwrapping codecs followed by encoding
+  middleware. A wider field in an exposed payload that used to cause a refusal or be dropped can now
+  be sent. Preparation can also refuse naming a field the read could not keep.
+- **Breaking:** a request that 0.19.0 refused at a class instance beside a struct
+  ([#274](https://github.com/viell-dev/slop-effect-schema-http/issues/274)) or at a field in an
+  unwrapping codec can now be sent. Elsewhere in that request, `Schema.Option(X)` still uses
+  Effect's first-fit member selection, which can leave out a field held by a wider member. Bind the
+  intended member of `X` directly or validate the resulting representation when that field is
+  required ([#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312)).
 - Checking visible payloads in unwrapping codecs adds preparation work. The 20,000-row measurements
   cover strict and loose writes, tagged Option payloads on the loose route, and controls without
   Options. [#298](https://github.com/viell-dev/slop-effect-schema-http/pull/298) records the medians
@@ -80,7 +86,7 @@
   the class cannot write the instance whole, as where a field is invalid or the instance holds a
   field only `Filter` states, and where any other field there, renamed or not, is written under the
   same wire name, as a field with an encoding default can be. The instance is written strictly once
-  rather than twice.
+  rather than twice. See the breaking entry above for requests that also contain `Schema.Option(X)`.
 - Wait up to eight minutes, not five, for npm to show a published version and its attestations
   before publication verification fails
   ([#288](https://github.com/viell-dev/slop-effect-schema-http/issues/288)). 0.19.0's upload needed

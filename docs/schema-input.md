@@ -671,18 +671,19 @@ the schema does with it. These are the places where it cannot, and what happens 
 - A name every object has, such as `toString` or `__proto__`, is read as Effect reads it. A field
   given under both its names sends one of them where its wire name is such a name.
 - Inside `Schema.Option(X)`, Effect reads and selects a member of X on every write route. A narrower
-  member can drop a payload field. For example, a loose write through
-  `Schema.Option(Union([Struct({ owner }), Struct({ owner, limit })]))` can send
-  `Some({ owner: "b", limit: "l" })` as `{"_tag":"Some","value":{"owner":"b"}}`.
-- A relaxed read can take a narrower member inside an ambiguous `Some` payload, for example when a
-  stray key defeats the strict read and competing codecs hide the payload. A loose write can select
-  a wider member through an unwrapping codec. Data already narrowed by the read, a class instance,
-  or a custom writer can fall outside that recovery. Let
+  member can drop a payload field. For example, with
+  `Schema.Option(Union([Struct({ owner }), Struct({ owner, limit })]))` as the entire body schema,
+  `Some({ owner: "b", limit: "l" })` can send as `{"_tag":"Some","value":{"owner":"b"}}`.
+- A relaxed read can take a narrower member inside a `Some` when a stray key defeats the strict read
+  and competing codecs or a configured `OptionFromOptionalNullOr` hide the payload. For a configured
+  codec, this can happen with a same-tag union, a list of unions, or a union inside another `Some`.
+  A loose write can select a wider member through an unwrapping codec. Data already narrowed by the
+  read, a class instance, or a custom writer can fall outside that recovery. Let
   `Choice = Union([Struct({ owner: String }), Struct({ owner: String, limit: String })])`. Inside
   another `Some`, `Union([OptionFromNullOr(Choice), Struct({ z: String })])` can lose `limit` on a
   loose write even without a stray key. Choose the intended member directly or validate and supply
   the encoded representation
-  ([#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)).
+  ([#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312)).
 - After an invalid `Some` fails the decoded read, preparation can read the wrapper itself as an
   encoded struct whose fields are all optional. With
   `OptionFromNullOr(Struct({ a: optionalKey(String), b: optionalKey(String) }))`,
