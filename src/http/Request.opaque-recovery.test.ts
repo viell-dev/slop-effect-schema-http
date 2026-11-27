@@ -2326,6 +2326,16 @@ describe("an invalid Some payload keeps its decoded error", () => {
             } as never),
           ).toEqual({ held: {}, count: "2" });
         }
+        const checked = Schema.Struct({
+          held: Schema.OptionFromNullOr(
+            payload.check(Schema.makeFilter(({ a }) => a === "a")),
+          ),
+          count: Schema.FiniteFromString,
+        });
+        expect(yield* json(checked, { held, count: "2" })).toEqual({
+          held: { a: "a", b: "keep" },
+          count: "2",
+        });
       }),
   );
 });
