@@ -43,10 +43,14 @@
   `{"held":{}}`. This also covers hand-written codecs and open payload schemas such as `Any` and
   `ObjectKeyword` ([#309](https://github.com/viell-dev/slop-effect-schema-http/issues/309),
   [#319](https://github.com/viell-dev/slop-effect-schema-http/issues/319)). A valid `Some` or `None`
-  can also refuse beside an encoded sibling or under an encoded parent that formerly lost it. Supply
-  the enclosing value and its siblings on their decoded side, or give the encoded payload or absence
-  directly at the Option's wire position
-  ([#318](https://github.com/viell-dev/slop-effect-schema-http/issues/318)).
+  can also refuse beside an encoded sibling. This includes a hand-written
+  `Struct({ value: optionalKey(P) })` codec decoded to `Option(P)`, where 0.19.0 could send both
+  values intact. Supply the enclosing value and its siblings on their decoded side, or give the
+  encoded payload or absence directly at the Option's wire position. For the hand-written codec,
+  give `{ value: payload }` or `{}`
+  ([#318](https://github.com/viell-dev/slop-effect-schema-http/issues/318)). A rename on the
+  enclosing struct or an ancestor can still let the encoded read take the wrapper as the payload
+  ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)).
 - Tell the author of a provider that writes bytes to refuse a header name that is not a token, and a
   NUL in a header value, as well as a carriage return or line feed
   ([#302](https://github.com/viell-dev/slop-effect-schema-http/issues/302)). A colon in a name such

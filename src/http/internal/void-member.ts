@@ -1,3 +1,4 @@
+/** Rewrite visible schema nodes to guard erasing Void members and to record native Option wrapper reads. */
 import {
   Effect,
   Exit,
@@ -114,6 +115,9 @@ const noteWrapper = Schema.makeFilter((input, _ast, options: ReadOptions) => {
   return true;
 });
 
+// On a successful wire parse, Effect applies encodingChecks to the original input, where the
+// wrapper is still visible. Checked on Effect 4.0.7 and 4.1.5. Revisit when Effect exposes a public
+// hook for this input or a peer update changes where these checks run.
 const notingWrapper = (ast: SchemaAST.AST): SchemaAST.AST =>
   copyAst(ast, {
     encodingChecks: [
@@ -135,7 +139,9 @@ const onSuccess = (
 
 /** Each alternative only contributes its notes if it was able to read the value. */
 const notingMembers = (ast: SchemaAST.Union): SchemaAST.AST => {
-  // Delegate to Effect's internal union parser to preserve its selection and read order.
+  // Delegate to Effect's internal union parser to preserve its selection and read order while
+  // observing each member separately. Checked on Effect 4.0.7 and 4.1.5. Revisit when Effect exposes
+  // a public hook for member parsing or a peer update changes the getParser contract.
   const original = ast as SchemaAST.Union & {
     getParser(compile: Compiler, compileField?: Compiler): Parser;
   };

@@ -24,11 +24,13 @@ const sparseStrings = () => {
   value.length = 1;
   return value;
 };
-const json = <S extends Schema.Top>(schema: S, value: Inputs.Input<S>) =>
+const jsonText = <S extends Schema.Top>(schema: S, value: Inputs.Input<S>) =>
   Effect.map(Body.jsonSchema(schema).encode(value), (body) => {
     if (body._tag !== "Uint8Array") throw new Error("expected a JSON body");
-    return JSON.parse(new TextDecoder().decode(body.body)) as unknown;
+    return new TextDecoder().decode(body.body);
   });
+const json = <S extends Schema.Top>(schema: S, value: Inputs.Input<S>) =>
+  Effect.map(jsonText(schema, value), (text) => JSON.parse(text) as unknown);
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/143
 describe("visible unions beside opaque fields", () => {
@@ -2254,6 +2256,38 @@ describe("an invalid Some payload keeps its decoded error", () => {
     }),
   );
 
+  const renamed = Schema.Struct({
+    held: Schema.OptionFromNullOr(payload),
+  }).pipe(Schema.encodeKeys({ held: "wire_held" }));
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/321
+  it.effect(
+    "currently sends an empty payload for a wrapper at a renamed key",
+    () =>
+      Effect.gen(function* () {
+        for (const wire_held of [
+          Option.some({ a: 5, b: "keep" }),
+          Option.some({ a: "a", b: "keep" }),
+          Option.none(),
+        ]) {
+          expect(yield* jsonText(renamed, { wire_held } as never)).toBe(
+            '{"wire_held":{}}',
+          );
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/321
+  it.effect.fails("refuses an invalid Some at a renamed key", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(
+        json(renamed, { wire_held: Option.some({ a: 5, b: "keep" }) } as never),
+      );
+      expect(failure).toBeInstanceOf(Schema.SchemaError);
+      expect(failure.message).toContain('["a"]');
+    }),
+  );
+
   it.effect("refuses an invalid Some under a hand-written codec", () =>
     Effect.gen(function* () {
       const held = Schema.NullOr(payload).pipe(
@@ -2355,6 +2389,59 @@ describe("an invalid Some payload keeps its decoded error", () => {
         count: "2",
       });
       expect(checked).toBeGreaterThan(0);
+    }),
+  );
+
+  it.effect(
+    "keeps the wrapper note from a successful asynchronous union member",
+    () =>
+      Effect.gen(function* () {
+        const count = Schema.String.pipe(
+          Schema.decodeTo(
+            Schema.Number,
+            SchemaTransformation.transformEffect({
+              decode: (value) => Effect.as(Effect.yieldNow, Number(value)),
+              encode: (value) => Effect.succeed(String(value)),
+            }),
+          ),
+        );
+        const schema = Schema.Union([
+          Schema.Struct({ held: Schema.OptionFromNullOr(Schema.Any), count }),
+          Schema.Struct({ held: Schema.Option(payload), count }),
+        ]);
+        expect(yield* json(schema, { held: { a: "a" }, count: "2" })).toEqual({
+          held: { a: "a" },
+          count: "2",
+        });
+        const failure = yield* Effect.flip(
+          json(schema, { held: Option.some({ a: "a" }), count: "2" } as never),
+        );
+        expect(failure).toBeInstanceOf(Schema.SchemaError);
+        expect(failure.message).toContain('["count"]');
+      }),
+  );
+
+  it.effect("keeps the wrapper note across decoding recovery", () =>
+    Effect.gen(function* () {
+      const schema = Schema.Struct({
+        held: Schema.OptionFromNullOr(payload),
+        n: Schema.FiniteFromString,
+      }).pipe(
+        Schema.catchDecoding(() =>
+          Effect.succeedSome({ held: Option.none(), n: 0 }),
+        ),
+      );
+      expect(yield* json(schema, { held: { a: "a" }, n: {} } as never)).toEqual(
+        {
+          held: null,
+          n: "0",
+        },
+      );
+      const failure = yield* Effect.flip(
+        json(schema, { held: Option.some({ a: "a" }), n: {} } as never),
+      );
+      expect(failure).toBeInstanceOf(Schema.SchemaError);
+      expect(failure.message).toContain('["n"]');
     }),
   );
 
