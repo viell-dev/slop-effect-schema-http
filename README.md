@@ -39,7 +39,8 @@ The library sends requests to a table through each provider the lane has, and th
 four records of each exchange, in the order they happen:
 
 1. **The wire.** A recording proxy in front of each cleartext listener keeps the request heads that
-   the client wrote.
+   the client wrote. On `https`, which it cannot read, the HTTP/2 provider below records the fields
+   it wrote.
 2. **What the server saw.** The host records the head the HTTP stack gave the router: method,
    version, URI, path, query, header map and transport security.
 3. **What the router chose.** The host asks `Router::select` about that head, apart from dispatch.
@@ -57,6 +58,12 @@ The Node lane uses each client an application might use: Node's `fetch`, undici 
 through `@effect/platform-node`, and a provider that keeps the library's original header lines. A
 raw provider writes the composed request to a socket as it is, for requests that no standard client
 sends. Undici negotiates HTTP/2 over TLS; the others stay on HTTP/1.1.
+
+For HTTP/2 heads that no standard client sends, an HTTP/2 provider hands the composed request to
+the host's own HTTP/2 client, `warded-test-host h2`, one connection per request. It writes the
+header block field by field, as plain HPACK literals in the order given, and refuses nothing, so a
+test can repeat, move, drop or add pseudo-header fields. It records the fields it wrote and what
+came back: a response, a reset stream or a closed connection.
 
 The browser lane runs the same tests in Chromium with the page's own `fetch`. Chromium accepts the
 host's certificate by the hash of its key, and is told to use HTTP/3 on one port, which the HTTP/3
@@ -78,6 +85,7 @@ Tests that need Node itself live in `*.node.test.ts` files, and tests that need 
 | [`selection.test.ts`](./src/scenarios/selection.test.ts)                   | Variants against ordered routes, fallthrough, fallbacks and errors   |
 | [`raw.node.test.ts`](./src/scenarios/raw.node.test.ts)                     | Requests only the raw provider sends                                 |
 | [`hostile-heads.node.test.ts`](./src/scenarios/hostile-heads.node.test.ts) | Malformed HTTP/1.1 heads, the server's host rules and false lengths  |
+| [`http2-heads.node.test.ts`](./src/scenarios/http2-heads.node.test.ts)     | Malformed HTTP/2 heads, `:authority` against `Host`, split cookies   |
 | [`http3.browser.test.ts`](./src/scenarios/http3.browser.test.ts)           | The same conditions over HTTP/3                                      |
 
 ## Running the suite

@@ -23,6 +23,35 @@ export interface WireRequest {
   readonly preflight: boolean;
 }
 
+/** A field of an HTTP/2 header block: a name and a value, one character for each byte. */
+export type Field = readonly [string, string];
+
+/** What came back for a request that the HTTP/2 client sent; `host/src/h2.rs` has the details. */
+export type H2Received =
+  | {
+      readonly is: "response";
+      readonly status: number;
+      /** The response's fields in order, without `:status`. */
+      readonly fields: ReadonlyArray<Field>;
+      /** The content, in base64. */
+      readonly body: string;
+    }
+  /** RST_STREAM on the request's stream: a stream error. */
+  | { readonly is: "reset"; readonly code: string }
+  /** GOAWAY before the response ended: a connection error. */
+  | { readonly is: "go_away"; readonly code: string; readonly debug: string }
+  /** The connection ended without any of those. */
+  | { readonly is: "closed" };
+
+/**
+ * A request as the HTTP/2 client wrote it to the HTTPS listener, which has no recording proxy. The
+ * client writes each field as a plain literal, in order, so its fields are what crossed the wire.
+ */
+export interface H2Exchange {
+  readonly fields: ReadonlyArray<Field>;
+  readonly received: H2Received;
+}
+
 /** The request head as the HTTP stack gave it to the router. */
 export interface Seen {
   readonly method: string;

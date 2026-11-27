@@ -3,7 +3,7 @@ import { Layer } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { inject } from "vitest";
 import type { Client, Lane } from "./lane.js";
-import { linesLayer, rawLayer } from "./providers.js";
+import { h2Provider, linesLayer, rawLayer } from "./providers.js";
 
 const ca = inject("certificate");
 
@@ -49,4 +49,8 @@ export const lane: Lane = {
   fetch,
   lines,
   raw: (origin, options) => quiet(rawLayer(origin, options)),
+  h2: (origin, options) => {
+    const { layer, exchanges } = h2Provider(origin, options);
+    return { layer: quiet(layer), exchanges };
+  },
 };
