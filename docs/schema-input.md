@@ -691,11 +691,12 @@ the schema does with it. These are the places where it cannot, and what happens 
   member can drop a payload field. For example, with
   `Schema.Option(Union([Struct({ owner }), Struct({ owner, limit })]))` as the entire body schema,
   `Some({ owner: "b", limit: "l" })` can send as `{"_tag":"Some","value":{"owner":"b"}}`.
-- A relaxed read can take a narrower member inside a `Some` when a stray key defeats the strict read
-  and competing codecs or a configured `OptionFromOptionalNullOr` hide the payload. For a configured
-  codec, this can happen with a same-tag union, a list of unions, or a union inside another `Some`.
-  A loose write can select a wider member through an unwrapping codec. Data already narrowed by the
-  read, a class instance, or a custom writer can fall outside that recovery. Let
+- Inside a `Some`, a key no member of the payload states is left out before the strict read, through
+  every built-in unwrapping codec, including a configured `OptionFromOptionalNullOr`, and between
+  codecs competing at one position when they share one payload schema. Competing codecs with
+  different payload schemas could each write the `Some`, so a stray key there refuses. A loose write
+  can select a wider member through an unwrapping codec. Data already narrowed by the read, a class
+  instance, or a custom writer can fall outside that recovery. Let
   `Choice = Union([Struct({ owner: String }), Struct({ owner: String, limit: String })])`. Inside
   another `Some`, `Union([OptionFromNullOr(Choice), Struct({ z: String })])` can lose `limit` on a
   loose write even without a stray key. Choose the intended member directly or validate and supply

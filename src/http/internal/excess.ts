@@ -1517,11 +1517,8 @@ const sourceAt = (
         : undefined);
     if (payload !== undefined) {
       const next = decodedOnly ? SchemaAST.toType(payload) : payload;
-      if (
-        option !== undefined &&
-        option !== type &&
-        (!decodedOnly || source !== next)
-      )
+      // Codecs competing at one position read a Some the same way when their payload is one schema.
+      if (option !== undefined && option !== type && source !== next)
         return false;
       option = type;
       source = next;
@@ -1594,7 +1591,7 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
       types.length === 0 ||
       !isObject(value) ||
       active.has(value) ||
-      (!inSome && !types.some(mayUnwrapOption))
+      (!inSome && !types.some(mayWriteUnwrappedOption))
     )
       return value;
     active.add(value);
@@ -1608,7 +1605,7 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
     inSome: boolean,
   ): unknown => {
     if (Option.isOption(value)) {
-      const source = sourceAt(types);
+      const source = sourceAt(types, true);
       const some = ownSome(value);
       if (source === undefined || some === undefined) return value;
       const payload: unknown = some.value;

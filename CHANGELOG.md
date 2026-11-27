@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Keep a stated field beside a stray key inside a `Some` read through a configured
+  `OptionFromOptionalNullOr`, such as `{ onNoneEncoding: null }`, or through codecs competing at one
+  position that share one payload schema, such as
+  `Union([OptionFromNullOr(Filter), OptionFromUndefinedOr(Filter)])`
+  ([#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312)). With
+  `Filter = Union([Struct({ owner }), Struct({ owner, limit })])`, `Some({ owner, limit, stray })`
+  under a same-tag union, a list or another `Some` sent `limit` nowhere, and elsewhere refused; it
+  now sends `{ owner, limit }`, as `OptionFromNullOr` does. Such a payload's own collisions, such as
+  a key `a` beside a field `value`, are now left out as unstated keys, as through
+  `OptionFromNullOr`, where they refused.
 - **Breaking:** refuse a built-in that a struct rebuilds from its own fields
   ([#316](https://github.com/viell-dev/slop-effect-schema-http/issues/316)), as 0.19.0 does for
   records. For example, `{ held: new Date(0) }` under `held: Struct({ a: optionalKey(String) })`,
