@@ -16,6 +16,7 @@ import {
   refusal,
   schemaFailure,
   stacked,
+  strictOnlyCheck,
   takes,
   urlOf,
 } from "../../test/request.js";
@@ -30,14 +31,15 @@ const post = <S extends Schema.Top>(schema: S) =>
     Request.body(Body.jsonSchema(schema)),
   );
 
-/** A schema that a check refuses only under `onExcessProperty: "error"`, which no request uses. */
-const strictOnly = <S extends Schema.Top>(message: string, schema: S) =>
-  schema.check(
-    Schema.makeFilter(
-      (_value, _ast, options) =>
-        options.onExcessProperty !== "error" || message,
-    ),
-  );
+/** What a JSON body schema sends for a value, whatever its type admits. */
+const sentBody = (schema: Schema.Top, body: unknown) =>
+  bodyOf(post(schema as Schema.Codec<unknown, unknown>), { body } as never);
+
+/** How a JSON body schema refuses a value, whatever its type admits. */
+const refusedBody = (schema: Schema.Top, body: unknown) =>
+  schemaFailure(post(schema as Schema.Codec<unknown, unknown>), {
+    body,
+  } as never);
 
 describe("signature-less object candidates under unions", () => {
   const Empty = Schema.Struct({});
@@ -3123,25 +3125,30 @@ describe("a caller's field under a union", () => {
     // strict attempt refuses can still write the value with the request's own options.
     const keyed = Schema.Record(Schema.String, Schema.Number).check(
       Schema.isPropertyNames(
-        strictOnly("Option-sensitive key refusal", Schema.String),
+        strictOnlyCheck("Option-sensitive key refusal", Schema.String),
       ),
     );
     const other = Schema.Struct({ other: Schema.String });
     const whole = Schema.Struct({
       a: text,
-      b: strictOnly("Option-sensitive b", Schema.String),
+      b: strictOnlyCheck("Option-sensitive b", Schema.String),
+    });
+    const wholeToo = Schema.Struct({
+      a: strictOnlyCheck("Option-sensitive a", Schema.String),
+      b: text,
     });
     const narrow = Schema.Struct({ a: text });
-
+    const given = { a: "x", b: "y" };
+    const oneOf = { mode: "oneOf" } as const;
     it.effect("writes the value through it, as Effect does", () =>
       Effect.gen(function* () {
-        // Effect decodes, constructs and encodes each of these with the request's own options.
         const forms = [
-          [Schema.Union([keyed, other]), { foo: 1 }, '{"foo":1}'],
+          [Schema.Union([keyed, other]), { foo: 1 }],
+          [Schema.Union([keyed, other], oneOf), { foo: 1 }],
+          [Schema.Union([other, narrow, keyed]), { foo: 1 }],
           [
             Schema.Union([Schema.Struct({ a: keyed }), other]),
             { a: { foo: 1 } },
-            '{"a":{"foo":1}}',
           ],
           [
             Schema.Union([
@@ -3149,32 +3156,29 @@ describe("a caller's field under a union", () => {
               other,
             ]),
             { a: { foo: 1 } },
-            '{"A":{"foo":1}}',
           ],
-          [
-            Schema.Union([whole, narrow]),
-            { a: "x", b: "y" },
-            '{"a":"x","b":"y"}',
-          ],
+          [Schema.Union([whole, narrow]), given],
         ] as const;
-        for (const [union, given, sent] of forms) {
+        for (const [union, value] of forms) {
           const schema = union as Schema.Codec<unknown, unknown>;
-          const send = (outer: Schema.Codec<unknown, unknown>, body: unknown) =>
-            bodyOf(post(outer), { body } as never);
-          expect(yield* send(schema, given)).toBe(sent);
-          expect(yield* send(Schema.Struct({ f: schema }), { f: given })).toBe(
-            `{"f":${sent}}`,
-          );
-          expect(yield* send(Schema.Array(schema), [given])).toBe(`[${sent}]`);
+          // What Effect's own write of the value gives, with the request's options.
+          const sent = JSON.stringify(Schema.encodeUnknownSync(schema)(value));
+          expect(yield* sentBody(schema, value)).toBe(sent);
           expect(
-            yield* send(Schema.Record(Schema.String, schema), { r: given }),
+            yield* sentBody(Schema.Struct({ f: schema }), { f: value }),
+          ).toBe(`{"f":${sent}}`);
+          expect(yield* sentBody(Schema.Array(schema), [value])).toBe(
+            `[${sent}]`,
+          );
+          expect(
+            yield* sentBody(Schema.Record(Schema.String, schema), { r: value }),
           ).toBe(`{"r":${sent}}`);
           expect(
-            yield* send(
+            yield* sentBody(
               Schema.Struct({ f: schema, p: text }).pipe(
                 Schema.encodeKeys({ p: "wire_p" }),
               ),
-              { f: given, p: "y" },
+              { f: value, p: "y" },
             ),
           ).toBe(`{"f":${sent},"wire_p":"y"}`);
         }
@@ -3187,44 +3191,277 @@ describe("a caller's field under a union", () => {
     );
 
     it.effect(
+      "writes the value through a member that holds it where the member written drops a field",
+      () =>
+        Effect.gen(function* () {
+          // Effect's own write takes `narrow` first and drops `b`, so `whole` is tried in its place.
+          // With the check passing strictly, preparation writes `whole` strictly, whatever the order.
+          expect(
+            Schema.encodeUnknownSync(Schema.Union([narrow, whole]))(given),
+          ).toEqual({ a: "x" });
+          const kept = '{"a":"x","b":"y"}';
+          for (const union of [
+            Schema.Union([narrow, whole]),
+            Schema.Union([narrow, wholeToo, whole]),
+            Schema.Union([whole, narrow], oneOf),
+            Schema.Union([narrow, whole], oneOf),
+          ])
+            expect(yield* sentBody(union, given)).toBe(kept);
+          // A member that drops `b` does not count against one that keeps it, as in the strict
+          // pass. Effect's own one-of write finds both.
+          expect(() =>
+            Schema.encodeUnknownSync(Schema.Union([whole, narrow], oneOf))(
+              given,
+            ),
+          ).toThrow("Expected exactly one member to match");
+          // Beside a stacked schema that states `b`, the value is still written by `whole`.
+          expect(
+            yield* urlOf(
+              stacked(
+                Schema.Union([whole, narrow], oneOf),
+                Schema.Struct({ b: text }),
+              ),
+              { query: given },
+            ),
+          ).toBe("/x?a=x&b=y");
+          expect(
+            yield* urlOf(
+              stacked(
+                Schema.Struct({ b: text }),
+                Schema.Union([whole, narrow]),
+              ),
+              { query: given },
+            ),
+          ).toBe("/x?a=x&b=y");
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/335
+    // Below a parent, the value is read with the request's own options once the strict read fails
+    // on the check, and that reading takes the first member that fits, which strips `b`.
+    it.effect(
+      "currently refuses below a parent a field the reading's first fit strips",
+      () =>
+        Effect.gen(function* () {
+          const anyOf = Schema.Union([narrow, whole]);
+          expect(
+            yield* refusedBody(Schema.Struct({ f: anyOf }), { f: given }),
+          ).toBe(
+            'The schema cannot keep this field with the rest of the value\n  at ["f"]["b"]',
+          );
+          expect(yield* refusedBody(Schema.Array(anyOf), [given])).toBe(
+            'The schema cannot keep this field with the rest of the value\n  at [0]["b"]',
+          );
+          // Under oneOf that reading finds both members, in either order.
+          for (const union of [
+            Schema.Union([narrow, whole], oneOf),
+            Schema.Union([whole, narrow], oneOf),
+          ])
+            expect(
+              yield* refusedBody(Schema.Struct({ f: union }), { f: given }),
+            ).toBe('Expected exactly one member to match\n  at ["f"]');
+          // In the other order, and with the check passing strictly, the field is sent.
+          for (const union of [
+            Schema.Union([whole, narrow]),
+            Schema.Union([narrow, Schema.Struct({ a: text, b: text })]),
+          ])
+            expect(
+              yield* sentBody(Schema.Struct({ f: union }), { f: given }),
+            ).toBe('{"f":{"a":"x","b":"y"}}');
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/335
+    it.effect.fails(
+      "sends below a parent a value a later member holds, whatever the order",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* sentBody(
+              Schema.Struct({ f: Schema.Union([narrow, whole]) }),
+              {
+                f: given,
+              },
+            ),
+          ).toBe('{"f":{"a":"x","b":"y"}}');
+        }),
+    );
+
+    it.effect(
+      "leaves a stripped constructor default to the member that strips it, as before",
+      () =>
+        Effect.gen(function* () {
+          // `b` is the reading's default, not the caller's, so `checked` dropping it loses nothing,
+          // and the member holding it is not tried in its place.
+          const defaulted = Schema.Struct({
+            a: text,
+            b: strictOnlyCheck("Option-sensitive b", Schema.String).pipe(
+              Schema.withConstructorDefault(Effect.succeed("dflt")),
+            ),
+          });
+          const checked = Schema.Struct({
+            a: strictOnlyCheck("Option-sensitive a", Schema.String),
+          });
+          for (const union of [
+            Schema.Union([defaulted, checked]),
+            Schema.Union([defaulted, checked], oneOf),
+            Schema.Union([checked, defaulted]),
+          ]) {
+            const encoded = Schema.encodeUnknownSync(union)(
+              Schema.decodeUnknownSync(union)({ a: "x" }),
+            );
+            expect(encoded).toEqual({ a: "x" });
+            expect(yield* sentBody(union, { a: "x" })).toBe('{"a":"x"}');
+          }
+        }),
+    );
+
+    it.effect(
+      "keeps a one-of union's write that drops a field where two members hold the value",
+      () =>
+        Effect.gen(function* () {
+          // Both `whole` and `wholeToo` write the value with the request's options, so neither is
+          // chosen, and `narrow`'s write stands as before. A stacked schema takes `b`.
+          const union = Schema.Union([whole, wholeToo, narrow], oneOf);
+          expect(
+            yield* urlOf(stacked(union, Schema.Struct({ b: text })), {
+              query: given,
+            }),
+          ).toBe("/x?a=x&b=y");
+          // Alone, the field `narrow` drops is refused, for the reason the request's own options give.
+          expect(yield* refusedBody(union, given)).toBe(
+            "Expected exactly one member to match",
+          );
+        }),
+    );
+
+    it.effect(
+      "refuses a default a member writes under the name of a field the caller gave",
+      () =>
+        Effect.gen(function* () {
+          // Read on its decoded side, `{ a, B }` is `defaultedB`'s, with `B` stripped and `b` its
+          // default. `renamedB` would write that default as `B`, where the caller gave `"y"`.
+          const renamedB = Schema.Struct({
+            a: text,
+            b: strictOnlyCheck("Option-sensitive b", Schema.String),
+          }).pipe(Schema.encodeKeys({ b: "B" }));
+          const defaultedB = Schema.Struct({
+            a: text,
+            b: strictOnlyCheck("Option-sensitive b", Schema.String).pipe(
+              Schema.withConstructorDefault(Effect.succeed("dflt")),
+            ),
+          });
+          const union = Schema.Union([
+            renamedB,
+            defaultedB,
+            Schema.Record(Schema.String, Schema.String).check(
+              Schema.isPropertyNames(
+                strictOnlyCheck("Option-sensitive key", Schema.String),
+              ),
+            ),
+          ]);
+          const value = { a: "x", B: "y" };
+          expect(
+            yield* refusedBody(Schema.Struct({ f: union }), { f: value }),
+          ).toBe(
+            'The schema cannot keep this field with the rest of the value\n  at ["f"]["B"]',
+          );
+          expect(yield* refusedBody(Schema.Array(union), [value])).toBe(
+            'The schema cannot keep this field with the rest of the value\n  at [0]["B"]',
+          );
+          // As the value itself, the record reads and writes it as given.
+          expect(yield* sentBody(union, value)).toBe('{"a":"x","B":"y"}');
+        }),
+    );
+
+    it.effect(
       "still refuses a field the written value loses, with the request's own errors",
       () =>
         Effect.gen(function* () {
-          // Effect's own write takes `narrow` first and drops `b`, which `whole` holds.
-          expect(
-            yield* schemaFailure(post(Schema.Union([narrow, whole])), {
-              body: { a: "x", b: "y" },
-            }),
-          ).toBe(
-            'The schema cannot keep this field with the rest of the value\n  at ["b"]',
-          );
           // Only the member that cannot read `a: "x"` states `b`.
           expect(
-            yield* schemaFailure(
-              post(
-                Schema.Union([
-                  Schema.Struct({ a: strictOnly("Option-sensitive a", text) }),
-                  Schema.Struct({ a: Schema.Number, b: text }),
-                ]),
-              ),
-              { body: { a: "x", b: "y" } as never },
+            yield* refusedBody(
+              Schema.Union([
+                Schema.Struct({
+                  a: strictOnlyCheck("Option-sensitive a", Schema.String),
+                }),
+                Schema.Struct({ a: Schema.Number, b: text }),
+              ]),
+              given,
             ),
           ).toBe(
             'The schema cannot keep this field with the rest of the value\n  at ["b"]',
           );
-          // Under oneOf, both members write it with the request's own options, as Effect finds.
-          expect(
-            yield* schemaFailure(
-              post(Schema.Union([whole, narrow], { mode: "oneOf" })),
-              { body: { a: "x", b: "y" } },
-            ),
-          ).toBe("Expected exactly one member to match");
           // A value no member can read keeps the reading's own error.
           expect(
-            yield* schemaFailure(post(Schema.Union([keyed, other])), {
-              body: { foo: "x" } as never,
-            }),
+            yield* refusedBody(Schema.Union([keyed, other]), { foo: "x" }),
           ).toBe('Expected number\n  at ["foo"]\nMissing key\n  at ["other"]');
+        }),
+    );
+
+    it.effect(
+      "runs a member that holds the value once more only where a supplied field would drop",
+      () =>
+        Effect.gen(function* () {
+          // `Coded` reads `code` and cannot write it, as its encoded side is at least two long, so
+          // its strict write fails for another reason than a key. Nothing reads the options.
+          let runs = 0;
+          const title = text.pipe(
+            Schema.decodeTo(text, {
+              decode: SchemaGetter.passthrough(),
+              encode: SchemaGetter.transformEffect((value: string) =>
+                Effect.sync(() => {
+                  runs++;
+                  return value;
+                }),
+              ),
+            }),
+          );
+          const code = text.pipe(
+            Schema.encodeTo(text.check(Schema.isMinLength(2)), {
+              decode: SchemaGetter.passthrough(),
+              encode: SchemaGetter.passthrough(),
+            }),
+          );
+          const union = (field: Schema.Codec<string, string>) =>
+            Schema.Union([
+              Schema.Struct({ title, code: field }),
+              Schema.Struct({ title: text }),
+            ]);
+          const coded = { title: "a", code: "x" };
+          const counted = (effect: Effect.Effect<string, unknown>) =>
+            Effect.suspend(() => {
+              runs = 0;
+              return Effect.match(effect, {
+                onFailure: () => ({ sent: undefined, runs }),
+                onSuccess: (sent) => ({ sent, runs }),
+              });
+            });
+          // `Title` drops the caller's `code`, so `Coded` is tried in its place with the request's
+          // options: once more in each loose write, where 0.20.0 ran it 4 times.
+          expect(
+            yield* counted(urlOf(queried(union(code)), { query: coded })),
+          ).toEqual({ sent: undefined, runs: 6 });
+          // The stacked schema takes `code` only after the union's write, so the attempt runs
+          // there too, and the request sends what 0.20.0 sends.
+          const beside = yield* counted(
+            urlOf(stacked(union(code), Schema.Struct({ code: text })), {
+              query: coded,
+            }),
+          );
+          expect(beside).toEqual({ sent: "/x?title=a&code=x", runs: 6 });
+          // A constructor default is not the caller's, so `Title` drops it as before.
+          const defaulted = yield* counted(
+            urlOf(
+              queried(
+                union(
+                  code.pipe(Schema.withConstructorDefault(Effect.succeed("x"))),
+                ),
+              ),
+              { query: { title: "a" } },
+            ),
+          );
+          expect(defaulted).toEqual({ sent: "/x?title=a", runs: 3 });
         }),
     );
   });

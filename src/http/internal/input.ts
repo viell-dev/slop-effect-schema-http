@@ -41,6 +41,7 @@ import {
   isKeyed,
   recordingInto,
   recordingWriter,
+  type WriteInput,
   type WriterNotes,
 } from "./writers.js";
 
@@ -1628,9 +1629,12 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     readonly strict?: Schema.SchemaError;
     readonly writers?: WriterNotes | undefined;
   }
+  /** What the caller gave for a value, as given and as the schema normalised it. */
+  type Offered = Omit<WriteInput, "value">;
   /** The loose write, and which member wrote each value where the writer can say. */
   const looseWrite = (
     value: S["Type"],
+    offered: Offered,
   ): Effect.Effect<Sent, Schema.SchemaError, R> => {
     if (recordingWrite === undefined)
       return Effect.map(strictWriter(value), (output) => ({
@@ -1639,7 +1643,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       }));
     const writers: WriterNotes = [];
     return Effect.map(
-      recordingWrite(value, recordingInto(writers)),
+      recordingWrite(value, recordingInto(writers, { ...offered, value })),
       (output) => ({ output, writers }),
     );
   };
@@ -1649,22 +1653,23 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     R | S["DecodingServices"]
   >;
   /** The read and what it wrote, strictly or else loosely. */
-  const sendRead = (read: Decoded<S["Type"]>): SentRead =>
+  const sendRead = (read: Decoded<S["Type"]>, offered: Offered): SentRead =>
     Effect.catchTag(
       Effect.map(
         strictWriter(read.value, Excess.strict),
         (output): Sent & { readonly read: typeof read } => ({ output, read }),
       ),
       "SchemaError",
-      (strict) => sendLoosely(read, strict),
+      (strict) => sendLoosely(read, strict, offered),
     );
   /** What a read wrote loosely, once its strict write failed with `strict`. */
   const sendLoosely = (
     read: Decoded<S["Type"]>,
     strict: Schema.SchemaError,
+    offered: Offered,
   ): SentRead => {
     // Relax excess-property handling while keeping any Void guard on the writer.
-    const loose = Effect.map(looseWrite(read.value), (sent) => ({
+    const loose = Effect.map(looseWrite(read.value, offered), (sent) => ({
       ...sent,
       strict,
       read,
@@ -1686,7 +1691,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
         ReadFailure,
         S["DecodingServices"]
       >,
-      sendRead,
+      (relaxedRead) => sendRead(relaxedRead, offered),
     );
     return recoverRead(
       Effect.catchTag(loose, "SchemaError", () => relaxed),
@@ -1707,8 +1712,13 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     Effect.suspend(() =>
       Effect.map(
         strictly === undefined
-          ? Effect.flatMap(readDecoded(from, given, input), sendRead)
-          : sendLoosely(strictly.read, strictly.failure),
+          ? Effect.flatMap(readDecoded(from, given, input), (read) =>
+              sendRead(read, { caller: input, given }),
+            )
+          : sendLoosely(strictly.read, strictly.failure, {
+              caller: input,
+              given,
+            }),
         ({
           output,
           strict,

@@ -20,6 +20,7 @@ import {
   queried,
   schemaFailure,
   stacked,
+  strictOnlyCheck,
   takes,
   Tenant,
   urlOf,
@@ -2759,24 +2760,16 @@ describe("a refusal says why it cannot keep a field", () => {
     "currently refuses a wire-named value whose step fails only under strict options",
     () =>
       Effect.gen(function* () {
-        const side = Schema.FiniteFromString.check(
-          Schema.makeFilter(
-            (_value, _ast, options) =>
-              options.onExcessProperty !== "error" || "Option-sensitive side",
-          ),
+        const side = strictOnlyCheck(
+          "Option-sensitive side",
+          Schema.FiniteFromString,
         );
         const renamed = Schema.Struct({ side }).pipe(
           Schema.encodeKeys({ side: "s" }),
         );
         const keyed = Schema.Record(Schema.String, Schema.Number).check(
           Schema.isPropertyNames(
-            Schema.String.check(
-              Schema.makeFilter(
-                (_key, _ast, options) =>
-                  options.onExcessProperty !== "error" ||
-                  "Option-sensitive key refusal",
-              ),
-            ),
+            strictOnlyCheck("Option-sensitive key refusal", Schema.String),
           ),
         );
         const member = Schema.Union([
@@ -2817,11 +2810,9 @@ describe("a refusal says why it cannot keep a field", () => {
     "sends a wire-named value whose step fails only under strict options",
     () =>
       Effect.gen(function* () {
-        const side = Schema.FiniteFromString.check(
-          Schema.makeFilter(
-            (_value, _ast, options) =>
-              options.onExcessProperty !== "error" || "Option-sensitive side",
-          ),
+        const side = strictOnlyCheck(
+          "Option-sensitive side",
+          Schema.FiniteFromString,
         );
         const renamed = Schema.Struct({ side }).pipe(
           Schema.encodeKeys({ side: "s" }),
