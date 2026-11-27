@@ -4878,3 +4878,52 @@ result-based catalogue gates reject the recorded wire failures.
 The cases cover the listed schema forms and Fetch dispatch. Other Effect peers, browser engines,
 host platforms and exhaustive combinations of codecs, containers and union modes are outside this
 run.
+
+## Request preparation for 0.20.0 (EXT-65 to EXT-77)
+
+[The 0.20.0 candidate changelog](https://github.com/viell-dev/slop-effect-schema-http/blob/6fd2c50bd3ea7f051db1ca1146e29b0e87a387fb/CHANGELOG.md#unreleased)
+supplies the expectations. The [neutral echo probe](./README.md#the-neutral-echo-probe) records
+each request in the Node, Chromium and packed lanes. Successful cases check the method, target,
+JSON headers and exact body bytes. Refusals check a `SchemaError`, its field and an empty ledger.
+The callback-count regressions from
+[#317](https://github.com/viell-dev/slop-effect-schema-http/issues/317) are covered by the existing
+EXT-36c, EXT-42k/l/o, EXT-43g and EXT-44j cases.
+
+- **EXT-65** [#316](https://github.com/viell-dev/slop-effect-schema-http/issues/316). A struct,
+  the same struct under `NullOr`, and its encoded form under `OptionFromNullOr` refuse `Date` and
+  `Map` at `held`. Plain objects and class instances with their own field send it. Status: tested.
+- **EXT-66** [#318](https://github.com/viell-dev/slop-effect-schema-http/issues/318). `Some` and
+  `None` keep their decoded meaning beside an encoded `FiniteFromString` sibling. A hand-written
+  codec sends its own encoded `value` field in the same situation. Status: tested.
+- **EXT-67** [#309](https://github.com/viell-dev/slop-effect-schema-http/issues/309) and
+  [#319](https://github.com/viell-dev/slop-effect-schema-http/issues/319). An invalid native `Some`
+  refuses through built-in and hand-written codecs. The guard also covers open payloads that
+  would accept the wrapper on their encoded side. Status: tested.
+- **EXT-68** [#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321). Both wrapper
+  variants refuse at encoded names across a renamed field, sibling, ancestor, class and list
+  ancestor. The native value sends on the decoded side, and a direct payload sends at `wire_held`.
+  Status: tested.
+- **EXT-69** [#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312) and
+  [#326](https://github.com/viell-dev/slop-effect-schema-http/issues/326). A configured
+  `OptionFromOptionalNullOr` and a union of two unwrapping codecs sharing `Filter` retain `owner`
+  and `limit` and drop `stray` in a field, a list and another `Some`. Status: tested.
+- **EXT-70** [#276](https://github.com/viell-dev/slop-effect-schema-http/issues/276). A fieldless
+  object that matches two `oneOf` members refuses in both orders, even with a default. An `anyOf`
+  with distinguishable writers sends the first fit. Status: tested.
+- **EXT-71** [#299](https://github.com/viell-dev/slop-effect-schema-http/issues/299). Unwrapping
+  `Some` keeps the payload's stated `value.a` and drops its unstated outer `a`. Status: tested.
+- **EXT-72** [#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305). A tagged
+  payload inside a list and another `Some` sends its wider member's `limit`. Status: tested.
+- **EXT-73** [#275](https://github.com/viell-dev/slop-effect-schema-http/issues/275). Refusals
+  identify both conflicting aliases, an invalid decoded value, and an invalid wire-named value
+  beside an unstated key. Status: tested.
+- **EXT-74** [#292](https://github.com/viell-dev/slop-effect-schema-http/issues/292). A visible
+  `Some` drops a payload key stated only by a member ruled out by the literal tag. Status: tested.
+- **EXT-75** [#308](https://github.com/viell-dev/slop-effect-schema-http/issues/308). A class
+  instance beside a renamed configured `Option` still lets the writer keep `limit` in a list item.
+  Status: tested.
+- **EXT-76** [#307](https://github.com/viell-dev/slop-effect-schema-http/issues/307). `anyOf`
+  and `oneOf` each send the same all-undefined field and opaque `Option` payload with or without
+  an unstated key inside the opaque payload. Status: tested.
+- **EXT-77** [#274](https://github.com/viell-dev/slop-effect-schema-http/issues/274). A class
+  instance beside a narrower struct writes its class member's renamed field. Status: tested.
