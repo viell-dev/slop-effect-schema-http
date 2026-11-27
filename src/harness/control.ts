@@ -74,19 +74,42 @@ class Host {
   }
 }
 
+/** The connection preface of HTTP/2 with prior knowledge (RFC 9113 section 3.4). */
+const preface = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
+
 /**
  * Read request heads out of what a client wrote to one connection. Bodies are skipped by
- * `Content-Length`, or up to the last chunk of a chunked body, which is all this suite sends.
+ * `Content-Length`, or up to the last chunk of a chunked body, which is all this suite sends. A
+ * connection that begins with the HTTP/2 preface is recorded by the preface's request line alone,
+ * `PRI * HTTP/2.0`: HTTP/2 frames are not read here, and the HTTP/2 provider records the fields it
+ * wrote instead.
  */
 class Heads {
   #buffer = Buffer.alloc(0);
   #skip = 0;
   #chunked = false;
+  /** Whether the connection's first bytes are still to be compared with the preface. */
+  #first = true;
+  #http2 = false;
 
   constructor(readonly found: (head: string) => void) {}
 
   push(chunk: Buffer): void {
+    if (this.#http2) return;
     this.#buffer = Buffer.concat([this.#buffer, chunk]);
+    if (this.#first) {
+      const length = Math.min(this.#buffer.length, preface.length);
+      if (
+        this.#buffer.subarray(0, length).equals(preface.subarray(0, length))
+      ) {
+        if (length < preface.length) return;
+        this.#http2 = true;
+        this.#buffer = Buffer.alloc(0);
+        this.found("PRI * HTTP/2.0\r\n");
+        return;
+      }
+      this.#first = false;
+    }
     for (;;) {
       if (this.#skip > 0) {
         const skipped = Math.min(this.#skip, this.#buffer.length);

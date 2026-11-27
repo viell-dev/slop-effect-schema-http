@@ -2,8 +2,9 @@
  * Hostile HTTP/2 request heads, sent to the `https` listener by the HTTP/2 provider, which writes a
  * header block field by field through the host's HTTP/2 client: pseudo-header fields that are
  * repeated, late, missing or unknown, `:authority` against `Host`, split `Cookie` fields, and the
- * shapes of the HTTP/1.1 probe list in `hostile-heads.node.test.ts`. Node-only, because the provider
- * runs the host's client as a child process.
+ * shapes of the HTTP/1.1 probe list in `hostile-heads.node.test.ts`. The last test sends HTTP/2
+ * with prior knowledge to the cleartext listeners. Node-only, because the provider runs the host's
+ * client as a child process.
  *
  * Two layers decide before any route runs. Hyper's HTTP/2 implementation, the `h2` crate, refuses a
  * malformed head (RFC 9113 section 8.1.1) with a stream error, RST_STREAM with PROTOCOL_ERROR. A
@@ -28,7 +29,7 @@ import {
   type H2Received,
   values,
 } from "../harness/evidence.js";
-import type { H2Options } from "../harness/lane.js";
+import type { H2Options, Listener } from "../harness/lane.js";
 import { serve } from "../harness/matrix.js";
 import {
   and,
@@ -94,18 +95,19 @@ interface SentH2 extends Sent {
   readonly h2: H2Exchange;
 }
 
-/** Send a request through the HTTP/2 provider to the table's HTTPS listener. */
+/** Send a request through the HTTP/2 provider to one of the table's listeners, HTTPS by default. */
 const sendH2 = <I, E>(
   routes: Table,
   request: Request.Request<I, E>,
   input: I,
   options?: H2Options,
+  listener: Listener = "https",
 ): Effect.Effect<SentH2> =>
   Effect.gen(function* () {
-    const provider = h2(routes.origins.https, options);
+    const provider = h2(routes.origins[listener], options);
     const sent = yield* send(
       routes,
-      "https",
+      listener,
       provider.layer,
       Operation.make(request, replies),
       input,
@@ -636,6 +638,18 @@ describe("hostile HTTP/2 request heads", () => {
         query: "q=1",
       });
       routed(query, { path: "/", route: "root" });
+      // So does a `:path` of only `?`, or only a fragment: neither has an absolute path either.
+      for (const [target, uri, query] of [
+        ["?", `https://${authority}/?`, ""],
+        ["#x", `https://${authority}/`, null],
+      ] as const) {
+        const sent = yield* sendH2(routes, Request.get("/"), undefined, {
+          fields: replace(":path", target),
+        });
+        expect(sent.h2.fields[3]).toEqual([":path", target]);
+        expect(only(sent).seen).toMatchObject({ uri, path: "/", query });
+        routed(sent, { path: "/", route: "root" });
+      }
 
       // `:scheme` is not limited to `http` and `https` (RFC 9113 section 8.3.1). The routes see the
       // scheme that the client named; transport security is still the listener's.
@@ -757,6 +771,113 @@ describe("hostile HTTP/2 request heads", () => {
         "5",
       ]);
       expect(bodyText(only(equal).dispatched)).toBe("hello");
+    }).pipe(Effect.scoped),
+  );
+  it.live("HTTP/2 with prior knowledge on the cleartext listeners", () =>
+    Effect.gen(function* () {
+      const routes = yield* serve(table);
+
+      // RFC 9113 section 3.3: a client that knows that a cleartext server speaks HTTP/2 sends the
+      // preface over TCP (h2c), without an upgrade. Both cleartext listeners take it: Hyper's
+      // automatic choice under `axum::serve`, and the Warded Server's cleartext listener. The
+      // recording proxies read HTTP/1 only, so the wire record has the preface, and the
+      // provider's fields are what crossed the wire.
+      for (const [listener, security] of [
+        ["plain", "unknown"],
+        ["http", "unsecure"],
+      ] as const) {
+        const authority = new URL(routes.origins[listener]).host;
+        const sent = yield* sendH2(
+          routes,
+          Request.get("/files/a"),
+          undefined,
+          undefined,
+          listener,
+        );
+        expect(sent.h2.fields).toEqual([
+          [":method", "GET"],
+          [":scheme", "http"],
+          [":authority", authority],
+          [":path", "/files/a"],
+          ["accept", "text/plain"],
+        ]);
+        expect(sent.wire).toMatchObject([
+          { listener, method: "PRI", target: "*", protocol: "HTTP/2.0" },
+        ]);
+        const { seen, verdict } = only(sent);
+        expect(seen).toEqual({
+          method: "GET",
+          version: "HTTP/2",
+          uri: `http://${authority}/files/a`,
+          path: "/files/a",
+          query: null,
+          headers: [["accept", "text/plain"]],
+          security,
+        });
+        expect(verdict).toEqual({
+          is: "selected",
+          index: indexOf("file"),
+          captures: { name: "a" },
+        });
+        expect(sent.h2.received).toMatchObject({ is: "response", status: 200 });
+
+        // h2 refuses a malformed head on both, as on `https`.
+        expectRefusedByH2(
+          yield* sendH2(
+            routes,
+            Request.get("/files/a"),
+            undefined,
+            { fields: twice(":path") },
+            listener,
+          ),
+          reset,
+        );
+      }
+
+      // The server's own checks run on its cleartext listener, and not under `axum::serve`, which
+      // gives the router what Hyper parsed: split cookies stay split, and whitespace around a
+      // value and a `Host` that names another host than `:authority` reach the routes.
+      const cookies = (...crumbs: ReadonlyArray<string>) =>
+        crumbs.reduce(
+          (request, crumb) =>
+            request.pipe(Request.appendHeader("cookie", crumb)),
+          Request.get("/cookies"),
+        );
+      const at = (listener: Listener, request: Request.Request<void, never>) =>
+        sendH2(routes, request, undefined, undefined, listener);
+
+      const joined = yield* at("http", cookies("a=1", "b=2; c=3"));
+      expect(values(only(joined).seen.headers, "cookie")).toEqual([
+        "a=1; b=2; c=3",
+      ]);
+      expect(only(joined).dispatched?.route).toBe("cookies");
+      const split = yield* at("plain", cookies("a=1", "b=2; c=3"));
+      expect(values(only(split).seen.headers, "cookie")).toEqual([
+        "a=1",
+        "b=2; c=3",
+      ]);
+      expect(only(split).dispatched?.route).toBe("other");
+
+      expectRefusedByServer(
+        yield* at("http", cookies("a=1", " b=2")),
+        "a field value begins or ends with whitespace",
+      );
+      const spaced = yield* at("plain", cookies("a=1", " b=2"));
+      expect(values(only(spaced).seen.headers, "cookie")).toEqual([
+        "a=1",
+        " b=2",
+      ]);
+
+      const elsewhere = Request.get("/files/a").pipe(
+        Request.setHeader("host", "other.test"),
+      );
+      expectRefusedByServer(
+        yield* at("http", elsewhere),
+        "the Host field names another host than :authority",
+      );
+      const passed = yield* at("plain", elsewhere);
+      expect(values(only(passed).seen.headers, "host")).toEqual(["other.test"]);
+      expect(only(passed).dispatched?.route).toBe("file");
     }).pipe(Effect.scoped),
   );
 });

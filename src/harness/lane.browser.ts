@@ -23,4 +23,5 @@ export const lane: Lane = {
   lines: undefined,
   raw: undefined,
   h2: undefined,
+  h3: undefined,
 };

@@ -39,8 +39,9 @@ The library sends requests to a table through each provider the lane has, and th
 four records of each exchange, in the order they happen:
 
 1. **The wire.** A recording proxy in front of each cleartext listener keeps the request heads that
-   the client wrote. On `https`, which it cannot read, the HTTP/2 provider below records the fields
-   it wrote.
+   the client wrote. On `https`, which it cannot read, the HTTP/2 and HTTP/3 providers below record
+   the fields they wrote. The proxies read HTTP/1 only: of HTTP/2 with prior knowledge they keep the
+   preface, and the HTTP/2 provider's record holds the fields.
 2. **What the server saw.** The host records the head the HTTP stack gave the router: method,
    version, URI, path, query, header map and transport security.
 3. **What the router chose.** The host asks `Router::select` about that head, apart from dispatch.
@@ -63,30 +64,40 @@ For HTTP/2 heads that no standard client sends, an HTTP/2 provider hands the com
 the host's own HTTP/2 client, `warded-test-host h2`, one connection per request. It writes the
 header block field by field, as plain HPACK literals in the order given, and refuses nothing, so a
 test can repeat, move, drop or add pseudo-header fields. It records the fields it wrote and what
-came back: a response, a reset stream or a closed connection.
+came back: a response, a reset stream or a closed connection. It speaks HTTP/2 over TLS to
+`https`, and with prior knowledge (h2c) to the cleartext listeners.
+
+An HTTP/3 provider does the same over QUIC to the HTTP/3 endpoint of `https`, through
+`warded-test-host h3`. It writes the field section as QPACK literals, without Huffman codes or the
+dynamic table, allows the server no dynamic table either, and records what came back: a response,
+a reset stream or a closed connection with its code. It uses Quinn, at the version and with the
+features that the Warded Server uses; the framing and QPACK are the host's own, since h3's client
+builds its heads from the `http` crate's types, which hold none of these shapes.
 
 The browser lane runs the same tests in Chromium with the page's own `fetch`. Chromium accepts the
 host's certificate by the hash of its key, and is told to use HTTP/3 on one port, which the HTTP/3
-test serves. No Node provider here speaks HTTP/3, so that test runs only in the browser.
+test serves. No standard Node client speaks HTTP/3, so that test of ordinary requests runs only in
+the browser.
 
 Tests that need Node itself live in `*.node.test.ts` files, and tests that need a browser in
 `*.browser.test.ts` files.
 
-| File                                                                       | What it checks                                                       |
-| -------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| [`paths.test.ts`](./src/scenarios/paths.test.ts)                           | Path values, templates and renderers against `exact_path` and `path` |
-| [`queries.test.ts`](./src/scenarios/queries.test.ts)                       | Query writers against `param_pair` and `param_present`               |
-| [`methods.test.ts`](./src/scenarios/methods.test.ts)                       | Method helpers and method names against Warded's method conditions   |
-| [`headers.test.ts`](./src/scenarios/headers.test.ts)                       | Header declarations and automatic headers against header conditions  |
-| [`negotiation.test.ts`](./src/scenarios/negotiation.test.ts)               | Automatic `Accept` and declared languages against offer sets         |
-| [`negotiation-edges.test.ts`](./src/scenarios/negotiation-edges.test.ts)   | Wildcards, weights, repeated fields and strict negotiation errors    |
-| [`limits.test.ts`](./src/scenarios/limits.test.ts)                         | Path captures and negotiation field boundaries                       |
-| [`transport.test.ts`](./src/scenarios/transport.test.ts)                   | Version, transport security and host                                 |
-| [`selection.test.ts`](./src/scenarios/selection.test.ts)                   | Variants against ordered routes, fallthrough, fallbacks and errors   |
-| [`raw.node.test.ts`](./src/scenarios/raw.node.test.ts)                     | Requests only the raw provider sends                                 |
-| [`hostile-heads.node.test.ts`](./src/scenarios/hostile-heads.node.test.ts) | Malformed HTTP/1.1 heads, the server's host rules and false lengths  |
-| [`http2-heads.node.test.ts`](./src/scenarios/http2-heads.node.test.ts)     | Malformed HTTP/2 heads, `:authority` against `Host`, split cookies   |
-| [`http3.browser.test.ts`](./src/scenarios/http3.browser.test.ts)           | The same conditions over HTTP/3                                      |
+| File                                                                       | What it checks                                                          |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [`paths.test.ts`](./src/scenarios/paths.test.ts)                           | Path values, templates and renderers against `exact_path` and `path`    |
+| [`queries.test.ts`](./src/scenarios/queries.test.ts)                       | Query writers against `param_pair` and `param_present`                  |
+| [`methods.test.ts`](./src/scenarios/methods.test.ts)                       | Method helpers and method names against Warded's method conditions      |
+| [`headers.test.ts`](./src/scenarios/headers.test.ts)                       | Header declarations and automatic headers against header conditions     |
+| [`negotiation.test.ts`](./src/scenarios/negotiation.test.ts)               | Automatic `Accept` and declared languages against offer sets            |
+| [`negotiation-edges.test.ts`](./src/scenarios/negotiation-edges.test.ts)   | Wildcards, weights, repeated fields and strict negotiation errors       |
+| [`limits.test.ts`](./src/scenarios/limits.test.ts)                         | Path captures and negotiation field boundaries                          |
+| [`transport.test.ts`](./src/scenarios/transport.test.ts)                   | Version, transport security and host                                    |
+| [`selection.test.ts`](./src/scenarios/selection.test.ts)                   | Variants against ordered routes, fallthrough, fallbacks and errors      |
+| [`raw.node.test.ts`](./src/scenarios/raw.node.test.ts)                     | Requests only the raw provider sends                                    |
+| [`hostile-heads.node.test.ts`](./src/scenarios/hostile-heads.node.test.ts) | Malformed HTTP/1.1 heads, the server's host rules and false lengths     |
+| [`http2-heads.node.test.ts`](./src/scenarios/http2-heads.node.test.ts)     | Malformed HTTP/2 heads, `:authority` against `Host`, split cookies, h2c |
+| [`http3-heads.node.test.ts`](./src/scenarios/http3-heads.node.test.ts)     | The same heads over HTTP/3                                              |
+| [`http3.browser.test.ts`](./src/scenarios/http3.browser.test.ts)           | The same conditions over HTTP/3                                         |
 
 ## Running the suite
 

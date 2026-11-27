@@ -1,6 +1,6 @@
 import type { Layer } from "effect";
 import type { HttpClient } from "effect/http";
-import type { Field, H2Exchange } from "./evidence.js";
+import type { Field, H2Exchange, H3Exchange } from "./evidence.js";
 
 /**
  * The interface every scenario uses, implemented once per lane. Tests import it from `#lane`, which
@@ -50,6 +50,16 @@ export interface H2Provider {
   readonly exchanges: ReadonlyArray<H2Exchange>;
 }
 
+/** The HTTP/3 provider writes a request as the HTTP/2 provider does. */
+export type H3Options = H2Options;
+
+/** The HTTP/3 provider for one origin, and what it sent there. */
+export interface H3Provider {
+  readonly layer: Layer.Layer<HttpClient.HttpClient>;
+  /** Each request it sent, in order, with what came back. */
+  readonly exchanges: ReadonlyArray<H3Exchange>;
+}
+
 export interface Lane {
   readonly name: "node" | "browser";
   /** The providers an application in this lane would use, by name. */
@@ -69,10 +79,17 @@ export interface Lane {
       ) => Layer.Layer<HttpClient.HttpClient>)
     | undefined;
   /**
-   * The HTTP/2 provider for the HTTPS listener at `origin`, in the Node lane only. It writes the
-   * request's header block field by field through the host's HTTP/2 client, with nothing refused;
-   * `providers.ts` gives the details.
+   * The HTTP/2 provider for the listener at `origin`, in the Node lane only: over TLS on `https`,
+   * and with prior knowledge (h2c) on the cleartext ones. It writes the request's header block
+   * field by field through the host's HTTP/2 client, with nothing refused; `providers.ts` gives
+   * the details.
    */
   readonly h2:
     ((origin: string, options?: H2Options) => H2Provider) | undefined;
+  /**
+   * The HTTP/3 provider for the HTTPS listener at `origin`, in the Node lane only: the HTTP/2
+   * provider's requests, through the host's HTTP/3 client.
+   */
+  readonly h3:
+    ((origin: string, options?: H3Options) => H3Provider) | undefined;
 }

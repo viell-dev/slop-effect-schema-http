@@ -4,7 +4,9 @@
 //!
 //! `warded-test-host h2 <directory>` reads one request as JSON on standard input, sends it on a
 //! connection of its own to the HTTPS listener at its port, trusting the certificate in
-//! `<directory>`, and writes what came back as one line of JSON on standard output.
+//! `<directory>`, and writes what came back as one line of JSON on standard output. With
+//! `cleartext`, it sends it to a cleartext listener instead, with prior knowledge (RFC 9113 section
+//! 3.3): the preface over TCP, without TLS or an upgrade.
 //!
 //! Every field goes out as a literal that is neither indexed nor Huffman-coded (RFC 7541 section
 //! 6.2.2), in the order given, so the bytes of the header block are the fields as given, and a
@@ -35,20 +37,23 @@ use tokio_rustls::TlsConnector;
 
 type Failure = Box<dyn Error>;
 /// A final response head: its status, and its other fields in order.
-type Head = (u16, Vec<(String, String)>);
+pub(crate) type Head = (u16, Vec<(String, String)>);
 
-/// One request. Text stands for bytes, one character for each.
+/// One request, for this client or [`crate::h3`]'s. Text stands for bytes, one character for each.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Sending {
-    port: u16,
+pub(crate) struct Sending {
+    pub(crate) port: u16,
     /// The header block, pseudo-header fields included, in order.
-    fields: Vec<(String, String)>,
+    pub(crate) fields: Vec<(String, String)>,
     /// The content in base64. Without it, the HEADERS frame ends the stream.
-    body: Option<String>,
+    pub(crate) body: Option<String>,
     /// Stop at the final response head, as for a CONNECT that opens a tunnel.
     #[serde(default)]
-    head_only: bool,
+    pub(crate) head_only: bool,
+    /// HTTP/2 over TCP without TLS. The HTTP/3 client always uses QUIC's TLS.
+    #[serde(default)]
+    pub(crate) cleartext: bool,
 }
 
 /// What came back on the connection.
@@ -108,6 +113,10 @@ pub async fn send(directory: &Path) -> Result<(), Failure> {
 }
 
 async fn exchange(directory: &Path, sending: &Sending) -> Result<Received, Failure> {
+    let tcp = TcpStream::connect((Ipv4Addr::LOCALHOST, sending.port)).await?;
+    if sending.cleartext {
+        return over(tcp, sending).await;
+    }
     let mut roots = RootCertStore::empty();
     roots.add(CertificateDer::from_pem_file(directory.join("cert.pem"))?)?;
     let mut config = ClientConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
@@ -115,14 +124,21 @@ async fn exchange(directory: &Path, sending: &Sending) -> Result<Received, Failu
         .with_root_certificates(roots)
         .with_no_client_auth();
     config.alpn_protocols = vec![b"h2".to_vec()];
-    let tcp = TcpStream::connect((Ipv4Addr::LOCALHOST, sending.port)).await?;
     let name = ServerName::from(IpAddr::V4(Ipv4Addr::LOCALHOST));
-    let mut connection = TlsConnector::from(Arc::new(config))
+    let connection = TlsConnector::from(Arc::new(config))
         .connect(name, tcp)
         .await?;
     if connection.get_ref().1.alpn_protocol() != Some(&b"h2"[..]) {
         return Err("the server did not choose HTTP/2".into());
     }
+    over(connection, sending).await
+}
+
+/// Send the request on a connection that speaks HTTP/2, and read what comes back.
+async fn over<C>(mut connection: C, sending: &Sending) -> Result<Received, Failure>
+where
+    C: AsyncRead + AsyncWrite + Unpin,
+{
     connection.write_all(&request(sending)?).await?;
     connection.flush().await?;
     read(&mut connection, sending.head_only).await
@@ -304,7 +320,7 @@ where
 }
 
 /// The status and fields of a final response head, or none for an informational one.
-fn final_head(fields: Vec<(Vec<u8>, Vec<u8>)>) -> Result<Option<Head>, Failure> {
+pub(crate) fn final_head(fields: Vec<(Vec<u8>, Vec<u8>)>) -> Result<Option<Head>, Failure> {
     let text = |bytes: Vec<u8>| bytes.into_iter().map(char::from).collect::<String>();
     let mut status = None;
     let mut rest = Vec::new();

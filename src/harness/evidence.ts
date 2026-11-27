@@ -4,7 +4,11 @@
  * target ran. A difference between two neighbours says which project a mismatch belongs to.
  */
 
-/** A request as it crossed a cleartext socket, read one character for each byte. */
+/**
+ * A request as it crossed a cleartext socket, read one character for each byte. For HTTP/2 with
+ * prior knowledge, only the connection preface's request line, `PRI * HTTP/2.0`; the HTTP/2
+ * provider's own record holds the fields.
+ */
 export interface WireRequest {
   /** Which cleartext listener it reached. HTTPS is not recorded on the wire. */
   readonly listener: "plain" | "http";
@@ -50,6 +54,28 @@ export type H2Received =
 export interface H2Exchange {
   readonly fields: ReadonlyArray<Field>;
   readonly received: H2Received;
+}
+
+/** What came back for a request that the HTTP/3 client sent; `host/src/h3.rs` has the details. */
+export type H3Received =
+  | Extract<H2Received, { readonly is: "response" }>
+  /** RESET_STREAM on the request stream: a stream error. */
+  | { readonly is: "reset"; readonly code: string }
+  /**
+   * CONNECTION_CLOSE before the response ended: a connection error, with HTTP/3's code, or QUIC's
+   * when QUIC itself closed the connection.
+   */
+  | { readonly is: "close"; readonly code: string; readonly reason: string }
+  /** The connection ended without any of those. */
+  | { readonly is: "closed" };
+
+/**
+ * A request as the HTTP/3 client wrote it to the HTTPS listener's HTTP/3 endpoint. The client
+ * writes each field as a plain literal, in order, so its fields are what crossed the wire.
+ */
+export interface H3Exchange {
+  readonly fields: ReadonlyArray<Field>;
+  readonly received: H3Received;
 }
 
 /** The request head as the HTTP stack gave it to the router. */
