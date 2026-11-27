@@ -799,11 +799,13 @@ the schema does with it. These are the places where it cannot, and what happens 
   string-indexed record that loses a supplied symbol, on either side of the schema, including one
   among a class's fields, a link whose encoded end is such a record, and the canonical JSON codec of
   `Schema.ObjectKeyword`, which copies only the string fields of an object and the positions of an
-  array, report a `SchemaError`. So does such a record or codec that rebuilds a built-in, such as a
-  `Map` or a `Date`, from its own fields. Not covered: a symbol inside a declaration's type
-  parameter, such as `Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`. A symbol
-  key the schema declares is written as it chooses, and one at a class's root is stripped. See the
-  [Body guide](./modules/body.md#text-json-and-finite-body-limits) for writer rules. An opaque
+  array, report a `SchemaError`. So does such a record or codec, or a struct, that rebuilds a
+  built-in, such as a `Map` or a `Date`, from its own fields, including a struct that reads a value
+  given on the encoded side of an Option codec such as `OptionFromNullOr`. An empty struct keeps the
+  value as given. Not covered: a symbol inside a declaration's type parameter, such as
+  `Option(Record(…))`, `ReadonlyMap`, `Redacted` or `OptionFromNullOr`. A symbol key the schema
+  declares is written as it chooses, and one at a class's root is stripped. See the [Body
+  guide](./modules/body.md#text-json-and-finite-body-limits) for writer rules. An opaque
   transformation can still choose its own encoded representation.
 - Opaque contents use their schema's own reading. A `ReadonlyMap` containing
   `{ term: "x", page_size: "05" }` can lose the alias through construction. Use decoded contents
