@@ -2,16 +2,20 @@
 
 ## Unreleased
 
-- Keep a stated field beside a stray key inside a `Some` read through a configured
-  `OptionFromOptionalNullOr`, such as `{ onNoneEncoding: null }`, or through codecs competing at one
-  position that share one payload schema, such as
-  `Union([OptionFromNullOr(Filter), OptionFromUndefinedOr(Filter)])`
+- **Breaking:** read a `Some` through a configured `OptionFromOptionalNullOr`, such as
+  `{ onNoneEncoding: null }`, and through codecs competing at one position that share one payload
+  schema, such as `Union([OptionFromNullOr(Filter), OptionFromUndefinedOr(Filter)])` or
+  `OptionFromOptionalKey(Filter)` beside `OptionFromNullOr(Filter)`, as `OptionFromNullOr` reads it
   ([#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312)). With
   `Filter = Union([Struct({ owner }), Struct({ owner, limit })])`, `Some({ owner, limit, stray })`
-  under a same-tag union, a list or another `Some` sent `limit` nowhere, and elsewhere refused; it
-  now sends `{ owner, limit }`, as `OptionFromNullOr` does. Such a payload's own collisions, such as
-  a key `a` beside a field `value`, are now left out as unstated keys, as through
-  `OptionFromNullOr`, where they refused.
+  under a same-tag union, a list or another `Some` sent `limit` nowhere in 0.19.0, and elsewhere
+  refused; it now sends `{ owner, limit }`. A key no member states is left out, so a key `a` beside
+  a field `value` and a field only a member ruled out by a literal tag states are now left out, as
+  through `OptionFromNullOr`, where these codecs refused them. A payload that a check changes is
+  still compared with what is written. Codecs competing with different payload schemas keep 0.19.0's
+  reading, which can still leave out `limit` beside a stray key, and so can a configured codec
+  inside another `Some` where the strict attempt fails for another reason. When the cleaned attempt
+  fails, a configured codec's checks now run as often as a built-in codec's.
 - **Breaking:** refuse a built-in that a struct rebuilds from its own fields
   ([#316](https://github.com/viell-dev/slop-effect-schema-http/issues/316)), as 0.19.0 does for
   records. For example, `{ held: new Date(0) }` under `held: Struct({ a: optionalKey(String) })`,
@@ -112,9 +116,9 @@
   value at the Option's position.
 - **Breaking:** an opaque or ambiguous Option position can now refuse an unstated payload key when
   the payload schema states a field called `value`, even if the previous body kept `value` intact.
-  This includes configured `OptionFromOptionalNullOr` and a native `Some` supplied as a struct
-  beside an Option alternative. Remove the unstated key, rename the payload's `value` field, or use
-  a visible `OptionFromNullOr`. For the struct case, supply a plain object.
+  This includes a native `Some` supplied as a struct beside an Option alternative. Remove the
+  unstated key, rename the payload's `value` field, or use a visible `OptionFromNullOr`. For the
+  struct case, supply a plain object.
 - **Breaking:** preserve wider members inside unwrapping Option codecs on a loose write
   ([#308](https://github.com/viell-dev/slop-effect-schema-http/issues/308)). A class instance
   elsewhere in the body can force a loose write. The payload writer can now keep wider fields in

@@ -1495,7 +1495,10 @@ const ownSome = (value: object): PropertyDescriptor | undefined => {
     : undefined;
 };
 
-/** One unwrapping codec, possibly beside scalars that cannot read the Some. */
+/**
+ * The payload of the unwrapping codecs at a position, possibly beside scalars that cannot read the
+ * Some, where every codec there has that one payload schema.
+ */
 const sourceAt = (
   types: ReadonlyArray<Ast>,
   loose = false,
@@ -1517,11 +1520,16 @@ const sourceAt = (
         : undefined);
     if (payload !== undefined) {
       const next = decodedOnly ? SchemaAST.toType(payload) : payload;
-      // Codecs competing at one position read a Some the same way when their payload is one schema.
-      if (option !== undefined && option !== type && source !== next)
-        return false;
+      // Codecs competing at one position read a Some the same way when their payload is one
+      // schema, including the optional copy OptionFromOptionalKey and its relatives make of it.
+      const same =
+        source === undefined ||
+        source === next ||
+        optionalCopyOf(source, next) ||
+        optionalCopyOf(next, source);
+      if (option !== undefined && option !== type && !same) return false;
       option = type;
-      source = next;
+      if (source === undefined || !SchemaAST.isOptional(next)) source = next;
       return true;
     }
     if (
@@ -1698,10 +1706,12 @@ export const optionLoss = (
   read: unknown,
   output: unknown,
   checkWrite: boolean,
+  /** Recognise configured codecs on the read, as the input's normalisation does. */
+  looseRead = checkWrite,
 ): ReadonlyArray<Path> => {
   const lost: Path[] = [];
   const active = new Set<object>();
-  const mayContain = checkWrite ? mayWriteUnwrappedOption : mayUnwrapOption;
+  const mayContain = looseRead ? mayWriteUnwrappedOption : mayUnwrapOption;
   interface Position {
     readonly path: Path;
     readonly inSome: boolean;
@@ -1732,9 +1742,9 @@ export const optionLoss = (
     { path, inSome, writing }: Position,
   ): void => {
     if (Option.isOption(given)) {
-      const unwrapped = sourceAt(types, checkWrite);
-      // Competing codecs and codecs followed by the writer can show what the read must hold
-      // without proving wire names. Schema.Option remains opaque even when its payload matches.
+      const unwrapped = sourceAt(types, looseRead);
+      // Codecs with different payloads competing here, and codecs followed by the writer, can
+      // show what the read must hold without proving wire names. Schema.Option remains opaque even when its payload matches.
       const source =
         unwrapped ?? (checkWrite ? sourceAt(types, true, true) : undefined);
       const some = ownSome(given);
@@ -1781,7 +1791,7 @@ export const optionLoss = (
       const omittedNone =
         Option.isOption(expected) &&
         Option.isNone(expected) &&
-        sourceAt(children, checkWrite) !== undefined;
+        sourceAt(children, looseRead) !== undefined;
       // Value equality can distinguish an unchanged scalar from another field under its wire
       // name. A field codec with its own encoding may legitimately change that scalar.
       const directScalar =

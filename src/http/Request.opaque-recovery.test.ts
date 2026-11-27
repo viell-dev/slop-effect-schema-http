@@ -2127,6 +2127,62 @@ describe("configured and same-payload Option codecs read a Some as the built-in 
       }),
   );
 
+  it.effect(
+    "keeps an optional-key codec beside one with the same payload",
+    () =>
+      Effect.gen(function* () {
+        for (const optional of [
+          Schema.OptionFromOptionalKey(TaggedFilter),
+          Schema.OptionFromOptional(TaggedFilter),
+        ])
+          expect(
+            yield* json(
+              Schema.Struct({
+                held: Schema.Union([
+                  Schema.OptionFromNullOr(TaggedFilter),
+                  optional,
+                ]),
+                filter: Filter,
+              }),
+              {
+                held: Option.some({ _tag: "A", ...wide, stray: "x" }),
+                filter,
+              } as never,
+            ),
+          ).toEqual({ held: { _tag: "A", ...wide }, filter });
+      }),
+  );
+
+  it.effect("checks a cleaned payload's write as the built-in codecs do", () =>
+    Effect.gen(function* () {
+      const Payload = Schema.Struct({
+        ...Owner.fields,
+        limit: Schema.optionalKey(Schema.String),
+      }).check(
+        Schema.makeFilter((value) => {
+          // Simulate a schema callback that changes the parsed copy before the writer sees it.
+          Reflect.deleteProperty(value, "limit");
+          return true;
+        }),
+      );
+      for (const held of [
+        ...configured.map((codec) => codec(Payload)),
+        Schema.Union([
+          configured[0]!(Payload),
+          Schema.OptionFromUndefinedOr(Payload),
+        ]),
+      ]) {
+        const failure = yield* Effect.flip(
+          json(Schema.Struct({ held, filter: Filter }), {
+            held: Option.some({ ...owner, limit: "l", stray: "x" }),
+            filter,
+          } as never),
+        );
+        expect(failure.message).toContain('["held"]["value"]["limit"]');
+      }
+    }),
+  );
+
   it.effect("leaves out an unstated key as OptionFromNullOr does", () =>
     Effect.gen(function* () {
       const payload = Schema.Union([

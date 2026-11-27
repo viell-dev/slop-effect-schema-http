@@ -1720,7 +1720,14 @@ const readerForCodec = <S extends Schema.Top, A, R>(
                   lost: mergePaths(
                     rebuilt.lost,
                     changed
-                      ? Excess.optionLoss(ast, from, read.value, output, false)
+                      ? Excess.optionLoss(
+                          ast,
+                          from,
+                          read.value,
+                          output,
+                          false,
+                          true,
+                        )
                       : [],
                   ),
                   causes: rebuilt.causes,
