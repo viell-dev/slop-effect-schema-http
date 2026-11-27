@@ -371,12 +371,18 @@ const counterpart = (
   reference: SchemaAST.AST,
   key: PropertyKey,
   target: SchemaAST.AST,
-): SchemaAST.AST | undefined => {
+):
+  | SchemaAST.AST
+  | { readonly ambiguous: ReadonlyArray<SchemaAST.AST> }
+  | undefined => {
   const decoded = originOf(layer);
   const link = decoded.encoding?.at(-1);
   if (link !== undefined && link.to === originOf(reference)) {
     const from = classFields(decoded) ?? decoded;
-    const child = renamedPairs(from, link)?.get(key);
+    const pairing = renamedPairs(from, link);
+    const ambiguous = pairing?.ambiguous.get(key);
+    if (ambiguous !== undefined) return { ambiguous };
+    const child = pairing?.pairs.get(key);
     return child !== undefined && projects(child, target) ? child : undefined;
   }
   return childrenOf(layer).find(
@@ -427,6 +433,14 @@ const projectChild = (
   for (const layer of layers) {
     const decoded = counterpart(layer, reference, key, target);
     if (decoded === undefined) break;
+    if ("ambiguous" in decoded) {
+      // Any of these fields could be the one written here, so the wrapper is refused if any of
+      // them may unwrap an Option: a suspension's target is not known yet.
+      unwraps ||= decoded.ambiguous.some(
+        (type) => type._tag === "Suspend" || chainOf(type).unwraps,
+      );
+      break;
+    }
     const chain = chainOf(decoded);
     next.push(...chain.nodes);
     unwraps ||= chain.unwraps;

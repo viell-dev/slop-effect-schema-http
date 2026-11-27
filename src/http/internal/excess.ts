@@ -699,7 +699,7 @@ const readAsArray = (sides: ReadonlyArray<Ast>): boolean =>
   sides.some(({ _tag }) => _tag === "Arrays") &&
   readAsStruct(sides, readsOpaquely(sides));
 
-type Renamed = ReadonlyArray<ReadonlyMap<PropertyKey, Ast>>;
+type Renamed = ReadonlyArray<ReadonlyMap<PropertyKey, ReadonlyArray<Ast>>>;
 
 const renamings = new WeakMap<Ast, Renamed>();
 
@@ -711,13 +711,22 @@ const renamings = new WeakMap<Ast, Renamed>();
 const renamedBy = (
   from: SchemaAST.Objects,
   to: Ast,
-): ReadonlyMap<PropertyKey, Ast> =>
+): ReadonlyMap<PropertyKey, ReadonlyArray<Ast>> =>
   new Map(
     fieldsOf(to).map(({ name }, index) => [
       name,
-      from.propertySignatures[index]!.type,
+      [from.propertySignatures[index]!.type],
     ]),
   );
+
+/** Every decoded field a rename can have written under each name: one, or several it cannot tell. */
+const writtenBy = (
+  pairing: RenamePairing,
+): ReadonlyMap<PropertyKey, ReadonlyArray<Ast>> =>
+  new Map([
+    ...[...pairing.pairs].map(([name, type]) => [name, [type]] as const),
+    ...pairing.ambiguous,
+  ]);
 
 /**
  * A renamed struct: by its rename's own pairing, which also covers integer-like names, or else, for a
@@ -727,8 +736,8 @@ const renamedStruct = (
   ast: SchemaAST.Objects,
   link: SchemaAST.Link,
 ): Renamed => {
-  const pairs = renamedPairs(ast, link);
-  if (pairs !== undefined) return [pairs];
+  const pairing = renamedPairs(ast, link);
+  if (pairing !== undefined) return [writtenBy(pairing)];
   return isKeyRename(ast) ? [renamedBy(ast, link.to)] : [];
 };
 
@@ -736,11 +745,11 @@ const renamedStruct = (
 const renamedClass = (ast: Ast): Renamed => {
   const fields = classFields(ast);
   const rename = ast.encoding?.[1];
-  const pairs =
+  const pairing =
     fields !== undefined && ast.encoding?.length === 2 && rename !== undefined
       ? renamedPairs(fields, rename)
       : undefined;
-  return pairs === undefined ? [] : [pairs];
+  return pairing === undefined ? [] : [writtenBy(pairing)];
 };
 
 const renamedFields = (ast: Ast): Renamed => {
@@ -1278,10 +1287,13 @@ const projectsTo = (decoded: Ast, wire: Ast): boolean =>
   SchemaAST.toEncoded(decoded) === wire ||
   (decoded._tag === "Suspend" && wire._tag === "Suspend");
 
-const renamePairs = new WeakMap<
-  SchemaAST.Link,
-  ReadonlyMap<PropertyKey, Ast> | null
->();
+/** A rename's pairs, and the names it could have written from several decoded fields. */
+export interface RenamePairing {
+  readonly pairs: ReadonlyMap<PropertyKey, Ast>;
+  readonly ambiguous: ReadonlyMap<PropertyKey, ReadonlyArray<Ast>>;
+}
+
+const renamePairs = new WeakMap<SchemaAST.Link, RenamePairing | null>();
 
 /**
  * Each name a `Schema.encodeKeys` rename writes, with the decoded field written there, where the
@@ -1292,7 +1304,8 @@ const renamePairs = new WeakMap<
  * schemas. Effect builds the wire struct from the projections of the decoded fields in their order,
  * and JavaScript keeps that order for every name but an integer-like one, which it lists first in
  * numeric order. Without such names a field pairs with the one in its place. With them, a wire field
- * pairs only with the one decoded field whose projection it is, and with none where several are.
+ * pairs only with the one decoded field whose projection it is; where several are, it lists them
+ * all, so a caller can refuse what any of them would refuse rather than guess.
  * Any other transformation pairs nothing, since its callback alone knows which field it writes
  * where. The rename is recognised by its getters, as configured Option codecs are, which a
  * hand-written transformation spelled the same way would also match (#327).
@@ -1300,12 +1313,12 @@ const renamePairs = new WeakMap<
 export const renamedPairs = (
   from: Ast,
   link: SchemaAST.Link,
-): ReadonlyMap<PropertyKey, Ast> | undefined => {
+): RenamePairing | undefined => {
   const known = renamePairs.get(link);
   if (known !== undefined) return known ?? undefined;
   const getters = gettersOf(link.transformation);
   const { to } = link;
-  let pairs: Map<PropertyKey, Ast> | undefined;
+  let pairing: RenamePairing | undefined;
   if (
     from._tag === "Objects" &&
     to._tag === "Objects" &&
@@ -1318,23 +1331,27 @@ export const renamedPairs = (
   ) {
     const decoded = from.propertySignatures;
     const wire = to.propertySignatures;
-    pairs = new Map();
+    const pairs = new Map<PropertyKey, Ast>();
+    const ambiguous = new Map<PropertyKey, ReadonlyArray<Ast>>();
     if (wire.some(({ name }) => isIntegerKey(name))) {
       for (const { name, type } of wire) {
-        const candidates = decoded.filter((field) =>
-          projectsTo(field.type, type),
-        );
-        if (candidates.length === 1) pairs.set(name, candidates[0]!.type);
+        const candidates = decoded
+          .filter((field) => projectsTo(field.type, type))
+          .map((field) => field.type);
+        if (candidates.length === 1) pairs.set(name, candidates[0]!);
+        else if (candidates.length > 1) ambiguous.set(name, candidates);
       }
+      pairing = { pairs, ambiguous };
     } else if (
       decoded.every((field, index) => projectsTo(field.type, wire[index]!.type))
-    )
+    ) {
       for (const [index, { name }] of wire.entries())
         pairs.set(name, decoded[index]!.type);
-    else pairs = undefined;
+      pairing = { pairs, ambiguous };
+    }
   }
-  renamePairs.set(link, pairs ?? null);
-  return pairs;
+  renamePairs.set(link, pairing ?? null);
+  return pairing;
 };
 
 const additionalOptionGetters = [

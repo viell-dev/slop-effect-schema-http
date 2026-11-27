@@ -2719,12 +2719,50 @@ describe("an invalid Some payload keeps its decoded error", () => {
             Schema.encodeKeys({ held: "1", other: "0" }),
           ),
         );
+        // Both fields are written as Any, so either could be the Option codec: a wrapper refuses
+        // at either name rather than risk its loss.
+        expect(
+          yield* Effect.flip(
+            json(ambiguous, {
+              row: { "1": { a: "a" }, "0": some },
+              wire_n: "x",
+            } as never),
+          ),
+        ).toBeInstanceOf(Schema.SchemaError);
         expect(
           yield* json(ambiguous, {
-            row: { "1": { a: "a" }, "0": some },
-            wire_n: "x",
+            row: { "1": { a: "a" }, "0": { b: "keep" } },
+            n: "x",
           } as never),
-        ).toEqual({ row: { "0": sentSome, "1": { a: "a" } }, wire_n: "x" });
+        ).toEqual({
+          row: { "0": { b: "keep" }, "1": { a: "a" } },
+          wire_n: "x",
+        });
+        // Fields sharing a projection, suspended or not, refuse a wrapper too.
+        const H = Schema.OptionFromNullOr(payload);
+        for (const fields of [
+          {
+            held: Schema.suspend(() => H),
+            other: Schema.suspend(() => Schema.String),
+          },
+          { held: H, other: Schema.toEncoded(H) },
+        ])
+          for (const mapping of [
+            { held: "1", other: "0" },
+            { held: "1", other: "wire_other" },
+          ] as const)
+            for (const option of [Option.none(), Option.some({ b: "keep" })]) {
+              const shared = below(
+                Schema.Struct(fields).pipe(Schema.encodeKeys(mapping)),
+              );
+              const failure = yield* Effect.flip(
+                json(shared, {
+                  row: { "1": option, [mapping.other]: "ok" },
+                  wire_n: "x",
+                } as never),
+              );
+              expect(failure).toBeInstanceOf(Schema.SchemaError);
+            }
         // A hand-written transformation between same-shaped structs is not a rename.
         const swapped = below(
           Schema.Struct({ x: Schema.Any, y: Schema.Any }).pipe(
