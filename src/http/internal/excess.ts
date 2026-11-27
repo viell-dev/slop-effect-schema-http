@@ -1250,22 +1250,70 @@ const statesOption = (types: ReadonlyArray<Ast>): boolean => {
   return types.some(visit);
 };
 
-// Some built-in codecs close over their choice of None encoding. Compare those getters
-// with the installed Effect's own getters without invoking any of the schema's callbacks.
-const getterSource = (getter: object): string | undefined =>
+/** A getter, as its tag and the source text of its function. */
+interface GetterText {
+  readonly tag: string;
+  readonly source: string;
+}
+
+/** A transformation's two getters, as text. */
+interface Getters {
+  readonly decode: GetterText;
+  readonly encode: GetterText;
+}
+
+const getterText = (getter: {
+  readonly _tag: string;
+}): GetterText | undefined =>
   "transform" in getter && typeof getter.transform === "function"
-    ? Function.prototype.toString.call(getter.transform)
+    ? {
+        tag: getter._tag,
+        source: Function.prototype.toString.call(getter.transform),
+      }
     : undefined;
 
+/**
+ * The getters of a transformation that has a function in each direction.
+ *
+ * @remarks
+ * Effect builds the getters of a few codecs on each call, closed over a choice such as the None
+ * encoding, so they have no identity to compare. Their text can be compared with that of the
+ * installed Effect's own getters without invoking any of the schema's callbacks. Text tells
+ * functions apart only where it states what they do. Many functions share one text whatever they
+ * were given: every data-last Effect call with one argument, such as `Option.getOrElse(() => null)`,
+ * `Struct.renameKeys(mapping)` or `Option.getOrNull` itself, returns the same wrapper, and so does
+ * every `flow` (#327).
+ */
 const gettersOf = (
   transformation: SchemaAST.Link["transformation"] | undefined,
-) => {
+): Getters | undefined => {
   if (transformation?._tag !== "Transformation") return undefined;
-  const { decode, encode } = transformation;
-  return [decode._tag, getterSource(decode), encode._tag, getterSource(encode)];
+  const decode = getterText(transformation.decode);
+  const encode = getterText(transformation.encode);
+  return decode === undefined || encode === undefined
+    ? undefined
+    : { decode, encode };
 };
 
-// Schema.encodeKeys renames through Struct.renameKeys in both directions.
+const sameText = (one: GetterText, other: GetterText): boolean =>
+  one.tag === other.tag && one.source === other.source;
+
+/** Whether a transformation's getters have the tags and text of the `known` ones. */
+const sameGetters = (
+  transformation: SchemaAST.Link["transformation"],
+  known: Getters | undefined,
+): boolean => {
+  const getters = gettersOf(transformation);
+  return (
+    known !== undefined &&
+    getters !== undefined &&
+    sameText(getters.decode, known.decode) &&
+    sameText(getters.encode, known.encode)
+  );
+};
+
+// Schema.encodeKeys renames through Struct.renameKeys in both directions. Both getters are
+// data-last wrappers, whose text other calls share; renamedPairs states what that admits.
 const encodeKeysGetters = gettersOf(
   Schema.Struct({ a: Schema.String }).pipe(Schema.encodeKeys({ a: "b" })).ast
     .encoding?.[0]?.transformation,
@@ -1307,8 +1355,15 @@ const renamePairs = new WeakMap<SchemaAST.Link, RenamePairing | null>();
  * pairs only with the one decoded field whose projection it is; where several are, it lists them
  * all, so a caller can refuse what any of them would refuse rather than guess.
  * Any other transformation pairs nothing, since its callback alone knows which field it writes
- * where. The rename is recognised by its getters, as configured Option codecs are, which a
- * hand-written transformation spelled the same way would also match (#327).
+ * where.
+ *
+ * Nothing tells the rename apart from such a transformation for certain. Effect builds both of its
+ * getters on each call, as `Struct.renameKeys` wrappers closed over the mapping, and their text is
+ * the one every data-last Effect call with one argument shares. A transformation between structs of
+ * this shape whose two getters are both such calls, such as `Struct.renameKeys` with a mapping that
+ * crosses the fields' places, is read as a rename, by place (#327). Its schema nodes are the ones
+ * `Schema.encodeKeys` builds for a mapping that keeps the places, so no schema-level check can
+ * separate them without also changing how that rename is read.
  */
 export const renamedPairs = (
   from: Ast,
@@ -1316,7 +1371,6 @@ export const renamedPairs = (
 ): RenamePairing | undefined => {
   const known = renamePairs.get(link);
   if (known !== undefined) return known ?? undefined;
-  const getters = gettersOf(link.transformation);
   const { to } = link;
   let pairing: RenamePairing | undefined;
   if (
@@ -1326,8 +1380,7 @@ export const renamedPairs = (
     from.indexSignatures.length === 0 &&
     to.indexSignatures.length === 0 &&
     from.propertySignatures.length === to.propertySignatures.length &&
-    encodeKeysGetters?.every((part, index) => part === getters?.[index]) ===
-      true
+    sameGetters(link.transformation, encodeKeysGetters)
   ) {
     const decoded = from.propertySignatures;
     const wire = to.propertySignatures;
@@ -1354,13 +1407,28 @@ export const renamedPairs = (
   return pairing;
 };
 
-const additionalOptionGetters = [
-  Schema.OptionFromOptional(Schema.String).ast,
-  Schema.OptionFromOptionalNullOr(Schema.String, { onNoneEncoding: null }).ast,
-  Schema.OptionFromNullishOr(Schema.String).ast,
-].map((ast) => gettersOf(ast.encoding?.[0]?.transformation));
+/**
+ * The getters of `OptionFromOptionalNullOr` with a `null` or `undefined` None encoding.
+ *
+ * @remarks
+ * Effect builds both on each call, closed over the None encoding, which changes only what a None
+ * writes, so one text serves either encoding. Their text states what they do, so a hand-written
+ * codec matches only with the same source. A test holds that for every Effect version the project
+ * is tested with, and fails for one that builds them as a wrapper other functions share.
+ */
+const configuredOptionGetters = gettersOf(
+  Schema.OptionFromOptionalNullOr(Schema.String, { onNoneEncoding: null }).ast
+    .encoding?.[0]?.transformation,
+);
 
-/** The single encoding link where a built-in codec exposes its Some payload. */
+/**
+ * The single encoding link where a built-in codec exposes its Some payload.
+ *
+ * @remarks
+ * Every built-in unwrapping codec but a configured `OptionFromOptionalNullOr` encodes with a
+ * function Effect shares, so its encoder is recognised by identity. On the loose route that
+ * configured codec is recognised by its getters' text (#327).
+ */
 const unwrappingLink = (
   ast: Ast,
   loose: boolean,
@@ -1388,17 +1456,13 @@ const unwrappingLink = (
     (encode._tag === "TransformOptional" && encode.transform === Option.flatten)
   )
     return link;
-  if (!loose) return undefined;
-  const getters = gettersOf(link.transformation);
-  return additionalOptionGetters.some(
-    (known) =>
-      known?.every((item, index) => item === getters?.[index]) === true,
-  )
+  return loose && sameGetters(transformation, configuredOptionGetters)
     ? link
     : undefined;
 };
 
 // JSON and other canonical codecs can give Schema.Option its own tagged wire representation.
+// Effect builds its getters on each call; their text states what they do.
 const taggedOption = gettersOf(
   Schema.toCodecJson(Schema.Option(Schema.String)).ast.encoding?.[0]
     ?.transformation,
@@ -1416,12 +1480,7 @@ export const readsOptionPayload = (ast: Ast): ast is SchemaAST.Declaration => {
       transformation.encode._tag === "Passthrough"
     )
       continue;
-    const getters = gettersOf(transformation);
-    if (
-      tagged ||
-      !taggedOption?.every((part, index) => part === getters?.[index])
-    )
-      return true;
+    if (tagged || !sameGetters(transformation, taggedOption)) return true;
     tagged = true;
   }
   return !tagged && !isOptionDeclaration(ast.encoding.at(-1)!.to);
@@ -1626,30 +1685,48 @@ const ownSome = (value: object): PropertyDescriptor | undefined => {
 };
 
 /**
+ * Whether the writer follows this codec into its Some's payload although preparation cannot find
+ * that payload's schema on the wire, as it does for Effect's codecs over a plain payload. That holds
+ * for a hand-written codec whose encoder is a plain transformation (one that can omit the key is not
+ * followed, #364), a built-in one behind middleware, and Effect's JSON codec of a built-in
+ * one where it rebuilds the payload, as it does for one holding a `Date` and for a suspended one.
+ * Nothing leaves a key out of such a codec's Some.
+ */
+const followedOnlyByWriter = (ast: Ast): ast is SchemaAST.Declaration =>
+  isOptionDeclaration(ast) &&
+  optionSource(ast, true) === undefined &&
+  writtenOptionSource(ast) !== undefined;
+
+/**
  * The payload of the unwrapping codecs at a position, possibly beside scalars that cannot read the
- * Some, where every codec there has that one payload schema.
+ * Some, where every codec there has that one payload schema. With `decoded`, it is their decoded
+ * payload, and a codec {@link followedOnlyByWriter} counts too: at every position, or with
+ * `"writerOnly"` only where one of the codecs there is such a codec.
  */
 const sourceAt = (
   types: ReadonlyArray<Ast>,
   loose = false,
-  decodedOnly = false,
+  decoded?: "always" | "writerOnly",
 ): Ast | undefined => {
   const active = new Set<Ast>();
   let option: Ast | undefined;
   let source: Ast | undefined;
+  let writerOnly = false;
   const visit = (type: Ast): boolean => {
     // A followed codec can show what the decoded read should hold. Only a known unwrapping
     // source also provides evidence about where the payload appears on the wire.
-    const payload =
-      optionSource(type, loose) ??
-      (decodedOnly &&
+    let payload = optionSource(type, loose);
+    if (
+      payload === undefined &&
+      decoded !== undefined &&
       loose &&
-      isOptionDeclaration(type) &&
-      writtenOptionSource(type) !== undefined
-        ? type.typeParameters[0]
-        : undefined);
+      followedOnlyByWriter(type)
+    ) {
+      payload = type.typeParameters[0]!;
+      writerOnly = true;
+    }
     if (payload !== undefined) {
-      const next = decodedOnly ? SchemaAST.toType(payload) : payload;
+      const next = decoded === undefined ? payload : SchemaAST.toType(payload);
       // Codecs competing at one position read a Some the same way when their payload is one
       // schema, including the optional copy OptionFromOptionalKey and its relatives make of it.
       const same =
@@ -1675,7 +1752,9 @@ const sourceAt = (
     }
     return takesNoObject(type);
   };
-  return types.every(visit) ? source : undefined;
+  return types.every(visit) && (decoded !== "writerOnly" || writerOnly)
+    ? source
+    : undefined;
 };
 
 const unwrappingOptions = new WeakMap<Ast, boolean>();
@@ -1688,9 +1767,7 @@ const containsOption = (ast: Ast, loose: boolean): boolean => {
   const visit = (type: Ast) => containsOption(type, loose);
   let found =
     optionSource(ast, loose) !== undefined ||
-    (loose &&
-      isOptionDeclaration(ast) &&
-      writtenOptionSource(ast) !== undefined);
+    (loose && followedOnlyByWriter(ast));
   if (ast._tag === "Suspend") found = ast.encoding === undefined;
   if (!found) {
     const fields = plainClassFrame(ast);
@@ -1835,13 +1912,29 @@ export const optionLoss = (
   input: unknown,
   read: unknown,
   output: unknown,
-  checkWrite: boolean,
-  /** Recognise configured codecs on the read, as the input's normalisation does. */
-  looseRead = checkWrite,
+  {
+    checkWrite = false,
+    looseRead = checkWrite,
+    writerOnlyCodecs = false,
+  }: {
+    /**
+     * The write was loose, so check that it holds what the read kept, and compare the read through
+     * every codec the writer follows.
+     */
+    readonly checkWrite?: boolean;
+    /** Recognise configured codecs on the read, as the input's normalisation does. */
+    readonly looseRead?: boolean;
+    /**
+     * Compare the read through a codec {@link followedOnlyByWriter} after a strict write too. What
+     * such a codec writes is never compared. A loose write compares it already.
+     */
+    readonly writerOnlyCodecs?: boolean;
+  } = {},
 ): ReadonlyArray<Path> => {
   const lost: Path[] = [];
   const active = new Set<object>();
-  const mayContain = looseRead ? mayWriteUnwrappedOption : mayUnwrapOption;
+  const mayContain =
+    looseRead || writerOnlyCodecs ? mayWriteUnwrappedOption : mayUnwrapOption;
   interface Position {
     readonly path: Path;
     readonly inSome: boolean;
@@ -1875,9 +1968,16 @@ export const optionLoss = (
       const unwrapped = sourceAt(types, looseRead);
       // Codecs with different payloads competing here, and codecs followed by the writer, can
       // show what the read must hold without proving wire names. Schema.Option remains opaque
-      // even when its payload matches.
+      // even when its payload matches. A codec only the writer follows is compared so after a
+      // strict write too: nothing leaves a key out of its Some, so the relaxed read can take a
+      // narrower member there whatever made the strict attempt fail.
       const source =
-        unwrapped ?? (checkWrite ? sourceAt(types, true, true) : undefined);
+        unwrapped ??
+        (checkWrite
+          ? sourceAt(types, true, "always")
+          : writerOnlyCodecs
+            ? sourceAt(types, true, "writerOnly")
+            : undefined);
       const some = ownSome(given);
       if (source === undefined || some === undefined) return;
       visit(
