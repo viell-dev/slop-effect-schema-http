@@ -12,10 +12,23 @@ The projects' own documentation is what the tests are judged against: the librar
 - This suite tests the two projects against each other. It never changes either one, or the
   server. Work on the suite stays in this branch; a finding about a project becomes an issue in that
   project's repository, and its repair is separate work there.
-- It covers what the library can declare in a request head and what Warded can match there. Bodies,
-  response formats and hostile services belong to the hostile suite on `hostile-servers-test`.
+- It covers two things. **Request heads:** what the library can declare in a request head, and
+  what Warded can match there. **Services built on Warded, as the library sees them:** route tables
+  in [`src/apis/`](./src/apis/) shaped like real APIs, whose handlers answer the way real services
+  do, and what the library decodes or refuses of those answers.
+- A service table can use whatever a Warded handler sends: any status from 100 to 999, error
+  shapes that differ by status or by the layer that answers, repeated fields such as `Set-Cookie`,
+  extension methods, routing on forwarded headers, JSONP callbacks, `;` query separators,
+  challenges, redirects, slow or endless bodies, and a `Content-Encoding` that does not match the
+  body. Each table, and each of its routes and replies, says which real-world convention it
+  imitates. Names, ids and data are synthetic, and no real service is named.
+- The hostile suite on `hostile-servers-test` keeps what Hyper does not let a handler write, which
+  its own servers can: truncated or reset replies, malformed status lines, header-name case, and no
+  reply at all. It also keeps the breadth of its service imitations, with their bodies and formats;
+  a table here rebuilds a convention where Warded's side of it is part of the test.
 - Every test serves both purposes: what the library sent, and what Warded made of it. Assert the
-  records that show each, not only the decoded result.
+  records that show each, not only the decoded result. A test of a service table also asserts what
+  the library decoded or refused, and the status the handler answered.
 
 ## Rules
 
@@ -24,6 +37,9 @@ The projects' own documentation is what the tests are judged against: the librar
   applications: the host condition, copied unchanged from Warded's guide to custom matchers, and the
   `filter` predicates. Keep `Router::select` in the recorder and the dispatch check in `send`, so
   that every exchange compares them.
+- **Handlers.** A target answers what its table gives it: a fixed reply, or a lookup by one of its
+  decoded captures, the way an application reads a record by its id. A handler never decides which
+  route runs.
 - **The library's public API.** Tests use only the library's package root, Effect, and the
   harness. Do not work around the library or edit `.library/`.
 - **Real sockets.** Every request goes over a socket to a table opened in the test's own scope.
