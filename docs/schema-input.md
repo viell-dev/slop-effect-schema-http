@@ -201,7 +201,8 @@ into, as an `Option` is. It has these consequences:
   `Expected number`, is Effect's, which reports the first failure it meets. Where the decoded side
   refuses a value under its decoded name, that side's own error names the field. A value under its
   wire name that the encoded side refuses keeps the decoded side's message, except where the
-  request's own reading strips a key the schema does not state and reports the value. The other
+  request's own reading strips a key the schema does not state and reports the value, or where a
+  field beside it under its decoded name cannot be read either and gives its own error. The other
   fields it cannot keep are named too, with the generic message where nothing more is known, even
   where correcting that value would keep them: the other side's reading of the whole value loses
   them whether or not they are valid. Only a wire-named field that the reading read under its

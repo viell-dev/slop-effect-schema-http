@@ -2423,12 +2423,85 @@ describe("a refusal says why it cannot keep a field", () => {
               'Missing key\n  at ["limit"]',
             );
         }
+        // A decoded value beside the wire name is read as given, so only the decoded side's own
+        // reading of the whole object fails, and on that side `limit` is missing.
+        for (const refuse of bindings(Required))
+          expect(yield* refuse({ page_size: "5", count: 3 })).toBe(
+            'Missing key\n  at ["limit"]',
+          );
+        // A list's items are read with the whole list, never field by field, so no reading with
+        // the caller's options reads the invalid `count` here either.
+        expect(
+          yield* schemaFailure(posted(Schema.Array(Required)), {
+            body: [{ page_size: "5", count: "x" }],
+          } as never),
+        ).toBe('Missing key\n  at [0]["limit"]');
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/313
+  it.effect(
+    "gives a sibling's own error beside a wire-named value where no reading reads that sibling",
+    () =>
+      Effect.gen(function* () {
+        // Read field by field with the caller's options, a sibling that no route reads refuses with
+        // its own error, at its own name, in place of `Missing key` at the decoded name.
+        const Two = Schema.Struct({
+          limit: Schema.FiniteFromString,
+          term: Schema.String,
+        }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+        // The same error as beside the decoded name, where the decoded side reports it.
+        for (const refuse of bindings(Two))
+          for (const value of [
+            { page_size: "x", term: 1 },
+            { page_size: "5", term: 1 },
+            { limit: 5, term: 1 },
+          ])
+            expect(yield* refuse(value)).toBe('Expected string\n  at ["term"]');
+        // The decoded side already gives that error where the sibling comes first.
+        for (const refuse of bindings(
+          pageSized({ term: Schema.String, limit: Schema.FiniteFromString }),
+        ))
+          expect(yield* refuse({ page_size: "x", term: 1 })).toBe(
+            'Expected string\n  at ["term"]',
+          );
+        // A codec gives its decoded side's error there, as beside the decoded name.
         for (const refuse of bindings(Required))
           for (const value of [
             { page_size: "5", count: "x" },
-            { page_size: "5", count: 3 },
+            { limit: 5, count: "x" },
           ])
-            expect(yield* refuse(value)).toBe('Missing key\n  at ["limit"]');
+            expect(yield* refuse(value)).toBe(
+              'Expected number\n  at ["count"]',
+            );
+        // A parent read field by field keeps the sibling's path inside it.
+        expect(
+          yield* schemaFailure(posted(Schema.Struct({ f: Two })), {
+            body: { f: { page_size: "5", term: 1 } },
+          } as never),
+        ).toBe('Expected string\n  at ["f"]["term"]');
+        // Beside a Void, where both fields read the generic message, the member's own error names
+        // the sibling alone, and the valid `page_size`, which the reading read, is not named.
+        const BesideVoid = pageSized({
+          limit: Schema.FiniteFromString,
+          extra: Schema.Union([
+            Schema.Void,
+            Schema.Struct({ a: Schema.Number }),
+          ]),
+        });
+        for (const refuse of bindings(BesideVoid))
+          for (const page_size of ["5", "many"])
+            expect(yield* refuse({ page_size, extra: { a: "x" } })).toBe(
+              'Expected number\n  at ["extra"]["a"]',
+            );
+        // Valid values on either side still send.
+        for (const value of [
+          { page_size: "5", term: "ok" },
+          { limit: 5, term: "ok" },
+        ])
+          expect(yield* sentBy(Two, value as never)).toBe(
+            '{"page_size":"5","term":"ok"}',
+          );
       }),
   );
 
@@ -2466,6 +2539,37 @@ describe("a refusal says why it cannot keep a field", () => {
           reads = 0;
           lastRead = 3;
           expect(yield* refuse(value)).toBe('Missing key\n  at ["limit"]');
+        }
+        // https://github.com/viell-dev/slop-effect-schema-http/issues/313
+        // A sibling that every route refuses gives its own error from the read already made.
+        const refusing = Schema.String.pipe(
+          Schema.decodeTo(Schema.Number, {
+            decode: SchemaGetter.transformEffect(() =>
+              Effect.suspend(() =>
+                ++reads > lastRead
+                  ? Effect.die("read again")
+                  : Effect.fail(
+                      new SchemaIssue.InvalidValue({ message: "Refused text" }),
+                    ),
+              ),
+            ),
+            encode: SchemaGetter.transform(String),
+          }),
+        );
+        const besideRefusing = pageSized({
+          limit: Schema.FiniteFromString,
+          side: refusing,
+        });
+        for (const refuse of bindings(besideRefusing)) {
+          reads = 0;
+          lastRead = Infinity;
+          const value = { page_size: "5", side: "nope" };
+          expect(yield* refuse(value)).toBe('Expected number\n  at ["side"]');
+          // Four reads, as 0.20.0 makes them, and none for the message.
+          expect(reads).toBe(4);
+          reads = 0;
+          lastRead = 4;
+          expect(yield* refuse(value)).toBe('Expected number\n  at ["side"]');
         }
       }),
   );
@@ -2526,17 +2630,24 @@ describe("a refusal says why it cannot keep a field", () => {
             value: { page_size: "many", stray: "1" },
             expected: 'Caller-options refusal\n  at ["page_size"]',
           },
-          // Effect's own codec refuses the value under any options, but only the strict read reports
-          // it there, so neither its error nor the sibling's strict-only refusal is taken.
+          // Effect's own codec refuses `page_size` under any options, but only the strict read
+          // reports it there, so neither its error nor the sibling's strict-only refusal is taken.
+          // No route reads the sibling, so it gives its decoded side's error, read with the caller's
+          // options, as it does beside the decoded name (#313).
           {
             schema: beside,
             value: { page_size: "many", side: "42" },
-            expected: 'Missing key\n  at ["limit"]',
+            expected: 'Expected number\n  at ["side"]',
           },
           {
             schema: beside,
             value: { page_size: "5", side: "42" },
-            expected: 'Missing key\n  at ["limit"]',
+            expected: 'Expected number\n  at ["side"]',
+          },
+          {
+            schema: beside,
+            value: { limit: 5, side: "42" },
+            expected: 'Expected number\n  at ["side"]',
           },
           // A field the decoded side would lose is named with the generic message.
           {
@@ -2619,6 +2730,41 @@ describe("a refusal says why it cannot keep a field", () => {
           expect(
             yield* refuse({ page_size: "invalid", side: { foo: 1 } }),
           ).toBe('Missing key\n  at ["limit"]');
+        // https://github.com/viell-dev/slop-effect-schema-http/issues/313
+        // A sibling that no route reads gives the error the caller's options report, where the strict
+        // read reports another: the declaration expects text, not a number, and each union member
+        // reports only its first error, not also the missing `b`.
+        const failureOf = (
+          field: Schema.Top,
+          value: unknown,
+          options?: typeof strict,
+        ) =>
+          Effect.map(
+            Effect.flip(
+              Schema.decodeUnknownEffect(field as Schema.Codec<unknown>)(
+                value,
+                options,
+              ),
+            ),
+            (error) => error.message,
+          );
+        for (const [field, value, expected, strictOnly] of [
+          [declared, true, 'Expected string\n  at ["side"]', "Expected number"],
+          [
+            chosen,
+            { a: "x" },
+            'Expected number\n  at ["side"]["a"]\nExpected number\n  at ["side"]["a"]',
+            'Missing key\n  at ["b"]',
+          ],
+        ] as const) {
+          expect(yield* failureOf(field, value)).not.toContain(strictOnly);
+          expect(yield* failureOf(field, value, strict)).toContain(strictOnly);
+          for (const refuse of bindings(
+            pageSized({ limit: Schema.FiniteFromString, side: field }),
+          ))
+            for (const page_size of ["5", "invalid"])
+              expect(yield* refuse({ page_size, side: value })).toBe(expected);
+        }
       }),
   );
 

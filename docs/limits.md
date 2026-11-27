@@ -212,7 +212,11 @@ than sent without it, and the message says why where it can. In these examples `
   a read's options to the decoders, checks and declarations it runs, which can then fail otherwise,
   so that read's error is not shown. Where the value also holds a key the schema does not state, the
   request's own reading, which strips that key, can report the value:
-  `{ page_size: "many", stray: "1" }` reads `Expected a finite number at ["page_size"]`.
+  `{ page_size: "many", stray: "1" }` reads `Expected a finite number at ["page_size"]`. Where a
+  field beside it, given under its decoded name, cannot be read either, a required field's
+  `Missing key` gives way to that field's own error, from the request's own reading of it: with a
+  string field `term`, `{ page_size: "5", term: 1 }` reads `Expected string at ["term"]`, as
+  `{ limit: 5, term: 1 }` does.
 - **A field beside a Void** that its union member refuses gets the member's own error, such as
   `Expected number at ["extra"]["a"]`. A wire-named field beside it that the reading read under its
   decoded name, such as `filter: { page_size: "05" }`, is not named.
