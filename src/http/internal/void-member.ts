@@ -6,7 +6,12 @@ import {
   SchemaIssue,
   SchemaParser,
 } from "effect";
-import { classFields, hasDefinedFields, hasHiddenContent } from "./excess.js";
+import {
+  classFields,
+  hasDefinedFields,
+  hasHiddenContent,
+  passesOptionsOnlyTo,
+} from "./excess.js";
 import { extraArrayField } from "./writer-error.js";
 
 const jsonVoid = Schema.toCodecJson(Schema.Void).ast.encoding?.[0];
@@ -36,21 +41,25 @@ const guard = (member: SchemaAST.Void) => {
       new SchemaAST.Void(member.annotations, member.checks),
     ),
   );
-  return new SchemaAST.Declaration(
-    [],
-    () => (input, _self, options) =>
-      holdsSomething(input)
-        ? Effect.fail(new SchemaIssue.InvalidType(member, input, options))
-        : parse(input, options),
-    { expected: "void", ...member.annotations },
-    undefined,
-    member.encoding,
-    member.context,
-    undefined,
-    () => (input, _self, options) =>
-      Predicate.isObjectOrArray(input) || holdsSomething(input)
-        ? Effect.fail(new SchemaIssue.InvalidType(member, input, options))
-        : parse(input, options),
+  // The options reach only Void's own checks.
+  return passesOptionsOnlyTo(
+    new SchemaAST.Declaration(
+      [],
+      () => (input, _self, options) =>
+        holdsSomething(input)
+          ? Effect.fail(new SchemaIssue.InvalidType(member, input, options))
+          : parse(input, options),
+      { expected: "void", ...member.annotations },
+      undefined,
+      member.encoding,
+      member.context,
+      undefined,
+      () => (input, _self, options) =>
+        Predicate.isObjectOrArray(input) || holdsSomething(input)
+          ? Effect.fail(new SchemaIssue.InvalidType(member, input, options))
+          : parse(input, options),
+    ),
+    member.checks,
   );
 };
 
