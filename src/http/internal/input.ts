@@ -1563,8 +1563,8 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   // Only the built-in writer establishes how a codec exposes a Some on the wire. A configured codec,
   // such as OptionFromOptionalNullOr with an onNoneEncoding, exposes a Some's payload as the other
   // built-in codecs do, so its unstated keys are left out before the strict read too. The relaxed
-  // route compares the Somes the writer unwraps with what the caller gave, including those of codecs
-  // only the writer follows, such as a hand-written one, as optionLoss says.
+  // route compares the Somes that codecs unwrap with what the caller gave, including those of codecs
+  // whose payload preparation does not find, such as a hand-written one, as optionLoss says.
   const writesUnwrappedOptions =
     custom === undefined && Excess.mayWriteUnwrappedOption(ast);
   const readOriginal = decodedReading(contract);
@@ -1739,7 +1739,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
               writesUnwrappedOptions
                 ? Excess.optionLoss(ast, given, value, output, {
                     checkWrite: strict !== undefined,
-                    writerOnlyCodecs: true,
+                    unfoundCodecs: true,
                   })
                 : [],
             ),

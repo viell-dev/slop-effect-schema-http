@@ -94,6 +94,18 @@ describe("the reading of Effect's schema structure", () => {
     );
     expect(shape.required).toEqual(new Set(["always", "defaulted"]));
   });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/347
+  it("gives a codec nested in a payload one decoded side, the one the payload's holds", () => {
+    const nested = Schema.OptionFromNullOr(Either);
+    const payload = Schema.Struct({ inner: nested });
+    const decoded = SchemaAST.toType(payload.ast);
+    if (decoded._tag !== "Objects") throw new Error("expected a struct");
+    const inner = decoded.propertySignatures[0]!.type;
+    expect(inner).toBe(SchemaAST.toType(nested.ast));
+    expect(inner.encoding).toBeUndefined();
+    expect(inner).not.toBe(SchemaAST.toType(Schema.Option(Either).ast));
+  });
 });
 
 describe("Excess.choosing", () => {
@@ -1196,7 +1208,10 @@ it("recognizes built-in unwrapping getters without running a custom getter", () 
       }),
     ),
   );
-  expect(Excess.mayWriteUnwrappedOption(custom.ast)).toBe(false);
+  // It is not one of Effect's codecs, but the writer follows it into its payload, as it follows a
+  // hand-written codec that writes a value (#364). Neither reading runs its getter.
+  expect(Excess.mayUnwrapOption(custom.ast)).toBe(false);
+  expect(Excess.mayWriteUnwrappedOption(custom.ast)).toBe(true);
   for (const codec of [
     Schema.OptionFromOptional(text),
     Schema.OptionFromNullishOr(text),
@@ -1249,13 +1264,7 @@ it("compares a hand-written codec's read after a strict write, never what it wri
   const narrowed = { held: Option.some({ a: "a" }) };
   expect(Excess.optionLoss(schema.ast, given, narrowed, {})).toEqual([]);
   expect(
-    Excess.optionLoss(
-      schema.ast,
-      given,
-      narrowed,
-      {},
-      { writerOnlyCodecs: true },
-    ),
+    Excess.optionLoss(schema.ast, given, narrowed, {}, { unfoundCodecs: true }),
   ).toEqual([["held", "value", "b"]]);
   // What the read kept is not checked against what the codec wrote.
   expect(
@@ -1264,7 +1273,7 @@ it("compares a hand-written codec's read after a strict write, never what it wri
       given,
       given,
       { held: {} },
-      { writerOnlyCodecs: true },
+      { unfoundCodecs: true },
     ),
   ).toEqual([]);
   // Effect's own codecs keep the comparison their recognition gives: a configured codec is
@@ -1278,7 +1287,7 @@ it("compares a hand-written codec's read after a strict write, never what it wri
       given,
       narrowed,
       {},
-      { writerOnlyCodecs: true },
+      { unfoundCodecs: true },
     ),
   ).toEqual([]);
   // The JSON codec of a built-in one whose payload has a JSON form of its own, such as a Date's,
@@ -1306,10 +1315,92 @@ it("compares a hand-written codec's read after a strict write, never what it wri
         dated,
         narrowedDated,
         {},
-        { writerOnlyCodecs: true },
+        { unfoundCodecs: true },
       ),
     ).toEqual([["held", "value", "b"]]);
   }
+});
+
+const handWritten = <S extends Schema.Top>(payload: S) =>
+  Schema.NullOr(payload).pipe(
+    Schema.decodeTo(
+      Schema.Option(Schema.toType(payload)),
+      SchemaTransformation.transform<
+        Option.Option<S["Type"]>,
+        S["Type"] | null
+      >({
+        decode: Option.fromNullOr,
+        encode: (value) => Option.getOrElse(value, () => null),
+      }),
+    ),
+  );
+
+/** A struct whose field is a hand-written codec over a struct holding `inner`. */
+const holding = (inner: Schema.Top) =>
+  Schema.Struct({ held: handWritten(Schema.Struct({ inner })) }).ast;
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/364
+it("follows a hand-written codec that can omit its key as one that writes a value", () => {
+  const omitting = Schema.optionalKey(Either).pipe(
+    Schema.decodeTo(
+      Schema.Option(Schema.toType(Either)),
+      SchemaTransformation.transformOptional<
+        Option.Option<typeof Either.Type>,
+        typeof Either.Type
+      >({
+        decode: Option.some,
+        encode: (value) => Option.flatMap(value, (some) => some),
+      }),
+    ),
+  );
+  if (omitting.ast._tag !== "Declaration")
+    throw new Error("expected a declaration");
+  // The writer finds the payload where the codec writes it: the optional copy of it on the wire.
+  expect(Excess.writtenOptionSource(omitting.ast)).toBe(
+    omitting.ast.encoding?.[0]?.to,
+  );
+  const schema = Schema.Struct({ held: omitting });
+  const given = { held: Option.some({ a: "a", b: "b" }) };
+  const narrowed = { held: Option.some({ a: "a" }) };
+  expect(
+    Excess.optionLoss(schema.ast, given, narrowed, {}, { unfoundCodecs: true }),
+  ).toEqual([["held", "value", "b"]]);
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/347
+it("compares a codec inside a hand-written codec's decoded payload, never a Schema.Option there", () => {
+  const given = {
+    held: Option.some({ inner: Option.some({ a: "a", b: "b" }) }),
+  };
+  const narrowed = { held: Option.some({ inner: Option.some({ a: "a" }) }) };
+  for (const inner of [Schema.OptionFromNullOr(Either), handWritten(Either)])
+    expect(
+      Excess.optionLoss(
+        holding(inner),
+        given,
+        narrowed,
+        {},
+        {
+          unfoundCodecs: true,
+        },
+      ),
+    ).toEqual([["held", "value", "inner", "value", "b"]]);
+  // A codec's decoded side given as a schema of its own reads as Schema.Option does.
+  for (const inner of [
+    Schema.Option(Either),
+    Schema.toType(Schema.OptionFromNullOr(Either)),
+  ])
+    expect(
+      Excess.optionLoss(
+        holding(inner),
+        given,
+        narrowed,
+        {},
+        {
+          unfoundCodecs: true,
+        },
+      ),
+    ).toEqual([]);
 });
 
 it("uses another written name when only one candidate shares its name", () => {
