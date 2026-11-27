@@ -101,13 +101,13 @@ struct Reply {
 }
 
 /// Content that a handler writes piece by piece, as one that streams an export or events does:
-/// each chunk after a delay, and after the last, what `then` says. The server takes each chunk as
+/// each chunk after a delay, and after the last, what `ending` says. The server takes each chunk as
 /// it comes, so the reply's head goes out before its content, without a length unless the reply
 /// declares one.
 #[derive(Clone, Debug, Deserialize)]
 struct Streamed {
     chunks: Vec<Chunk>,
-    then: Then,
+    ending: Ending,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -120,7 +120,7 @@ struct Chunk {
 /// What a streamed reply does after its last chunk.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Then {
+enum Ending {
     /// End the content, whatever length the head declared.
     End,
     /// Write nothing more, and never end: the response stays open.
@@ -143,9 +143,9 @@ struct Progress {
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Ended {
-    /// After the last chunk, as `Then::End` says.
+    /// After the last chunk, as `Ending::End` says.
     Finished,
-    /// With the error of `Then::Fail`.
+    /// With the error of `Ending::Fail`.
     Failed,
     /// The server dropped the content before it ended: the client went away, or the connection
     /// or stream failed.
@@ -236,18 +236,18 @@ impl Writing {
             return None;
         }
         if self.next == self.streamed.chunks.len() {
-            match self.streamed.then {
-                Then::End => {
+            match self.streamed.ending {
+                Ending::End => {
                     self.end(Ended::Finished);
                     return None;
                 }
-                Then::Stall => std::future::pending::<()>().await,
-                Then::Fail => {
+                Ending::Stall => std::future::pending::<()>().await,
+                Ending::Fail => {
                     self.failed = true;
                     self.end(Ended::Failed);
                     return Some(Err(io::Error::other("the streamed content failed")));
                 }
-                Then::Repeat => self.next = 0,
+                Ending::Repeat => self.next = 0,
             }
         }
         let chunk = &self.streamed.chunks[self.next];
@@ -531,7 +531,7 @@ impl Reply {
             BASE64_STANDARD.decode(bytes).map_err(text)?;
         }
         if let Some(stream) = &self.stream
-            && matches!(stream.then, Then::Repeat)
+            && matches!(stream.ending, Ending::Repeat)
             && stream.chunks.is_empty()
         {
             return Err("a stream that repeats needs a chunk".to_owned());

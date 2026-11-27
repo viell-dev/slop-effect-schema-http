@@ -107,7 +107,7 @@ export const exportService: Definition = {
           after: at === 0 ? 0 : rowDelay,
           text,
         })),
-        then: "end",
+        ending: "end",
       },
     }),
     // The same orders as NDJSON, one record on each line, for consumers that read records as they
@@ -120,7 +120,7 @@ export const exportService: Definition = {
           after: 60,
           text: `${JSON.stringify(order)}\n`,
         })),
-        then: "end",
+        ending: "end",
       },
     }),
     // A JSON feed that writes its array as the query returns rows. The query waits on a lock that
@@ -128,7 +128,7 @@ export const exportService: Definition = {
     route("feed", and(get(), exactPath("/v1/exports/feed")), {
       status: 200,
       headers: [["content-type", "application/json"]],
-      stream: { chunks: [{ after: 0, text: feedStart }], then: "stall" },
+      stream: { chunks: [{ after: 0, text: feedStart }], ending: "stall" },
     }),
     // An archive copied from storage: the handler declares the file's length, then the copy loses
     // its source, and the handler ends the content instead of failing it.
@@ -140,7 +140,7 @@ export const exportService: Definition = {
       ],
       stream: {
         chunks: [{ after: 0, text: ordersCsv.slice(0, 2).join("") }],
-        then: "end",
+        ending: "end",
       },
     }),
     // A ledger export whose database cursor fails halfway. The handler returns the error from its
@@ -154,7 +154,7 @@ export const exportService: Definition = {
           { after: 0, text: ordersCsv[0] },
           { after: 50, text: ordersCsv[1] },
         ],
-        then: "fail",
+        ending: "fail",
       },
     }),
     // Server-sent events for the export's progress, which the service sends while the export runs.
@@ -165,7 +165,7 @@ export const exportService: Definition = {
         ["content-type", "text/event-stream"],
         ["cache-control", "no-cache"],
       ],
-      stream: { chunks: [{ after: 50, text: heartbeat }], then: "repeat" },
+      stream: { chunks: [{ after: 50, text: heartbeat }], ending: "repeat" },
     }),
     // The object store, by file name. A missing key gets the store's XML error document.
     lookupRoute("file", and(get(), path("/v1/exports/files/{name}")), {
