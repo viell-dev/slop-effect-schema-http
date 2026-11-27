@@ -289,6 +289,81 @@ describe("a schema-backed input takes either side of its schema", () => {
     }),
   );
 
+  it.effect(
+    "prepares a deep recursive struct with a renamed key in linear work, on either side",
+    () =>
+      Effect.gen(function* () {
+        // 0.20.0 read each level below a renamed field about twice as often as the level above it,
+        // so 20 levels took seconds and 200 would never finish
+        // (https://github.com/viell-dev/slop-effect-schema-http/issues/355). Counting the reads
+        // of the self-reference, which Effect's encoded projection of it makes through the same
+        // property, measures that work without timing it. Preparation reads it 3 times a level;
+        // 0.19.0 read it more often the deeper the value. Past the budget the read throws, so a
+        // walk that repeats work fails here at once instead of running on.
+        const depth = 200;
+        const budget = 10 * depth;
+        const rows = {
+          text: {
+            held: Schema.String,
+            decoded: (at: number) => `x${at}`,
+            encoded: (at: number) => `x${at}`,
+          },
+          option: {
+            held: Schema.OptionFromNullOr(Schema.Struct({ a: Schema.String })),
+            decoded: (at: number) =>
+              at % 2 === 0 ? Option.some({ a: `x${at}` }) : Option.none(),
+            encoded: (at: number) => (at % 2 === 0 ? { a: `x${at}` } : null),
+          },
+        };
+        for (const [kind, { held, decoded, encoded }] of Object.entries(rows))
+          for (const list of [false, true])
+            for (const side of ["decoded", "encoded"] as const) {
+              let reads = 0;
+              const self = Schema.suspend(
+                (): Schema.Codec<unknown, unknown> => Row,
+              );
+              const target = self.ast.thunk;
+              Object.assign(self.ast, {
+                thunk: () => {
+                  if (++reads > budget)
+                    throw new Error(`read the self-reference ${reads} times`);
+                  return target();
+                },
+              });
+              const Row: Schema.Codec<unknown, unknown> = Schema.Struct({
+                held,
+                child: list ? Schema.Array(self) : Schema.NullOr(self),
+              }).pipe(Schema.encodeKeys({ held: "wire_held" }));
+              // Built from the deepest row up: each row holds the one below it as its child.
+              let child: unknown = list ? [] : null;
+              let written = list ? "[]" : "null";
+              let body: unknown;
+              let sent = "";
+              for (let at = depth - 1; at >= 0; at--) {
+                body =
+                  side === "decoded"
+                    ? { held: decoded(at), child }
+                    : { wire_held: encoded(at), child };
+                sent = `{"wire_held":${JSON.stringify(encoded(at))},"child":${written}}`;
+                child = list ? [body] : body;
+                written = list ? `[${sent}]` : sent;
+              }
+              const request = Request.post("/rows").pipe(
+                Request.body(Body.jsonSchema(Row)),
+              );
+              expect(
+                yield* bodyOf(request, { body }),
+                `${kind}, ${list ? "list" : "nullable"}, ${side}`,
+              ).toBe(sent);
+              expect(reads).toBeLessThanOrEqual(budget);
+            }
+      }),
+    // The budget above is the check. This limit only leaves room for slow machines: the eight
+    // requests take about a second here, and their time still grows faster than the depth
+    // (https://github.com/viell-dev/slop-effect-schema-http/issues/366).
+    60_000,
+  );
+
   it.effect("takes a schema's own type on either side, such as a Date", () =>
     Effect.gen(function* () {
       const noon = new Date("2026-11-07T12:00:00.000Z");

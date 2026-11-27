@@ -768,6 +768,16 @@ const renamedFields = (ast: Ast): Renamed => {
   return renamed;
 };
 
+/**
+ * Each schema once, in the order first given. Everything {@link rewriting} decides from a list of
+ * schemas depends only on which schemas it holds and the order they first appear in, so a repeat
+ * adds nothing. Below a renamed field of a recursive struct, the decoded side read there and that
+ * side's own rename name the same field schemas, so without this each level would pass on twice as
+ * many as the level above it.
+ */
+const distinct = (types: ReadonlyArray<Ast>): ReadonlyArray<Ast> =>
+  types.length < 2 ? types : [...new Set(types)];
+
 /** Bring a value's {@link unlisted} fields out as keys, at any depth, and take out what `drops` says. */
 const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
   const rewrite = (
@@ -832,14 +842,14 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
         return [];
       }
       const next = rewrite(
-        inner,
+        distinct(inner),
         item,
         view,
         beyond && isObject(item)
-          ? [
+          ? distinct([
               ...typesAt(alsoSides, key),
               ...renamed.flatMap((fields) => fields.get(key) ?? []),
-            ]
+            ])
           : undefined,
       );
       changed ||= next !== item;
