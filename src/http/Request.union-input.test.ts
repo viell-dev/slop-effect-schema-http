@@ -30,6 +30,15 @@ const post = <S extends Schema.Top>(schema: S) =>
     Request.body(Body.jsonSchema(schema)),
   );
 
+/** A schema that a check refuses only under `onExcessProperty: "error"`, which no request uses. */
+const strictOnly = <S extends Schema.Top>(message: string, schema: S) =>
+  schema.check(
+    Schema.makeFilter(
+      (_value, _ast, options) =>
+        options.onExcessProperty !== "error" || message,
+    ),
+  );
+
 describe("signature-less object candidates under unions", () => {
   const Empty = Schema.Struct({});
   const A = Schema.Struct({ a: Schema.String });
@@ -3104,6 +3113,118 @@ describe("a caller's field under a union", () => {
               { body: dated } as never,
             ),
           ).toBe('{"w_d":{}}');
+        }),
+    );
+  });
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/335
+  describe("a member whose strict write fails on a step that reads the options", () => {
+    // Effect gives a write's options to the schema's own steps, so a member that the library's
+    // strict attempt refuses can still write the value with the request's own options.
+    const keyed = Schema.Record(Schema.String, Schema.Number).check(
+      Schema.isPropertyNames(
+        strictOnly("Option-sensitive key refusal", Schema.String),
+      ),
+    );
+    const other = Schema.Struct({ other: Schema.String });
+    const whole = Schema.Struct({
+      a: text,
+      b: strictOnly("Option-sensitive b", Schema.String),
+    });
+    const narrow = Schema.Struct({ a: text });
+
+    it.effect("writes the value through it, as Effect does", () =>
+      Effect.gen(function* () {
+        // Effect decodes, constructs and encodes each of these with the request's own options.
+        const forms = [
+          [Schema.Union([keyed, other]), { foo: 1 }, '{"foo":1}'],
+          [
+            Schema.Union([Schema.Struct({ a: keyed }), other]),
+            { a: { foo: 1 } },
+            '{"a":{"foo":1}}',
+          ],
+          [
+            Schema.Union([
+              Schema.Struct({ a: keyed }).pipe(Schema.encodeKeys({ a: "A" })),
+              other,
+            ]),
+            { a: { foo: 1 } },
+            '{"A":{"foo":1}}',
+          ],
+          [
+            Schema.Union([whole, narrow]),
+            { a: "x", b: "y" },
+            '{"a":"x","b":"y"}',
+          ],
+        ] as const;
+        for (const [union, given, sent] of forms) {
+          const schema = union as Schema.Codec<unknown, unknown>;
+          const send = (outer: Schema.Codec<unknown, unknown>, body: unknown) =>
+            bodyOf(post(outer), { body } as never);
+          expect(yield* send(schema, given)).toBe(sent);
+          expect(yield* send(Schema.Struct({ f: schema }), { f: given })).toBe(
+            `{"f":${sent}}`,
+          );
+          expect(yield* send(Schema.Array(schema), [given])).toBe(`[${sent}]`);
+          expect(
+            yield* send(Schema.Record(Schema.String, schema), { r: given }),
+          ).toBe(`{"r":${sent}}`);
+          expect(
+            yield* send(
+              Schema.Struct({ f: schema, p: text }).pipe(
+                Schema.encodeKeys({ p: "wire_p" }),
+              ),
+              { f: given, p: "y" },
+            ),
+          ).toBe(`{"f":${sent},"wire_p":"y"}`);
+        }
+        expect(
+          yield* urlOf(queried(Schema.Union([keyed, other])), {
+            query: { foo: 1 },
+          }),
+        ).toBe("/x?foo=1");
+      }),
+    );
+
+    it.effect(
+      "still refuses a field the written value loses, with the request's own errors",
+      () =>
+        Effect.gen(function* () {
+          // Effect's own write takes `narrow` first and drops `b`, which `whole` holds.
+          expect(
+            yield* schemaFailure(post(Schema.Union([narrow, whole])), {
+              body: { a: "x", b: "y" },
+            }),
+          ).toBe(
+            'The schema cannot keep this field with the rest of the value\n  at ["b"]',
+          );
+          // Only the member that cannot read `a: "x"` states `b`.
+          expect(
+            yield* schemaFailure(
+              post(
+                Schema.Union([
+                  Schema.Struct({ a: strictOnly("Option-sensitive a", text) }),
+                  Schema.Struct({ a: Schema.Number, b: text }),
+                ]),
+              ),
+              { body: { a: "x", b: "y" } as never },
+            ),
+          ).toBe(
+            'The schema cannot keep this field with the rest of the value\n  at ["b"]',
+          );
+          // Under oneOf, both members write it with the request's own options, as Effect finds.
+          expect(
+            yield* schemaFailure(
+              post(Schema.Union([whole, narrow], { mode: "oneOf" })),
+              { body: { a: "x", b: "y" } },
+            ),
+          ).toBe("Expected exactly one member to match");
+          // A value no member can read keeps the reading's own error.
+          expect(
+            yield* schemaFailure(post(Schema.Union([keyed, other])), {
+              body: { foo: "x" } as never,
+            }),
+          ).toBe('Expected number\n  at ["foo"]\nMissing key\n  at ["other"]');
         }),
     );
   });

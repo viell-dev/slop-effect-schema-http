@@ -95,9 +95,13 @@ const parser = (
  * runs. Each in turn writes the value strictly or, where it states every key the value holds, as the
  * write's options say: what a strict write then refuses is the member's own, as a key its encoder
  * hands on or a field a class instance holds beside those it states. Only where no member can are
- * they tried as Effect tries them. A failed attempt forgets what was noted inside it, so only the
- * members of the write that succeeded remain. An any-of union keeps its first success; a one-of union
- * fails if two members write. The union's checks, encoding and context stay with it.
+ * they tried as Effect tries them: those whose attempt failed only on keys it would strip, each
+ * after any earlier member that holds every key such a member would strip, and then, where none of
+ * those writes either, every other member. A step that reads the write's options can fail strictly
+ * for another reason too, so that failure does not show the member cannot write loosely. A failed
+ * attempt forgets what was noted inside it, so only the members of the write that succeeded remain.
+ * An any-of union keeps its first success; a one-of union fails if two members write. The union's
+ * checks, encoding and context stay with it.
  */
 const noting = (
   original: SchemaAST.Union,
@@ -154,6 +158,10 @@ const noting = (
       const issues = new Map<number, SchemaIssue.Issue>();
       /** The members a looser attempt could still write through. */
       const open = new Set<number>();
+      /** The members already tried as Effect tries them. */
+      const loosened = new Set<number>();
+      /** The members that state every key the value holds. */
+      const holdingAll = new Set<number>();
       const successes: Array<SchemaAST.AST> = [];
       let written:
         { readonly output: unknown; readonly index: number } | undefined;
@@ -187,6 +195,17 @@ const noting = (
       const strictly: Array<Attempt> = [];
       const holding: Array<Attempt> = [];
       const anyhow: Array<Attempt> = [];
+      // A step can read the write's options, so a strict failure for another reason than a key the
+      // member strips does not show that the member cannot write loosely. Where nothing else wrote,
+      // the members not yet tried as Effect tries them are, in Effect's order.
+      const otherwise: Array<Attempt> = [];
+      // For the same reason, a member that holds every key is tried loosely before a later one that
+      // would strip a key it holds, as Effect tries it first. That later write would lose the key.
+      const heldBeforeStripping = (index: number) =>
+        holdingAll.has(index) &&
+        order
+          .slice(order.indexOf(index) + 1)
+          .some((later) => open.has(later) && !holdingAll.has(later));
       const attempt = (
         stages: ReadonlyArray<ReadonlyArray<Attempt>>,
         stage = 0,
@@ -199,19 +218,27 @@ const noting = (
           return written === undefined ? attempt(stages, stage + 1) : finish();
         const { index, strictly } = current;
         const next = () => attempt(stages, stage, position + 1);
-        if (!strictly && !open.delete(index)) return next();
+        const loosely = attempts === anyhow || attempts === otherwise;
+        if (
+          attempts === otherwise
+            ? loosened.has(index)
+            : !strictly &&
+              !open.delete(index) &&
+              !(attempts === anyhow && heldBeforeStripping(index))
+        )
+          return next();
+        if (loosely) loosened.add(index);
         const mark = writers?.length ?? 0;
         return Effect.matchEffect(
           encoders[index]!()(
             input,
-            strictly ? strict : stages[stage] === anyhow ? loose : wholly,
+            strictly ? strict : loosely ? loose : wholly,
           ),
           {
             onFailure: (issue) => {
               forget(mark);
               issues.set(index, issue);
-              if (stages[stage] !== anyhow && couldLoosen(issue))
-                open.add(index);
+              if (!loosely && couldLoosen(issue)) open.add(index);
               return next();
             },
             onSuccess: (output) => {
@@ -231,19 +258,22 @@ const noting = (
       for (const index of order) {
         const member = original.types[index]!;
         anyhow.push({ index, strictly: false });
+        otherwise.push({ index, strictly: false });
         // A Void writes any value strictly, so it may only follow the members that keep one.
         if (member._tag === "Void" && isKeyed(input)) {
           open.add(index);
           continue;
         }
         strictly.push({ index, strictly: true });
-        if (statesEveryKey(member, input))
+        if (statesEveryKey(member, input)) {
+          holdingAll.add(index);
           (oneOf ? holding : strictly).push({ index, strictly: false });
+        }
       }
       return attempt([
         strictly,
         holding,
-        ...(within || options[whole] === true ? [] : [anyhow]),
+        ...(within || options[whole] === true ? [] : [anyhow, otherwise]),
       ]);
     },
   );

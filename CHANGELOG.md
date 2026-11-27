@@ -46,6 +46,23 @@
   the refusal also names the unstated key, and refuses it even where nothing stated is lost
   ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)).
 
+- **Fixed:** a union whose member holds a step that reads the parse options, such as a filter that
+  checks `onExcessProperty`, no longer refuses a value that member writes with the request's own
+  options ([#335](https://github.com/viell-dev/slop-effect-schema-http/issues/335)). With `keyed`, a
+  `Record(String, Number)` whose key filter refuses only under `onExcessProperty: "error"`,
+  `Union([keyed, Struct({ other: String })])` given `{ foo: 1 }` refused with that filter's
+  strict-only failure and `Missing key at ["other"]`; it now sends `{"foo":1}`, as Effect's own
+  reading does. So does the member as a struct's field, renamed or not, and the union in a field, a
+  list or a record. Preparation writes a value strictly first, and a member whose strict attempt
+  failed for another reason than a key it would strip was never tried loosely. Now a member that
+  holds every key is tried loosely before a later one that would drop a key it holds, and before the
+  write fails, every member is, in Effect's order. A field the written value loses is still refused,
+  with the request's own errors, and under `oneOf` two members that both write the value read
+  `Expected exactly one member to match`, as Effect's own write does. Those extra attempts run a
+  member's steps once more on such writes, including the few that then send through another route. A
+  value given on its encoded side, under a wire name, still refuses where such a step fails only
+  under strict options, as the input reference's limits describe.
+
 ## 0.20.1 — 2026-11-28
 
 [What's in

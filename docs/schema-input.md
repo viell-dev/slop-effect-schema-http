@@ -239,8 +239,12 @@ A value that cannot be written strictly, as where a class instance holds a membe
 written loosely. Each union in it, in a class's fields too, is still written by its first member
 that holds the whole value: strictly, or loosely where that member states every key the value holds,
 so a class instance's own fields do not push a value out of it. Only where no member can is the
-union written as Effect writes it, and a field that drops is refused. Where that write fails too,
-preparation writes what the fields' own readings give and refuses what they lose.
+union written as Effect writes it, and a field that drops is refused. A step that reads the write's
+options, such as a filter that checks `onExcessProperty`, can fail a member's strict attempt though
+the member writes the value with the request's own options. So a member that holds every key is
+tried as Effect tries it before a later one that would drop a key it holds, and before the write
+fails, every member is. Where that write fails too, preparation writes what the fields' own readings
+give and refuses what they lose.
 
 A strict read takes a class instance by its class, but a loose read takes the first member that
 fits, and a struct fits any object. Where the loose read's struct would strip the instance, the
@@ -884,6 +888,14 @@ the schema does with it. These are the places where it cannot, and what happens 
   of the `Some`, or use a built-in codec such as `OptionFromNullOr`, without middleware or an
   explicit `Schema.toCodecJson`. Where something else makes the strict attempt fail, such as a stray
   key in a sibling `Schema.Option`, `OptionFromNullOr` refuses the field too.
+- A value on its encoded side, given under a wire name, is read strictly first to find the keys a
+  loose read would strip. A step that reads the parse options and fails only under those strict
+  options, such as a filter that checks `onExcessProperty`, fails that read for another reason, and
+  the request's own reading of the encoded side does not run, so the value refuses with the decoded
+  side's message. With `side` checked that way and renamed to `s`, `{ s: "42" }` reads
+  `Missing key at ["side"]`, though Effect reads it
+  ([#335](https://github.com/viell-dev/slop-effect-schema-http/issues/335)). Give the value on its
+  decoded side: `{ side: 42 }` sends `{"s":"42"}`.
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
   either binding order. Bounded [stacked-union
   recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;
