@@ -1,4 +1,11 @@
-import { Effect, Result, Schema, SchemaAST, SchemaIssue } from "effect";
+import {
+  Effect,
+  type Option,
+  Result,
+  Schema,
+  SchemaAST,
+  SchemaIssue,
+} from "effect";
 import {
   afterAlternative,
   attemptRead,
@@ -594,11 +601,11 @@ const decodedReading = <S extends Schema.Top>(
       );
     if (guardedReading === guarded) return read(parseOptions);
     return Effect.suspend(() => {
-      const note = { used: false };
+      const wrappers = new Set<Option.Option<unknown>>();
       return Effect.flatMap(
-        read(recordingWrapperInto(note, parseOptions)),
+        read(recordingWrapperInto(wrappers, parseOptions)),
         (value) =>
-          note.used
+          wrappers.size > 0
             ? Effect.fail(
                 new OptionWrapperRead({
                   failure: new Schema.SchemaError(
@@ -606,6 +613,7 @@ const decodedReading = <S extends Schema.Top>(
                       message: "Expected a payload without an Option wrapper",
                     }),
                   ),
+                  wrappers,
                 }),
               )
             : Effect.succeed(value),
@@ -941,7 +949,7 @@ const decodedReading = <S extends Schema.Top>(
         )
           return wrapperBesideFields(
             input,
-            new OptionWrapperRead({ failure }),
+            new OptionWrapperRead({ failure, wrappers: refused.wrappers }),
             fields,
           );
         // A loose read can take another union member than a strict one and strip its names unseen.
@@ -1028,7 +1036,7 @@ const decodedReading = <S extends Schema.Top>(
               )
             : Effect.mapError(chosen, (error) =>
                 error._tag === "OptionWrapperRead"
-                  ? new OptionWrapperRead({ failure })
+                  ? new OptionWrapperRead({ failure, wrappers: error.wrappers })
                   : error,
               ),
           () =>
@@ -1208,8 +1216,8 @@ const decodedReading = <S extends Schema.Top>(
             : given === undefined
               ? Effect.catchTags(unaccounted(input, parseOptions), {
                   SchemaError: () => Effect.fail(failure),
-                  OptionWrapperRead: () =>
-                    Effect.fail(new OptionWrapperRead({ failure })),
+                  OptionWrapperRead: ({ wrappers }: OptionWrapperRead) =>
+                    Effect.fail(new OptionWrapperRead({ failure, wrappers })),
                 })
               : accounted(
                   input,
@@ -1553,6 +1561,23 @@ const readerForCodec = <S extends Schema.Top, A, R>(
       : decodedReading(contract, {
           witness: (path) => hasPlainWitness(caller, path),
         });
+  /**
+   * The strict pass's refusal of the native Options its decoder took as wire values, which no later
+   * route reads again. It carries the strict constructor's failure, and no reading with the caller's
+   * own parse options runs on this route, so each wrapper is named where it was given, as one the
+   * schema cannot keep with the rest of the value, or the whole value where plain data does not hold
+   * it.
+   */
+  const strictWrapperRefusal = (
+    from: unknown,
+    { wrappers }: OptionWrapperRead,
+  ): OptionWrapperRead => {
+    const [first = [], ...others] = Excess.placesOf(from, wrappers);
+    return new OptionWrapperRead({
+      failure: Excess.refusal(ast, [first, ...others]),
+      wrappers,
+    });
+  };
   /** A value a strict read took as it was, and why it cannot be written strictly. */
   interface Unwritable {
     readonly read: Decoded<S["Type"]>;
@@ -1742,7 +1767,11 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     ) as Input<S>;
     const kept = (from: Input<S>) => {
       return Effect.flatMap(
-        readingFrom(from, input)(from, { parseOptions: Excess.strict }),
+        Effect.catchTag(
+          readingFrom(from, input)(from, { parseOptions: Excess.strict }),
+          "OptionWrapperRead",
+          (refusal) => Effect.fail(strictWrapperRefusal(from, refusal)),
+        ),
         (read) =>
           Effect.match(strictWriter(read.value, Excess.strict), {
             onSuccess: (output): Kept => {
