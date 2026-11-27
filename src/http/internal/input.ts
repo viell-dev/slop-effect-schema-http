@@ -753,6 +753,22 @@ const decodedReading = <S extends Schema.Top>(
       (key) => names.includes(key) || given[key] === undefined,
     );
   };
+  /**
+   * Where the whole encoded read took a native Option wrapper, a struct's fields can each be read on
+   * their own side, so the wrapper stays a decoded field's own value beside an encoded sibling. A
+   * union keeps the refusal: read member by member, it would lose which member the whole value chose.
+   * Where the fields cannot be read either, the wrapper's refusal stands.
+   */
+  const wrapperBesideFields = (
+    input: unknown,
+    refusal: OptionWrapperRead,
+    fields: () => Effect.Effect<Decoded<unknown>, ReadFailure, unknown>,
+  ): Effect.Effect<Decoded<unknown>, ReadFailure, unknown> =>
+    contract.ast._tag === "Objects" && isKeyed(input)
+      ? Effect.mapError(fields(), (error) =>
+          error._tag === "SchemaError" ? refusal : error,
+        )
+      : Effect.fail(refusal);
   /** The routes after the constructor, as Effect reads a value. */
   const unaccounted = (
     input: unknown,
@@ -761,8 +777,13 @@ const decodedReading = <S extends Schema.Top>(
     Effect.matchEffect(decode(input, parseOptions), {
       onSuccess: (value) => Effect.succeed(whole(value)),
       onFailure: (failure) => {
-        if (!isKeyed(input) || failure._tag === "OptionWrapperRead")
-          return Effect.fail(failure);
+        if (failure._tag === "OptionWrapperRead")
+          return wrapperBesideFields(input, failure, () =>
+            isKeyed(input)
+              ? byMember(input, failure.failure, undefined, parseOptions)
+              : Effect.fail(failure),
+          );
+        if (!isKeyed(input)) return Effect.fail(failure);
         if (failure._tag !== "FieldlessOneOf")
           return byMember(input, failure, undefined, parseOptions);
         if (!failure.insideUnion && failure.path.length === 0)
@@ -890,7 +911,11 @@ const decodedReading = <S extends Schema.Top>(
           read === undefined &&
           refused._tag === "OptionWrapperRead"
         )
-          return Effect.fail(new OptionWrapperRead({ failure }));
+          return wrapperBesideFields(
+            input,
+            new OptionWrapperRead({ failure }),
+            fields,
+          );
         // A loose read can take another union member than a strict one and strip its names unseen.
         // If only an opaque neighbour kept the strict decoder from reading, retry a failed loose
         // read without undefined keys before deciding the encoded side cannot take the value.
