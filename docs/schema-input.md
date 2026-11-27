@@ -31,34 +31,33 @@ Each row gives a value, the schema it meets, and what the request carries or whi
 instead. A `SchemaError`, `HttpBodyError` or `Request.InvalidRequest` fails before dispatch.
 [Limits](./limits.md#read-a-refusal-message) explains each message and what to change.
 
-| The caller gives                                                    | Under                                      | Result                                                                                             |
-| ------------------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `{ limit: 5, count: "3" }`: decoded names, values on either side    | `Page`                                     | `{"page_size":"5","count":"3"}`                                                                    |
-| `{ page_size: "5", count: 3 }`: a wire name beside a decoded value  | `Page`                                     | `Missing key at ["limit"]`; the whole object is read as encoded, where `3` is not text             |
-| `{ limit: 5, page_size: "5", count: 3 }`: one field under two names | `Page`                                     | `The schema cannot keep this field with the rest of the value at ["page_size"]`, though they agree |
-| `{ page_size: "many", count: "3" }`: an invalid wire-named value    | `Page`, whose fields are required          | `Missing key at ["limit"]`, the decoded name                                                       |
-|                                                                     | The same field made `optionalKey`          | `The schema cannot keep this field … at ["page_size"]`                                             |
-| `[{ limit: 5 }, { page_size: "6" }]`: list items on different sides | A list of `Page` with `optionalKey` fields | `The schema cannot keep this field … at [1]["page_size"]`                                          |
-| `{ ids: [5, "6"] }`: scalar list items on different sides           | `Ids`                                      | `Expected number at ["ids"][1]`; `["5", "6"]` and `[5, 6]` both work                               |
-| `{ _tag: "Comment", text: "x", due: "d" }`: another variant's field | `Union([Comment, Reschedule])`             | `{"_tag":"Comment","text":"x"}`, with no error                                                     |
-| `{ title: "a", extra: 1 }`: a key the schema does not state         | `Struct({ title: String })`                | `{"title":"a"}`, with no error                                                                     |
-| `{ note: undefined }`                                               | `Schema.optional(String)`                  | JSON `{"note":null}`; a query or header leaves the field out                                       |
-|                                                                     | `Schema.optionalKey(String)`               | `Expected string at ["note"]`                                                                      |
-|                                                                     | `Schema.UndefinedOr(String)`               | JSON `{"note":null}`                                                                               |
-|                                                                     | `Schema.Any`, or `Body.json`               | `{}`                                                                                               |
-| `{ note: NaN }`                                                     | `Schema.Number`                            | JSON `{"note":"NaN"}`; a query `?note=NaN`                                                         |
-|                                                                     | `Schema.Finite`                            | `Expected a finite number at ["note"]`                                                             |
-|                                                                     | `Schema.Any`, or `Body.json`               | `HttpBodyError`: `JSON body at $["note"] must be a finite number`                                  |
-| `{ note: new Map([["a", 1]]) }`                                     | `Schema.Any`, or `Body.json`               | `HttpBodyError`: `JSON body at $["note"] cannot encode Map`                                        |
-|                                                                     | `Schema.Record(String, Unknown)`           | `The schema cannot keep this field … at ["note"]`                                                  |
-|                                                                     | `Schema.Unknown`                           | `Expected JSON value at ["note"]`                                                                  |
-| `{ note: new Point() }`, a class instance with a field `x`          | `Schema.Any`, or a string-keyed record     | `{"note":{"x":1}}`                                                                                 |
-|                                                                     | `Schema.Unknown`                           | `Expected JSON value at ["note"]`                                                                  |
-| `{ note: { x: 1 } }` in a query                                     | `Schema.Any`                               | `InvalidRequest`: `The query field "note" must encode a scalar value or a list of scalar values`   |
-| `{ "x-count": 5 }` in headers                                       | `Schema.Any`                               | `InvalidRequest`: `The header field "x-count" must have a string value`                            |
-| `{ ack: undefined }`, `null`, `{}` or `[]`                          | `Struct({ ack: Schema.Void })`             | `{"ack":null}`                                                                                     |
-| `{ ack: 5 }`, a `Date`, a `Map` or `{ a: 1 }`                       | `Struct({ ack: Schema.Void })`             | `Expected void at ["ack"]`                                                                         |
-| `{ b: 1 }`, whose only key no member states                         | `Union([Void, Struct({ a: String })])`     | `null`: the unstated key is left out, and the empty object is Void's                               |
+| The caller gives                                                    | Under                                      | Result                                                                                            |
+| ------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `{ limit: 5, count: "3" }`: decoded names, values on either side    | `Page`                                     | `{"page_size":"5","count":"3"}`                                                                   |
+| `{ page_size: "5", count: 3 }`: a wire name beside a decoded value  | `Page`                                     | `Expected string at ["count"]`; the whole object is read as encoded, where `3` is not text        |
+| `{ limit: 5, page_size: "5", count: 3 }`: one field under two names | `Page`                                     | `This field is given under both "limit" and "page_size"; …` at `["page_size"]`, though they agree |
+| `{ page_size: "many", count: "3" }`: an invalid wire-named value    | `Page`, required or `optionalKey`          | `Expected a finite number at ["page_size"]`, the encoded side's own error                         |
+| `[{ limit: 5 }, { page_size: "6" }]`: list items on different sides | A list of `Page` with `optionalKey` fields | `The items of this field's list or record use different sides; …` at `[1]["page_size"]`           |
+| `{ ids: [5, "6"] }`: scalar list items on different sides           | `Ids`                                      | `Expected number at ["ids"][1]`; `["5", "6"]` and `[5, 6]` both work                              |
+| `{ _tag: "Comment", text: "x", due: "d" }`: another variant's field | `Union([Comment, Reschedule])`             | `{"_tag":"Comment","text":"x"}`, with no error                                                    |
+| `{ title: "a", extra: 1 }`: a key the schema does not state         | `Struct({ title: String })`                | `{"title":"a"}`, with no error                                                                    |
+| `{ note: undefined }`                                               | `Schema.optional(String)`                  | JSON `{"note":null}`; a query or header leaves the field out                                      |
+|                                                                     | `Schema.optionalKey(String)`               | `Expected string at ["note"]`                                                                     |
+|                                                                     | `Schema.UndefinedOr(String)`               | JSON `{"note":null}`                                                                              |
+|                                                                     | `Schema.Any`, or `Body.json`               | `{}`                                                                                              |
+| `{ note: NaN }`                                                     | `Schema.Number`                            | JSON `{"note":"NaN"}`; a query `?note=NaN`                                                        |
+|                                                                     | `Schema.Finite`                            | `Expected a finite number at ["note"]`                                                            |
+|                                                                     | `Schema.Any`, or `Body.json`               | `HttpBodyError`: `JSON body at $["note"] must be a finite number`                                 |
+| `{ note: new Map([["a", 1]]) }`                                     | `Schema.Any`, or `Body.json`               | `HttpBodyError`: `JSON body at $["note"] cannot encode Map`                                       |
+|                                                                     | `Schema.Record(String, Unknown)`           | `The schema cannot keep this Map as a record at ["note"]`                                         |
+|                                                                     | `Schema.Unknown`                           | `Expected JSON value at ["note"]`                                                                 |
+| `{ note: new Point() }`, a class instance with a field `x`          | `Schema.Any`, or a string-keyed record     | `{"note":{"x":1}}`                                                                                |
+|                                                                     | `Schema.Unknown`                           | `Expected JSON value at ["note"]`                                                                 |
+| `{ note: { x: 1 } }` in a query                                     | `Schema.Any`                               | `InvalidRequest`: `The query field "note" must encode a scalar value or a list of scalar values`  |
+| `{ "x-count": 5 }` in headers                                       | `Schema.Any`                               | `InvalidRequest`: `The header field "x-count" must have a string value`                           |
+| `{ ack: undefined }`, `null`, `{}` or `[]`                          | `Struct({ ack: Schema.Void })`             | `{"ack":null}`                                                                                    |
+| `{ ack: 5 }`, a `Date`, a `Map` or `{ a: 1 }`                       | `Struct({ ack: Schema.Void })`             | `Expected void at ["ack"]`                                                                        |
+| `{ b: 1 }`, whose only key no member states                         | `Union([Void, Struct({ a: String })])`     | `null`: the unstated key is left out, and the empty object is Void's                              |
 
 TypeScript catches some of these first. The `Request.Input` type refuses a wire name beside a
 decoded value and a scalar list on two sides. An object literal written in place also fails the
@@ -154,7 +153,7 @@ const search = Request.get("https://api.example.test/things").pipe(
 // Input: { query: {} }; URL query: ?page_size=25
 // Input: { query: { limit: 5 } } or { query: { page_size: "05" } }; URL query: ?page_size=5
 // Input: { query: { page_size: "many" } }
-// SchemaError: The schema cannot keep this field ... at ["page_size"]
+// SchemaError: Expected a finite number at ["page_size"]
 
 const Page = Schema.Struct({
   n: Schema.FiniteFromString,
@@ -166,7 +165,7 @@ const send = Request.post("https://api.example.test/pages").pipe(
 // Input: { body: { n: 1, items: [{ limit: 5 }, {}] } }
 // JSON body: {"n":"1","items":[{"page_size":"5"},{"page_size":"25"}]}
 // Input: { body: { n: 1, items: [{ limit: "x" }] } }
-// SchemaError: The schema cannot keep this field ... at ["items"][0]["limit"]
+// SchemaError: Expected number at ["items"][0]["limit"]
 ```
 
 This holds at any depth, in struct, class, list, tuple, record and union fields, and whatever stands
@@ -176,14 +175,15 @@ into, as an `Option` is. It has these consequences:
 - **A field given under both its names** refuses, even where the two agree. Codecs give no general
   way to tell whether two sides' values agree, so this restricts the input rather than finding a
   contradiction. The refusal names the wire name, as `{ limit: 5, page_size: "5" }` names
-  `["page_size"]`. Give each field one name.
+  `["page_size"]`, and says the field is given under both names. Give each field one name.
 - **A decoded name below a name the parent writes**, as `{ w: { limit: 5 } }` where `f: Filter` is
   renamed to `w`, refuses too. Below a renamed field, use the same side as its own name.
 - **A list, a tuple and a record are read as one value**, not item by item, so items on different
-  sides refuse: `[{ limit: 5 }, { page_size: "6" }]` names `[1]["page_size"]`. The `Input` type
-  allows that mix. An item that would be valid alone is refused too when the others put the list on
-  the other side. The same holds for scalar items: under `Schema.Array(Schema.NumberFromString)`,
-  `[5, "6"]` fails with `Expected number` at `[1]`. Give every item on one side.
+  sides refuse: `[{ limit: 5 }, { page_size: "6" }]` names `[1]["page_size"]` and says the items use
+  different sides. The `Input` type allows that mix. An item that would be valid alone is refused
+  too when the others put the list on the other side. The same holds for scalar items: under
+  `Schema.Array(Schema.NumberFromString)`, `[5, "6"]` fails with `Expected number` at `[1]`. Give
+  every item on one side.
 - **A field both sides can hold**, as under a schema from text to text, means what the route that
   read it takes it for. Built by a constructor or read field by field it is decoded, so it is
   encoded again. Decoded as part of the whole it is already encoded.
@@ -197,7 +197,11 @@ into, as an `Option` is. It has these consequences:
   that cannot be kept is named on its own: under `Schema.Array(Filter)`,
   `[{ limit: 1, page_size: "02" }, { page_size: "25" }]` refuses at `[0]["page_size"]` and at
   `[1]["page_size"]`, and a record names each entry the same way. A schema's own error, such as
-  `Expected number`, is Effect's, which reports the first failure it meets.
+  `Expected number`, is Effect's, which reports the first failure it meets. Where the side a value
+  was given on refuses it, that side's own error names the field, under the name the caller gave. A
+  renamed field that error does not explain is left out, because the other side's reading of the
+  whole value loses it even where it is valid. [Limits](./limits.md#read-a-refusal-message) lists
+  each message.
 
 ### Where it applies
 
@@ -266,8 +270,9 @@ the names of two renamed fields, is a `SchemaError`. Which field it names depend
   `The schema cannot keep this field with the rest of the value at ["B"]`.
 - With required fields, it is `Missing key at ["b"]`, the decoded name the caller did not use. The
   value fits neither side, so the decoded side's error is reported, and on that side `b` is missing.
-  The same goes for a wire-named value the encoded side refuses, such as `{ page_size: "many" }`
-  under a required `limit`, which reports `Missing key at ["limit"]`.
+  A wire-named value the encoded side refuses, in an object that gives no decoded name, reports that
+  side's own error instead: `{ page_size: "many" }` under a required `limit` reports
+  `Expected a finite number at ["page_size"]`.
 
 ```ts
 import { Schema } from "effect";

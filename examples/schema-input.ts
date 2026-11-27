@@ -43,7 +43,8 @@ const outcome = async (
   const { _tag, message } = error as { _tag: string; message: string };
   return `${_tag}: ${message.replace(/\n\s*/g, " ")}`;
 };
-const kept = "The schema cannot keep this field with the rest of the value";
+const bothNames =
+  'This field is given under both "limit" and "page_size"; give it under one name';
 
 assert.equal(
   await outcome(Request.compile(sendPage, { body: { limit: 5, count: "3" } })),
@@ -56,7 +57,7 @@ assert.equal(
       body: { page_size: "5", count: 3 } as never,
     }),
   ),
-  'SchemaError: Missing key at ["limit"]',
+  'SchemaError: Expected string at ["count"]',
 );
 assert.equal(
   await outcome(
@@ -64,13 +65,13 @@ assert.equal(
       body: { limit: 5, page_size: "5", count: 3 },
     }),
   ),
-  `SchemaError: ${kept} at ["page_size"]`,
+  `SchemaError: ${bothNames} at ["page_size"]`,
 );
 assert.equal(
   await outcome(
     Request.compile(sendPage, { body: { page_size: "many", count: "3" } }),
   ),
-  'SchemaError: Missing key at ["limit"]',
+  'SchemaError: Expected a finite number at ["page_size"]',
 );
 const OptionalPage = Schema.Struct({
   limit: Schema.optionalKey(Schema.FiniteFromString),
@@ -79,7 +80,7 @@ assert.equal(
   await outcome(
     Request.compile(json(OptionalPage), { body: { page_size: "many" } }),
   ),
-  `SchemaError: ${kept} at ["page_size"]`,
+  'SchemaError: Expected a finite number at ["page_size"]',
 );
 assert.equal(
   await outcome(
@@ -87,7 +88,7 @@ assert.equal(
       body: [{ limit: 5 }, { page_size: "6" }],
     }),
   ),
-  `SchemaError: ${kept} at [1]["page_size"]`,
+  'SchemaError: The items of this field\'s list or record use different sides; give every item on one side at [1]["page_size"]',
 );
 assert.equal(
   await outcome(
@@ -187,7 +188,7 @@ assert.equal(
       body: map,
     }),
   ),
-  `SchemaError: ${kept} at ["note"]`,
+  'SchemaError: The schema cannot keep this Map as a record at ["note"]',
 );
 assert.equal(
   await outcome(Request.compile(note(Schema.Unknown), { body: map })),

@@ -404,22 +404,19 @@ decoded names each value can still be on either side. Once a renamed field appea
 name, the whole object is read as encoded, so every field, with everything inside it, must then be
 encoded. With `limit` written as `page_size` and both fields from `Schema.FiniteFromString`:
 
-| The caller gives                         | The request carries or fails with                                               |
-| ---------------------------------------- | ------------------------------------------------------------------------------- |
-| `{ limit: 5, count: "3" }`               | `{"page_size":"5","count":"3"}`                                                 |
-| `{ page_size: "5", count: "3" }`         | The same                                                                        |
-| `{ page_size: "5", count: 3 }`           | `Missing key at ["limit"]`                                                      |
-| `{ limit: 5, page_size: "5", count: 3 }` | `The schema cannot keep this field with the rest of the value at ["page_size"]` |
+| The caller gives                         | The request carries or fails with                                                                 |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `{ limit: 5, count: "3" }`               | `{"page_size":"5","count":"3"}`                                                                   |
+| `{ page_size: "5", count: "3" }`         | The same                                                                                          |
+| `{ page_size: "5", count: 3 }`           | `Expected string at ["count"]`                                                                    |
+| `{ limit: 5, page_size: "5", count: 3 }` | `This field is given under both "limit" and "page_size"; give it under one name at ["page_size"]` |
 
 Supplying both names of one field refuses, even where the two agree. A value under a wire name that
-the encoded side refuses reports differently by field. With required fields,
-`{ page_size: "many", count: "3" }` fails with `Missing key at ["limit"]`, naming the decoded name
-the caller did not use: the value fits neither side, and the decoded side's error is reported. With
-an optional field, it fails with
-`The schema cannot keep this field with the rest of the value at ["page_size"]`. The items of a list
-share one side as well. The [input reference](../schema-input.md#what-will-be-sent) gives more
-cases, and [Preservation and selection](../schema-input.md#preservation-and-selection) explains
-strict reading.
+the encoded side refuses fails with that side's own error, at the name the caller gave:
+`{ page_size: "many", count: "3" }` fails with `Expected a finite number at ["page_size"]`, whether
+the field is required or optional. The items of a list share one side as well. The [input
+reference](../schema-input.md#what-will-be-sent) gives more cases, and [Preservation and
+selection](../schema-input.md#preservation-and-selection) explains strict reading.
 
 #### Under a union
 

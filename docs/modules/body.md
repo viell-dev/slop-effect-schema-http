@@ -140,16 +140,16 @@ choice decides what is converted and how a refusal reads:
 
 <<< ../../examples/modules/body.ts#free-form
 
-| Value in the field           | `Schema.Any`, or `Body.json`                | `Schema.Unknown`                   | `Schema.Record(String, Unknown)`                                                                         |
-| ---------------------------- | ------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| JSON values                  | Written                                     | Written                            | Written                                                                                                  |
-| A `Date`, at any depth       | ISO text, through its `toJSON`              | `Expected JSON value` at the field | As the field: `The schema cannot keep this field …`; deeper: `Expected JSON value` at the record's field |
-| A class instance with fields | Its fields                                  | `Expected JSON value` at the field | Its fields                                                                                               |
-| `Option.some(1)`             | `{"_id":"Option","_tag":"Some","value":1}`  | `Expected JSON value` at the field | `{"value":1}`: its own fields, so the tag is lost                                                        |
-| A field set to `undefined`   | Left out                                    | `Expected JSON value` at the field | `Expected JSON value` at the record's field                                                              |
-| `NaN`, or a bigint           | `HttpBodyError` at its position             | `Expected JSON value` at the field | `Expected JSON value` at the record's field                                                              |
-| A `Map`                      | `HttpBodyError`: `cannot encode Map`        | `Expected JSON value` at the field | `The schema cannot keep this field …`                                                                    |
-| A `Uint8Array`               | `HttpBodyError`: `cannot encode Uint8Array` | `Expected JSON value` at the field | Its positions, as `{"0":1}`                                                                              |
+| Value in the field           | `Schema.Any`, or `Body.json`                | `Schema.Unknown`                   | `Schema.Record(String, Unknown)`                                                                                  |
+| ---------------------------- | ------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| JSON values                  | Written                                     | Written                            | Written                                                                                                           |
+| A `Date`, at any depth       | ISO text, through its `toJSON`              | `Expected JSON value` at the field | As the field: `The schema cannot keep this Date as a record`; deeper: `Expected JSON value` at the record's field |
+| A class instance with fields | Its fields                                  | `Expected JSON value` at the field | Its fields                                                                                                        |
+| `Option.some(1)`             | `{"_id":"Option","_tag":"Some","value":1}`  | `Expected JSON value` at the field | `{"value":1}`: its own fields, so the tag is lost                                                                 |
+| A field set to `undefined`   | Left out                                    | `Expected JSON value` at the field | `Expected JSON value` at the record's field                                                                       |
+| `NaN`, or a bigint           | `HttpBodyError` at its position             | `Expected JSON value` at the field | `Expected JSON value` at the record's field                                                                       |
+| A `Map`                      | `HttpBodyError`: `cannot encode Map`        | `Expected JSON value` at the field | `The schema cannot keep this Map as a record`                                                                     |
+| A `Uint8Array`               | `HttpBodyError`: `cannot encode Uint8Array` | `Expected JSON value` at the field | Its positions, as `{"0":1}`                                                                                       |
 
 Use `Schema.Any` to let the JSON writer convert values through `toJSON`, such as a `Date` or an
 `Option`, and refuse what it cannot write with `HttpBodyError` at its exact position, such as
