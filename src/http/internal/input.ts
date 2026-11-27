@@ -229,6 +229,8 @@ const chooseReading = (
     let ambiguity: FieldlessOneOf | undefined;
     let first: Decoded<unknown> | undefined;
     let complete: Decoded<unknown> | undefined;
+    // Keep the first diagnostic, but let any provisional ambiguity trigger a loose read.
+    let provisional = false;
     const matches: Array<SchemaAST.AST> = [];
     for (const [index, reading] of readings.entries()) {
       const result = yield* enclosingUnion
@@ -237,6 +239,7 @@ const chooseReading = (
       if (result._tag === "Failure") {
         if (result.failure._tag === "FieldlessOneOf") {
           ambiguity ??= result.failure;
+          provisional ||= result.failure.afterAlternative === true;
         } else if (!keepMost || failure === undefined) {
           failure = result.failure;
         }
@@ -267,7 +270,8 @@ const chooseReading = (
       if (complete !== undefined) return afterAmbiguity(complete, ambiguity);
       return yield* failure === undefined &&
       most === undefined &&
-      first === undefined
+      first === undefined &&
+      !provisional
         ? ambiguity
         : afterAlternative(ambiguity);
     }
@@ -613,14 +617,21 @@ const decodedReading = <S extends Schema.Top>(
     // The constructor runs again over each part's result. Strictly, a union there keeps the member
     // the part was read by instead of taking an earlier one that strips it; loosely, as Effect would.
     // A part that was not checked does not turn that off for the others.
+    // A part read as given keeps its undefined-valued keys. Read strictly again here, they make
+    // members of an inner oneOf fail, and the one left would join an enclosing oneOf's count. The
+    // part's own reading already settled that count, so the loose constructor decides.
     const value = yield* isKeyed(given)
-      ? recoverRead(
+      ? Effect.catch(
           make(
             { ...(withoutFields(given, read) as object), ...fieldParts },
             { ...parseOptions, onExcessProperty: "error" },
             input,
           ),
-          () => make(output, parseOptions, input),
+          (failure) =>
+            failure._tag === "FieldlessOneOf" &&
+            !changedAtAmbiguity(failure, given, input)
+              ? Effect.fail(failure)
+              : make(output, parseOptions, input),
         )
       : make(output, parseOptions, input);
     if (given !== undefined)

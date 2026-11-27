@@ -220,7 +220,7 @@ cases it is, and beside a Void it can also name a valid field next to the one at
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `The schema cannot keep this field with the rest of the value`                      | One of the cases above                                                                                              | Give each field one name, keep every item on one side, choose the union member that states the field, or convert the built-in to plain data |
 | `Missing key` at a decoded name the caller did not use                              | A required renamed field given under its wire name with a value the encoded side refuses, or beside a decoded value | Fix that value, or give the whole object on one side; elsewhere, the message means a required field was left out                            |
-| `Expected exactly one member to match`                                              | Multiple `oneOf` members match, or all enclosing members fail and an inner `oneOf` is ambiguous                     | Supply a value that only the intended member accepts, or use `anyOf` for first fit                                                          |
+| `Expected exactly one member to match`                                              | Multiple `oneOf` members match, or all enclosing members fail and an inner `oneOf` is ambiguous                     | Supply an unambiguous value, or use `anyOf` for first fit. For undefined-valued keys, see [#310][310].                                      |
 | `Expected void`                                                                     | A value other than `undefined`, `null`, `{}` or `[]` where only `Schema.Void` can take it                           | Leave the field empty, or add a union member that takes the value                                                                           |
 | `Expected JSON value`                                                               | A value under `Schema.Unknown`, or in a string-keyed record of it, that is not already JSON, such as a `Date`       | Convert it first, or use `Schema.Any` to let the JSON writer convert it                                                                     |
 | `The query field "…" must encode a scalar value or a list of scalar values`         | A query value that is an object other than a `Date`, a function, a symbol or a nested list                          | Encode the value to text, a number, a boolean or a `Date`, or a flat list of them                                                           |
@@ -230,6 +230,8 @@ cases it is, and beside a Void it can also name a valid field next to the one at
 | `Multipart body at $[…] …`, or `URL-encoded body at $[…] …`                         | A form value the form writer cannot send as an entry, such as a number or `null`                                    | Encode the value to text in the schema                                                                                                      |
 
 The [input reference](./schema-input.md#what-will-be-sent) gives the value behind each of these.
+
+[310]: https://github.com/viell-dev/slop-effect-schema-http/issues/310
 
 ## Report a defect
 

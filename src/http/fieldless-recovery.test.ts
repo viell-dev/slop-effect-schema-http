@@ -683,6 +683,23 @@ describe("an enclosing reader beside an opaque neighbour's stray key", () => {
   );
 
   it.effect(
+    "keeps the one reader of an undefined-valued key beside an encoded-side sibling and a stray key",
+    () =>
+      Effect.gen(function* () {
+        const U = oneOf(Filter, Schema.Void, B);
+        const contract = post(
+          Schema.Struct({ f: oneOf(U, Schema.Struct({})), o: Opaque, n: F }),
+        );
+        for (const f of [() => ({}), () => ({ zz: undefined })])
+          for (const neighbour of [clean, stray])
+            for (const n of ["5", 5])
+              expect(
+                yield* outcome(contract, { f: f(), o: neighbour(), n }),
+              ).toBe(`sent {"f":{},"o":${some},"n":"5"}`);
+      }),
+  );
+
+  it.effect(
     "retries a loose read on the normalized field before counting readers",
     () =>
       Effect.gen(function* () {
@@ -776,3 +793,208 @@ it.effect(
       }
     }),
 );
+
+describe("an enclosing union with a reader in a later member", () => {
+  for (const [name, members] of [
+    ["Filter beside Void", [Filter, Schema.Void]],
+    ["two optional-field structs", [Adef, B]],
+  ] as const) {
+    const U = oneOf(...members);
+    // First is ambiguous at f and has nothing else to try. The reader sits in a nested union.
+    const First = Schema.Struct({ f: U, o: Opaque, x: Schema.optionalKey(S) });
+    const M = Schema.Struct({ f: U, o: Opaque });
+    for (const [kname, K] of [
+      ["Unknown", Schema.Struct({ f: Schema.Unknown, o: Opaque })],
+      ["an empty struct", Schema.Struct({ f: Schema.Struct({}), o: Opaque })],
+    ] as const)
+      for (const [label, contract] of [
+        [
+          "nested anyOf, ambiguous member first",
+          Schema.Union([First, Schema.Union([M, K])]),
+        ],
+        [
+          "nested anyOf, ambiguous member last",
+          Schema.Union([Schema.Union([M, K]), First]),
+        ],
+        [
+          "nested oneOf, ambiguous member first",
+          Schema.Union([First, oneOf(M, K)]),
+        ],
+      ] as const)
+        it.effect(
+          `reads through the nested union's reader, ${name}, K holds f as ${kname}, ${label}`,
+          () =>
+            Effect.gen(function* () {
+              for (const neighbour of [clean, stray])
+                expect(
+                  yield* outcome(post(contract), { f: {}, o: neighbour() }),
+                  neighbour === stray ? "stray key" : "clean",
+                ).toBe(`sent {"f":{},"o":${some}}`);
+            }),
+        );
+
+    // A states f as the bare inner oneOf. Bm states it as an enclosing union whose other member
+    // reads {} on its encoded side.
+    const A = Schema.Struct({ f: U, o: Opaque });
+    for (const [label, Bm] of [
+      [
+        "anyOf",
+        Schema.Struct({ f: Schema.Union([U, EncodedOnly]), o: Opaque }),
+      ],
+      ["oneOf", Schema.Struct({ f: oneOf(U, EncodedOnly), o: Opaque })],
+    ] as const)
+      it.effect(
+        `reads f through the second member's own enclosing ${label}, ${name}`,
+        () =>
+          Effect.gen(function* () {
+            for (const contract of [
+              Schema.Union([A, Bm]),
+              Schema.Union([Bm, A]),
+              oneOf(A, Bm),
+              oneOf(Bm, A),
+            ])
+              for (const neighbour of [clean, stray])
+                expect(
+                  yield* outcome(post(contract), { f: {}, o: neighbour() }),
+                  neighbour === stray ? "stray key" : "clean",
+                ).toBe(`sent {"f":{},"o":${some}}`);
+          }),
+      );
+  }
+});
+
+describe("reassembling fields beside an encoded-side sibling", () => {
+  for (const [kname, K] of [
+    ["an empty struct", Schema.Struct({})],
+    ["Unknown", Schema.Unknown],
+    ["a record", Schema.Record(S, Schema.Unknown)],
+  ] as const)
+    it.effect(
+      `reads an undefined-valued key through K beside an encoded-side sibling, K is ${kname}`,
+      () =>
+        Effect.gen(function* () {
+          const U = oneOf(Filter, Schema.Void);
+          for (const enclosing of [oneOf(U, K), oneOf(K, U)]) {
+            // No sibling needs decoding: this already sends on 44725e4.
+            expect(
+              yield* outcome(post(Schema.Struct({ f: enclosing, n: F })), {
+                f: { zz: undefined },
+                n: 5,
+              }),
+            ).toBe('sent {"f":{},"n":"5"}');
+            expect(
+              yield* outcome(post(Schema.Struct({ f: enclosing, n: F })), {
+                f: { zz: undefined },
+                n: "5",
+              }),
+            ).toBe('sent {"f":{},"n":"5"}');
+            expect(
+              yield* outcome(
+                post(Schema.Struct({ f: enclosing, a: F, b: F })),
+                { f: { a: undefined }, a: "5", b: 6 },
+              ),
+            ).toBe('sent {"f":{},"a":"5","b":"6"}');
+          }
+        }),
+    );
+});
+
+it.effect(
+  "keeps a value that is not plain data out of the fieldless refusal beside a stray key",
+  () =>
+    Effect.gen(function* () {
+      class Empty {}
+      const contract = Schema.Struct({
+        f: oneOf(Filter, Schema.Void),
+        o: Opaque,
+      });
+      for (const neighbour of [clean, stray])
+        expect(
+          yield* outcome(post(contract), { f: new Empty(), o: neighbour() }),
+          neighbour === stray ? "stray key" : "clean",
+        ).toBe(`sent {"f":{"page_size":"25"},"o":${some}}`);
+    }),
+);
+
+it.effect(
+  "reports the sibling's failure after reading an unaccounted field on its decoded side",
+  () =>
+    Effect.gen(function* () {
+      // `constructor` is a name every object has, so this root is not accounted for. The whole
+      // decoder finds two encoded matches at f; f reads on its decoded side; n is what fails.
+      const contract = Schema.Struct({
+        f: oneOf(Adef, EncodedOnly),
+        n: F,
+        constructor: Schema.optionalKey(S),
+      });
+      expect(yield* outcome(post(contract), { f: {}, n: "5" })).toBe(
+        'SchemaError: Expected number\n  at ["n"]',
+      );
+    }),
+);
+
+describe("enclosing union limits", () => {
+  const U = oneOf(Filter, Schema.Void);
+  const M = Schema.Struct({ f: U });
+  const K = Schema.Struct({ f: Schema.Struct({}) });
+  const opaqueWithAlternative = post(
+    Schema.Struct({ f: Schema.Union([U, EncodedOnly]), o: Opaque }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/310
+  it.effect(
+    "currently writes null or an object depending on enclosing oneOf order",
+    () =>
+      Effect.gen(function* () {
+        const input = { f: { zz: undefined } };
+        expect(yield* outcome(post(oneOf(M, K)), input)).toBe(
+          'sent {"f":null}',
+        );
+        expect(yield* outcome(post(oneOf(K, M)), input)).toBe('sent {"f":{}}');
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/310
+  it.effect.fails(
+    "writes the object through the only reader in either enclosing oneOf order",
+    () =>
+      Effect.gen(function* () {
+        for (const contract of [oneOf(M, K), oneOf(K, M)]) {
+          expect(yield* outcome(post(contract), { f: { zz: undefined } })).toBe(
+            'sent {"f":{}}',
+          );
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/310
+  it.effect(
+    "currently writes null through Void beside an opaque neighbour's stray key",
+    () =>
+      Effect.gen(function* () {
+        const f = { page_size: undefined };
+        expect(yield* outcome(opaqueWithAlternative, { f, o: clean() })).toBe(
+          `sent {"f":{},"o":${some}}`,
+        );
+        expect(yield* outcome(opaqueWithAlternative, { f, o: stray() })).toBe(
+          `sent {"f":null,"o":${some}}`,
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/310
+  it.effect.fails(
+    "writes the object through the encoded reader beside a stray key",
+    () =>
+      Effect.gen(function* () {
+        for (const neighbour of [clean, stray]) {
+          expect(
+            yield* outcome(opaqueWithAlternative, {
+              f: { page_size: undefined },
+              o: neighbour(),
+            }),
+          ).toBe(`sent {"f":{},"o":${some}}`);
+        }
+      }),
+  );
+});
