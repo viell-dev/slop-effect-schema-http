@@ -1628,7 +1628,8 @@ const ownSome = (value: object): PropertyDescriptor | undefined => {
 /**
  * Whether the writer follows this codec into its Some's payload although preparation cannot find
  * that payload's schema on the wire, as it does for Effect's codecs over a plain payload. That holds
- * for a hand-written codec, a built-in one behind middleware, and Effect's JSON codec of a built-in
+ * for a hand-written codec whose encoder is a plain transformation (one that can omit the key is not
+ * followed, #364), a built-in one behind middleware, and Effect's JSON codec of a built-in
  * one where it rebuilds the payload, as it does for one holding a `Date` and for a suspended one.
  * Nothing leaves a key out of such a codec's Some.
  */

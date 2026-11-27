@@ -594,22 +594,23 @@ that keeps the whole value first. This includes a nested `Some` and a payload be
 an index-like name such as `"0"`. A plain transformation can expose the same payload schema directly
 or in a single-field struct for loose writing.
 
-Some codecs that unwrap a `Some` are followed only by the writer: a hand-written codec, a built-in
-one behind middleware, and an explicit `Schema.toCodecJson` of a built-in codec where it rebuilds
-the payload, as it does for a payload with a `Date` or `BigInt` field or a suspended payload.
-Preparation cannot tell what such a codec's encoder writes, so it leaves no key out of its `Some`,
-and a key no member of the payload states makes the strict attempt fail. Wherever the strict attempt
-fails, for that or another reason, such as a stray key in a sibling `Schema.Option` or a `limit` the
-wider member refuses, the relaxed read that follows is checked against what the caller gave: under a
-direct union, a same-tag union or a list, and inside a `Some` that a built-in codec reads. A stated
-field it lost is refused, naming the field. This needs the codec to be the only Option schema at its
-position, or to share its payload schema with the codecs beside it, as the limits below say. What
-the encoder writes from the read is its own: one that writes only `owner` sends only `owner`.
-`Body.jsonSchema` applies `Schema.toCodecJson` itself, so give it the built-in codec rather than its
-JSON form. Declare a hand-written codec's decoded side as `Schema.Option(Schema.toType(payload))`:
-over a payload with a renamed field, `Schema.Option(payload)` gives the codec two different payload
-types, which TypeScript rejects (TS2322), and at run time the payload is encoded twice, so `limit`
-can go with no error.
+Some codecs that unwrap a `Some` are followed only by the writer: a hand-written codec whose encoder
+writes a value in the field's place, a built-in one behind middleware, and an explicit
+`Schema.toCodecJson` of a built-in codec where it rebuilds the payload, as it does for a payload
+with a `Date` or `BigInt` field or a suspended payload. Preparation cannot tell what such a codec's
+encoder writes, so it leaves no key out of its `Some`, and a key no member of the payload states
+makes the strict attempt fail. Wherever the strict attempt fails, for that or another reason, such
+as a stray key in a sibling `Schema.Option` or a `limit` the wider member refuses, the relaxed read
+that follows is checked against what the caller gave: under a direct union, a same-tag union or a
+list, and inside a `Some` that a built-in codec reads. A stated field it lost is refused, naming the
+field. This needs the codec to be the only Option schema at its position, or to share its payload
+schema with the codecs beside it, as the limits below say. What the encoder writes from the read is
+its own: one that writes only `owner` sends only `owner`. `Body.jsonSchema` applies
+`Schema.toCodecJson` itself, so give it the built-in codec rather than its JSON form. Declare a
+hand-written codec's decoded side as `Schema.Option(Schema.toType(payload))`: over a payload with a
+renamed field, `Schema.Option(payload)` gives the codec two different payload types, which
+TypeScript rejects (TS2322), and at run time the payload is encoded twice, so `limit` can go with no
+error.
 
 Use decoded names inside a `Some` that an unwrapping codec reads. For a payload that writes `limit`
 as `page_size`, pass `Some({ limit: "5" })`. To supply the wire name, pass the encoded value
@@ -729,6 +730,11 @@ the schema does with it. These are the places where it cannot, and what happens 
   loose write even without a stray key. Choose the intended member directly or validate and supply
   the encoded representation
   ([#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312)).
+- A hand-written codec whose encoder can omit its key, a `transformOptional` as in
+  `OptionFromOptional`, is not followed by the writer. Beside a key no member states in its `Some`,
+  a same-tag union, a list of unions or a union inside another `Some` can lose `limit`, and a direct
+  union refuses. Use `Schema.OptionFromOptional`, or leave the key out
+  ([#364](https://github.com/viell-dev/slop-effect-schema-http/issues/364)).
 - Inside a `Some` that a hand-written codec, or another codec only the writer follows, reads, a
   nested Option codec, built-in or hand-written, can lose `limit` wherever the strict attempt fails:
   beside a key no member states in its own `Some`, and with none there, as where a sibling
