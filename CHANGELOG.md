@@ -58,11 +58,13 @@
   `{"held":{"a":"a","b":"keep"},"count":"2"}`, where 0.19.0 sent `{"held":{},"count":"2"}`, and a
   hand-written `Struct({ value: optionalKey(P) })` codec decoded to `Option(P)` sends what it writes
   ([#318](https://github.com/viell-dev/slop-effect-schema-http/issues/318)). A union of whole
-  structs can still refuse there, and under a `oneOf` whose other member reads `held` as a plain
-  struct a `None` now refuses as ambiguous where 0.19.0 sent `{"held":{}}`. Supply the enclosing
-  value and its siblings on their decoded side, or give the encoded payload or absence directly at
-  the Option's wire position. A rename on the enclosing struct or an ancestor can still let the
-  encoded read take the wrapper as the payload
+  structs can still refuse there, and under a `oneOf` that lists the Option's struct before one that
+  reads `held` as a plain struct, a `None` now refuses as ambiguous where 0.19.0 sent `{"held":{}}`;
+  in the other order it still sends that. Reading field by field runs the fields' decoders and
+  checks again after the whole read, as the other recovery routes do. Supply the enclosing value and
+  its siblings on their decoded side, or give the encoded payload or absence directly at the
+  Option's wire position. A rename on the enclosing struct or an ancestor can still let the encoded
+  read take the wrapper as the payload
   ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)).
 - Tell the author of a provider that writes bytes to refuse a header name that is not a token, and a
   NUL in a header value, as well as a carriage return or line feed
