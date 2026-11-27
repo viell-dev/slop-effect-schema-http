@@ -1043,6 +1043,47 @@ it("compares configured unwrapping codecs on the loose route", () => {
   );
 });
 
+// https://github.com/viell-dev/slop-effect-schema-http/issues/334
+it("compares a hand-written codec's read after a strict write, never what it writes", () => {
+  const payload = Either;
+  const handWritten = Schema.NullOr(payload).pipe(
+    Schema.decodeTo(
+      Schema.Option(payload),
+      SchemaTransformation.transform<
+        Option.Option<typeof payload.Type>,
+        typeof payload.Type | null
+      >({
+        decode: Option.fromNullOr,
+        encode: (value) => Option.getOrElse(value, () => null),
+      }),
+    ),
+  );
+  const schema = Schema.Struct({ held: handWritten });
+  const given = { held: Option.some({ a: "a", b: "b" }) };
+  const narrowed = { held: Option.some({ a: "a" }) };
+  expect(Excess.optionLoss(schema.ast, given, narrowed, {}, false)).toEqual([]);
+  expect(
+    Excess.optionLoss(schema.ast, given, narrowed, {}, false, {
+      writerOnlyCodecs: true,
+    }),
+  ).toEqual([["held", "value", "b"]]);
+  // What the read kept is not checked against what the codec wrote.
+  expect(
+    Excess.optionLoss(schema.ast, given, given, { held: {} }, false, {
+      writerOnlyCodecs: true,
+    }),
+  ).toEqual([]);
+  // Effect's own codecs keep the comparison their recognition gives.
+  const configured = Schema.Struct({
+    held: Schema.OptionFromOptionalNullOr(payload, { onNoneEncoding: null }),
+  });
+  expect(
+    Excess.optionLoss(configured.ast, given, narrowed, {}, false, {
+      writerOnlyCodecs: true,
+    }),
+  ).toEqual([]);
+});
+
 it("uses another written name when only one candidate shares its name", () => {
   const first = Schema.Struct({ code: Schema.String }).pipe(
     Schema.encodeTo(

@@ -594,6 +594,13 @@ that keeps the whole value first. This includes a nested `Some` and a payload be
 an index-like name such as `"0"`. A plain transformation can expose the same payload schema directly
 or in a single-field struct for loose writing.
 
+A hand-written codec that unwraps a `Some`, or a built-in one behind middleware, has no key left out
+of the `Some`, because preparation cannot tell what its encoder writes. A key no member of its
+payload states then makes the strict attempt fail, and the relaxed read that follows is checked
+against what the caller gave: under a direct union, a same-tag union or a list, and inside a `Some`
+that a built-in codec reads. A stated field it lost is refused, naming the field. What the encoder
+writes from the read is its own: one that writes only `owner` sends only `owner`.
+
 Use decoded names inside a `Some` that an unwrapping codec reads. For a payload that writes `limit`
 as `page_size`, pass `Some({ limit: "5" })`. To supply the wire name, pass the encoded value
 `{ page_size: "5" }` at the Option's position. If the decoded payload fails validation, the encoded
@@ -711,6 +718,11 @@ the schema does with it. These are the places where it cannot, and what happens 
   loose write even without a stray key. Choose the intended member directly or validate and supply
   the encoded representation
   ([#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312)).
+- Inside a `Some` that a hand-written codec reads, a nested Option codec, built-in or hand-written,
+  can lose `limit` where its own `Some` also holds a key no member states. The check after the
+  relaxed read follows the outer codec's decoded payload, where the nested codec reads as an opaque
+  `Schema.Option`. Leave unstated keys out of the inner `Some`, or use a built-in outer codec
+  ([#347](https://github.com/viell-dev/slop-effect-schema-http/issues/347)).
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
   guard for native Options follows visible schema nodes into the encoded side of Option codecs,
   including hand-written ones. It cannot see a wrapper read inside an opaque declaration or inside a
@@ -787,6 +799,15 @@ the schema does with it. These are the places where it cannot, and what happens 
   forces the original reading. If a narrower member on that route would lose a stated field,
   preparation can refuse at that field. Remove undeclared keys from the value blocking the strict
   attempt, or bind the member you intend to use.
+- Beside a key no member states in a `Some` that a hand-written codec reads, a stated field that a
+  built-in codec would keep is refused, because preparation cannot leave the key out without knowing
+  what the encoder writes. With `Choice` as above, `Some({ owner, limit, stray })` refuses at
+  `limit` under a same-tag union, a list of `Choice` or a `Choice` inside another `Some`
+  ([#334](https://github.com/viell-dev/slop-effect-schema-http/issues/334)). Under `Choice` itself,
+  a struct holding it, or such a codec beside a scalar or another codec, the refusal also names the
+  unstated key, and `Some({ owner, stray })` refuses at `stray`
+  ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)). Leave unstated keys out
+  of the `Some`, or use a built-in codec such as `OptionFromNullOr`.
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
   either binding order. Bounded [stacked-union
   recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;

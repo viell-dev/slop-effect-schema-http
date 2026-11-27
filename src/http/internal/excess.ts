@@ -1678,6 +1678,33 @@ const sourceAt = (
   return types.every(visit) ? source : undefined;
 };
 
+/**
+ * Whether a codec at a position unwraps a Some that only the writer follows, such as a hand-written
+ * one: its payload is found on the wire, but it is not recognised as one of Effect's codecs.
+ */
+const writerOnlyCodecAt = (types: ReadonlyArray<Ast>): boolean => {
+  const active = new Set<Ast>();
+  const visit = (type: Ast): boolean => {
+    if (isOptionDeclaration(type))
+      return (
+        optionSource(type, true) === undefined &&
+        writtenOptionSource(type) !== undefined
+      );
+    if (
+      type.encoding !== undefined ||
+      (type._tag !== "Union" && type._tag !== "Suspend") ||
+      active.has(type)
+    )
+      return false;
+    active.add(type);
+    const found =
+      type._tag === "Union" ? type.types.some(visit) : visit(type.thunk());
+    active.delete(type);
+    return found;
+  };
+  return types.some(visit);
+};
+
 const unwrappingOptions = new WeakMap<Ast, boolean>();
 const looseOptions = new WeakMap<Ast, boolean>();
 
@@ -1836,12 +1863,23 @@ export const optionLoss = (
   read: unknown,
   output: unknown,
   checkWrite: boolean,
-  /** Recognise configured codecs on the read, as the input's normalisation does. */
-  looseRead = checkWrite,
+  {
+    looseRead = checkWrite,
+    writerOnlyCodecs = false,
+  }: {
+    /** Recognise configured codecs on the read, as the input's normalisation does. */
+    readonly looseRead?: boolean;
+    /**
+     * Compare the read through a codec only the writer follows, as {@link writerOnlyCodecAt} finds
+     * one, where the write was strict too. What such a codec writes is never compared.
+     */
+    readonly writerOnlyCodecs?: boolean;
+  } = {},
 ): ReadonlyArray<Path> => {
   const lost: Path[] = [];
   const active = new Set<object>();
-  const mayContain = looseRead ? mayWriteUnwrappedOption : mayUnwrapOption;
+  const mayContain =
+    looseRead || writerOnlyCodecs ? mayWriteUnwrappedOption : mayUnwrapOption;
   interface Position {
     readonly path: Path;
     readonly inSome: boolean;
@@ -1875,9 +1913,14 @@ export const optionLoss = (
       const unwrapped = sourceAt(types, looseRead);
       // Codecs with different payloads competing here, and codecs followed by the writer, can
       // show what the read must hold without proving wire names. Schema.Option remains opaque
-      // even when its payload matches.
+      // even when its payload matches. A codec only the writer follows is compared so after a
+      // strict write too: nothing leaves a key out of its Some, so a stray key there always
+      // defeats the strict read, and the loose read can take a narrower member.
       const source =
-        unwrapped ?? (checkWrite ? sourceAt(types, true, true) : undefined);
+        unwrapped ??
+        (checkWrite || (writerOnlyCodecs && writerOnlyCodecAt(types))
+          ? sourceAt(types, true, true)
+          : undefined);
       const some = ownSome(given);
       if (source === undefined || some === undefined) return;
       visit(

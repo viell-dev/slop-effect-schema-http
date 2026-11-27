@@ -2251,6 +2251,234 @@ describe("configured and same-payload Option codecs read a Some as the built-in 
   );
 });
 
+// Preparation cannot tell what these encoders write, so it leaves no key out of their Somes.
+const fromNull = <S extends Schema.Top>(
+  payload: S,
+  encode: (value: Option.Option<S["Type"]>) => S["Type"] | null = (value) =>
+    Option.getOrElse(value, () => null),
+) =>
+  Schema.NullOr(payload).pipe(
+    Schema.decodeTo(
+      Schema.Option(Schema.toType(payload)),
+      SchemaTransformation.transform<
+        Option.Option<S["Type"]>,
+        S["Type"] | null
+      >({ decode: Option.fromNullOr, encode }),
+    ),
+  );
+const fromUndefined = <S extends Schema.Top>(payload: S) =>
+  Schema.UndefinedOr(payload).pipe(
+    Schema.decodeTo(
+      Schema.Option(Schema.toType(payload)),
+      SchemaTransformation.transform<
+        Option.Option<S["Type"]>,
+        S["Type"] | undefined
+      >({
+        decode: Option.fromUndefinedOr,
+        encode: (value) => Option.getOrElse(value, () => undefined),
+      }),
+    ),
+  );
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/334
+describe("a hand-written codec that unwraps a Some keeps or refuses its payload's fields", () => {
+  const TaggedOwner = Schema.TaggedStruct("A", Owner.fields);
+  const TaggedWide = Schema.TaggedStruct("A", Wide.fields);
+  const Tagged = Schema.Union([TaggedOwner, TaggedWide]);
+  const wide = { ...owner, limit: "l" };
+  const withStray = { ...wide, stray: "x" };
+  const ownerOnly = (value: typeof Owner.Type) => ({ owner: value.owner });
+
+  type Held = Schema.Codec<unknown, unknown>;
+  interface Position {
+    readonly held: Held;
+    readonly give: (payload: object) => unknown;
+    readonly sent: (payload: object) => unknown;
+    readonly limit: string;
+  }
+  /** A same-tag union, a list of unions, and a union inside another Some, each held by a codec. */
+  const positions = (held: {
+    readonly tagged: Held;
+    readonly list: Held;
+    readonly inner: Held;
+  }): ReadonlyArray<Position> => [
+    {
+      held: held.tagged,
+      give: (payload) => Option.some({ _tag: "A", ...payload }),
+      sent: (payload) => ({ _tag: "A", ...payload }),
+      limit: '["held"]["value"]["limit"]',
+    },
+    {
+      held: held.list,
+      give: (payload) => Option.some([payload]),
+      sent: (payload) => [payload],
+      limit: '["held"]["value"][0]["limit"]',
+    },
+    {
+      held: Schema.OptionFromNullOr(Schema.Struct({ inner: held.inner })),
+      give: (payload) => Option.some({ inner: Option.some(payload) }),
+      sent: (payload) => ({ inner: payload }),
+      limit: '["held"]["value"]["inner"]["value"]["limit"]',
+    },
+  ];
+  const through = (codec: (payload: Held) => Held, wideFirst = false) => {
+    const order = <A, B>(narrow: A, wider: B) =>
+      wideFirst ? ([wider, narrow] as const) : ([narrow, wider] as const);
+    const choice = Schema.Union(order(Owner, Wide));
+    return positions({
+      tagged: codec(Schema.Union(order(TaggedOwner, TaggedWide))),
+      list: codec(Schema.Array(choice)),
+      inner: codec(choice),
+    });
+  };
+  const codecs = [fromNull, fromUndefined] as const;
+  const send = ({ held, give }: Position, payload: object) =>
+    json(Schema.Struct({ held }), { held: give(payload) } as never);
+
+  it.effect(
+    "refuses a stated field a stray key costs, as a direct union does",
+    () =>
+      Effect.gen(function* () {
+        for (const codec of codecs) {
+          for (const position of through(codec)) {
+            const failure = yield* Effect.flip(send(position, withStray));
+            expect(failure.message).toContain(position.limit);
+            // The stray key is left out, as a key no member states.
+            expect(failure.message).not.toContain("stray");
+          }
+          const direct = yield* Effect.flip(
+            json(Schema.Struct({ held: codec(Filter) }), {
+              held: Option.some(withStray),
+            } as never),
+          );
+          expect(direct.message).toContain('["held"]["value"]["limit"]');
+        }
+      }),
+  );
+
+  it.effect("keeps every stated field the read keeps", () =>
+    Effect.gen(function* () {
+      for (const codec of codecs) {
+        for (const position of through(codec)) {
+          expect(yield* send(position, wide)).toEqual({
+            held: position.sent(wide),
+          });
+          expect(yield* send(position, { ...owner, stray: "x" })).toEqual({
+            held: position.sent(owner),
+          });
+        }
+        // With the wider member first, the read keeps `limit` and leaves out only the stray key.
+        for (const position of through(codec, true))
+          expect(yield* send(position, withStray)).toEqual({
+            held: position.sent(wide),
+          });
+      }
+    }),
+  );
+
+  it.effect(
+    "lets a narrowing encoder write what it writes and refuses what the read lost",
+    () =>
+      Effect.gen(function* () {
+        const narrowing = positions({
+          tagged: fromNull(
+            Tagged,
+            Option.match({
+              onNone: () => null,
+              onSome: (value) => ({ _tag: value._tag, owner: value.owner }),
+            }),
+          ),
+          list: fromNull(
+            Schema.Array(Filter),
+            Option.match({
+              onNone: () => null,
+              onSome: (items) => items.map(ownerOnly),
+            }),
+          ),
+          inner: fromNull(
+            Filter,
+            Option.match({ onNone: () => null, onSome: ownerOnly }),
+          ),
+        });
+        for (const position of narrowing) {
+          expect(yield* send(position, wide)).toEqual({
+            held: position.sent(owner),
+          });
+          const failure = yield* Effect.flip(send(position, withStray));
+          expect(failure.message).toContain(position.limit);
+        }
+        // A direct union, which already refused, gives the same results.
+        const direct = Schema.Struct({
+          held: fromNull(
+            Filter,
+            Option.match({ onNone: () => null, onSome: ownerOnly }),
+          ),
+        });
+        expect(yield* json(direct, { held: Option.some(wide) })).toEqual({
+          held: owner,
+        });
+        const failure = yield* Effect.flip(
+          json(direct, { held: Option.some(withStray) } as never),
+        );
+        expect(failure.message).toContain('["held"]["value"]["limit"]');
+      }),
+  );
+
+  const direct = Schema.Struct({ held: fromNull(Filter) });
+  const lone = { held: Option.some({ ...owner, stray: "x" }) } as never;
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/346
+  it.effect("currently refuses a lone stray key beside a direct union", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(json(direct, lone));
+      expect(failure.message).toContain('["held"]["value"]["stray"]');
+    }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/346
+  it.effect.fails("leaves out a lone stray key beside a direct union", () =>
+    Effect.gen(function* () {
+      expect(yield* json(direct, lone)).toEqual({ held: owner });
+    }),
+  );
+
+  const inside = [Schema.OptionFromNullOr(Filter), fromNull(Filter)].map(
+    (inner) => Schema.Struct({ held: fromNull(Schema.Struct({ inner })) }),
+  );
+  const nested = {
+    held: Option.some({ inner: Option.some(withStray) }),
+  } as never;
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/347
+  it.effect(
+    "currently loses a stated field in a codec inside a hand-written Some",
+    () =>
+      Effect.gen(function* () {
+        for (const schema of inside)
+          expect(yield* json(schema, nested)).toEqual({
+            held: { inner: owner },
+          });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/347
+  it.effect.fails(
+    "keeps or refuses a stated field in a codec inside a hand-written Some",
+    () =>
+      Effect.gen(function* () {
+        for (const schema of inside)
+          yield* Effect.match(json(schema, nested), {
+            onSuccess: (body) =>
+              expect(body).toEqual({ held: { inner: wide } }),
+            onFailure: (failure) =>
+              expect(failure.message).toContain(
+                '["held"]["value"]["inner"]["value"]["limit"]',
+              ),
+          });
+      }),
+  );
+});
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/299
 it.effect("refuses wrapper collisions at opaque Option positions", () =>
   Effect.gen(function* () {

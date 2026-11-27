@@ -237,7 +237,9 @@ The loose writer follows unwrapping codecs into the payload schema and its decod
 can also follow a plain transformation whose wire shape exposes the same payload schema directly or
 in a field of a single-field struct. Every union it reaches there can try a member that holds the
 whole payload, including beneath an index-like rename whose field names cannot be paired by
-position. The relaxed route checks what the read held. Output comparison uses candidate wire names
+position. The relaxed route checks what the read held. Through a codec that only the writer follows,
+such as a hand-written one, it does so on the decoded payload, after a strict write as well as a
+loose one, and it never compares what that codec wrote. Output comparison uses candidate wire names
 where they can be paired. An unpairable rename supplies no output evidence, and the writer can still
 select a wider member. A value that Void reads as nothing in place still holds its field.
 `Schema.Option(X)` uses Effect's own reading and member selection for its contents on every write
