@@ -247,11 +247,14 @@ fits, and a struct fits any object. Where the loose read's struct would strip th
 write takes the strict read instead, if what it writes keeps every field a member states. With
 `class Counted extends Schema.Class<Counted>("Counted")({ a: Schema.String }) { readonly reads = 1 }`
 and a struct `Filter` that states only `limit`, `Union([Filter, Counted])` sends a `Counted`
-instance as `{"a":"item"}` in either order. `reads`, which no member states, is left out. A field
-that `Schema.encodeKeys` renames, on the class or on a struct inside the instance, is kept under the
-name it is written as, so `Union([Filter, Counted.pipe(Schema.encodeKeys({ a: "A" }))])` sends
-`{"A":"item"}`. That name shows the field was written only where nothing else there can write it, as
-the [active limits](#active-limits-and-recovery) give.
+instance as `{"a":"item"}` in either order. `reads`, which no member states, is left out. An
+instance whose class 0.20.0 could not write as its fields, such as a `Schema.Error` or a
+`Schema.TaggedError`, is not taken that way: where its strict write fails, as where it holds a field
+no member states, it is refused, as on 0.19.0 and 0.20.0. A field that `Schema.encodeKeys` renames,
+on the class or on a struct inside the instance, is kept under the name it is written as, so
+`Union([Filter, Counted.pipe(Schema.encodeKeys({ a: "A" }))])` sends `{"A":"item"}`. That name shows
+the field was written only where nothing else there can write it, as the [active
+limits](#active-limits-and-recovery) give.
 
 ## Preservation and selection
 
@@ -852,10 +855,27 @@ the schema does with it. These are the places where it cannot, and what happens 
   array, report a `SchemaError`. So does such a record or codec, or a struct, that rebuilds a
   built-in, such as a `Map` or a `Date`, from its own fields, including a struct that reads a value
   given on the encoded side of an Option codec such as `OptionFromNullOr`. An empty struct keeps the
-  value as given. A struct refuses only where it is read on its own: beside a union of structs,
-  below a rename, through a suspension, with a constructor default, or as an `Option.some` payload,
-  a built-in can still be sent as `{}` or as the struct's defaults
-  ([#330](https://github.com/viell-dev/slop-effect-schema-http/issues/330)). Not covered: a symbol
+  value as given. A class, such as a `Schema.Error`, writes its own instance, or one it built from
+  plain data, as its fields, and another codec writes what it built from plain data as it chooses.
+  That holds where preparation reads the caller's value at that position. A value a class's fields
+  read from anything else, or a built-in a codec takes as its own, is compared as above. So is a
+  value built to pass a class's check, such as a `Date` given the class's prototype, or a `Map`, an
+  `Error` or a proxy that carries its marker. A value built from the class's own prototype that
+  holds what its instances hold, such as an `Error` given an Error class's prototype, cannot be told
+  from an instance and is written as the class writes its fields. A proxy of an Error class's
+  instance that holds none of its fields cannot be told from a proxy of a built-in, and is compared
+  as above. So a codec's own built-in is refused where its struct or record could have rebuilt what
+  the codec writes ([#374](https://github.com/viell-dev/slop-effect-schema-http/issues/374)). A
+  `Schema.Error` or `Schema.TaggedError` is still refused in a union with a struct, a record or
+  another class that could have built what it writes, and where preparation does not read the value
+  given there: its instance inside another instance kept as given, as in a recursive class's
+  instance, and its instance or plain data below a hand-written transformation
+  ([#350](https://github.com/viell-dev/slop-effect-schema-http/issues/350)). A struct refuses only
+  where it is read on its own: beside a union of structs, below a rename, through a suspension, with
+  a constructor default, or as an `Option.some` payload, a built-in can still be sent as `{}` or as
+  the struct's defaults ([#330](https://github.com/viell-dev/slop-effect-schema-http/issues/330)).
+  So can a built-in that a `Schema.Class` other than an Error class reads
+  ([#375](https://github.com/viell-dev/slop-effect-schema-http/issues/375)). Not covered: a symbol
   inside a declaration's type parameter, such as `Option(Record(…))`, `ReadonlyMap`, `Redacted` or
   `OptionFromNullOr`. A symbol key the schema declares is written as it chooses, and one at a
   class's root is stripped. See the [Body guide](./modules/body.md#text-json-and-finite-body-limits)
