@@ -4422,12 +4422,12 @@ remain under `artifacts/void-member-5e8d57e-*`.
   is still Void's, and `[]` is Void's when Void is first and `[]` otherwise. At `36a6188` the
   Void-first union sent Void's output for these objects and lists. Status: tested.
   - `[EXT-49q] ${binding} ${order} Void keeps an object or list whose contents decode to undefined`
-- **EXT-49r** Beside a valid alias the invalid `extra.a` still refuses before dispatch. The
-  message names `["extra"]` and the valid `["filter"]["page_size"]`, omitting `["extra"]["a"]`.
-  0.18.0 names both `["extra"]` and `["extra"]["a"]`, in member order, without naming the
-  valid alias. Both orders and both bindings still dispatch the valid control.
-  [#275](https://github.com/viell-dev/slop-effect-schema-http/issues/275). Status: defect.
-  - `[EXT-49r] currently a refusal names the outer invalid field and the valid alias beside it (${binding}, ${order})`
+- **EXT-49r** Beside a valid alias the invalid `extra.a` refuses before dispatch, and the message
+  names only `["extra"]["a"]`, with the member's own `Expected number`. It no longer names
+  `["extra"]` or the valid `["filter"]["page_size"]`, which the library's #311 fixed
+  ([#275](https://github.com/viell-dev/slop-effect-schema-http/issues/275)). Both orders and both
+  bindings still dispatch the valid control. Status: tested.
+  - `[EXT-49r] a refusal beside a Void names the member's own error at the invalid field, not the valid alias (${binding}, ${order})`
 - **EXT-49s** `Union([Array(Filter), Void])` in either order refuses invalid `"many"` and `null`
   with `Schema.SchemaError` and zero dispatch on the path and in JSON. Valid encoded, decoded and
   omitted aliases send `"5"`, `"5"` and `"25"`. The empty list keeps first-fit: `[]` array-first
@@ -4770,7 +4770,10 @@ through its same-origin proxy and imports the packed package.
 - **EXT-60** [#261](https://github.com/viell-dev/slop-effect-schema-http/issues/261). Open JSON
   records and ObjectKeyword refuse Map, Date and URL before rebuilding away their content, at the
   root, in a field or at a list index. Open query and header records refuse Date. A class
-  instance with own fields remains writable. Status: tested.
+  instance with own fields remains writable. Since
+  [#311](https://github.com/viell-dev/slop-effect-schema-http/pull/311) each refusal names the
+  built-in and what the schema would rebuild it as, such as `The schema cannot keep this Map as a
+  record`. Status: tested.
 - **EXT-61** [#262](https://github.com/viell-dev/slop-effect-schema-http/issues/262). A JSON refusal
   names the innermost lost list field, and a malformed second query pair names `$[1]` in both
   the cause and the top-level message since
@@ -4814,9 +4817,8 @@ The table counts only EXT-57–63. TypeScript assignability is checked separatel
 
 ### Retained mismatches on the 0.19 pin
 
-The current pins for EXT-49r are linked from its catalogue entry. They distinguish incorrect
-diagnostics from losing a supplied value. EXT-59's pins became ordinary tests with #293, EXT-30j's
-with #298 and EXT-49o's with #290. EXT-35j/o/t pin documented input limits. The original
+No 0.19 mismatch pins remain. EXT-49r's became ordinary tests with #311, EXT-59's with #293,
+EXT-30j's with #298 and EXT-49o's with #290. EXT-35j/o/t pin documented input limits. The original
 assertions at suite commit `208ed44` failed in 11 cases on the first Node run at `96e5163`, with
 the same case titles failing as in the historical standalone Node run below. The initial log is
 `artifacts/new-pin-initial-node.log`.
