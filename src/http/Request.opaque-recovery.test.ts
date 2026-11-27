@@ -3808,26 +3808,31 @@ describe("an invalid Some payload keeps its decoded error", () => {
           held,
         }) {}
         const none = Option.none();
-        for (const [box, given, other] of [
-          [Box, { held: none }, { held: { b: "ok" } }],
+        // Each shape with the wrapper given below it, where the wrapper is, and its payload.
+        for (const [box, given, wrapper, other] of [
+          [Box, { held: none }, '["held"]', { held: { b: "ok" } }],
           [
             Schema.Struct({ held: Schema.Array(held) }),
             { held: [none] },
+            '["held"][0]',
             { held: [] },
           ],
           [
             Schema.Struct({ held: Schema.Tuple([held]) }),
             { held: [none] },
+            '["held"][0]',
             { held: [null] },
           ],
           [
             Schema.Struct({ held: Schema.Record(Schema.String, held) }),
             { held: { k: none } },
+            '["held"]["k"]',
             { held: {} },
           ],
           [
             Schema.Struct({ held: Schema.Union([held, Schema.String]) }),
             { held: none },
+            '["held"]',
             { held: "s" },
           ],
           [
@@ -3835,6 +3840,7 @@ describe("an invalid Some payload keeps its decoded error", () => {
               Schema.encodeKeys({ held: "wire_held" }),
             ),
             { wire_held: none },
+            '["wire_held"]',
             { wire_held: null },
           ],
           // Swapped names: the codec's wire side is `other`.
@@ -3843,6 +3849,7 @@ describe("an invalid Some payload keeps its decoded error", () => {
               Schema.encodeKeys({ held: "other", other: "held" }),
             ),
             { other: none, held: 1 },
+            '["other"]',
             { other: null, held: 1 },
           ],
           // A pair that the inner rename cannot tell apart either.
@@ -3851,30 +3858,39 @@ describe("an invalid Some payload keeps its decoded error", () => {
               Schema.encodeKeys({ left: "1", right: "0" }),
             ),
             { "1": { held: none }, "0": { held: null } },
+            '["1"]["held"]',
             { "1": { held: null }, "0": { held: null } },
           ],
-          [Schema.suspend(() => Box), { held: none }, { held: null }],
+          [
+            Schema.suspend(() => Box),
+            { held: none },
+            '["held"]',
+            { held: null },
+          ],
           [
             Schema.Struct({ held: Schema.suspend(() => held) }),
             { held: none },
+            '["held"]',
             { held: null },
           ],
           [
             ClassRow.pipe(Schema.encodeKeys({ held: "wire_held" })),
             { wire_held: none },
+            '["wire_held"]',
             { wire_held: null },
           ],
         ] as const)
           for (const names of integerNames)
-            for (const row of [
-              { "1": given, "0": other },
-              { "1": other, "0": given },
-            ]) {
+            for (const at of ["1", "0"]) {
+              const row =
+                at === "1"
+                  ? { "1": given, "0": other }
+                  : { "1": other, "0": given };
               const failure = yield* Effect.flip(
                 json(ambiguousPair(box, names), { row, wire_n: "x" } as never),
               );
-              expect(failure.message).toContain(
-                'Expected no excess property\n  at ["wire_n"]',
+              expect(failure.message).toBe(
+                notHeld(`["row"]["${at}"]${wrapper}`),
               );
             }
         // A Some there was refused already, naming the caller's field; the refusal now names the
@@ -3969,9 +3985,7 @@ describe("an invalid Some payload keeps its decoded error", () => {
             wire_n: "x",
           } as never),
         );
-        expect(told.message).toContain(
-          'Expected no excess property\n  at ["wire_n"]',
-        );
+        expect(told.message).toBe(notHeld('["row"]["1"]["held"]'));
         expect(
           yield* json(unambiguous, {
             row: { left: { held: none }, right: "s" },
@@ -4017,11 +4031,7 @@ describe("an invalid Some payload keeps its decoded error", () => {
                 within({ [L]: { x: none }, [R]: { x: 1 } }) as never,
               ),
             );
-            expect(lost.message).toContain(
-              path === ""
-                ? 'Expected no excess property\n  at ["0"]'
-                : 'Expected no excess property\n  at ["wire_n"]',
-            );
+            expect(lost.message).toBe(notHeld(`${path}["${L}"]["x"]`));
           }
           // At the names themselves, a wrapper keeps the reading of the field written there.
           const atNames = Schema.Struct({
@@ -4034,9 +4044,7 @@ describe("an invalid Some payload keeps its decoded error", () => {
           const refused = yield* Effect.flip(
             json(atNames, { [L]: 1, [R]: none } as never),
           );
-          expect(refused.message).toContain(
-            'Expected no excess property\n  at ["0"]',
-          );
+          expect(refused.message).toBe(notHeld(`["${R}"]`));
           // A key that only the other field's decoded side states is left out, as Effect leaves it.
           const stated = Schema.Struct({
             left: Schema.suspend(() =>
@@ -4071,9 +4079,7 @@ describe("an invalid Some payload keeps its decoded error", () => {
                   { [at]: none, [other]: null } as never,
                 ),
               );
-              expect(failure.message).toContain(
-                'Expected no excess property\n  at ["0"]',
-              );
+              expect(failure.message).toBe(notHeld(`["${at}"]`));
             }
             for (const right of [any, Schema.toEncoded(any)])
               expect(
@@ -4152,7 +4158,7 @@ describe("an invalid Some payload keeps its decoded error", () => {
         );
         for (const [schema, value, path] of [
           [derived, { h: none }, '["h"]'],
-          [derived, { h: null, next: { h: none } }, '["h"]'],
+          [derived, { h: null, next: { h: none } }, '["next"]["h"]'],
           [
             Schema.Struct({ f: derived }) as unknown as typeof renamed,
             { f: { h: none } },
@@ -4161,31 +4167,29 @@ describe("an invalid Some payload keeps its decoded error", () => {
           [
             Schema.toCodecJson(integer) as unknown as typeof renamed,
             { "1": none, "0": "x" },
-            '["0"]',
+            '["1"]',
           ],
           [hand, { h: none, n: "x" }, '["h"]'],
           [
             besideRenamed(hand),
             { row: { h: none, n: "x" }, wire_n: "x" },
-            '["wire_n"]',
+            '["row"]["h"]',
           ],
           [
             besideRenamed(handOwn),
             { row: { h: { x: none } }, wire_n: "x" },
-            '["wire_n"]',
+            '["row"]["h"]["x"]',
           ],
           [
             besideRenamed(handNested),
             { row: { h: { inner: { x: none } } }, wire_n: "x" },
-            '["wire_n"]',
+            '["row"]["h"]["inner"]["x"]',
           ],
-          [handIntegers, { "1": none, "0": 1 }, '["0"]'],
+          [handIntegers, { "1": none, "0": 1 }, '["1"]'],
           [handIntegers, { "1": null, "0": Option.some(1) }, '["0"]'],
         ] as const) {
           const failure = yield* Effect.flip(json(schema, value as never));
-          expect(failure.message).toContain(
-            `Expected no excess property\n  at ${path}`,
-          );
+          expect(failure.message).toBe(notHeld(path));
         }
         for (const schema of [derived, hand]) {
           const failure = yield* Effect.flip(
@@ -4443,9 +4447,7 @@ describe("an invalid Some payload keeps its decoded error", () => {
         ).toEqual({ "0": { x: 1 }, "1": { x: {} } });
         // Paired by identity, the same value refuses.
         const failure = yield* Effect.flip(json(Tree, given as never));
-        expect(failure.message).toContain(
-          'Expected no excess property\n  at ["0"]',
-        );
+        expect(failure.message).toBe(notHeld('["1"]["x"]'));
       }),
   );
 
@@ -4593,18 +4595,22 @@ describe("an invalid Some payload keeps its decoded error", () => {
             }),
           ),
         );
-        for (const [schema, value, path] of [
-          [codec, Option.some(1), '["value"]'],
+        for (const [schema, value, message] of [
+          [
+            codec,
+            Option.some(1),
+            "The schema cannot keep the content of this value",
+          ],
           [
             Schema.Struct({ f: codec }),
             { f: Option.some(1) },
-            '["f"]["value"]',
+            notHeld('["f"]'),
           ],
         ] as const) {
           const failure = yield* Effect.flip(
             json(schema as typeof codec, value as never),
           );
-          expect(failure.message).toContain(`Expected object\n  at ${path}`);
+          expect(failure.message).toBe(message);
         }
       }),
   );
@@ -4628,23 +4634,23 @@ describe("an invalid Some payload keeps its decoded error", () => {
         }).pipe(renameRow);
         const schema = besideRenamed(Row);
         const none = Option.none();
-        for (const [within, row] of [
-          [schema, { l: { held: none, any: 1 }, r: "s" }],
+        for (const [within, row, path] of [
+          [schema, { l: { held: none, any: 1 }, r: "s" }, '["l"]["held"]'],
           [
             besideRenamed(DeepRow),
             { l: { inner: { held: none, any: 1 } }, r: "s" },
+            '["l"]["inner"]["held"]',
           ],
           [
             besideRenamed(Schema.Array(Row)),
             [{ l: { held: none, any: 1 }, r: "s" }],
+            '[0]["l"]["held"]',
           ],
         ] as const) {
           const failure = yield* Effect.flip(
             json(within, { row, wire_n: "x" } as never),
           );
-          expect(failure.message).toContain(
-            'Expected no excess property\n  at ["wire_n"]',
-          );
+          expect(failure.message).toBe(notHeld(`["row"]${path}`));
         }
         // Three renames deep, with a list between.
         const three = Schema.Struct({
@@ -4657,9 +4663,7 @@ describe("an invalid Some payload keeps its decoded error", () => {
             wire_m: "y",
           } as never),
         );
-        expect(deep.message).toContain(
-          'Expected no excess property\n  at ["wire_m"]',
-        );
+        expect(deep.message).toBe(notHeld('["s"]["row"][0]["l"]["held"]'));
         // A Some there was refused already, naming the caller's field; the refusal now names the
         // decoded field.
         const some = yield* Effect.flip(
@@ -4723,8 +4727,8 @@ describe("an invalid Some payload keeps its decoded error", () => {
               treeAbove(levels, { h: none, any: 1, kids: [] }) as never,
             ),
           );
-          expect(failure.message).toContain(
-            'Expected no excess property\n  at ["h"]',
+          expect(failure.message).toBe(
+            notHeld(`${'["kids"][0]'.repeat(levels)}["h"]`),
           );
         }
         const below = yield* Effect.flip(
@@ -4733,8 +4737,8 @@ describe("an invalid Some payload keeps its decoded error", () => {
             wire_n: "x",
           } as never),
         );
-        expect(below.message).toContain(
-          'Expected no excess property\n  at ["wire_n"]',
+        expect(below.message).toBe(
+          notHeld('["row"]["kids"][0]["kids"][0]["h"]'),
         );
         // An Option at `any` is that field's own value, and the encoded payload is kept.
         expect(
