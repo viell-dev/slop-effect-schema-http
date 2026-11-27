@@ -1136,3 +1136,64 @@ it("recognizes a native Option across suspension, encoding and recursive alterna
     expect(Excess.normalised([ast], input)).toBe(input);
   }
 });
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/275
+describe("Excess.refusal", () => {
+  const Wire = Schema.Struct({ page_size: Schema.String, b: Schema.String });
+  const failure = (value: unknown) =>
+    Effect.runSync(
+      Effect.flip(
+        Schema.decodeUnknownEffect(Wire)(value, {
+          errors: "all",
+          onExcessProperty: "error",
+          reportInput: true,
+        }),
+      ),
+    );
+  const message = (
+    paths: readonly [Excess.Path, ...ReadonlyArray<Excess.Path>],
+    causes?: ReadonlyArray<Excess.Cause>,
+  ) => Excess.refusal(Wire.ast, paths, causes).message;
+
+  it("names a field the schema cannot keep where nothing says why", () => {
+    expect(message([["page_size"]])).toBe(
+      'The schema cannot keep this field with the rest of the value\n  at ["page_size"]',
+    );
+    expect(message([[]])).toBe(
+      "The schema cannot keep the content of this value",
+    );
+  });
+
+  it("names a field with another reading's error, without its value", () => {
+    const value = { page_size: 5, b: "kept", extra: "stray-value" };
+    const error = failure(value);
+    // The reading reported its input, so Effect's own message shows the value.
+    expect(error.message).toContain("got 5");
+    const named = message(
+      [["page_size"]],
+      [Excess.failureCause(error, [Wire.ast], value)],
+    );
+    expect(named).toBe('Expected string\n  at ["page_size"]');
+    // A key the reading does not state says nothing of why a field is lost.
+    expect(
+      message([["extra"]], [Excess.failureCause(error, [Wire.ast], value)]),
+    ).toBe(
+      'The schema cannot keep this field with the rest of the value\n  at ["extra"]',
+    );
+  });
+
+  it("names the field the reading's error is inside", () => {
+    const Outer = Schema.Struct({ x: Wire });
+    const value = { x: { page_size: "kept", b: 7 } };
+    const error = Effect.runSync(
+      Effect.flip(Schema.decodeUnknownEffect(Outer)(value)),
+    );
+    expect(
+      Excess.refusal(
+        Outer.ast,
+        [["x"]],
+        [Excess.failureCause(error, [Outer.ast], value)],
+      ).message,
+    ).toBe('Expected string\n  at ["x"]["b"]');
+  });
+});
