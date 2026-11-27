@@ -2625,6 +2625,35 @@ describe("an invalid Some payload keeps its decoded error", () => {
         expect(
           yield* json(handSchema, { held: Option.none(), count: "2" } as never),
         ).toEqual({ held: {}, count: "2" });
+        // The fields are read again after the whole read, as on every recovery route.
+        let runs = 0;
+        const counted = Schema.String.pipe(
+          Schema.decodeTo(
+            Schema.Number,
+            SchemaTransformation.transformEffect({
+              decode: (value) =>
+                Effect.sync(() => {
+                  runs++;
+                  return Number(value);
+                }),
+              encode: (value) => Effect.succeed(String(value)),
+            }),
+          ),
+        );
+        const withPre = Schema.Struct({ pre: counted, ...schema.fields });
+        expect(
+          yield* json(withPre, { pre: "1", held, count: "2" } as never),
+        ).toEqual({ pre: "1", held: { a: "a", b: "keep" }, count: "2" });
+        expect(runs).toBe(2);
+        runs = 0;
+        yield* Effect.flip(
+          json(withPre, {
+            pre: "1",
+            held: Option.some({ a: 5, b: "keep" }),
+            count: "2",
+          } as never),
+        );
+        expect(runs).toBe(2);
         // An invalid payload and an invalid sibling still refuse.
         const invalid = yield* Effect.flip(
           json(schema, {
