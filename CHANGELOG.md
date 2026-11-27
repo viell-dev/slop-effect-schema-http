@@ -80,7 +80,8 @@
   its siblings on their decoded side, or give the encoded payload or absence directly at the
   Option's wire position. The same holds below a
   struct with renamed keys: with `held` renamed to `wire_held`, a `Some` or `None` given at
-  `wire_held`, or beside a renamed sibling or below a renamed ancestor on the encoded side, now
+  `wire_held`, or beside a renamed sibling or below a renamed ancestor on the encoded side,
+  including through a suspension, a nested rename or a list or union below that ancestor, now
   refuses where 0.19.0 sent `{"wire_held":{}}`, and a record payload there refuses where 0.19.0 sent
   `{"wire_held":{"value":{...}}}`. The refusal can read `Missing key` at the decoded name
   ([#313](https://github.com/viell-dev/slop-effect-schema-http/issues/313)); give the field on its
