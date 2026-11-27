@@ -127,14 +127,16 @@
   which calls the caller's own wire name excess; it now reads
   `The schema cannot keep this field with the rest of the value at ["held"]`. The same holds for a
   wrapper under a renamed field's wire name, below a renamed parent, and in a parent, a list, a
-  record or a union, at the wrapper's own path. The earlier text came from the library's strict
-  read, whose options Effect also gives the schema's own steps, and no reading with the request's
-  own options reads such a value, so the wrapper is named without reading anything again. Where the
+  record or a union, at the wrapper's own path. A valid `None` elsewhere in the value, such as in a
+  `Schema.Option` field, is not named, and a wrapper held behind an accessor, which the library does
+  not run to find it, names the whole value. The earlier text came from the library's strict read,
+  whose options Effect also gives the schema's own steps, and no reading with the request's own
+  options reads such a value, so the wrapper is named without reading anything again. Where the
   encoded payload cannot take the wrapper, as with `OptionFromNullOr(Struct({ a: Number }))`, the
   request's own reading still reports `Missing key at ["n"]`. Every request that refused still
   refuses before dispatch with the same error class, every request that sent sends the same bytes,
-  and a schema's decoders, checks and defaults run as often as on 0.20.0. Code that matches the text
-  of these refusals needs updating.
+  and this change does not alter how often a schema's decoders, checks and defaults run. Code that
+  matches the text of these refusals needs updating.
 
 ## 0.20.0 — 2026-11-27
 

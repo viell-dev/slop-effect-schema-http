@@ -34,6 +34,13 @@ const json = <S extends Schema.Top>(schema: S, value: Inputs.Input<S>) =>
 /** The library's own message for a field it cannot keep with the rest of the value. */
 const notHeld = (path: string) =>
   `The schema cannot keep this field with the rest of the value\n  at ${path}`;
+/** `held` beside these fields and `n`, written as `wire_n`, which puts the value on its encoded side. */
+const besideWireN = <F extends Schema.Struct.Fields>(fields: F) =>
+  Schema.Struct({
+    held: Schema.OptionFromNullOr(Schema.Any),
+    n: Schema.String,
+    ...fields,
+  }).pipe(Schema.encodeKeys({ n: "wire_n" }));
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/143
 describe("visible unions beside opaque fields", () => {
@@ -2646,6 +2653,167 @@ describe("an invalid Some payload keeps its decoded error", () => {
           json(struct, { held: Option.some({ a: 1 }), wire_n: "x" } as never),
         );
         expect(failure.message).toBe('Missing key\n  at ["n"]');
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/351
+  it.effect(
+    "names only the wrapper a reader took, though every None is one object",
+    () =>
+      Effect.gen(function* () {
+        // `Option.none()` is one object, but none of these places reads a wrapper as a wire value:
+        // Schema.Option keeps its own on both sides, and Schema.Any reads nothing inside.
+        const layouts = [
+          [
+            besideWireN({ other: Schema.Option(Schema.String) }),
+            (inner: Option.Option<string>) => ({ other: inner }),
+          ],
+          [
+            besideWireN({ tags: Schema.Array(Schema.Option(Schema.String)) }),
+            (inner: Option.Option<string>) => ({
+              tags: [inner, Option.some("a"), inner],
+            }),
+          ],
+          [
+            besideWireN({ meta: Schema.Any }),
+            (inner: Option.Option<string>) => ({ meta: { flag: inner } }),
+          ],
+          [
+            besideWireN({
+              other: Schema.Union([
+                Schema.OptionFromNullOr(Schema.String),
+                Schema.Option(Schema.String),
+              ]),
+            }),
+            (inner: Option.Option<string>) => ({ other: inner }),
+          ],
+        ] as const;
+        for (const [schema, beside] of layouts)
+          for (const held of [Option.none(), Option.some({ a: 1 })])
+            for (const inner of [Option.none(), Option.some("b")]) {
+              const failure = yield* Effect.flip(
+                json(
+                  schema as never,
+                  {
+                    held,
+                    wire_n: "x",
+                    ...beside(inner),
+                  } as never,
+                ),
+              );
+              expect(failure.message).toBe(notHeld('["held"]'));
+            }
+        // Where another reader does take a None as its wire value, that place is named too.
+        const twoCodecs = yield* Effect.flip(
+          json(
+            besideWireN({
+              other: Schema.OptionFromNullOr(Schema.Any),
+              items: Schema.Array(Schema.OptionFromNullOr(Schema.Any)),
+            }),
+            {
+              held: Option.none(),
+              other: Option.none(),
+              items: [Option.none(), null],
+              wire_n: "x",
+            } as never,
+          ),
+        );
+        expect(twoCodecs.message).toBe(
+          [
+            notHeld('["held"]'),
+            notHeld('["other"]'),
+            notHeld('["items"][0]'),
+          ].join("\n"),
+        );
+        // A struct in a union can read a Some's own payload, so a wrapper taken there is named
+        // inside the Some that holds it.
+        const inside = yield* Effect.flip(
+          json(
+            besideWireN({
+              other: Schema.Union([
+                Schema.Struct({ value: Schema.OptionFromNullOr(Schema.Any) }),
+                Schema.OptionFromNullOr(Schema.Any),
+              ]),
+            }),
+            {
+              held: Option.none(),
+              other: Option.some(Option.some(1)),
+              wire_n: "x",
+            } as never,
+          ),
+        );
+        expect(inside.message).toBe(
+          [
+            notHeld('["held"]'),
+            notHeld('["other"]'),
+            notHeld('["other"]["value"]'),
+          ].join("\n"),
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/351
+  it.effect(
+    "names the whole value for a wrapper it cannot find without running an accessor",
+    () =>
+      Effect.gen(function* () {
+        const schema = besideWireN({
+          f: Schema.Struct({ other: Schema.OptionFromNullOr(Schema.Any) }),
+        });
+        // The decoder reads `other` through its accessor; finding where it was given would not.
+        const f = Object.defineProperty({}, "other", {
+          enumerable: true,
+          get: () => Option.some({ a: 2 }),
+        });
+        const alone = yield* Effect.flip(
+          json(schema, { held: null, f, wire_n: "x" } as never),
+        );
+        expect(alone.message).toBe(
+          "The schema cannot keep the content of this value",
+        );
+        // A wrapper found where it was given is named beside it, and neither is left out.
+        const beside = yield* Effect.flip(
+          json(schema, {
+            held: Option.some({ a: 1 }),
+            f,
+            wire_n: "x",
+          } as never),
+        );
+        expect(beside.message).toBe(
+          `${notHeld('["held"]')}\nThe schema cannot keep the content of this value`,
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/383
+  it.effect(
+    "currently names a valid None that Schema.Option reads before a codec that could take it",
+    () =>
+      Effect.gen(function* () {
+        const schema = besideWireN({
+          other: Schema.Union([
+            Schema.Option(Schema.String),
+            Schema.OptionFromNullOr(Schema.Any),
+          ]),
+        });
+        const none = yield* Effect.flip(
+          json(schema, {
+            held: Option.none(),
+            other: Option.none(),
+            wire_n: "x",
+          } as never),
+        );
+        expect(none.message).toBe(
+          `${notHeld('["held"]')}\n${notHeld('["other"]')}`,
+        );
+        const some = yield* Effect.flip(
+          json(schema, {
+            held: Option.none(),
+            other: Option.some("b"),
+            wire_n: "x",
+          } as never),
+        );
+        expect(some.message).toBe(notHeld('["held"]'));
       }),
   );
 
