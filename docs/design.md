@@ -149,9 +149,12 @@ strictly, or where it states every key the value holds and only its own parts ke
 being strict, as a class instance's own fields or an encoder that hands on a key do. An open member
 is tried in its place in the order, so it does not take a value an earlier member holds. Only where
 no member can is the union written as Effect writes it. A strict attempt is not proof that the
-member cannot write loosely, because Effect gives the write's options to the schema's own steps, so
-a member that holds every key is tried loosely before a later one that would drop a key it holds,
-and every member is tried loosely before the write fails.
+member cannot write loosely, because Effect gives the write's options to the schema's own steps. So
+where the member written as Effect writes drops a field the caller gave, a member that states every
+key is tried loosely in its place, and every such member is tried before the write fails. It may not
+write a field under a name the caller gave where the value holds nothing by that name. Under `oneOf`
+a dropping member does not count against it, and where two such members write the value the dropping
+write stands.
 
 These checks, and the relaxed write's below, run only where preparation can establish what the
 caller gave: on plain data, judged place by place. Plain data is a list whose prototype is

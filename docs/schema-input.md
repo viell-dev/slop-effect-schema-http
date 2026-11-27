@@ -241,10 +241,17 @@ that holds the whole value: strictly, or loosely where that member states every 
 so a class instance's own fields do not push a value out of it. Only where no member can is the
 union written as Effect writes it, and a field that drops is refused. A step that reads the write's
 options, such as a filter that checks `onExcessProperty`, can fail a member's strict attempt though
-the member writes the value with the request's own options. So a member that holds every key is
-tried as Effect tries it before a later one that would drop a key it holds, and before the write
-fails, every member is. Where that write fails too, preparation writes what the fields' own readings
-give and refuses what they lose.
+the member writes the value with the request's own options. So where the member that writes the
+value as Effect does drops a field the caller gave, a member that states every key the value holds
+is tried in its place with the request's options, wherever it stands in the union, and before the
+write fails every such member is. That runs the member's steps once more, also where a stacked
+schema then takes the field. A constructor default the reading made is not the caller's, so a write
+that drops only one stands, and nothing runs again. A member tried this way does not write a field
+under a name the caller gave where the value holds nothing by that name, as where a constructor
+default stands in for a field given under another member's wire name; that field is refused. Under
+`oneOf`, a member that drops a field does not count against one that holds the value, as in the
+strict attempt, and where two members hold it the write that dropped the field stands. Where that
+write fails too, preparation writes what the fields' own readings give and refuses what they lose.
 
 A strict read takes a class instance by its class, but a loose read takes the first member that
 fits, and a struct fits any object. Where the loose read's struct would strip the instance, the
@@ -896,6 +903,13 @@ the schema does with it. These are the places where it cannot, and what happens 
   `Missing key at ["side"]`, though Effect reads it
   ([#335](https://github.com/viell-dev/slop-effect-schema-http/issues/335)). Give the value on its
   decoded side: `{ side: 42 }` sends `{"s":"42"}`.
+- Below a parent, a union whose member that holds the value fails its strict read on such a step is
+  read with the request's own options, and that reading takes the first member that fits. With
+  `whole = Struct({ a, b })`, `b` checked that way, and `narrow = Struct({ a })`,
+  `Struct({ f: Union([narrow, whole]) })` refuses `{ f: { a: "x", b: "y" } }` at `["f"]["b"]`, and
+  under `oneOf`, in either order, it reads `Expected exactly one member to match at ["f"]`
+  ([#335](https://github.com/viell-dev/slop-effect-schema-http/issues/335)). As the body itself, the
+  union sends `{"a":"x","b":"y"}`. Put the member that holds the value first in an any-of union.
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
   either binding order. Bounded [stacked-union
   recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;

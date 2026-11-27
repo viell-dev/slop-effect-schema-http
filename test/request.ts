@@ -63,6 +63,22 @@ export const refusesDecoding = <S extends Schema.Top>(
     (error) => error instanceof Schema.SchemaError,
   );
 
+/**
+ * A schema whose check refuses only under `onExcessProperty: "error"`, which no request uses. Effect
+ * gives a parse's options to the schema's own steps, so only preparation's strict attempts see it
+ * fail.
+ */
+export const strictOnlyCheck = <S extends Schema.Top>(
+  message: string,
+  schema: S,
+) =>
+  schema.check(
+    Schema.makeFilter(
+      (_value, _ast, options) =>
+        options.onExcessProperty !== "error" || message,
+    ),
+  );
+
 /** Whether Effect's constructor refuses a value with a schema issue, and nothing else. */
 export const refusesConstruction = (schema: Schema.Top, input: unknown) =>
   Effect.map(Effect.flip(schema.makeEffect(input)), SchemaIssue.isIssue);

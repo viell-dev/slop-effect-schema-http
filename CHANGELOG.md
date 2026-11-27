@@ -52,16 +52,42 @@
   `Record(String, Number)` whose key filter refuses only under `onExcessProperty: "error"`,
   `Union([keyed, Struct({ other: String })])` given `{ foo: 1 }` refused with that filter's
   strict-only failure and `Missing key at ["other"]`; it now sends `{"foo":1}`, as Effect's own
-  reading does. So does the member as a struct's field, renamed or not, and the union in a field, a
-  list or a record. Preparation writes a value strictly first, and a member whose strict attempt
-  failed for another reason than a key it would strip was never tried loosely. Now a member that
-  holds every key is tried loosely before a later one that would drop a key it holds, and before the
-  write fails, every member is, in Effect's order. A field the written value loses is still refused,
-  with the request's own errors, and under `oneOf` two members that both write the value read
-  `Expected exactly one member to match`, as Effect's own write does. Those extra attempts run a
-  member's steps once more on such writes, including the few that then send through another route. A
-  value given on its encoded side, under a wire name, still refuses where such a step fails only
-  under strict options, as the input reference's limits describe.
+  write does, and so does the member as a struct's field, renamed or not, and the union in a field,
+  a list or a record. With `whole = Struct({ a, b })`, `b` checked that way, and
+  `narrow = Struct({ a })`, `Union([whole, narrow])` and, as the body or a query,
+  `Union([narrow, whole])` and either order under `oneOf` now send `{ a: "x", b: "y" }` as given, as
+  they do with the check passing strictly. Preparation writes a value strictly first, and a member
+  whose strict attempt failed for another reason than a key it would strip was never tried with the
+  request's options. Now, where the member written as Effect writes drops a field the caller gave, a
+  member that states every key the value holds is tried that way in its place, and every such member
+  is tried before the write fails. Under `oneOf` a member that would drop a field does not count
+  against it, as in the strict attempt. A field the written value loses is still refused, with the
+  request's own errors: where two members hold a `oneOf` value and a third drops a field, the field
+  is refused with `Expected exactly one member to match`. Such a member never writes a constructor
+  default under a name the caller gave another field; that field is refused. Below a parent, where
+  the reading takes `narrow` first, and for a value given under a wire name, such a step still
+  refuses, as the input reference's limits describe.
+  `Request.query(Union([Struct({ a: keyed }), other]))` given `{ a: { foo: 1 } }` refused with a
+  `SchemaError`; the query writer now refuses its nested object with `InvalidRequest`.
+- **Breaking:** beside a stacked query or header schema, such a union now writes the value through
+  the member that holds it, where 0.20.0 wrote it through a later member that dropped a field the
+  stacked schema took ([#335](https://github.com/viell-dev/slop-effect-schema-http/issues/335)).
+  With `renamed = Struct({ a }).pipe(encodeKeys({ a: "A" }))`,
+  `Request.query(Union([whole, renamed]))` stacked with `Request.query(Struct({ b }))` and
+  `{ a: "x", b: "y" }` sent `?A=x&b=y` and now sends `?a=x&b=y`, as Effect's own write does; bound
+  after `Struct({ b })`, `Union([whole, narrow])` sent `?b=y&a=x` and now sends `?a=x&b=y`. Check a
+  server that reads such a field under the name only the dropping member wrote, or that reads the
+  parameters in order. Every request that sent still sends. Where the member written drops a field
+  the caller gave, or preparation cannot tell what the caller gave there, the members holding the
+  value are tried, and where no member writes, every holding member is, so their steps run once more
+  in each such loose write. That also happens on requests that send what they sent before: where the
+  stacked schema then takes the field, which is settled only after the union's write, and where the
+  loose write fails either way and another route writes the value. With
+  `Union([Struct({ title, code }), Struct({ title })])`, where `code`'s encoded side refuses `"x"`
+  and no step reads the options, stacked with `Struct({ code })`, `{ title: "a", code: "x" }` sends
+  `?title=a&code=x` as before and `title`'s encoder runs 6 times where it ran 4. A dropped field the
+  reading made, such as a constructor default, is not the caller's, so it adds no run and changes no
+  bytes.
 
 ## 0.20.1 — 2026-11-28
 
