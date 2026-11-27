@@ -1139,6 +1139,217 @@ describe("loose writes inside Some", () => {
       }),
   );
 
+  it.effect("leaves names inside Schema.Option to Effect on loose writes", () =>
+    Effect.gen(function* () {
+      const Ids = Schema.Struct({
+        id: Schema.String,
+        externalId: Schema.String,
+      }).pipe(Schema.encodeKeys({ id: "internal_id", externalId: "id" }));
+      const Swap = AB.pipe(Schema.encodeKeys({ a: "b", b: "a" }));
+      const Shift = Schema.Struct({
+        a: Schema.String,
+        b: Schema.optionalKey(Schema.String),
+      }).pipe(Schema.encodeKeys({ a: "b", b: "c" }));
+      const OnlyC = Schema.Struct({ b: Schema.String }).pipe(
+        Schema.encodeKeys({ b: "c" }),
+      );
+      const Titled = Schema.Struct({ title: Schema.String }).pipe(
+        Schema.encodeKeys({ title: "name" }),
+      );
+      const Named = Schema.Struct({ name: Schema.String, kind: Schema.String });
+      const Keyed = Schema.Struct({
+        m: Schema.Record(
+          Schema.String.pipe(
+            Schema.decodeTo(Schema.String, SchemaTransformation.snakeToCamel()),
+          ),
+          Schema.String,
+        ),
+        n: Schema.FiniteFromString,
+      });
+      const Blank = Schema.Struct({ a: Schema.String, n: Schema.String }).pipe(
+        Schema.decodeTo(
+          Schema.Struct({
+            a: Schema.String,
+            n: Schema.optionalKey(Schema.Finite),
+          }),
+          SchemaTransformation.transform({
+            decode: ({ a, n }) => (n === "" ? { a } : { a, n: Number(n) }),
+            encode: ({ a, n }) => ({ a, n: n === undefined ? "" : String(n) }),
+          }),
+        ),
+      );
+      const codec = A.pipe(
+        Schema.decodeTo(
+          AB,
+          SchemaTransformation.transform({
+            decode: ({ a }) => ({ a, b: "default" }),
+            encode: (value) => value,
+          }),
+        ),
+      );
+      for (const [payload, given, written] of [
+        [
+          Schema.Union([Schema.Struct({ externalId: Schema.String }), Ids]),
+          { id: "mine", externalId: "theirs" },
+          { externalId: "theirs" },
+        ],
+        [Schema.Union([A, Swap]), { a: "A", b: "B" }, { a: "A" }],
+        [Schema.Union([OnlyC, Shift]), { b: "A", c: "B" }, { c: "A" }],
+        [Schema.Union([Titled, Named]), { name: "n" }, { name: "n" }],
+        [Schema.Union([Named, Titled]), { name: "n" }, { name: "n" }],
+        [
+          Keyed,
+          { m: { page_size: "v" }, n: "5" },
+          { m: { page_size: "v" }, n: "5" },
+        ],
+        [Blank, { a: "a", n: "" }, { a: "a", n: "" }],
+      ] as const) {
+        const held = Schema.Option(payload);
+        const renamed = Schema.Struct({ held, who: Counted }).pipe(
+          Schema.encodeKeys({ held: "h" }),
+        );
+        const failingWrite = Schema.Struct({ held, codec });
+        const value = Option.some(given);
+        const expected = { _tag: "Some", value: written };
+        expect(yield* json(renamed, { held: value, who } as never)).toEqual({
+          h: expected,
+          who: writtenWho,
+        });
+        expect(
+          yield* json(failingWrite, {
+            held: value,
+            codec: { a: "a", b: "b" },
+          } as never),
+        ).toEqual({ held: expected, codec: { a: "a" } });
+      }
+    }),
+  );
+
+  it.effect(
+    "stops loose recovery at a tagged Option around an unwrapping codec",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.Option(
+          Schema.Struct({
+            n: Schema.FiniteFromString,
+            inner: Schema.OptionFromNullOr(Filter),
+          }),
+        );
+        const root = Schema.Struct({ held, who: Counted }).pipe(
+          Schema.encodeKeys({ held: "h" }),
+        );
+        expect(
+          yield* json(root, {
+            held: Option.some({ n: 5, inner: Option.some(wide) }),
+            who,
+          }),
+        ).toEqual({
+          h: { _tag: "Some", value: { n: "5", inner: owner } },
+          who: writtenWho,
+        });
+      }),
+  );
+
+  it.effect(
+    "keeps a tagged Option opaque inside an unwrapping codec's decoded projection",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.OptionFromNullOr(
+          Schema.Struct({
+            visible: Schema.OptionFromNullOr(Filter),
+            opaque: Schema.Option(Filter),
+          }),
+        );
+        const schema = Schema.Struct({ held, who: Counted });
+        const some = Option.some(wide);
+        expect(
+          yield* json(schema, {
+            held: Option.some({ visible: some, opaque: some }),
+            who,
+          }),
+        ).toEqual({
+          held: { visible: wide, opaque: { _tag: "Some", value: owner } },
+          who: writtenWho,
+        });
+      }),
+  );
+
+  it.effect(
+    "keeps Effect's loose selection beside an opaque Option alternative",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.OptionFromNullOr(
+          Schema.Struct({
+            inner: Schema.Union([Schema.Option(Filter), Schema.String]),
+          }),
+        );
+        const schema = Schema.Struct({ held, who: Counted, filter: Filter });
+        expect(
+          yield* json(schema, {
+            held: Option.some({ inner: Option.some(wide) }),
+            who,
+            filter: wide,
+          }),
+        ).toEqual({
+          held: { inner: { _tag: "Some", value: owner } },
+          who: writtenWho,
+          filter: wide,
+        });
+      }),
+  );
+
+  it.effect("compares caller names and values inside an unwrapping Some", () =>
+    Effect.gen(function* () {
+      for (const [payload, value, key] of [
+        [
+          Schema.Union([Owner, Page]),
+          { owner: "a", page_size: "5" },
+          "page_size",
+        ],
+        [
+          Schema.Union([
+            Owner,
+            Schema.Struct({ owner: Schema.String, n: Schema.FiniteFromString }),
+          ]),
+          { owner: "a", n: "5" },
+          "n",
+        ],
+      ] as const) {
+        const schema = Schema.Struct({
+          held: Schema.OptionFromNullOr(payload),
+          who: Counted,
+        }).pipe(Schema.encodeKeys({ held: "h" }));
+        const error = yield* Effect.flip(
+          json(schema, { held: Option.some(value), who } as never),
+        );
+        expect(error.message).toContain(`["held"]["value"]["${key}"]`);
+      }
+
+      for (const member of [
+        Schema.Struct({
+          value: A,
+          n: Schema.optionalKey(Schema.FiniteFromString),
+        }),
+        Schema.Struct({ value: A, n: Schema.optionalKey(Schema.String) }).pipe(
+          Schema.encodeKeys({ n: "N" }),
+        ),
+      ]) {
+        const held = Schema.OptionFromNullOr(
+          Schema.Union([member, Schema.Struct({ c: Schema.String })]),
+        );
+        const value = Option.some({ value: { a: "inner" }, a: "outer" });
+        expect(yield* json(Schema.Struct({ held }), { held: value })).toEqual({
+          held: { value: { a: "inner" } },
+        });
+        const schema = Schema.Struct({ held, who: Counted }).pipe(
+          Schema.encodeKeys({ held: "h" }),
+        );
+        const error = yield* Effect.flip(json(schema, { held: value, who }));
+        expect(error.message).toContain('["held"]["value"]["a"]');
+      }
+    }),
+  );
+
   it.effect(
     "keeps configured tagged and list payloads below a renamed parent",
     () =>

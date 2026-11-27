@@ -584,10 +584,9 @@ an index-like name such as `"0"`.
 Use decoded names inside a `Some` that an unwrapping codec reads. For a payload that writes `limit`
 as `page_size`, pass `Some({ limit: "5" })`. To supply the wire name, pass the encoded value
 `{ page_size: "5" }` at the Option's position. A field called `value` inside the payload belongs to
-the payload. At runtime, `Schema.Option(X)` can also read X's encoded names and values inside a
-`Some`. The typed input expects decoded contents. On a loose write, preparation can check that a
-supplied wire name still has its decoded field when a structural rename pairs those names. Other
-payloads follow Effect's own reading.
+the payload. `Schema.Option(X)` uses Effect's own reading and member selection for its contents on
+every write route. Effect can read X's encoded names and values from a `Some` at runtime, though the
+typed input expects decoded contents. A narrower member can drop a payload field without a refusal.
 
 ### The reading of Effect is tested, not checked at run time
 
@@ -670,13 +669,18 @@ the schema does with it. These are the places where it cannot, and what happens 
   `Union([Note, Title])` drops `meta` from a class instance.
 - A name every object has, such as `toString` or `__proto__`, is read as Effect reads it. A field
   given under both its names sends one of them where its wire name is such a name.
-- A relaxed read can still take a narrower member inside an opaque or ambiguous `Some` payload, for
-  example when a stray key defeats the strict read and competing codecs hide the payload. A loose
-  write can select a wider member for data that reaches it through an Option declaration. Data
-  already narrowed by the read, a class instance, or a custom writer can remain outside that
-  recovery. For example, `Union([OptionFromNullOr(Filter), Struct({ z: String })])` inside another
-  `Some` can take a narrower member of `Filter` on a loose write even when there is no stray key.
-  Choose the intended member directly or validate and supply the encoded representation
+- Inside `Schema.Option(X)`, Effect reads and selects a member of X on every write route. A narrower
+  member can drop a payload field. For example, a loose write through
+  `Schema.Option(Union([Struct({ owner }), Struct({ owner, limit })]))` can send
+  `Some({ owner: "b", limit: "l" })` as `{"_tag":"Some","value":{"owner":"b"}}`.
+- A relaxed read can take a narrower member inside an ambiguous `Some` payload, for example when a
+  stray key defeats the strict read and competing codecs hide the payload. A loose write can select
+  a wider member through an unwrapping codec. Data already narrowed by the read, a class instance,
+  or a custom writer can fall outside that recovery. Let
+  `Choice = Union([Struct({ owner: String }), Struct({ owner: String, limit: String })])`. Inside
+  another `Some`, `Union([OptionFromNullOr(Choice), Struct({ z: String })])` can lose `limit` on a
+  loose write even without a stray key. Choose the intended member directly or validate and supply
+  the encoded representation
   ([#305](https://github.com/viell-dev/slop-effect-schema-http/issues/305)).
 - After an invalid `Some` fails the decoded read, preparation can read the wrapper itself as an
   encoded struct whose fields are all optional. With

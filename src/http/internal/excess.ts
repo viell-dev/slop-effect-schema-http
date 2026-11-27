@@ -1089,7 +1089,7 @@ const optionalCopyOf = (source: Ast, payload: Ast): boolean =>
   );
 
 /** A schema for a native Option, including codecs whose payload is opaque here. */
-export const isOptionDeclaration = (ast: Ast): ast is SchemaAST.Declaration =>
+const isOptionDeclaration = (ast: Ast): ast is SchemaAST.Declaration =>
   ast._tag === "Declaration" &&
   (ast.annotations?.["representation"] as { readonly id?: string } | undefined)
     ?.id === "effect/schema/Option";
@@ -1110,57 +1110,141 @@ const statesOption = (types: ReadonlyArray<Ast>): boolean => {
   return types.some(visit);
 };
 
-/**
- * The schema of a native Some's payload where the source of its single encoding link exposes
- * that same payload directly. Effect's OptionFrom… codecs add nullish or optional cases around
- * the source and use its decoded projection as the Option declaration's only type parameter.
- * Keep the source itself for comparison, since it also states the payload's wire names.
- * Check the getter as well: a custom link between the same schemas can replace the payload.
- */
-const findOptionSource = (ast: Ast): Ast | undefined => {
+// Some built-in codecs close over their choice of None encoding. Compare those getters
+// with the installed Effect's own getters without invoking any of the schema's callbacks.
+const getterSource = (getter: object): string | undefined =>
+  "transform" in getter && typeof getter.transform === "function"
+    ? Function.prototype.toString.call(getter.transform)
+    : undefined;
+
+const optionGetters = (ast: Ast) => {
+  const transformation = ast.encoding?.[0]?.transformation;
+  if (transformation?._tag !== "Transformation") return undefined;
+  const { decode, encode } = transformation;
+  return [decode._tag, getterSource(decode), encode._tag, getterSource(encode)];
+};
+
+const additionalOptionGetters = [
+  Schema.OptionFromOptional(Schema.String).ast,
+  Schema.OptionFromOptionalNullOr(Schema.String, { onNoneEncoding: null }).ast,
+  Schema.OptionFromNullishOr(Schema.String).ast,
+].map(optionGetters);
+
+/** The single encoding link where a built-in codec exposes its Some payload. */
+const unwrappingLink = (
+  ast: Ast,
+  loose: boolean,
+): SchemaAST.Link | undefined => {
   if (
     !isOptionDeclaration(ast) ||
     ast.typeParameters.length !== 1 ||
     ast.encoding?.length !== 1
   )
     return undefined;
-  const { to, transformation } = ast.encoding[0];
+  const link = ast.encoding[0];
+  const { transformation } = link;
   if (transformation._tag !== "Transformation") return undefined;
   const { encode } = transformation;
-  const unwraps =
+  if (
     (encode._tag === "Transform" &&
       (encode.transform === Option.getOrNull ||
         encode.transform === Option.getOrUndefined)) ||
-    (encode._tag === "TransformOptional" &&
-      encode.transform === Option.flatten);
-  if (!unwraps) return undefined;
+    (encode._tag === "TransformOptional" && encode.transform === Option.flatten)
+  )
+    return link;
+  if (!loose) return undefined;
+  const getters = optionGetters(ast);
+  return additionalOptionGetters.some(
+    (known) =>
+      known?.every((item, index) => item === getters?.[index]) === true,
+  )
+    ? link
+    : undefined;
+};
+
+const onlyContent = (ast: Ast, allowEncoding = false): Ast | undefined => {
+  if (ast._tag !== "Union" || (!allowEncoding && ast.encoding !== undefined))
+    return undefined;
+  const content = ast.types.filter(
+    (member) => member._tag !== "Null" && member._tag !== "Undefined",
+  );
+  return content.length === 1 ? content[0] : undefined;
+};
+
+/** Find the same payload schema on the decoded side and under the unwrapping link. */
+const findOptionSource = (ast: Ast, loose: boolean): Ast | undefined => {
+  const link = unwrappingLink(ast, loose);
+  if (link === undefined || ast._tag !== "Declaration") return undefined;
   const payload = ast.typeParameters[0]!;
   const find = (source: Ast): Ast | undefined => {
     const decoded = SchemaAST.toType(source);
     if (decoded === payload || optionalCopyOf(decoded, payload)) return source;
-    if (source._tag !== "Union" || source.encoding !== undefined)
-      return undefined;
-    const content = source.types.filter(
-      (member) => member._tag !== "Null" && member._tag !== "Undefined",
-    );
-    return content.length === 1 ? find(content[0]!) : undefined;
+    const content = onlyContent(source);
+    return content === undefined ? undefined : find(content);
   };
-  return find(to);
+  return find(link.to);
 };
 
 const optionSources = new WeakMap<Ast, Ast | null>();
-const optionSource = (ast: Ast): Ast | undefined => {
-  const known = optionSources.get(ast);
+const looseOptionSources = new WeakMap<Ast, Ast | null>();
+const optionSource = (ast: Ast, loose = false): Ast | undefined => {
+  if (ast._tag !== "Declaration") return undefined;
+  const cache = loose ? looseOptionSources : optionSources;
+  const known = cache.get(ast);
   if (known !== undefined) return known ?? undefined;
-  const source = findOptionSource(ast);
-  optionSources.set(ast, source ?? null);
+  const source = findOptionSource(ast, loose);
+  cache.set(ast, source ?? null);
   return source;
+};
+
+const unwrapsOption = (ast: Ast): boolean =>
+  optionSource(ast, true) !== undefined;
+
+/**
+ * The JSON codec can rebuild the encoded payload and its suspensions separately from the Some's
+ * decoded projection. The writer can still follow the built-in link. Its source is used only to
+ * identify nested codecs while walking the decoded projection.
+ */
+export const writtenOptionSource = (
+  ast: SchemaAST.Declaration,
+): Ast | undefined => {
+  const link = unwrappingLink(ast, true);
+  if (link === undefined) return undefined;
+  const projected = ast.typeParameters[0]!;
+  const matched = optionSource(ast, true);
+  if (matched !== undefined) return matched;
+  let source: Ast | undefined = link.to;
+  while (source !== undefined) {
+    // Canonical JSON can put an encoding on the optional or nullish envelope itself.
+    const content: Ast | undefined = onlyContent(source, source === link.to);
+    if (
+      source._tag === projected._tag &&
+      (source._tag !== "Union" ||
+        projected._tag !== "Union" ||
+        (content?._tag !== "Union" &&
+          source.types.length === projected.types.length))
+    )
+      return source;
+    source = content;
+  }
+  return projected;
+};
+
+/** A union whose only object alternatives are opaque native Options. */
+export const choosesOpaqueOption = (ast: SchemaAST.Union): boolean => {
+  const opaqueOption = (type: Ast) =>
+    isOptionDeclaration(type) && unwrappingLink(type, true) === undefined;
+  return (
+    ast.encoding === undefined &&
+    ast.types.some(opaqueOption) &&
+    ast.types.every((type) => opaqueOption(type) || takesNoObject(type))
+  );
 };
 
 // OptionFromOptionalKey and its relatives can omit a wire key required on the decoded side.
 const isOptionFrame = (ast: Ast): boolean =>
   isStructural(ast) ||
-  (ast._tag === "Objects" && isKeyRename(ast, isOptionDeclaration));
+  (ast._tag === "Objects" && isKeyRename(ast, unwrapsOption));
 
 /** A native class may be constructed from a plain input using these fields. */
 const plainClassFrame = (ast: Ast): Ast | undefined =>
@@ -1246,31 +1330,27 @@ const ownSome = (value: object): PropertyDescriptor | undefined => {
     : undefined;
 };
 
-/**
- * One unwrapping codec, possibly beside scalars that cannot read the Some. For a decoded-only
- * comparison, Option declarations can instead agree on the same payload schema.
- */
+/** One unwrapping codec, possibly beside scalars that cannot read the Some. */
 const sourceAt = (
   types: ReadonlyArray<Ast>,
+  loose = false,
   decodedOnly = false,
 ): Ast | undefined => {
   const active = new Set<Ast>();
   let option: Ast | undefined;
   let source: Ast | undefined;
   const visit = (type: Ast): boolean => {
-    const payload =
-      decodedOnly && isOptionDeclaration(type)
-        ? type.typeParameters[0]
-        : optionSource(type);
+    const payload = optionSource(type, loose);
     if (payload !== undefined) {
+      const next = decodedOnly ? SchemaAST.toType(payload) : payload;
       if (
         option !== undefined &&
         option !== type &&
-        (!decodedOnly || source !== payload)
+        (!decodedOnly || source !== next)
       )
         return false;
       option = type;
-      source = payload;
+      source = next;
       return true;
     }
     if (
@@ -1290,14 +1370,14 @@ const sourceAt = (
 };
 
 const unwrappingOptions = new WeakMap<Ast, boolean>();
-const allOptions = new WeakMap<Ast, boolean>();
+const looseOptions = new WeakMap<Ast, boolean>();
 
-const containsOption = (ast: Ast, all: boolean): boolean => {
-  const cache = all ? allOptions : unwrappingOptions;
+const containsOption = (ast: Ast, loose: boolean): boolean => {
+  const cache = loose ? looseOptions : unwrappingOptions;
   const known = cache.get(ast);
   if (known !== undefined) return known;
-  const visit = all ? mayContainOption : mayUnwrapOption;
-  let found = all ? isOptionDeclaration(ast) : optionSource(ast) !== undefined;
+  const visit = (type: Ast) => containsOption(type, loose);
+  let found = optionSource(ast, loose) !== undefined;
   if (ast._tag === "Suspend") found = ast.encoding === undefined;
   if (!found) {
     const fields = plainClassFrame(ast);
@@ -1316,8 +1396,8 @@ const containsOption = (ast: Ast, all: boolean): boolean => {
 export const mayUnwrapOption = (ast: Ast): boolean =>
   containsOption(ast, false);
 
-/** Find Option declarations, including opaque codecs. */
-export const mayContainOption = (ast: Ast): boolean =>
+/** Find unwrapping codecs, including configured codecs supported on loose writes. */
+export const mayWriteUnwrappedOption = (ast: Ast): boolean =>
   containsOption(ast, true);
 
 /**
@@ -1410,31 +1490,9 @@ const optionNamesAlong = (side: SchemaAST.Objects) => {
   const links = side.encoding ?? [];
   // A hand-written rename can reorder index or symbol fields on the decoded side too.
   if (links.length > 0 && !keepsOrder(side)) return undefined;
-  const names = namesAlong(side, links, isOptionDeclaration);
+  const names = namesAlong(side, links, unwrapsOption);
   optionNames.set(side, names ?? null);
   return names;
-};
-
-/**
- * The decoded field corresponding to a wire name inside an opaque Some. A competing field can
- * make the name ambiguous, so use only an agreed rename.
- */
-const pairedReadName = (
-  sides: ReadonlyArray<Ast>,
-  key: PropertyKey,
-): PropertyKey | undefined => {
-  let paired: PropertyKey | undefined;
-  for (const side of sides) {
-    if (side._tag !== "Objects") continue;
-    const pairs = optionNamesAlong(side);
-    if (pairs === undefined) return undefined;
-    for (const [name, wire] of pairs) {
-      if (wire !== key) continue;
-      if (paired !== undefined && paired !== name) return undefined;
-      paired = name;
-    }
-  }
-  return paired;
 };
 
 /** Possible wire names for one field and whether another decoded name can write there too. */
@@ -1468,12 +1526,11 @@ export const optionLoss = (
 ): ReadonlyArray<Path> => {
   const lost: Path[] = [];
   const active = new Set<object>();
-  const mayContain = checkWrite ? mayContainOption : mayUnwrapOption;
+  const mayContain = checkWrite ? mayWriteUnwrappedOption : mayUnwrapOption;
   interface Position {
     readonly path: Path;
     readonly inSome: boolean;
     readonly writing: boolean;
-    readonly mayDecode: boolean;
   }
   const visit = (
     types: ReadonlyArray<Ast>,
@@ -1497,14 +1554,14 @@ export const optionLoss = (
     given: Record<PropertyKey, unknown>,
     value: unknown,
     written: unknown,
-    { path, inSome, writing, mayDecode }: Position,
+    { path, inSome, writing }: Position,
   ): void => {
     if (Option.isOption(given)) {
-      const unwrapped = sourceAt(types);
-      // A loose write can follow a read that already narrowed a configured Option's payload.
-      // The type parameter states decoded fields even if the wire payload cannot be paired.
+      const unwrapped = sourceAt(types, checkWrite);
+      // Competing unwrapping codecs can agree on what the read must hold without agreeing on
+      // wire names. Schema.Option remains opaque even when its payload matches.
       const source =
-        unwrapped ?? (checkWrite ? sourceAt(types, true) : undefined);
+        unwrapped ?? (checkWrite ? sourceAt(types, true, true) : undefined);
       const some = ownSome(given);
       if (source === undefined || some === undefined) return;
       visit(
@@ -1516,33 +1573,15 @@ export const optionLoss = (
           path: [...path, "value"],
           inSome: true,
           writing: writing && unwrapped !== undefined,
-          // Opaque Option declarations can decode the Some through their type parameter.
-          mayDecode:
-            mayDecode ||
-            (unwrapped === undefined &&
-              (SchemaAST.toType(source) !== source ||
-                SchemaAST.toEncoded(source) !== source)),
         },
       );
       return;
     }
     if (!isPlainData(given)) return;
-    const frames = structuralFrames(types, given);
-    const sides =
-      frames ??
-      (mayDecode
-        ? structuralFrames(types.map(SchemaAST.toType), given)
-        : undefined);
+    const sides = structuralFrames(types, given);
     if (sides === undefined) return;
     for (const key of keysOf(given)) {
-      const paired =
-        mayDecode && frames !== undefined
-          ? pairedReadName(frames, key)
-          : undefined;
-      const readKey = paired !== undefined && !has(value, key) ? paired : key;
-      const children = mayDecode
-        ? typesAt(sides, readKey)
-        : frameTypesAt(sides, key);
+      const children = frameTypesAt(sides, key);
       if (children.length === 0) continue;
       const expected = at(given, key);
       if (expected === undefined) continue;
@@ -1550,12 +1589,12 @@ export const optionLoss = (
         ...path,
         Array.isArray(given) ? (arrayIndex(key) ?? key) : key,
       ];
-      const decoded = at(value, readKey);
+      const decoded = at(value, key);
       // Void can read an empty value as undefined and still hold its field.
       if (
         decoded === undefined &&
         isObject(value) &&
-        readKey in value &&
+        key in value &&
         holdsNothing(expected)
       )
         continue;
@@ -1567,7 +1606,7 @@ export const optionLoss = (
       const omittedNone =
         Option.isOption(expected) &&
         Option.isNone(expected) &&
-        sourceAt(children) !== undefined;
+        sourceAt(children, checkWrite) !== undefined;
       // Value equality can distinguish an unchanged scalar from another field under its wire
       // name. A field codec with its own encoding may legitimately change that scalar.
       const directScalar =
@@ -1597,9 +1636,7 @@ export const optionLoss = (
       if (
         inSome &&
         (decoded === undefined ||
-          (!mayDecode &&
-            !isObject(expected) &&
-            !Object.is(decoded, expected)) ||
+          (!isObject(expected) && !Object.is(decoded, expected)) ||
           (mustWrite &&
             !omittedNone &&
             outputs.every((actual) => actual === undefined)))
@@ -1621,7 +1658,6 @@ export const optionLoss = (
           path: here,
           inSome,
           writing: mustWrite,
-          mayDecode,
         });
         if (lost.length === before) {
           firstLoss = undefined;
@@ -1637,7 +1673,6 @@ export const optionLoss = (
     path: [],
     inSome: false,
     writing: checkWrite,
-    mayDecode: false,
   });
   return lost;
 };
