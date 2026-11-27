@@ -464,6 +464,10 @@ const failsAtAmbiguity = (ambiguity: FieldlessOneOf, path: Excess.Path) =>
 const atField = (name: PropertyKey, failure: FieldlessOneOf) =>
   new FieldlessOneOf({ ...failure, path: [name, ...failure.path] });
 
+/** A field's own wrapper refusal, read on its own, at that field of the object holding it. */
+const wrapperAtField = (name: PropertyKey, refusal: OptionWrapperRead) =>
+  new OptionWrapperRead({ ...refusal, at: [name, ...refusal.at] });
+
 /**
  * A field's failure, read on its own, at that field of the object holding it. It is still that
  * reading's failure, so a {@link reporting} read's stays one. Today only readings with the caller's
@@ -616,6 +620,7 @@ const decodedReading = <S extends Schema.Top>(
                     }),
                   ),
                   wrappers,
+                  at: [],
                 }),
               )
             : Effect.succeed(value),
@@ -711,6 +716,8 @@ const decodedReading = <S extends Schema.Top>(
               {
                 FieldlessOneOf: (failure) =>
                   Effect.fail(atField(name, failure)),
+                OptionWrapperRead: (refusal) =>
+                  Effect.fail(wrapperAtField(name, refusal)),
                 SchemaError: (failure) =>
                   Effect.fail(failureAtField(name, failure)),
               },
@@ -794,7 +801,10 @@ const decodedReading = <S extends Schema.Top>(
    * Where the whole encoded read took a native Option wrapper, a struct's fields can each be read on
    * their own side, so the wrapper stays a decoded field's own value beside an encoded sibling. A
    * union keeps the refusal: read member by member, it would lose which member the whole value chose.
-   * Where the fields cannot be read either, the wrapper's refusal stands.
+   * Where the fields cannot be read either, the wrapper's refusal stands. A field's own wrapper
+   * refusal stands with only the wrappers that field's read took: the whole read's can include
+   * wrappers the other fields keep, and the fields after it are not read
+   * ([#387](https://github.com/viell-dev/slop-effect-schema-http/issues/387)).
    */
   const wrapperBesideFields = (
     input: unknown,
@@ -855,7 +865,7 @@ const decodedReading = <S extends Schema.Top>(
                 own._tag === "FieldlessOneOf"
                   ? atField(field.name, own)
                   : own._tag === "OptionWrapperRead"
-                    ? own
+                    ? wrapperAtField(field.name, own)
                     : afterAlternative(failure),
               ),
             onSuccess: (read) =>
@@ -951,7 +961,7 @@ const decodedReading = <S extends Schema.Top>(
         )
           return wrapperBesideFields(
             input,
-            new OptionWrapperRead({ failure, wrappers: refused.wrappers }),
+            new OptionWrapperRead({ ...refused, failure }),
             fields,
           );
         // A loose read can take another union member than a strict one and strip its names unseen.
@@ -1038,7 +1048,7 @@ const decodedReading = <S extends Schema.Top>(
               )
             : Effect.mapError(chosen, (error) =>
                 error._tag === "OptionWrapperRead"
-                  ? new OptionWrapperRead({ failure, wrappers: error.wrappers })
+                  ? new OptionWrapperRead({ ...error, failure })
                   : error,
               ),
           () =>
@@ -1218,8 +1228,8 @@ const decodedReading = <S extends Schema.Top>(
             : given === undefined
               ? Effect.catchTags(unaccounted(input, parseOptions), {
                   SchemaError: () => Effect.fail(failure),
-                  OptionWrapperRead: ({ wrappers }: OptionWrapperRead) =>
-                    Effect.fail(new OptionWrapperRead({ failure, wrappers })),
+                  OptionWrapperRead: (refusal: OptionWrapperRead) =>
+                    Effect.fail(new OptionWrapperRead({ ...refusal, failure })),
                 })
               : accounted(
                   input,
@@ -1566,24 +1576,27 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   /**
    * The strict pass's refusal of the native Options its decoder took as wire values, which no later
    * route reads again. It carries the strict constructor's failure, and no reading with the caller's
-   * own parse options runs on this route, so each wrapper is named where it was given, as one the
-   * schema cannot keep with the rest of the value. Only a place where a reader of the guarded schema
-   * notes wrappers counts, since every `None` is one object. A wrapper found nowhere, such as one
-   * behind an accessor, names the whole value.
+   * own parse options runs on this route, so each wrapper the refusing read took is named where it
+   * was given, as one the schema cannot keep with the rest of the value. Where a field's own read
+   * refuses, those are that field's wrappers only, found in that field, and another refused wrapper
+   * can go unnamed ([#387](https://github.com/viell-dev/slop-effect-schema-http/issues/387)). Only a
+   * place where a reader of the guarded schema notes wrappers counts, since every `None` is one
+   * object. A wrapper found nowhere, such as one behind an accessor, names the whole value.
    */
   const strictWrapperRefusal = (
     from: unknown,
-    { wrappers }: OptionWrapperRead,
+    refusal: OptionWrapperRead,
   ): OptionWrapperRead => {
     const places = Excess.placesOf(
       guardReading(guardVoids(ast)),
       from,
-      wrappers,
+      refusal.wrappers,
       notesWrapper,
+      refusal.at,
     );
     return new OptionWrapperRead({
+      ...refusal,
       failure: Excess.refusal(ast, Arr.isArrayNonEmpty(places) ? places : [[]]),
-      wrappers,
     });
   };
   /** A value a strict read took as it was, and why it cannot be written strictly. */

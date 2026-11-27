@@ -233,11 +233,15 @@ than sent without it, and the message says why where it can. In these examples `
   read's error. A valid `None` elsewhere in the value, such as in a `Schema.Option` field or inside
   `Schema.Any`, is not named, unless a union at its place has another member that could take it as a
   wire value, as `Union([Schema.Option(X), OptionFromNullOr(Schema.Any)])` does
-  ([#383](https://github.com/viell-dev/slop-effect-schema-http/issues/383)). A wrapper held behind
-  an accessor, which the library does not run to find it, names the whole value instead. Give `held`
-  its encoded payload, such as `{ a: 1 }` or `null`, or give `n` under its decoded name. Elsewhere
-  the request's own reading gives the message: with the payload `Struct({ a: Number })`, the same
-  value reads `Missing key at ["n"]`.
+  ([#383](https://github.com/viell-dev/slop-effect-schema-http/issues/383)). Where a field's own
+  read refuses a wrapper, as a list of `OptionFromNullOr(Schema.Any)` given `[Option.none(), null]`
+  does, only that field's wrappers are named; another refused wrapper such as `held` is named once
+  that field is fixed ([#387](https://github.com/viell-dev/slop-effect-schema-http/issues/387)).
+  Another error in such a value, such as a required field left out, is reported once the wrappers
+  are fixed. A wrapper held behind an accessor, which the library does not run to find it, names the
+  whole value instead. Give `held` its encoded payload, such as `{ a: 1 }` or `null`, or give `n`
+  under its decoded name. Elsewhere the request's own reading gives the message: with the payload
+  `Struct({ a: Number })`, the same value reads `Missing key at ["n"]`.
 - **A field beside a Void** that its union member refuses gets the member's own error, such as
   `Expected number at ["extra"]["a"]`. A wire-named field beside it that the reading read under its
   decoded name, such as `filter: { page_size: "05" }`, is not named.

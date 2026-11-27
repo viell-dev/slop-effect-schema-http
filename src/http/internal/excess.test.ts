@@ -396,6 +396,27 @@ describe("Excess.placesOf", () => {
     ).toEqual([[]]);
   });
 
+  it("finds a target only within the part that was read", () => {
+    const schema = guardReading(
+      Schema.Struct({
+        held: Schema.OptionFromNullOr(Schema.Any),
+        l: Schema.Array(Schema.OptionFromNullOr(Schema.Any)),
+      }).ast,
+    );
+    const value = { held: none, l: [null, none] };
+    expect(
+      Excess.placesOf(schema, value, new Set([none]), notesWrapper),
+    ).toEqual([["held"], ["l", 1]]);
+    expect(
+      Excess.placesOf(schema, value, new Set([none]), notesWrapper, ["l"]),
+    ).toEqual([["l", 1]]);
+    expect(
+      Excess.placesOf(schema, { held: none }, new Set([none]), notesWrapper, [
+        "l",
+      ]),
+    ).toEqual([[]]);
+  });
+
   it("runs no accessor, and names the whole value for a target behind one", () => {
     const value = Object.defineProperty({ other: none }, "held", {
       enumerable: true,
@@ -406,6 +427,45 @@ describe("Excess.placesOf", () => {
     expect(
       Excess.placesOf(reading, value, new Set([none]), notesWrapper),
     ).toEqual([[]]);
+  });
+
+  it("reads nothing where no reader takes a target or reads keys", () => {
+    let traps = 0;
+    const counted = new Proxy(
+      { flag: none },
+      {
+        get: (target, key, receiver) => {
+          traps++;
+          return Reflect.get(target, key, receiver) as unknown;
+        },
+        getOwnPropertyDescriptor: (target, key) => {
+          traps++;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+        getPrototypeOf: (target) => {
+          traps++;
+          return Reflect.getPrototypeOf(target);
+        },
+        ownKeys: (target) => {
+          traps++;
+          return Reflect.ownKeys(target);
+        },
+      },
+    );
+    const schema = Schema.Struct({
+      held: Schema.OptionFromNullOr(Schema.Any),
+      meta: Schema.Any,
+      name: text,
+    });
+    expect(
+      Excess.placesOf(
+        guardReading(schema.ast),
+        { held: none, meta: counted, name: counted },
+        new Set([none]),
+        notesWrapper,
+      ),
+    ).toEqual([["held"]]);
+    expect(traps).toBe(0);
   });
 });
 

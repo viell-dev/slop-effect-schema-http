@@ -1856,46 +1856,66 @@ const readersOf = (types: ReadonlyArray<Ast>): ReadonlyArray<Ast> => {
   return [...readers];
 };
 
+/** A struct, a record, a list or a tuple, which reads what a value holds under its keys. */
+const readsByKey = (ast: Ast): boolean =>
+  ast._tag === "Objects" || ast._tag === "Arrays";
+
 /**
- * Where a value read with `schema` holds any of these targets, at a place where one of its readers
- * `takes` it, and the whole value if a target is held nowhere this can see.
+ * Where a value read with `schema` holds any of these targets at or below `within`, at a place where
+ * one of its readers `takes` it, and the whole value if a target is held nowhere this can see.
  *
  * @remarks
  * Identity alone would not say where a target was read: `Option.none()` is one object, so every
  * `None` a value holds would be found. A place is found only where a reader there could have taken
- * the target, and the search stops where no schema reads the value further, as inside
- * `Schema.Any`. It goes through plain data and a native Some's own payload only, so it runs no
- * accessor, and searches an object held in several places at each of them. A list's cells are
- * named by their indexes.
+ * the target, and only within the part that was read. The search looks at a key only where a reader
+ * there takes a target or reads keys in turn, so it reads nothing inside `Schema.Any` or text. It
+ * goes through plain data and a native Some's own payload only, so it runs no accessor, and searches
+ * an object held in several places at each of them. A list's cells are named by their indexes.
  */
 export const placesOf = (
   schema: Ast,
   value: unknown,
   targets: ReadonlySet<unknown>,
   takes: (reader: Ast) => boolean,
+  within: Path = [],
 ): Array<Path> => {
   const places: Array<Path> = [];
   const found = new Set<unknown>();
   const active = new Set<object>();
-  const visit = (types: ReadonlyArray<Ast>, held: unknown, path: Path) => {
-    if (types.length === 0 || !isObject(held) || active.has(held)) return;
-    const readers = readersOf(types);
-    if (targets.has(held) && readers.some(takes)) {
-      places.push(path);
+  const path: Array<PropertyKey> = [];
+  const visit = (readers: ReadonlyArray<Ast>, held: unknown) => {
+    if (!isObject(held) || active.has(held)) return;
+    const depth = path.length;
+    if (depth >= within.length && targets.has(held) && readers.some(takes)) {
+      places.push([...path]);
       found.add(held);
     }
-    if (!isPlainData(held) && ownSome(held) === undefined) return;
+    const containers = readers.filter(readsByKey);
+    if (
+      containers.length === 0 ||
+      (!isPlainData(held) && ownSome(held) === undefined)
+    )
+      return;
     active.add(held);
     const list = Array.isArray(held);
-    for (const key of Reflect.ownKeys(held))
-      if (Object.prototype.propertyIsEnumerable.call(held, key))
-        visit(typesAt(readers, key), held[key], [
-          ...path,
-          list ? (arrayIndex(key) ?? key) : key,
-        ]);
+    // On the way to the part that was read, only the key leading to it.
+    const step = within[depth];
+    const only = typeof step === "number" ? String(step) : step;
+    for (const key of Reflect.ownKeys(held)) {
+      if (depth < within.length && key !== only) continue;
+      const inner = readersOf(typesAt(containers, key));
+      if (
+        inner.some((reader) => takes(reader) || readsByKey(reader)) &&
+        Object.prototype.propertyIsEnumerable.call(held, key)
+      ) {
+        path.push(list ? (arrayIndex(key) ?? key) : key);
+        visit(inner, held[key]);
+        path.pop();
+      }
+    }
     active.delete(held);
   };
-  visit([schema], value, []);
+  visit(readersOf([schema]), value);
   if ([...targets].some((target) => !found.has(target))) places.push([]);
   return places;
 };

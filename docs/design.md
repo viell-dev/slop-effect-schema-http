@@ -197,7 +197,11 @@ do not cover its length. That read, on a sparse or inherited list rebuilt beside
 one of two calls a caller's Proxy sees that 0.18.0 did not make. The other is Effect's own: where an
 empty struct keeps a caller's object whole, Effect's parser reads that object, asking for its own
 keys once more and whether it has each stated field. 0.18.0 made the same calls wherever it had
-nothing to strip, and the calls in all are fewer than 0.18.0's.
+nothing to strip, and the calls in all are fewer than 0.18.0's. A refusal that names a native
+`Option` only the library's strict read took reads the value once more after the refusal is decided,
+to find where each wrapper was given. It asks for an object's prototype, its own keys and their
+descriptors and values only where a reader there could take a wrapper or reads keys in turn, so
+nothing inside `Schema.Any` or text.
 
 A native `Some` whose codec writes the payload directly, such as `Schema.OptionFromNullOr`, can
 expose the payload's declared fields. Preparation follows plain structural parents, including

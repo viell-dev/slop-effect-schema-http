@@ -41,6 +41,29 @@ const besideWireN = <F extends Schema.Struct.Fields>(fields: F) =>
     n: Schema.String,
     ...fields,
   }).pipe(Schema.encodeKeys({ n: "wire_n" }));
+/** Fields whose own read refuses the wrapper `refused` beside a value on the encoded side. */
+const refusingFields = (refused: Option.Option<unknown>) => {
+  const codec = Schema.OptionFromNullOr(Schema.Any);
+  return [
+    [{ l: Schema.Array(codec) }, { l: [refused, null] }, '["l"][0]'],
+    [{ l: Schema.Array(codec) }, { l: [null, refused] }, '["l"][1]'],
+    [
+      { r: Schema.Record(Schema.String, codec) },
+      { r: { k: refused, j: null } },
+      '["r"]["k"]',
+    ],
+    [{ t: Schema.Tuple([codec, codec]) }, { t: [refused, null] }, '["t"][0]'],
+    [
+      {
+        f: Schema.Struct({ a: codec, m: Schema.String }).pipe(
+          Schema.encodeKeys({ m: "wire_m" }),
+        ),
+      },
+      { f: { a: refused, wire_m: "y" } },
+      '["f"]["a"]',
+    ],
+  ] as const;
+};
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/143
 describe("visible unions beside opaque fields", () => {
@@ -2627,13 +2650,17 @@ describe("an invalid Some payload keeps its decoded error", () => {
           // Each place a wrapper is given is named.
           const shared = Option.some({ a: 1 });
           const twice = yield* Effect.flip(
-            json(Schema.Struct({ x: sibling, y: sibling }), {
-              x: { held: shared, wire_n: "x" },
-              y: { held: shared, wire_n: "y" },
-            } as never),
+            json(
+              Schema.Struct({
+                held: Schema.OptionFromNullOr(wire),
+                other: Schema.OptionFromNullOr(wire),
+                n: Schema.String,
+              }).pipe(Schema.encodeKeys({ n: "wire_n" })),
+              { held: shared, other: shared, wire_n: "x" } as never,
+            ),
           );
           expect(twice.message).toBe(
-            `${notHeld('["x"]["held"]')}\n${notHeld('["y"]["held"]')}`,
+            `${notHeld('["held"]')}\n${notHeld('["other"]')}`,
           );
           // On one side throughout, the value is sent.
           expect(
@@ -2713,7 +2740,7 @@ describe("an invalid Some payload keeps its decoded error", () => {
             {
               held: Option.none(),
               other: Option.none(),
-              items: [Option.none(), null],
+              items: [Option.none()],
               wire_n: "x",
             } as never,
           ),
@@ -2815,6 +2842,216 @@ describe("an invalid Some payload keeps its decoded error", () => {
         );
         expect(some.message).toBe(notHeld('["held"]'));
       }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/383
+  it.effect.fails(
+    "names only the refused None where Schema.Option reads one before a codec that could take it",
+    () =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          json(
+            besideWireN({
+              other: Schema.Union([
+                Schema.Option(Schema.String),
+                Schema.OptionFromNullOr(Schema.Any),
+              ]),
+            }),
+            {
+              held: Option.none(),
+              other: Option.none(),
+              wire_n: "x",
+            } as never,
+          ),
+        );
+        expect(failure.message).toBe(notHeld('["held"]'));
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/387
+  it.effect(
+    "currently names only a field's wrappers where that field's own read refuses one",
+    () =>
+      Effect.gen(function* () {
+        for (const refused of [Option.none(), Option.some(2)])
+          for (const [fields, given, path] of refusingFields(refused)) {
+            const failure = yield* Effect.flip(
+              json(
+                besideWireN(fields) as never,
+                {
+                  held: Option.some({ a: 1 }),
+                  wire_n: "x",
+                  ...given,
+                } as never,
+              ),
+            );
+            expect(failure.message).toBe(notHeld(path));
+          }
+        // A None elsewhere, refused just as much, is not named either, though it is the same object.
+        const list = besideWireN({
+          l: Schema.Array(Schema.OptionFromNullOr(Schema.Any)),
+        });
+        const none = yield* Effect.flip(
+          json(list, {
+            held: Option.none(),
+            l: [Option.none(), null],
+            wire_n: "x",
+          } as never),
+        );
+        expect(none.message).toBe(notHeld('["l"][0]'));
+        // Of two fields that refuse their own wrappers, the first read is named.
+        const sibling = besideWireN({});
+        const shared = Option.some({ a: 1 });
+        const two = yield* Effect.flip(
+          json(Schema.Struct({ x: sibling, y: sibling }), {
+            x: { held: shared, wire_n: "x" },
+            y: { held: shared, wire_n: "y" },
+          } as never),
+        );
+        expect(two.message).toBe(notHeld('["x"]["held"]'));
+        // Once that field is fixed, `held` is named.
+        const fixed = yield* Effect.flip(
+          json(list, {
+            held: Option.some({ a: 1 }),
+            l: [null, null],
+            wire_n: "x",
+          } as never),
+        );
+        expect(fixed.message).toBe(notHeld('["held"]'));
+        // Where the list's own read does not refuse, both are named.
+        const whole = yield* Effect.flip(
+          json(list, {
+            held: Option.some({ a: 1 }),
+            l: [Option.some(2), Option.some(3)],
+            wire_n: "x",
+          } as never),
+        );
+        expect(whole.message).toBe(
+          [notHeld('["held"]'), notHeld('["l"][0]'), notHeld('["l"][1]')].join(
+            "\n",
+          ),
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/387
+  it.effect.fails(
+    "names every refused wrapper where a field's own read refuses one",
+    () =>
+      Effect.gen(function* () {
+        for (const [fields, given, path] of refusingFields(Option.some(2))) {
+          const failure = yield* Effect.flip(
+            json(
+              besideWireN(fields) as never,
+              { held: Option.some({ a: 1 }), wire_n: "x", ...given } as never,
+            ),
+          );
+          expect(failure.message).toBe(
+            `${notHeld('["held"]')}\n${notHeld(path)}`,
+          );
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/387
+  it.effect(
+    "names no wrapper the fields keep beside a field whose own read refuses one",
+    () =>
+      Effect.gen(function* () {
+        // `n` can be read on its own, so the fields keep `held` as their decoded value, though the
+        // whole value's read took it too. A None there is the same object as the list's.
+        const schema = Schema.Struct({
+          held: Schema.OptionFromNullOr(Schema.Any),
+          n: Schema.FiniteFromString,
+          l: Schema.Array(Schema.OptionFromNullOr(Schema.Any)),
+          z: Schema.optionalKey(Schema.String),
+        }).pipe(Schema.encodeKeys({ z: "wire_z" }));
+        for (const [held, sent] of [
+          [Option.some({ a: 1 }), { a: 1 }],
+          [Option.none(), null],
+        ] as const)
+          for (const refused of [Option.some(2), Option.none()]) {
+            const failure = yield* Effect.flip(
+              json(schema, { held, n: "1", l: [refused, null] } as never),
+            );
+            expect(failure.message).toBe(notHeld('["l"][0]'));
+            expect(
+              yield* json(schema, { held, n: "1", l: [null, null] } as never),
+            ).toEqual({ held: sent, n: "1", l: [null, null] });
+          }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/351
+  it.effect(
+    "reports another error in the value once its refused wrappers are fixed",
+    () =>
+      Effect.gen(function* () {
+        const schema = besideWireN({
+          l: Schema.Array(Schema.OptionFromNullOr(Schema.Any)),
+        });
+        // `n` is left out, under either name.
+        const refused = yield* Effect.flip(
+          json(schema, {
+            held: Option.some({ a: 1 }),
+            l: [Option.none(), null],
+          } as never),
+        );
+        expect(refused.message).toBe(notHeld('["l"][0]'));
+        const fixed = yield* Effect.flip(
+          json(schema, {
+            held: Option.some({ a: 1 }),
+            l: [null, null],
+          } as never),
+        );
+        expect(fixed.message).toBe('Missing key\n  at ["n"]');
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/351
+  it.effect("reads nothing inside Schema.Any to name a refused wrapper", () =>
+    Effect.gen(function* () {
+      let traps = 0;
+      const counted = <T extends object>(target: T) =>
+        new Proxy(target, {
+          get: (inner, key, receiver) => {
+            traps++;
+            return Reflect.get(inner, key, receiver) as unknown;
+          },
+          getOwnPropertyDescriptor: (inner, key) => {
+            traps++;
+            return Reflect.getOwnPropertyDescriptor(inner, key);
+          },
+          getPrototypeOf: (inner) => {
+            traps++;
+            return Reflect.getPrototypeOf(inner);
+          },
+          has: (inner, key) => {
+            traps++;
+            return Reflect.has(inner, key);
+          },
+          ownKeys: (inner) => {
+            traps++;
+            return Reflect.ownKeys(inner);
+          },
+        });
+      // 0.20.0 runs the same traps for these values, refusing them with the strict read's error.
+      for (const [held, meta, runs] of [
+        [Option.some({ a: 1 }), { flag: Option.none(), b: 1 }, 7],
+        [Option.none(), { flag: Option.none() }, 5],
+      ] as const) {
+        traps = 0;
+        const failure = yield* Effect.flip(
+          json(besideWireN({ meta: Schema.Any }), {
+            held,
+            meta: counted(meta),
+            wire_n: "x",
+          } as never),
+        );
+        expect(failure.message).toBe(notHeld('["held"]'));
+        expect(traps).toBe(runs);
+      }
+    }),
   );
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/321
