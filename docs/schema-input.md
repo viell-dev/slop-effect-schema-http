@@ -715,7 +715,10 @@ the schema does with it. These are the places where it cannot, and what happens 
   middleware callback. Below a struct with renamed keys, it pairs each wire field with the decoded
   field it was projected from, so a native Option given there is refused as well. With `held`
   renamed to `wire_held`, a `Some` or `None` at `wire_held`, or beside a renamed sibling or below a
-  renamed ancestor on the encoded side, refuses instead of sending `{"wire_held":{}}`
+  renamed ancestor on the encoded side, refuses instead of sending `{"wire_held":{}}`, also through
+  a suspension, a nested rename, or a list or union below a renamed ancestor. A wire field is paired
+  by its name or position; renamed fields with different codecs whose wire sides are one schema node
+  cannot be told apart, so a wrapper there keeps the schema's own reading
   ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)). A recovery's value is
   not checked against what it was given: a `Schema.catchDecoding` record beside a list member can
   take a list whose cells hold a key the list member does not state, and what it recovers is sent.

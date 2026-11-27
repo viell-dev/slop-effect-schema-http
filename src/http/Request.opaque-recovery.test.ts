@@ -2493,6 +2493,49 @@ describe("an invalid Some payload keeps its decoded error", () => {
           const failure = yield* Effect.flip(json(schema, body as never));
           expect(failure).toBeInstanceOf(Schema.SchemaError);
         }
+        // Through a suspension, a nested rename and containers below a renamed ancestor too.
+        const held = Schema.OptionFromNullOr(payload);
+        const Row = Schema.Struct({ held });
+        const RenamedRow = Schema.Struct({ held }).pipe(
+          Schema.encodeKeys({ held: "wire_held" }),
+        );
+        interface Recursive {
+          readonly held: Option.Option<typeof payload.Type>;
+          readonly next?: Recursive;
+        }
+        const Recursive: Schema.Codec<Recursive, unknown> = Schema.Struct({
+          held,
+          next: Schema.optionalKey(Schema.suspend(() => Recursive)),
+        });
+        const below = (row: Schema.Top) =>
+          Schema.Struct({ row, n: Schema.String }).pipe(
+            Schema.encodeKeys({ n: "wire_n" }),
+          );
+        for (const [schema, row] of [
+          [below(Schema.suspend(() => Row)), { held: Option.none() }],
+          [
+            below(Schema.Struct({ held: Schema.suspend(() => held) })),
+            { held: Option.none() },
+          ],
+          [below(RenamedRow), { wire_held: Option.none() }],
+          [
+            below(Recursive),
+            { held: Option.some({ a: "a" }), next: { held: Option.none() } },
+          ],
+          [below(Schema.Array(RenamedRow)), [{ wire_held: Option.none() }]],
+          [
+            below(Schema.Union([RenamedRow, Schema.String])),
+            { wire_held: Option.none() },
+          ],
+        ] as const) {
+          const failure = yield* Effect.flip(
+            json(
+              schema as unknown as typeof Row,
+              { row, wire_n: "x" } as never,
+            ),
+          );
+          expect(failure).toBeInstanceOf(Schema.SchemaError);
+        }
         // On the decoded side the wrapper is the field's own value.
         expect(yield* json(sibling, { held: Option.none(), n: "3" })).toEqual({
           held: null,
@@ -2501,6 +2544,43 @@ describe("an invalid Some payload keeps its decoded error", () => {
         expect(
           yield* json(parent, { row: { held: Option.none(), m: "1" }, n: "2" }),
         ).toEqual({ row: { held: null, m: "1" }, wire_n: "2" });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/321
+  it.effect(
+    "pairs a projected field with its own decoded field, in any order",
+    () =>
+      Effect.gen(function* () {
+        const Held = Schema.Any.pipe(
+          Schema.decodeTo(
+            Schema.Option(payload),
+            SchemaTransformation.transform({
+              decode: (value) => Option.some(value),
+              encode: (value) => (Option.isSome(value) ? value.value : null),
+            }),
+          ),
+        );
+        const input = {
+          held: { a: "x" },
+          other: Option.some({ b: "keep" }),
+          wire_n: "x",
+        };
+        const sent = {
+          held: { a: "x" },
+          other: { _id: "Option", _tag: "Some", value: { b: "keep" } },
+          wire_n: "x",
+        };
+        for (const fields of [
+          { held: Held, other: Schema.Any, n: Schema.String },
+          { other: Schema.Any, held: Held, n: Schema.String },
+        ])
+          expect(
+            yield* json(
+              Schema.Struct(fields).pipe(Schema.encodeKeys({ n: "wire_n" })),
+              input as never,
+            ),
+          ).toEqual(sent);
       }),
   );
 
