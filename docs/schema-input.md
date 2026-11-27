@@ -701,10 +701,15 @@ the schema does with it. These are the places where it cannot, and what happens 
 - An opaque value, a declaration, a custom transformation and middleware decide for themselves. A
   guard for native Options follows visible schema nodes into the encoded side of Option codecs,
   including hand-written ones. It cannot see a wrapper read inside an opaque declaration or inside a
-  middleware callback. A recovery's value is not checked against what it was given: a
-  `Schema.catchDecoding` record beside a list member can take a list whose cells hold a key the list
-  member does not state, and what it recovers is sent. In `Union([Opaque, Title])`, where `Opaque`
-  is a declaration that cannot be written as JSON, `Title` can drop `meta`.
+  middleware callback. The encoded read of a struct with renamed keys can still take a native Option
+  as its payload and lose content, even if the rename is on a sibling or an ancestor of the Option's
+  field. For example, with `held` renamed to `wire_held`, an `OptionFromNullOr` of an optional-field
+  struct can send `{"wire_held":{}}` for a native `Some` or `None` at `wire_held`
+  ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)). A recovery's value is
+  not checked against what it was given: a `Schema.catchDecoding` record beside a list member can
+  take a list whose cells hold a key the list member does not state, and what it recovers is sent.
+  In `Union([Opaque, Title])`, where `Opaque` is a declaration that cannot be written as JSON,
+  `Title` can drop `meta`.
 - A union that chooses again on a transformed copy, behind a transformation or middleware on the
   union itself or on the encoded side of a renamed struct, is the schema's own choice, because no
   caller field can be traced to the copy. `Union([Coded, Title]).pipe(Schema.middlewareDecoding(…))`

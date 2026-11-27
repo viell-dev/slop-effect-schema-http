@@ -226,7 +226,9 @@ the payload holds none of their fields.
 The guard caches the rewritten schema per AST. An observed decode carries a flag in its parse
 options, tests the inputs at the guarded positions, and gives each tried union member a local flag
 so a failed member leaves no note. There is no additional schema parse. A refusal can end
-preparation before later callbacks would have run on a lossy reading.
+preparation before later callbacks would have run on a lossy reading. A note from a failed read
+inside decoding middleware is kept, so preparation can refuse input even when `Schema.catchDecoding`
+supplies a recovery value.
 
 The loose writer follows unwrapping codecs into the payload schema and its decoded projection. It
 can also follow a plain transformation whose wire shape exposes the same payload schema directly or
