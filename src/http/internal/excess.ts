@@ -2127,6 +2127,26 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
         }
       };
     }
+    // A struct builds a plain object from the fields it states, so the content of a built-in such
+    // as a `Map` or a `Date` is lost there too. An empty struct keeps the value as given. In a
+    // union, only a result this struct could have built is its loss.
+    if (node._tag === "Objects") {
+      const names = new Set(node.propertySignatures.map(({ name }) => name));
+      const required = node.propertySignatures
+        .filter(({ type }) => !SchemaAST.isOptional(type))
+        .map(({ name }) => name);
+      return (supplied, result, path, found) => {
+        if (
+          supplied !== result &&
+          isObject(supplied) &&
+          isObject(result) &&
+          !Array.isArray(supplied) &&
+          required.every((name) => Object.hasOwn(result, name)) &&
+          Reflect.ownKeys(result).every((key) => names.has(key))
+        )
+          lostHiddenContent(supplied, result, path, found, "object");
+      };
+    }
     if (!json || node._tag !== "ObjectKeyword" || node.encoding !== undefined)
       return undefined;
     return (supplied, result, path, found) => {
@@ -2145,8 +2165,22 @@ export function rebuildLoss(ast: Ast, json: boolean): Comparison | undefined {
   const inner = (node: Ast): RebuildCheck | undefined => {
     switch (node._tag) {
       case "Declaration": {
-        const fields = classFields(node);
-        return fields === undefined ? undefined : build(fields);
+        // A value given on an unwrapping Option codec's encoded side is read as its payload. Check
+        // it first: a codec such as OptionFromOptionalKey ends in a struct, as a class does.
+        if (!readsOptionPayload(node)) {
+          const fields = classFields(node);
+          return fields === undefined ? undefined : build(fields);
+        }
+        const payload = build(node.encoding!.at(-1)!.to);
+        if (payload === undefined) return undefined;
+        return (supplied, result, path, found) => {
+          if (
+            !Option.isOption(supplied) &&
+            Option.isOption(result) &&
+            Option.isSome(result)
+          )
+            payload(supplied, result.value, path, found);
+        };
       }
       case "Objects": {
         const properties = node.propertySignatures.flatMap(({ name, type }) => {

@@ -911,6 +911,75 @@ describe("writers keep or refuse what they cannot write", () => {
       }),
     );
 
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/316
+    it.effect("is refused where a struct would rebuild it", () =>
+      Effect.gen(function* () {
+        const P = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+        for (const held of [
+          P,
+          Schema.NullOr(P),
+          Schema.Union([P, Schema.String]),
+          Schema.OptionFromNullOr(P),
+          Schema.OptionFromUndefinedOr(P),
+          Schema.OptionFromOptionalKey(P),
+        ])
+          for (const [value, kind] of named()) {
+            const error = yield* Effect.flip(
+              Body.jsonSchema(Schema.Struct({ held })).encode({
+                held: value,
+              } as never),
+            );
+            expect(error).toBeInstanceOf(Schema.SchemaError);
+            expect(error.message).toBe(
+              `The schema cannot keep ${kind} as an object\n  at ["held"]`,
+            );
+          }
+        const query = Request.get("/x").pipe(Request.query(P));
+        expect(
+          yield* Effect.flip(
+            Request.compile(query, { query: new Map([["a", "x"]]) as never }),
+          ),
+        ).toBeInstanceOf(Schema.SchemaError);
+      }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/316
+    it.effect("is kept where a struct reads it as plain data", () =>
+      Effect.gen(function* () {
+        const P = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+        const schema = Schema.Struct({ held: Schema.OptionFromNullOr(P) });
+        class Point {
+          readonly a = "x";
+        }
+        for (const held of [
+          new Point(),
+          { a: "x" },
+          Option.some({ a: "x" }),
+        ] as const)
+          expect(
+            textOf(yield* Body.jsonSchema(schema).encode({ held } as never)),
+          ).toBe('{"held":{"a":"x"}}');
+        // Effect's empty struct keeps the value as given, so the writer decides.
+        expect(
+          textOf(
+            yield* Body.jsonSchema(
+              Schema.Struct({ held: Schema.Struct({}) }),
+            ).encode({ held: new Date(0) }),
+          ),
+        ).toBe('{"held":"1970-01-01T00:00:00.000Z"}');
+        // A struct that cannot read the value does not claim the record's rebuild.
+        const union = Schema.Union([
+          Schema.Struct({ q: Schema.String }),
+          Schema.Record(Schema.String, Schema.Unknown),
+        ]);
+        expect(
+          (yield* Effect.flip(
+            Body.jsonSchema(union).encode(new Date(0) as never),
+          )).message,
+        ).toBe("The schema cannot keep this Date as a record");
+      }),
+    );
+
     it.effect("is kept beside a member that reads its content", () =>
       Effect.gen(function* () {
         const entries = Schema.ReadonlyMap(Schema.String, Schema.Number);

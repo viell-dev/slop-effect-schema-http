@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Breaking:** refuse a built-in that a struct rebuilds from its own fields
+  ([#316](https://github.com/viell-dev/slop-effect-schema-http/issues/316)), as 0.19.0 does for
+  records. For example, `{ held: new Date(0) }` under `held: Struct({ a: optionalKey(String) })`,
+  `NullOr` of it or `OptionFromNullOr` of it sent `{"held":{}}`. It now fails with
+  `The schema cannot keep this Date as an object at ["held"]`. Under a plain struct Effect's own
+  encoding also sends `{}`, so this refuses what Effect would send; under an Option codec Effect
+  refuses too. A `Map`, `Set`, `RegExp`, `Error`, `URL` and the other values the record check
+  refuses are refused the same way. Class instances with fields, typed arrays, an `Option.some`, a
+  `Result` and plain objects are read as before, by their own fields, and an empty struct keeps the
+  value as given. Convert the value to plain data first.
 - Run a schema's decoders and checks as often as before the message change below
   ([#317](https://github.com/viell-dev/slop-effect-schema-http/issues/317)). That change decoded the
   value an extra time wherever the constructor could not keep all of it, even where no route used
