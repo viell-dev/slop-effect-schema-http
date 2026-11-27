@@ -138,3 +138,97 @@ export const MomentFromString = Schema.String.pipe(
     ),
   }),
 );
+
+/**
+ * A union whose first member a request reads field by field: a renamed field with a constructor
+ * default, alone under `filter` or as the only item of `filters`, beside a value on each side, text a
+ * codec rewrites, and an `Option` holding a key its schema does not state. `trace` records each
+ * value the `left` and `gate` decoders read, each run of the default and each check of `right`.
+ * `written` is what the member's encoded side holds once it is read.
+ */
+export const memberFieldwise = (list: boolean) => {
+  const trace: Array<string> = [];
+  const counted = (name: string) =>
+    Schema.String.pipe(
+      Schema.decodeTo(Schema.String, {
+        decode: SchemaGetter.transform((text) => {
+          trace.push(`${name}.read:${text}`);
+          return text;
+        }),
+        encode: SchemaGetter.transform((text) => text),
+      }),
+      Schema.decodeTo(Schema.FiniteFromString),
+    );
+  const filter = Schema.Struct({
+    limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
+      Schema.withConstructorDefault(
+        Effect.sync(() => {
+          trace.push("limit.default");
+          return 25;
+        }),
+      ),
+    ),
+    gate: counted("gate"),
+  }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+  const others = {
+    left: counted("left"),
+    right: Schema.FiniteFromString.check(
+      Schema.makeFilter((value) => {
+        trace.push(`right.check:${value}`);
+        return true;
+      }),
+    ),
+    shared: Schema.StringFromBase64,
+    neighbor: Schema.Option(Schema.Struct({ keep: Schema.String })),
+  };
+  const schema = Schema.Union([
+    Schema.Struct(
+      list
+        ? { filters: Schema.Array(filter), ...others }
+        : { filter, ...others },
+    ),
+    Schema.Struct({ cursor: Schema.String }),
+  ]);
+  const given = { page_size: "08", gate: "02" };
+  const kept = { page_size: "8", gate: "2" };
+  const input = {
+    ...(list ? { filters: [given] } : { filter: given }),
+    left: "06",
+    right: 4,
+    shared: "eA==",
+    neighbor: Option.some({ keep: "ok", stray: "strip" }),
+  };
+  const written = {
+    ...(list ? { filters: [kept] } : { filter: kept }),
+    left: "6",
+    right: "4",
+    shared: "ZUE9PQ==",
+    neighbor: Option.some({ keep: "ok" }),
+  };
+  return { schema, input, written, trace };
+};
+
+/** What {@link memberFieldwise} records as a request prepares its input. */
+export const memberFieldwiseTrace = [
+  "gate.read:02",
+  "left.read:06",
+  "gate.read:02",
+  "left.read:06",
+  "gate.read:02",
+  "left.read:06",
+  "right.check:4",
+  "limit.default",
+  "gate.read:02",
+  "left.read:06",
+  "limit.default",
+  "gate.read:02",
+  "left.read:06",
+  "limit.default",
+  "gate.read:02",
+  "gate.read:02",
+  "left.read:06",
+  "left.read:06",
+  "right.check:4",
+  "right.check:4",
+  "right.check:4",
+];

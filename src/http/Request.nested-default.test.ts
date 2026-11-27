@@ -1,5 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Schema, SchemaIssue } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  Option,
+  Schema,
+  SchemaGetter,
+  SchemaIssue,
+} from "effect";
 import type { HttpBody } from "effect/http";
 import { empty, synthetic } from "../../test/support.js";
 import * as Body from "./Body.js";
@@ -418,6 +426,188 @@ describe("nested aliases replaced during whole construction", () => {
           }
         }
       }),
+    );
+  }
+});
+
+/** Text that records each value it reads and writes under `name`. */
+const observedText = (trace: Array<string>, name: string) =>
+  Schema.String.pipe(
+    Schema.decodeTo(Schema.String, {
+      decode: SchemaGetter.transform((text) => {
+        trace.push(`${name}.read:${text}`);
+        return text;
+      }),
+      encode: SchemaGetter.transform((text) => {
+        trace.push(`${name}.write:${text}`);
+        return text;
+      }),
+    }),
+  );
+/** A renamed field with a constructor default, beside fields on both sides and an opaque one. */
+const fieldwise = () => {
+  const trace: Array<string> = [];
+  const finite = (name: string) =>
+    observedText(trace, name).pipe(Schema.decodeTo(Schema.FiniteFromString));
+  const filter = Schema.Struct({
+    limit: Schema.optionalKey(finite("limit")).pipe(
+      Schema.withConstructorDefault(
+        Effect.sync(() => {
+          trace.push("limit.default");
+          return 25;
+        }),
+      ),
+    ),
+    gate: finite("gate"),
+  }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+  const schema = Schema.Struct({
+    filter,
+    n: finite("n"),
+    m: finite("m"),
+    shared: observedText(trace, "shared").pipe(
+      Schema.decodeTo(Schema.StringFromBase64),
+    ),
+    neighbor: Schema.Option(Schema.Struct({ keep: Schema.String })),
+  });
+  const input = {
+    filter: { page_size: "05", gate: "03" },
+    n: "07",
+    m: 9,
+    shared: "aGk=",
+    neighbor: Option.some({ keep: "ok", stray: "schema-owned" }),
+  };
+  return { schema, input, trace };
+};
+/**
+ * Two renamed fields given invalid wire values: the left's writer replaces the input, and the
+ * right's decoder cannot invert what its writer omits, so the right one is refused.
+ */
+const refusedPair = () => {
+  const trace: Array<string> = [];
+  const input = {
+    left: { page_size: "many" },
+    right: { page_size: "many" },
+  };
+  const leftNumber = observedText(trace, "left").pipe(
+    Schema.decodeTo(Schema.FiniteFromString),
+    Schema.decodeTo(Schema.Number, {
+      decode: SchemaGetter.passthrough(),
+      encode: SchemaGetter.transform((value) => {
+        trace.push("left.replace");
+        input.left = { page_size: "many" };
+        return value;
+      }),
+    }),
+  );
+  const rightNumber = Schema.optionalKey(
+    observedText(trace, "right").pipe(Schema.decodeTo(Schema.FiniteFromString)),
+  ).pipe(
+    Schema.decodeTo(Schema.optionalKey(Schema.Number), {
+      decode: SchemaGetter.transformOptionalEffect(() =>
+        Effect.fail(
+          new SchemaIssue.InvalidValue({
+            message: "The omitted right field has no inverse",
+          }),
+        ),
+      ),
+      encode: SchemaGetter.transformOptional((value) => {
+        trace.push(`right.omit:${Option.getOrElse(value, () => -1)}`);
+        return Option.none();
+      }),
+    }),
+    Schema.withConstructorDefault(
+      Effect.sync(() => {
+        trace.push("right.default");
+        return 25;
+      }),
+    ),
+  );
+  const left = Schema.Struct({
+    limit: Schema.optionalKey(leftNumber).pipe(
+      Schema.withConstructorDefault(
+        Effect.sync(() => {
+          trace.push("left.default");
+          return 25;
+        }),
+      ),
+    ),
+  }).pipe(Schema.encodeKeys({ limit: "page_size" }));
+  const right = Schema.Struct({ limit: rightNumber }).pipe(
+    Schema.encodeKeys({ limit: "page_size" }),
+  );
+  return { schema: Schema.Struct({ left, right }), input, trace };
+};
+
+// Recording a read's failure to explain a refusal must not run the schema's steps. These traces
+// are those from before #275's messages, whose recorded loose read ran even where no route read.
+// https://github.com/viell-dev/slop-effect-schema-http/issues/317
+describe("callback traces of fieldwise nested reads", () => {
+  for (const kind of ["path", "body"] as const) {
+    it.effect(`keeps the callback trace of a fieldwise ${kind} read`, () =>
+      Effect.gen(function* () {
+        const { schema, input, trace } = fieldwise();
+        expect(yield* prepare(schema, input, kind)).toEqual({
+          filter: { page_size: "5", gate: "3" },
+          n: "7",
+          m: "9",
+          shared: "YUdrPQ==",
+          neighbor:
+            kind === "path"
+              ? Option.some({ keep: "ok" })
+              : { _tag: "Some", value: { keep: "ok" } },
+        });
+        expect(trace).toEqual([
+          "limit.read:05",
+          "gate.read:03",
+          "n.read:07",
+          "limit.read:05",
+          "gate.read:03",
+          "n.read:07",
+          "limit.default",
+          "limit.read:05",
+          "gate.read:03",
+          "n.read:07",
+          "shared.read:aGk=",
+          "limit.default",
+          "limit.read:05",
+          "gate.read:03",
+          "limit.read:05",
+          "gate.read:03",
+          "n.read:07",
+          "n.read:07",
+          "limit.write:5",
+          "gate.write:3",
+          "n.write:7",
+          "m.write:9",
+          "shared.write:YUdrPQ==",
+        ]);
+      }),
+    );
+
+    it.effect(
+      `keeps the callback trace where a fieldwise ${kind} read refuses`,
+      () =>
+        Effect.gen(function* () {
+          const { schema, input, trace } = refusedPair();
+          const error = yield* Effect.flip(prepare(schema, input, kind));
+          expect(error).toBeInstanceOf(Schema.SchemaError);
+          expect(error.message).toContain('["right"]["page_size"]');
+          expect(trace).toEqual([
+            "left.read:many",
+            "left.read:many",
+            "left.default",
+            "right.default",
+            "left.read:many",
+            "right.read:many",
+            "left.default",
+            "left.read:many",
+            "right.default",
+            "right.read:many",
+            "left.replace",
+            "left.write:25",
+            "right.omit:25",
+          ]);
+        }),
     );
   }
 });

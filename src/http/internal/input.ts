@@ -861,13 +861,14 @@ const decodedReading = <S extends Schema.Top>(
               );
         // This read has the caller's own options, so its failure says what they report.
         let looseFailure: Schema.SchemaError | undefined;
-        const readLoosely = Effect.tapError(
-          decode(input, parseOptions),
-          (error) =>
+        // Effect's decoder starts the schema's steps when it is called, before its effect runs, so it
+        // is called only where the loose route reads the value, as often as that route reads it.
+        const readLoosely = () =>
+          Effect.tapError(decode(input, parseOptions), (error) =>
             Effect.sync(() => {
               if (error._tag === "SchemaError") looseFailure = error;
             }),
-        );
+          );
         const loose =
           stripped === undefined
             ? read === undefined
@@ -877,8 +878,8 @@ const decodedReading = <S extends Schema.Top>(
               ? Effect.fail(failure)
               : Effect.map(
                   stripped.length === 0 && given !== input
-                    ? Effect.catch(readLoosely, retryNormalised)
-                    : readLoosely,
+                    ? Effect.catch(readLoosely(), retryNormalised)
+                    : readLoosely(),
                   (value): Decoded<unknown> => ({
                     value,
                     lost: mergePaths(stripped, leftOut(input, given, value)),

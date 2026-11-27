@@ -3,6 +3,7 @@ import { Effect, Option, Schema } from "effect";
 import * as Body from "./Body.js";
 import * as Inputs from "./internal/input.js";
 import * as Request from "./Request.js";
+import { memberFieldwise, memberFieldwiseTrace } from "../../test/request.js";
 
 const Inner = Schema.Struct({
   limit: Schema.optionalKey(Schema.FiniteFromString).pipe(
@@ -241,4 +242,27 @@ describe("nested aliases below unchanged parent unions", () => {
       expect(defaults).toBe(3);
     }),
   );
+});
+
+// Recording a read's failure to explain a refusal must not run the schema's steps. These traces
+// are those from before #275's messages, whose recorded loose read ran even where no route read.
+// https://github.com/viell-dev/slop-effect-schema-http/issues/317
+describe("callback traces of a member read field by field", () => {
+  for (const kind of ["path", "body"] as const)
+    it.effect(
+      `keeps the callback trace of a member-fieldwise ${kind} read`,
+      () =>
+        Effect.gen(function* () {
+          const { schema, input, written, trace } = memberFieldwise(false);
+          expect(yield* prepare(schema, input, kind)).toEqual(
+            kind === "path"
+              ? written
+              : {
+                  ...written,
+                  neighbor: { _tag: "Some", value: { keep: "ok" } },
+                },
+          );
+          expect(trace).toEqual(memberFieldwiseTrace);
+        }),
+    );
 });
