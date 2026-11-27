@@ -1,9 +1,11 @@
 /**
  * The Node lane's providers. `linesClient` and `rawClient` come from the hostile suite on the
  * `hostile-servers-test` branch of this repository (`src/harness/providers.ts` at `da6734c`), with a
- * `protocol` option added to the raw provider. The others are Effect's own, as an application
- * would use them, each trusting the host's certificate.
+ * `protocol` option added to the raw provider. `h2Client` is this suite's own. The others are
+ * Effect's own, as an application would use them, each trusting the host's certificate.
  */
+import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import {
   type ClientRequest,
   type IncomingMessage,
@@ -11,6 +13,7 @@ import {
 } from "node:http";
 import { connect, type Socket } from "node:net";
 import { Duplex } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { Effect, Layer, Option, Stream } from "effect";
 import {
   HttpClient,
@@ -20,7 +23,8 @@ import {
   UrlParams,
 } from "effect/http";
 import { Transport } from "viell-effect-schema-http";
-import type { RawOptions } from "./lane.js";
+import type { Field, H2Exchange, H2Received } from "./evidence.js";
+import type { H2Options, H2Provider, RawOptions } from "./lane.js";
 
 const bodyBytes = (
   request: HttpClientRequest.HttpClientRequest,
@@ -395,3 +399,176 @@ export const rawLayer = (
   options?: RawOptions,
 ): Layer.Layer<HttpClient.HttpClient> =>
   Layer.succeed(HttpClient.HttpClient, rawClient(origin, options));
+
+/** Text as bytes, one character for each: as UTF-8, the way the raw provider writes its request line. */
+const utf8 = (text: string): string => Buffer.from(text).toString("latin1");
+
+/** A header name or value as bytes, one character for each, as `headerLineBytes` writes it. */
+const fieldBytes = (text: string): string =>
+  headerLineBytes(text).toString("latin1");
+
+const root = new URL("../../", import.meta.url);
+
+/**
+ * Send one request through the host's HTTP/2 client (`host/src/h2.rs`), on a connection of its
+ * own. A client that cannot run, or a connection it cannot make, is a defect of the suite, not an
+ * answer of the server, so it ends the test with the client's reason.
+ */
+const viaHost = (sending: {
+  readonly port: number;
+  readonly fields: ReadonlyArray<Field>;
+  readonly body?: string;
+  readonly headOnly: boolean;
+}): Effect.Effect<H2Received> =>
+  Effect.callback<H2Received>((resume) => {
+    const { executable } = JSON.parse(
+      readFileSync(new URL(".host/BUILT", root), "utf8"),
+    ) as { executable: string };
+    const child = spawn(executable, [
+      "h2",
+      fileURLToPath(new URL(".host", root)),
+    ]);
+    const output: Array<Buffer> = [];
+    const errors: Array<Buffer> = [];
+    child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
+    let settled = false;
+    const settle = (outcome: Effect.Effect<H2Received>) => {
+      if (settled) return;
+      settled = true;
+      resume(outcome);
+    };
+    child.on("error", (cause) => settle(Effect.die(cause)));
+    child.on("close", (code) => {
+      const text = Buffer.concat(output).toString("utf8");
+      try {
+        if (code !== 0) throw new Error(`exit code ${code}`);
+        settle(Effect.succeed(JSON.parse(text) as H2Received));
+      } catch (cause) {
+        const reason = Buffer.concat(errors).toString("utf8").trim();
+        settle(
+          Effect.die(
+            new Error(`the HTTP/2 client failed (${String(cause)}): ${reason}`),
+          ),
+        );
+      }
+    });
+    child.stdin.end(JSON.stringify(sending));
+    return Effect.sync(() => child.kill());
+  });
+
+const describeReceived = (received: H2Received): string => {
+  switch (received.is) {
+    case "reset":
+      return `the server reset the stream with ${received.code}`;
+    case "go_away":
+      return `the server closed the connection with ${received.code}`;
+    case "closed":
+      return "the server closed the connection without an answer";
+    case "response":
+      return `the server answered ${received.status}`;
+  }
+};
+
+/**
+ * A provider that sends a request over HTTP/2 to the HTTPS listener at `origin`, with its header
+ * block written field by field, for the heads no standard client sends. Each request goes on a
+ * connection of its own, through the host's HTTP/2 client, and `exchanges` records what it wrote
+ * and what came back: the wire record of the HTTPS listener, which has no recording proxy.
+ *
+ * - **Pseudo-header fields.** `:method` as given, `:scheme` `https`, `:authority` the origin's
+ *   host, and `:path` the target of `rawTarget`, so the request is never parsed as a URL. Both are
+ *   written as UTF-8, like the raw provider's request line.
+ * - **Fields.** `Transport.headerLines` as written, names in their own case, with the lines
+ *   `withFraming` adds for the body and no `Host`, then the body in DATA frames. Names and values
+ *   go out like the raw provider's header lines: Latin-1, or UTF-8 when they do not fit.
+ * - **`fields`** rewrites the composed block before it is sent, so a test can repeat, move, drop or
+ *   change pseudo-header fields, which the library cannot declare as such.
+ * - **Nothing is refused.** Uppercase names, a CR, LF or NUL in a value, and fields about the
+ *   connection go out as given. A standard HTTP/2 client lowercases names and refuses the others.
+ *
+ * A reset stream, a GOAWAY or a closed connection fails the request as a transport error; the
+ * exchange says which. A response ends the request, or for a request whose `:method` is
+ * `CONNECT`, its head does. Like the line-preserving provider, it attaches the response's fields.
+ */
+export const h2Client = (
+  origin: string,
+  exchanges: Array<H2Exchange>,
+  { fields: rewrite = (composed) => composed }: H2Options = {},
+): HttpClient.HttpClient => {
+  const { host, port } = new URL(origin);
+  return HttpClient.makeWith<
+    never,
+    never,
+    HttpClientError.HttpClientError,
+    never
+  >(
+    (prepared) =>
+      Effect.flatMap(prepared, (request) =>
+        Effect.gen(function* () {
+          const lines = yield* Transport.headerLines(request);
+          const { bytes, contentType } = yield* bodyBytes(request);
+          const fields = rewrite([
+            [":method", utf8(request.method)],
+            [":scheme", "https"],
+            [":authority", host],
+            [":path", utf8(rawTarget(origin, request))],
+            ...withFraming(lines, undefined, bytes, contentType).map(
+              ([name, value]): Field => [fieldBytes(name), fieldBytes(value)],
+            ),
+          ]);
+          const received = yield* viaHost({
+            port: Number(port),
+            fields,
+            ...(bytes === undefined
+              ? {}
+              : { body: Buffer.from(bytes).toString("base64") }),
+            headOnly: fields.some(
+              ([name, value]) => name === ":method" && value === "CONNECT",
+            ),
+          });
+          exchanges.push({ fields, received });
+          if (received.is !== "response")
+            return yield* Effect.fail(
+              transportError(request, new Error(describeReceived(received))),
+            );
+          const { status } = received;
+          const empty =
+            nullBodyStatuses.has(status) || request.method === "HEAD";
+          try {
+            const web = new Response(
+              empty
+                ? null
+                : new Uint8Array(Buffer.from(received.body, "base64")),
+              {
+                status,
+                headers: received.fields.map(
+                  ([name, value]): [string, string] => [name, value],
+                ),
+              },
+            );
+            return Transport.withResponseHeaders(
+              HttpClientResponse.fromWeb(request, web),
+              received.fields,
+            );
+          } catch (cause) {
+            // As in `readResponse`: a response the Fetch API cannot represent.
+            return yield* Effect.fail(transportError(request, cause));
+          }
+        }),
+      ),
+    (request) => Effect.succeed(request),
+  );
+};
+
+/** The HTTP/2 provider as a layer, with the record of what it sent. */
+export const h2Provider = (origin: string, options?: H2Options): H2Provider => {
+  const exchanges: Array<H2Exchange> = [];
+  return {
+    layer: Layer.succeed(
+      HttpClient.HttpClient,
+      h2Client(origin, exchanges, options),
+    ),
+    exchanges,
+  };
+};

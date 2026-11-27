@@ -3,8 +3,11 @@
 //! - `warded-test-host certificate <directory>` writes a certificate for the loopback names.
 //! - `warded-test-host serve <directory>` uses it, and takes commands on standard input: one JSON
 //!   object per line, answered by one line on standard output.
+//! - `warded-test-host h2 <directory>` sends one HTTP/2 request that it reads on standard input,
+//!   as [`h2`] describes, and writes what came back on standard output.
 
 mod condition;
+mod h2;
 mod table;
 
 use base64::{Engine, prelude::BASE64_STANDARD};
@@ -46,7 +49,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match arguments.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         ["certificate", directory] => certificate(Path::new(directory)),
         ["serve", directory] => serve(Path::new(directory)).await,
-        _ => Err("usage: warded-test-host (certificate | serve) <directory>".into()),
+        ["h2", directory] => h2::send(Path::new(directory)).await,
+        _ => Err("usage: warded-test-host (certificate | serve | h2) <directory>".into()),
     }
 }
 

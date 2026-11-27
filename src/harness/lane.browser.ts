@@ -22,4 +22,5 @@ export const lane: Lane = {
   fetch,
   lines: undefined,
   raw: undefined,
+  h2: undefined,
 };

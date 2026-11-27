@@ -278,7 +278,7 @@ fn http_version(text: &str) -> Result<Version, String> {
 }
 
 /// Header values cross from JavaScript with one character for each byte.
-fn latin1(text: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn latin1(text: &str) -> Result<Vec<u8>, String> {
     text.chars()
         .map(|character| u8::try_from(u32::from(character)))
         .collect::<Result<_, _>>()

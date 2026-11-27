@@ -1,5 +1,6 @@
 import type { Layer } from "effect";
 import type { HttpClient } from "effect/http";
+import type { Field, H2Exchange } from "./evidence.js";
 
 /**
  * The interface every scenario uses, implemented once per lane. Tests import it from `#lane`, which
@@ -32,6 +33,23 @@ export interface RawOptions {
   readonly protocol?: string;
 }
 
+/** How the HTTP/2 provider writes a request. */
+export interface H2Options {
+  /**
+   * Rewrite the header block before it is sent: repeat, reorder, drop, change or add fields,
+   * pseudo-header fields included. It receives the fields the provider composed, one character for
+   * each byte. Default: send them as composed.
+   */
+  readonly fields?: (composed: ReadonlyArray<Field>) => ReadonlyArray<Field>;
+}
+
+/** The HTTP/2 provider for one origin, and what it sent there. */
+export interface H2Provider {
+  readonly layer: Layer.Layer<HttpClient.HttpClient>;
+  /** Each request it sent, in order, with what came back. */
+  readonly exchanges: ReadonlyArray<H2Exchange>;
+}
+
 export interface Lane {
   readonly name: "node" | "browser";
   /** The providers an application in this lane would use, by name. */
@@ -50,4 +68,11 @@ export interface Lane {
         options?: RawOptions,
       ) => Layer.Layer<HttpClient.HttpClient>)
     | undefined;
+  /**
+   * The HTTP/2 provider for the HTTPS listener at `origin`, in the Node lane only. It writes the
+   * request's header block field by field through the host's HTTP/2 client, with nothing refused;
+   * `providers.ts` gives the details.
+   */
+  readonly h2:
+    ((origin: string, options?: H2Options) => H2Provider) | undefined;
 }

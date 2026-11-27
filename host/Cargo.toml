@@ -15,11 +15,16 @@ warded-server = { git = "https://github.com/viell-dev/slop-warded-server", rev =
 axum = { version = "0.8.9", default-features = false, features = ["http1", "http2", "tokio"] }
 base64 = "0.23"
 http-body-util = "0.1"
+# The HTTP/2 client decodes response heads with it; it encodes requests itself.
+loona-hpack = "0.4.3"
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+# The versions the server uses, for the HTTP/2 client's TLS.
+rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-rustls = { version = "0.26.6", default-features = false }
 tower = { version = "0.5.3", features = ["util"] }
 
 [patch.crates-io]
