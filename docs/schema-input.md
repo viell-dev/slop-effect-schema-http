@@ -717,8 +717,8 @@ the schema does with it. These are the places where it cannot, and what happens 
   renamed to `wire_held`, a `Some` or `None` at `wire_held`, or beside a renamed sibling or below a
   renamed ancestor on the encoded side, refuses instead of sending `{"wire_held":{}}`, also through
   a suspension, a recursive schema, a nested rename or a renamed class, and in a list or union below
-  a renamed ancestor. A wire field is paired by its name or position; renamed fields with different
-  codecs whose wire sides are one schema node cannot be told apart, so a wrapper there keeps the
+  a renamed ancestor. A wire field is paired with the decoded field in its place in the rename, and
+  otherwise with the field of the same name; a field written by another transformation keeps the
   schema's own reading ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)). A
   recovery's value is not checked against what it was given: a `Schema.catchDecoding` record beside
   a list member can take a list whose cells hold a key the list member does not state, and what it

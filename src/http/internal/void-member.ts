@@ -339,46 +339,75 @@ const childrenOf = (ast: SchemaAST.AST): ReadonlyArray<Child> => {
   }
 };
 
-/**
- * The child of `layer` that `target`, the child of `reference` under `key`, is the projection of.
- *
- * @remarks
- * Effect builds some wire schemas, such as `Schema.encodeKeys`'s, from `toEncoded` projections of
- * the decoded fields, which drop every Option codec. Effect memoizes `toEncoded`, so a projected
- * child is the very node `toEncoded` returns for its decoded counterpart. Checked on Effect 4.0.7
- * and 4.1.6. Revisit when a peer update stops memoizing it. A guard's copies are compared as the
- * nodes they stand for. Identity alone does not say which
- * child a projection came from, since unrelated children can share one, so the same key comes
- * first. A renamed child has a key `reference` does not use; one is taken only where every such
- * candidate is the same node, so field order never decides.
- */
 /** The schema node each rewritten node stands for, so a projection is recognised after a guard. */
 const origins = new WeakMap<SchemaAST.AST, SchemaAST.AST>();
 const originOf = (ast: SchemaAST.AST): SchemaAST.AST => origins.get(ast) ?? ast;
 
+/**
+ * Whether `wire` is the projection of `decoded`: the very node `toEncoded` returns for it.
+ *
+ * @remarks
+ * Effect builds some wire schemas, such as `Schema.encodeKeys`'s, from `toEncoded` projections of
+ * the decoded fields, which drop every Option codec. Effect memoizes `toEncoded`, so a projected
+ * node is the very node `toEncoded` returns for its decoded counterpart. Checked on Effect 4.0.7
+ * and 4.1.6. Revisit when a peer update stops memoizing it. A guard's copies are compared as the
+ * nodes they stand for. A projected suspension is a new one each time, and its target may not
+ * exist yet, so a suspension stands for one in the same place; its target is paired when read.
+ */
+const projects = (decoded: SchemaAST.AST, wire: SchemaAST.AST): boolean =>
+  SchemaAST.toEncoded(originOf(decoded)) === originOf(wire) ||
+  (decoded._tag === "Suspend" && wire._tag === "Suspend");
+
+const renames = new WeakMap<SchemaAST.AST, boolean>();
+
+/**
+ * Whether `layer` is written as `reference` by a rename of its fields, as `Schema.encodeKeys`
+ * builds: its last encoding leads to `reference`, which has as many children, each in the same
+ * place the projection of the decoded one. Only then do the two pair by place rather than by key.
+ */
+const isRenameOf = (
+  layer: SchemaAST.AST,
+  reference: SchemaAST.AST,
+): boolean => {
+  const decoded = originOf(layer);
+  const wire = originOf(reference);
+  if (decoded.encoding?.at(-1)?.to !== wire) return false;
+  let known = renames.get(decoded);
+  if (known === undefined) {
+    const from = childrenOf(decoded);
+    const to = childrenOf(wire);
+    known =
+      wire._tag === "Objects" &&
+      from.length === to.length &&
+      from.every((child, at) => projects(child.type, to[at]!.type));
+    renames.set(decoded, known);
+  }
+  return known;
+};
+
+/**
+ * The child of `layer` that `target`, the child of `reference` under `key`, is the projection of.
+ * Across a rename the child in the same place; otherwise the child under the same key, since a
+ * projection keeps its keys. Identity alone does not say which child a projection came from, as
+ * unrelated children can share one, so no other child is guessed.
+ */
 const counterpart = (
   layer: SchemaAST.AST,
   reference: SchemaAST.AST,
   key: PropertyKey,
   target: SchemaAST.AST,
 ): SchemaAST.AST | undefined => {
-  const wire = originOf(target);
-  // A projected suspension is a new one each time, and its target may not exist yet, so a
-  // suspension stands for one in the same place; its target is paired when it is read.
-  const projects = ({ type }: Child) =>
-    SchemaAST.toEncoded(originOf(type)) === wire ||
-    (type._tag === "Suspend" && target._tag === "Suspend");
   const children = childrenOf(layer);
-  const same = children.find((child) => child.key === key && projects(child));
-  if (same !== undefined) return same.type;
-  const used = new Set(childrenOf(reference).map((child) => child.key));
-  const renamed = children.filter(
-    (child) => !used.has(child.key) && projects(child),
-  );
-  return renamed.length > 0 &&
-    renamed.every(({ type }) => type === renamed[0]!.type)
-    ? renamed[0]!.type
-    : undefined;
+  if (isRenameOf(layer, reference)) {
+    const at = childrenOf(reference).findIndex((child) => child.key === key);
+    const child = at < 0 ? undefined : children[at];
+    return child !== undefined && projects(child.type, target)
+      ? child.type
+      : undefined;
+  }
+  return children.find(
+    (child) => child.key === key && projects(child.type, target),
+  )?.type;
 };
 
 interface Interned {
