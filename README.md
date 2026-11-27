@@ -1,4 +1,4 @@
-# Effect Schema HTTP and Warded: request-head suite
+# Effect Schema HTTP and Warded: request-head and service suite
 
 This branch holds an integration suite that tests two projects against each other over real
 sockets:
@@ -15,9 +15,16 @@ whatever the library can declare, Warded should see as declared, and every kind 
 can match, the library should be able to satisfy.
 
 It covers the dimensions Warded matches on: path, query parameters, method, headers, the `Accept`
-family, HTTP version, transport security and host. It does not repeat the wide range of the
-[hostile suite](https://github.com/viell-dev/slop-effect-schema-http/tree/hostile-servers-test),
-which tests the library against imitations of real services, including their bodies and formats.
+family, HTTP version, transport security and host.
+
+It also tests the library against services built on Warded: route tables shaped like real APIs,
+whose handlers answer with the conventions real services use, such as odd statuses, error shapes
+that differ by status, and repeated `Set-Cookie` lines. The tests check what the library decodes
+or refuses of each answer, and the records show what the server did with it on the way. The
+[hostile suite](https://github.com/viell-dev/slop-effect-schema-http/tree/hostile-servers-test)
+keeps the rest: its own servers write what Hyper does not let a handler write, such as truncated
+replies and malformed status lines, and it imitates many more services with their bodies and
+formats.
 
 Agents write and maintain this suite. Its code is not human-reviewed. This branch has its own
 history and never merges into `main`.
@@ -47,6 +54,8 @@ four records of each exchange, in the order they happen:
 3. **What the router chose.** The host asks `Router::select` about that head, apart from dispatch.
 4. **What ran.** The selected target reports the selection and captures in its request's
    extensions, the captures as the server's `Params` extractor decodes them, and the body it read.
+   The exchange also keeps the status the application answered, before the server finished the
+   response, which can replace it.
 
 So a mismatch says where it belongs. A wrong wire points at the library or the HTTP client it uses.
 A right wire and a wrong head point at the server's HTTP stack. A right head and a wrong choice point
@@ -64,7 +73,8 @@ For HTTP/2 heads that no standard client sends, an HTTP/2 provider hands the com
 the host's own HTTP/2 client, `warded-test-host h2`, one connection per request. It writes the
 header block field by field, as plain HPACK literals in the order given, and refuses nothing, so a
 test can repeat, move, drop or add pseudo-header fields. It records the fields it wrote and what
-came back: a response, a reset stream or a closed connection. It speaks HTTP/2 over TLS to
+came back: a response, a reset stream, a stream that ended after informational heads only, or a
+closed connection. It speaks HTTP/2 over TLS to
 `https`, and with prior knowledge (h2c) to the cleartext listeners. It also records the server's
 SETTINGS, and the size of the header block it wrote and the frames that carried it, which the
 limits on encoded heads count.
@@ -85,23 +95,37 @@ the browser.
 Tests that need Node itself live in `*.node.test.ts` files, and tests that need a browser in
 `*.browser.test.ts` files.
 
-| File                                                                       | What it checks                                                          |
-| -------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| [`paths.test.ts`](./src/scenarios/paths.test.ts)                           | Path values, templates and renderers against `exact_path` and `path`    |
-| [`queries.test.ts`](./src/scenarios/queries.test.ts)                       | Query writers against `param_pair` and `param_present`                  |
-| [`methods.test.ts`](./src/scenarios/methods.test.ts)                       | Method helpers and method names against Warded's method conditions      |
-| [`headers.test.ts`](./src/scenarios/headers.test.ts)                       | Header declarations and automatic headers against header conditions     |
-| [`negotiation.test.ts`](./src/scenarios/negotiation.test.ts)               | Automatic `Accept` and declared languages against offer sets            |
-| [`negotiation-edges.test.ts`](./src/scenarios/negotiation-edges.test.ts)   | Wildcards, weights, repeated fields and strict negotiation errors       |
-| [`limits.test.ts`](./src/scenarios/limits.test.ts)                         | Path captures and negotiation field boundaries                          |
-| [`transport.test.ts`](./src/scenarios/transport.test.ts)                   | Version, transport security and host                                    |
-| [`selection.test.ts`](./src/scenarios/selection.test.ts)                   | Variants against ordered routes, fallthrough, fallbacks and errors      |
-| [`raw.node.test.ts`](./src/scenarios/raw.node.test.ts)                     | Requests only the raw provider sends                                    |
-| [`hostile-heads.node.test.ts`](./src/scenarios/hostile-heads.node.test.ts) | Malformed HTTP/1.1 heads, the server's host rules and false lengths     |
-| [`http2-heads.node.test.ts`](./src/scenarios/http2-heads.node.test.ts)     | Malformed HTTP/2 heads, `:authority` against `Host`, split cookies, h2c |
-| [`http3-heads.node.test.ts`](./src/scenarios/http3-heads.node.test.ts)     | The same heads over HTTP/3                                              |
-| [`head-limits.node.test.ts`](./src/scenarios/head-limits.node.test.ts)     | Head limits over HTTP/2 and HTTP/3, their SETTINGS, negotiation fields  |
-| [`http3.browser.test.ts`](./src/scenarios/http3.browser.test.ts)           | The same conditions over HTTP/3                                         |
+### Service tables
+
+A service table in [`src/apis/`](./src/apis/) is an ordinary route table whose targets answer the
+way a real service does: with a fixed reply, or with a lookup by one of the route's decoded
+captures, the way an application reads a record by its id. Each table, route and reply says which
+convention it imitates, with synthetic names and data. The consumer side, the library's
+description of the same API, sits beside it.
+
+| Table                                 | What it imitates                                                                                                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`parcels.ts`](./src/apis/parcels.ts) | A parcel-tracking API behind an edge proxy: error shapes by status and layer, statuses from 100 to 999, `Set-Cookie` lines with a clearing cookie of the same name, PURGE |
+
+| File                                                                       | What it checks                                                            |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [`paths.test.ts`](./src/scenarios/paths.test.ts)                           | Path values, templates and renderers against `exact_path` and `path`      |
+| [`queries.test.ts`](./src/scenarios/queries.test.ts)                       | Query writers against `param_pair` and `param_present`                    |
+| [`methods.test.ts`](./src/scenarios/methods.test.ts)                       | Method helpers and method names against Warded's method conditions        |
+| [`headers.test.ts`](./src/scenarios/headers.test.ts)                       | Header declarations and automatic headers against header conditions       |
+| [`negotiation.test.ts`](./src/scenarios/negotiation.test.ts)               | Automatic `Accept` and declared languages against offer sets              |
+| [`negotiation-edges.test.ts`](./src/scenarios/negotiation-edges.test.ts)   | Wildcards, weights, repeated fields and strict negotiation errors         |
+| [`limits.test.ts`](./src/scenarios/limits.test.ts)                         | Path captures and negotiation field boundaries                            |
+| [`transport.test.ts`](./src/scenarios/transport.test.ts)                   | Version, transport security and host                                      |
+| [`selection.test.ts`](./src/scenarios/selection.test.ts)                   | Variants against ordered routes, fallthrough, fallbacks and errors        |
+| [`raw.node.test.ts`](./src/scenarios/raw.node.test.ts)                     | Requests only the raw provider sends                                      |
+| [`hostile-heads.node.test.ts`](./src/scenarios/hostile-heads.node.test.ts) | Malformed HTTP/1.1 heads, the server's host rules and false lengths       |
+| [`http2-heads.node.test.ts`](./src/scenarios/http2-heads.node.test.ts)     | Malformed HTTP/2 heads, `:authority` against `Host`, split cookies, h2c   |
+| [`http3-heads.node.test.ts`](./src/scenarios/http3-heads.node.test.ts)     | The same heads over HTTP/3                                                |
+| [`head-limits.node.test.ts`](./src/scenarios/head-limits.node.test.ts)     | Head limits over HTTP/2 and HTTP/3, their SETTINGS, negotiation fields    |
+| [`http3.browser.test.ts`](./src/scenarios/http3.browser.test.ts)           | The same conditions over HTTP/3                                           |
+| [`parcels.test.ts`](./src/scenarios/parcels.test.ts)                       | The parcels table through every provider: what the library decodes        |
+| [`parcels.node.test.ts`](./src/scenarios/parcels.node.test.ts)             | What the servers wrote for those answers, through the recording providers |
 
 ## Running the suite
 
