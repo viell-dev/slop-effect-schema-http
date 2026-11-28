@@ -354,8 +354,6 @@ const childrenOf = (ast: SchemaAST.AST): ReadonlyArray<Child> => {
           type,
         })),
       ];
-    case "Union":
-      return ast.types.map((type, index) => ({ key: index, type }));
     default:
       return [];
   }
@@ -380,6 +378,44 @@ type Counterpart =
 /** The encoded kind of a node, which every copy of it that Effect builds keeps. */
 const kindOf = (ast: SchemaAST.AST): SchemaAST.AST["_tag"] =>
   SchemaAST.toEncoded(ast)._tag;
+
+/**
+ * Encoded kinds that take no object, and so no native Option. Any other kind is taken to take one,
+ * which only makes {@link pairMembers} pair fewer members.
+ */
+const objectless: ReadonlySet<SchemaAST.AST["_tag"]> = new Set([
+  "String",
+  "Number",
+  "Boolean",
+  "BigInt",
+  "Symbol",
+  "UniqueSymbol",
+  "Literal",
+  "TemplateLiteral",
+  "Enum",
+  "Null",
+  "Undefined",
+  "Never",
+]);
+
+/** Whether a node's encoded side can take an object, as a native Option is. */
+const takesObject = (ast: SchemaAST.AST): boolean => {
+  const encoded = SchemaAST.toEncoded(ast);
+  return encoded._tag === "Union"
+    ? encoded.types.some(takesObject)
+    : !objectless.has(encoded._tag);
+};
+
+/** Each member's index among the members of `union` that can take an object, if it can. */
+const objectPlaces = (
+  union: SchemaAST.Union,
+): ReadonlyArray<number | undefined> => {
+  const places: Array<number | undefined> = [];
+  let next = 0;
+  for (const member of union.types)
+    places.push(takesObject(member) ? next++ : undefined);
+  return places;
+};
 
 const memberPairings = new WeakMap<
   SchemaAST.AST,
@@ -429,11 +465,15 @@ const pairMembers = (
         ? kindOf(member) === kindOf(placed)
         : own[at]!.includes(placed);
     });
+  const decodedTaking = decoded.types.filter(takesObject);
+  const wirePlaces = objectPlaces(wire);
   const pairs = own.map((found, at) => {
     const placed = decoded.types[at];
     if (found.length === 0) return inPlace ? placed : undefined;
     if (placed !== undefined && found.includes(placed)) return placed;
-    return found.length === 1 ? found[0] : undefined;
+    const place = wirePlaces[at];
+    const taking = place === undefined ? undefined : decodedTaking[place];
+    return taking !== undefined && found.includes(taking) ? taking : undefined;
   });
   if (byWire === undefined) {
     byWire = new WeakMap();
@@ -482,16 +522,27 @@ const counterpart = (
     const type = pairing?.pairs.get(key);
     return type === undefined ? undefined : { _tag: "Field", type };
   }
-  const wire = originOf(reference);
-  const type =
-    decoded._tag !== "Union"
-      ? childrenOf(layer).find((candidate) => candidate.key === key)?.type
-      : wire._tag === "Union" && typeof key === "number"
-        ? pairMembers(decoded, wire)[key]
-        : undefined;
+  const type = layerChild(layer, originOf(reference), key);
   return type !== undefined && kindOf(type) === kindOf(originOf(child))
     ? { _tag: "Field", type }
     : undefined;
+};
+
+/**
+ * The child of `layer` under `key`, where `wire` is its projection. For a union, it is the member
+ * that `wire`'s member at index `key` stands for.
+ */
+const layerChild = (
+  layer: SchemaAST.AST,
+  wire: SchemaAST.AST,
+  key: PropertyKey,
+): SchemaAST.AST | undefined => {
+  const decoded = originOf(layer);
+  if (decoded._tag === "Union")
+    return wire._tag === "Union" && typeof key === "number"
+      ? pairMembers(decoded, wire)[key]
+      : undefined;
+  return childrenOf(layer).find((candidate) => candidate.key === key)?.type;
 };
 
 interface Interned<A> {
