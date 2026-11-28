@@ -64,20 +64,23 @@ type Supplied = (value: unknown) => Given | typeof unaccounted;
  *
  * @remarks
  * Each object of the written value is paired with the caller's value at the same place, following
- * only names the two share and plain data on both sides. Where the caller's plain object holds no
- * key the value does not, a key only the value holds is one the reading made, as a constructor
- * default is, so the caller gave nothing below it. An object met at two places with different
- * values pairs with neither, and nor does anything below it. A value the walk does not pair, as one
- * Effect writes again below a renamed struct from what a union's first write wrote, or an `Option`'s
- * payload, counts as given in every key where everything the caller gave is plain data. Otherwise
- * it may come from data that is not plain and cannot be accounted for.
+ * only names the two share and plain data on both sides. Where what the caller gave there, as the
+ * schema normalised it, holds no key the value does not, a key only the value holds is one the
+ * reading made, as a constructor default is, so the caller gave nothing below it. A key no schema
+ * there states is left out by that normalising and read by nothing, so it does not count. An object
+ * met at two places with different values pairs with neither, and nor does anything below it. A
+ * value the walk does not pair, as one Effect writes again below a renamed struct from what a
+ * union's first write wrote, one parsed from text, or an `Option`'s payload, counts as given in
+ * every key where everything the caller gave is plain data. Otherwise it may come from data that is
+ * not plain and cannot be accounted for.
  */
 const pairing = (input: WriteInput): Supplied => {
   let pairs: WeakMap<object, Given> | undefined;
   let plain: boolean | undefined;
   return (value) => {
     pairs ??= paired(input);
-    if (isKeyed(value) && pairs.has(value)) return pairs.get(value);
+    const at = isKeyed(value) ? pairs.get(value) : undefined;
+    if (at !== undefined) return at;
     plain ??= isPlainThroughout(input.caller);
     return plain ? undefined : unaccounted;
   };
@@ -126,7 +129,7 @@ const paired = ({
       !meet(held, offered)
     )
       return;
-    const onlyShared = Reflect.ownKeys(from).every((key) =>
+    const onlyShared = Reflect.ownKeys(offered).every((key) =>
       Object.hasOwn(held, key),
     );
     for (const key of Reflect.ownKeys(held))
@@ -191,9 +194,9 @@ interface Attempt {
 interface Stage {
   readonly attempts: ReadonlyArray<Attempt>;
   readonly admits: (attempt: Attempt) => boolean;
-  /** Whether a member's write is taken here, where not every write is. */
-  readonly takes?: (output: unknown) => boolean;
-  /** Whether a write not taken ends the stage and leaves the member to the stages after it. */
+  /** Whether a member's write is kept here, where not every write is. */
+  readonly keeps?: (output: unknown) => boolean;
+  /** Whether a write not kept ends the stage and leaves the member to the stages after it. */
   readonly yields?: () => boolean;
   /** What the member that wrote here comes to, where it is not simply kept. */
   readonly settle?: (
@@ -309,9 +312,12 @@ const parser = (
  * under a name the caller gave where the value holds nothing by that name, as a renamed member
  * writing a default in the place of a field the reading did not keep would. A member that drops a
  * field does not count against one that holds the value, as in the strict attempts; where two such
- * members write a one-of union's value, the write that dropped the field is kept, and what it drops
- * is refused for that ambiguity. None of this runs where the value may come from data that is not
- * plain, whose drops are Effect's own, nor where the write was not told what the caller gave.
+ * members write a one-of union's value, no other is tried, the write that dropped the field is kept,
+ * and what it drops is refused for that ambiguity. Where the write comes to the members that hold
+ * the value whatever the others write, as where every other member the loose attempts may take
+ * drops a field the caller gave, those are tried first. None of this runs where the value may come
+ * from data that is not plain, whose drops are Effect's own, nor where the write was not told what
+ * the caller gave.
  *
  * A failed attempt forgets what was noted inside it, so only the members of the write that succeeded
  * remain. An any-of union keeps its first success; a one-of union fails if two members write in one
@@ -383,7 +389,7 @@ const noting = (
       const successes: Array<SchemaAST.AST> = [];
       let written:
         { readonly output: unknown; readonly index: number } | undefined;
-      /** Where two members that cover a one-of union's value write it, so neither is chosen. */
+      /** Where two members that cover a one-of union's value write it, so none of them is chosen. */
       let ambiguous: SchemaIssue.OneOf | undefined;
       const finish = (): Effect.Effect<unknown, SchemaIssue.Issue> => {
         if (written === undefined)
@@ -455,12 +461,18 @@ const noting = (
           at !== unaccounted && dropsGiven(original.types[index]!, input, at)
         );
       };
-      /** The members that cover the value and were not yet tried as the write's options say. */
+      /**
+       * The members that cover the value and were not yet tried as the write's options say. Once two
+       * of them have written a one-of union's value, neither is chosen and no other is tried.
+       */
       const coveringLeft: Stage = {
         attempts: looseCovering,
-        admits: ({ index }) => !loosened.has(index) && given() !== unaccounted,
+        admits: ({ index }) =>
+          ambiguous === undefined &&
+          !loosened.has(index) &&
+          given() !== unaccounted,
         // What such a member writes in the place of a field the caller gave is not theirs.
-        takes: (output) => {
+        keeps: (output) => {
           const at = given();
           return at !== unaccounted && !replaces(input, output, at);
         },
@@ -495,7 +507,7 @@ const noting = (
       const tryStage = (
         current: Stage,
         after: () => Effect.Effect<unknown, SchemaIssue.Issue>,
-        twice: NonNullable<Stage["twice"]> = Effect.fail,
+        twice: NonNullable<Stage["twice"]> = (issue) => Effect.fail(issue),
         position = 0,
       ): Effect.Effect<unknown, SchemaIssue.Issue> => {
         const next = current.attempts[position];
@@ -517,7 +529,7 @@ const noting = (
               return following();
             },
             onSuccess: (output) => {
-              if (current.takes?.(output) === false) {
+              if (current.keeps?.(output) === false) {
                 forget(mark);
                 if (current.yields?.() !== true) return following();
                 // The loose attempts write the member as Effect does, if nothing before it writes.
@@ -582,7 +594,8 @@ const noting = (
                 admits: (attempt: Attempt) =>
                   coveringFirst().applies && coveringLeft.admits(attempt),
                 yields: () => coveringFirst().yields,
-                // Whether either stands rests on the members that drop a field, as in `instead`.
+                // Neither stands, and no other member that covers the value is tried: what the
+                // members that drop a field write decides, as in `instead`.
                 twice: (
                   issue: SchemaIssue.OneOf,
                   after: () => Effect.Effect<unknown, SchemaIssue.Issue>,

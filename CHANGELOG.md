@@ -66,22 +66,27 @@
   writes drops a field the caller gave, a member that states every key the value holds is tried that
   way in its place, and every such member is tried before the write fails. Under `oneOf` a member
   that would drop a field does not count against it, as in the strict attempt. A field the written
-  value loses is still refused: where two members hold a `oneOf` value and a third drops a field,
-  the field is refused with `Expected exactly one member to match`. Such a member never writes a
-  constructor default under a name the caller gave another field; that field is refused. A refusal
-  takes its message from the request's own reading where the step fails the strict read, but a step
-  that fails only the strict write can still give it that step's strict-only failure, as on 0.20.1.
-  This follows what the caller gave, so a value that is not plain data, such as a class instance,
-  and what it holds are written as on 0.20.1 and still refuse where they did. Below a parent, where
-  the reading takes `narrow` first, and for a value given under a wire name, such a step still
-  refuses, as the input reference's limits describe.
-  `Request.query(Union([Struct({ a: keyed }), other]))` given `{ a: { foo: 1 } }` refused with a
-  `SchemaError`; the query writer now refuses its nested object with `InvalidRequest`.
-- **Breaking:** beside a stacked query or header schema, such a union now writes the value through
-  the member that holds it, where 0.20.1 wrote it through a later member that dropped a field the
-  stacked schema took ([#335](https://github.com/viell-dev/slop-effect-schema-http/issues/335)).
-  Each such request sends what the same schemas send with the check passing strictly. With
-  `{ a: "x", b: "y" }`, check a server that reads:
+  value loses is still refused: where two or more members hold a `oneOf` value and another drops a
+  field, the field is refused with `Expected exactly one member to match`, as Effect's own write
+  refuses the value. Such a member never writes a constructor default under a name the caller gave
+  another field; that field is refused. A refusal takes its message from the request's own reading
+  where the step fails the strict read, but a step that fails only the strict write can still give
+  it that step's strict-only failure, as on 0.20.1. This follows what the caller gave, so a value
+  that is not plain data, such as a class instance, and what it holds are written as on 0.20.1 and
+  still refuse where they did. So is a union whose value cannot be matched with a place in the
+  caller's, as inside text the caller gave as text, wherever the caller's value holds something that
+  is not plain data, even beside the union, such as a `Date` field. Below a parent, where the
+  reading takes `narrow` first, for a value given under a wire name, and under `oneOf` where the
+  member that holds the value first fails its strict write in a union below it, as in a recursive
+  union whose list comes before such a step, the step still refuses, as the input reference's limits
+  describe. `Request.query(Union([Struct({ a: keyed }), other]))` given `{ a: { foo: 1 } }` refused
+  with a `SchemaError`; the query writer now refuses its nested object with `InvalidRequest`.
+- **Breaking:** such a union now writes the value through the member that holds it in two places
+  where 0.20.1 wrote it through another member that dropped a field: beside a stacked query or
+  header schema that took the field, and inside text the caller gave as text
+  ([#335](https://github.com/viell-dev/slop-effect-schema-http/issues/335)). Each such request sends
+  what the same schemas send with the check passing strictly. With `{ a: "x", b: "y" }`, check a
+  server that reads:
   - a field under the name only the dropping member wrote: `Request.query(Union([whole, renamed]))`,
     with `renamed = Struct({ a }).pipe(encodeKeys({ a: "A" }))`, stacked with
     `Request.query(Struct({ b }))` sent `?A=x&b=y` and now sends `?a=x&b=y`, as Effect's own write
@@ -98,25 +103,38 @@
     the headers `b: Y`, `a: x` are now `a: x`, `b: y`. Bind the union first to keep the stacked
     schema's encoding;
   - the parameters or headers in order: bound after `Struct({ b })`, `Union([whole, narrow])` sent
-    `?b=y&a=x` and now sends `?a=x&b=y`.
+    `?b=y&a=x` and now sends `?a=x&b=y`;
+  - a field inside text, which now holds it: with `wholeW = Struct({ a, b })` and `b` checked only
+    on its encoded side, `Struct({ j: fromJsonString(Union([narrow, wholeW])) })` given
+    `{ j: '{"a":"x","b":"y"}' }` sent `{"j":"{\"a\":\"x\"}"}`, as Effect's own write does, and now
+    sends `{"j":"{\"a\":\"x\",\"b\":\"y\"}"}`, and so does the union at the root and in a query
+    parameter. Where the caller's value holds something that is not plain data, such as a `Date`
+    beside `j`, the request sends as on 0.20.1.
 
-  Every request that sent still sends. Where the member written drops a field the caller gave, or
-  preparation cannot tell what the caller gave there, the members holding the value are tried, and
-  where no member writes, every holding member is, so their steps run once more in each such loose
-  write, and a union below them is written again. That also happens on requests that send what they
-  sent before: where the stacked schema then takes the field, which is settled only after the
-  union's write, and where the loose write fails either way and another route writes the value. With
+  Every request that sent still sends, where no step's result depends on how often or in what order
+  it runs. Where the member written drops a field the caller gave, or preparation cannot tell what
+  the caller gave there, the members holding the value are tried, and where no member writes, every
+  holding member is, so their steps run once more in each such loose write, and a union below them
+  is written again. That also happens on requests that send what they sent before: where the stacked
+  schema then takes the field, which is settled only after the union's write, and where the loose
+  write fails either way and another route writes the value. With
   `Union([Struct({ title, code }), Struct({ title })])`, where `code`'s encoded side refuses `"x"`
   and no step reads the options, stacked with `Struct({ code })`, `{ title: "a", code: "x" }` sends
-  `?title=a&code=x` as before and `title`'s encoder runs 6 times where it ran 4. Where every other
-  member the loose write could take would drop such a field, the holding members are tried first, so
-  no write is made only to be set aside and a recursive union writes each level once: for
+  `?title=a&code=x` as before and `title`'s encoder runs 6 times where it ran 4. The holding members
+  can now run before the member that writes, so a step whose result depends on how often or in what
+  order it runs can see another count: where `title` appends the number of its run, the request sent
+  `?title=a-4&code=x` and now sends `?title=a-5&code=x`, and where `title` refuses its fifth run,
+  the request now refuses. Where every other member the loose write could take would drop such a
+  field, the holding members are tried first, so no write is made only to be set aside and a
+  recursive union writes each level once: for
   `Union([Struct({ v, kids }), Struct({ v, kids, x })])`, `kids` a list of the union and `x` written
   through such a step, a 13-level chain holding `x` at every level runs `v`'s encoder 24,586 times,
   where 0.20.1 ran it 49,146 times before refusing, as its strict attempts already double the work
   with each level, and with `x` declared before `kids` it runs 28 times, where 0.20.1 ran it 54
-  times before refusing. A dropped field the reading made, such as a constructor default, is not the
-  caller's, so it adds no run and changes no bytes, and nor does a value that is not plain data.
+  times before refusing. Under `oneOf`, with `kids` first, the chain still refuses after 622,644
+  runs, as on 0.20.1 ([#370](https://github.com/viell-dev/slop-effect-schema-http/issues/370)). A
+  dropped field the reading made, such as a constructor default, is not the caller's, so it adds no
+  run and changes no bytes, and nor does a value that is not plain data.
 
 ## 0.20.1 — 2026-11-28
 
