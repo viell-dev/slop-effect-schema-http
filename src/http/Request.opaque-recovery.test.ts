@@ -6,6 +6,7 @@ import {
   Option,
   Schema,
   SchemaGetter,
+  SchemaIssue,
   SchemaTransformation,
 } from "effect";
 import * as Body from "./Body.js";
@@ -2338,6 +2339,21 @@ const optionalKey = <S extends Schema.Top>(
     ),
   );
 
+/** The same over `Schema.optionalKey`, whose wire key can be missing but never `undefined`. */
+const exactKey = <S extends Schema.Top>(payload: S) =>
+  Schema.optionalKey(payload).pipe(
+    Schema.decodeTo(
+      Schema.Option(Schema.toType(payload)),
+      SchemaTransformation.transformOptional<
+        Option.Option<S["Type"]>,
+        S["Type"]
+      >({
+        decode: Option.some,
+        encode: (value) => Option.flatMap(value, (some) => some),
+      }),
+    ),
+  );
+
 /** A `held` Some holding `inner` in a Some of its own. */
 const inSome = (inner: object) =>
   ({ held: Option.some({ inner: Option.some(inner) }) }) as never;
@@ -2407,8 +2423,15 @@ describe("a codec whose payload preparation cannot find on the wire keeps or ref
     });
   };
   // Preparation cannot find the payload of a built-in codec behind middleware on the wire, as it
-  // cannot find a hand-written one's, including one that can omit its key.
-  const codecs = [fromNull, fromUndefined, caught, optionalKey] as const;
+  // cannot find a hand-written one's, including one that can omit its key over either optional
+  // field.
+  const codecs = [
+    fromNull,
+    fromUndefined,
+    caught,
+    optionalKey,
+    exactKey,
+  ] as const;
   const send = ({ held, give }: Position, payload: object) =>
     json(Schema.Struct({ held }), { held: give(payload) } as never);
   /** A same-tag Some holding a stray key beside `limit` and the given fields. */
@@ -3038,6 +3061,7 @@ describe("a codec whose payload preparation cannot find on the wire keeps or ref
         const cases = [
           [besideAddsIn(optionalKey(Filter), Option.none()), {}],
           [besideAddsIn(writesNothing, Option.some(wide)), {}],
+          [besideAddsIn(exactKey(Filter), Option.none()), {}],
           [besideAddsIn(Schema.OptionFromOptional(Filter), Option.none()), {}],
           [
             besideAddsInRenamed(optionalKey(Filter), Option.none()),
@@ -3053,6 +3077,199 @@ describe("a codec whose payload preparation cannot find on the wire keeps or ref
             held,
             s: { a: "a" },
           });
+      }),
+  );
+
+  // Decode-only codecs: the encoder always fails, so a member holding one fails to write and the
+  // loose writer falls back to another. One writes its payload in place, one can omit its key.
+  const decodeOnly = (payload: Codec) =>
+    Schema.NullOr(payload).pipe(
+      Schema.decodeTo(
+        Schema.Option(Schema.toType(payload)),
+        new SchemaTransformation.Transformation(
+          SchemaGetter.transform<Option.Option<unknown>, unknown>(
+            Option.fromNullOr,
+          ),
+          SchemaGetter.forbidden<unknown, Option.Option<unknown>>(
+            () => "decode only",
+          ),
+        ),
+      ),
+    );
+  const decodeOnlyOptional = (payload: Codec) =>
+    Schema.optional(payload).pipe(
+      Schema.decodeTo(
+        Schema.Option(Schema.toType(payload)),
+        new SchemaTransformation.Transformation(
+          SchemaGetter.transformOptional<Option.Option<unknown>, unknown>(
+            (value) =>
+              Option.some(Option.flatMap(value, Option.fromUndefinedOr)),
+          ),
+          SchemaGetter.forbidden<unknown, Option.Option<unknown>>(
+            () => "decode only",
+          ),
+        ),
+      ),
+    );
+  /** An effectful encoder that refuses a Some whose `limit` is "l". */
+  const validating = Schema.NullOr(Filter).pipe(
+    Schema.decodeTo(
+      Schema.Option(Schema.toType(Filter)),
+      new SchemaTransformation.Transformation(
+        SchemaGetter.transform<
+          Option.Option<typeof Filter.Type>,
+          typeof Filter.Type | null
+        >(Option.fromNullOr),
+        SchemaGetter.transformEffect<
+          typeof Filter.Type | null,
+          Option.Option<typeof Filter.Type>
+        >((value) =>
+          Option.exists(
+            value,
+            (payload) => "limit" in payload && payload.limit === "l",
+          )
+            ? Effect.fail(
+                new SchemaIssue.InvalidValue(
+                  { message: "limit l is refused" },
+                  value,
+                ),
+              )
+            : Effect.succeed(Option.getOrElse(value, () => null)),
+        ),
+      ),
+    ),
+  );
+  /** A struct of `n`, renamed, and the given fields. */
+  const renamedN = (fields: Fields) =>
+    Schema.Struct({ n: Schema.String, ...fields }).pipe(
+      Schema.encodeKeys({ n: "wire_n" }),
+    );
+  /** A built-in codec's Some of a union whose narrower member, listed first, does not state `inner`. */
+  const narrowerFirst = (inner: Codec, beside: Fields = {}) =>
+    Schema.OptionFromNullOr(
+      Schema.Union([
+        Schema.Struct({ n: Schema.String }),
+        Schema.Struct({ n: Schema.String, inner, ...beside }),
+      ]),
+    );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/386
+  it.effect(
+    "refuses a Some that a narrower member leaves out where the loose writer falls back to it",
+    () =>
+      Effect.gen(function* () {
+        // The wider member's write fails and the narrower one writes the struct. It does not state
+        // `inner`, so the codec never ran, and its missing key is no sign of what it writes.
+        const cases = [
+          [narrowerFirst(decodeOnly(Filter)), {}, { n: "n" }],
+          [
+            Schema.OptionFromNullOr(
+              Schema.Union([
+                renamedN({}),
+                renamedN({ inner: decodeOnly(Filter) }),
+              ]),
+            ),
+            {},
+            { wire_n: "n" },
+          ],
+          [narrowerFirst(decodeOnlyOptional(Filter)), {}, { n: "n" }],
+          // A decode-only sibling makes the write fail beside a codec the writer follows.
+          [
+            narrowerFirst(fromNull(Filter), { bad: decodeOnly(Filter) }),
+            { bad: Option.none() },
+            { n: "n" },
+          ],
+        ] as const;
+        for (const [held, beside, sent] of cases) {
+          const schema = Schema.Struct({ held });
+          const given = (inner: Option.Option<typeof wide>) =>
+            ({ held: Option.some({ n: "n", inner, ...beside }) }) as never;
+          const failure = yield* Effect.flip(
+            json(schema, given(Option.some(wide))),
+          );
+          expect(failure.message).toContain('["held"]["value"]["inner"]');
+          // A None holds nothing the narrower member could leave out.
+          expect(yield* json(schema, given(Option.none()))).toEqual({
+            held: sent,
+          });
+        }
+        // An effectful encoder that refuses this Some, in the wider member listed first.
+        const wideFirst = Schema.Struct({
+          held: Schema.OptionFromNullOr(
+            Schema.Union([
+              Schema.Struct({ n: Schema.String, inner: validating }),
+              Schema.Struct({ n: Schema.String }),
+            ]),
+          ),
+        });
+        const refused = yield* Effect.flip(
+          json(wideFirst, {
+            held: Option.some({ n: "n", inner: Option.some(wide) }),
+          } as never),
+        );
+        expect(refused.message).toContain(
+          '["held"]["value"]["inner"]["value"]["limit"]',
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/386
+  it.effect(
+    "currently refuses a Some a codec writes as nothing in a union payload whose narrower member does not state it",
+    () =>
+      Effect.gen(function* () {
+        // The check cannot tell which member wrote, so a missing Some is the codec's own only where
+        // every member states its field, as on 0.20.0. Effect's own encoding sends `{"n":"n"}`.
+        const writesNothing = optionalKey(Filter, () => Option.none());
+        const sendBesideAdds = (
+          held: Codec,
+          inner: Option.Option<typeof wide>,
+        ) =>
+          json(Schema.Struct({ held, s: Adds }), {
+            held: Option.some({ n: "n", inner }),
+            s: { a: "a" },
+          } as never);
+        const narrower = narrowerFirst(writesNothing);
+        const failure = yield* Effect.flip(
+          sendBesideAdds(narrower, Option.some(wide)),
+        );
+        expect(failure.message).toContain('["held"]["value"]["inner"]');
+        const sent = { held: { n: "n" }, s: { a: "a" } };
+        expect(yield* sendBesideAdds(narrower, Option.none())).toEqual(sent);
+        const bothState = Schema.OptionFromNullOr(
+          Schema.Union([
+            Schema.Struct({ inner: writesNothing, k: Schema.Literal("k") }),
+            Schema.Struct({ inner: writesNothing, n: Schema.String }),
+          ]),
+        );
+        expect(yield* sendBesideAdds(bothState, Option.some(wide))).toEqual(
+          sent,
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/392
+  it.effect(
+    "refuses an encoded payload a Void takes in a renamed struct that a codec that can omit its key makes a frame",
+    () =>
+      Effect.gen(function* () {
+        const other = Option.some({ owner: "b", limit: "m", stray: "x" });
+        for (const codec of [optionalKey, exactKey]) {
+          const schema = Schema.Struct({
+            held: codec(Schema.Union([Schema.Void, Wide])),
+            other: Schema.OptionFromNullOr(Filter),
+            n: Schema.String,
+          }).pipe(Schema.encodeKeys({ n: "wire_n" }));
+          // The sibling's stray key is left out, so the strict read takes the payload, and the Void
+          // on the codec's wire side reads it as nothing. Before such a codec made the struct a
+          // frame, the stray key led to the relaxed read, which refused that, as this does.
+          const failure = yield* Effect.flip(
+            json(schema, { held: wide, other, n: "n" } as never),
+          );
+          expect(failure.message).toContain('["held"]');
+          expect(failure.message).not.toContain('["held"][');
+          expect(failure.message).not.toContain("other");
+        }
       }),
   );
 
@@ -3472,6 +3689,81 @@ it.effect(
       });
     }),
 );
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/392
+describe("an Option codec given its encoded payload", () => {
+  const VoidFirst = Schema.Union([Schema.Void, Wide]);
+  const wide = { ...owner, limit: "l" };
+  /** `held` over `VoidFirst` in a renamed struct beside a built-in codec's `other`. */
+  const renamed = (codec: (payload: typeof VoidFirst) => Schema.Top) =>
+    Schema.Struct({
+      held: codec(VoidFirst),
+      other: Schema.OptionFromNullOr(Filter),
+      n: Schema.String,
+    }).pipe(Schema.encodeKeys({ n: "wire_n" }));
+  const other = { owner: "b", limit: "m" };
+  const cases = [
+    [Schema.Struct({ held: Schema.OptionFromOptional(VoidFirst) }), {}],
+    [
+      Schema.Struct({ held: Schema.OptionFromNullOr(VoidFirst) }),
+      { held: null },
+    ],
+    [Schema.Struct({ held: optionalKey(VoidFirst) }), {}],
+    [Schema.Struct({ held: fromNull(VoidFirst) }), { held: null }],
+    [
+      renamed(optionalKey),
+      { other, wire_n: "n" },
+      { other: Option.some(other), n: "n" },
+    ],
+    // A built-in codec made the rename a frame before, so a sibling's stray key is left out as
+    // before, and the strict read takes the payload.
+    [
+      renamed(Schema.OptionFromOptional),
+      { other, wire_n: "n" },
+      { other: Option.some({ ...other, stray: "x" }), n: "n" },
+    ],
+  ] as const;
+  const send = (schema: Schema.Top, beside: object = {}) =>
+    json(
+      schema as Schema.Codec<unknown, unknown>,
+      {
+        held: wide,
+        ...beside,
+      } as never,
+    );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/392
+  it.effect(
+    "currently sends nothing for a payload a Void on the codec's wire side takes",
+    () =>
+      Effect.gen(function* () {
+        for (const [schema, sent, beside] of cases)
+          expect(yield* send(schema, beside)).toEqual(sent);
+        // With no codec, Void takes only an empty value and the wider member keeps the payload.
+        expect(yield* send(Schema.Struct({ held: VoidFirst }))).toEqual({
+          held: wide,
+        });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/392
+  it.effect.fails(
+    "keeps or refuses a payload a Void on the codec's wire side would take",
+    () =>
+      Effect.gen(function* () {
+        for (const [schema, , beside] of cases) {
+          const result = yield* Effect.exit(send(schema, beside));
+          if (Exit.isSuccess(result))
+            expect(result.value).toMatchObject({ held: wide });
+          else
+            expect(Cause.squash(result.cause)).toHaveProperty(
+              "message",
+              expect.stringContaining('["held"]'),
+            );
+        }
+      }),
+  );
+});
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/309
 describe("an invalid Some payload keeps its decoded error", () => {

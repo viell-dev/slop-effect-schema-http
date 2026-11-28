@@ -39,9 +39,10 @@
   and refuses it even where nothing stated is lost
   ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)).
 
-- **Breaking:** the same refusal reaches every hand-written Option codec, whatever its encoder
-  writes or leaves out ([#364](https://github.com/viell-dev/slop-effect-schema-http/issues/364)).
-  With
+- **Breaking:** the same refusal reaches a hand-written Option codec whatever its encoder writes or
+  leaves out ([#364](https://github.com/viell-dev/slop-effect-schema-http/issues/364)), unless its
+  wire side hides the payload's union, as a codec that writes its payload as text does
+  ([#379](https://github.com/viell-dev/slop-effect-schema-http/issues/379)). With
   `OptionalKey(P) = optional(P).pipe(decodeTo(Option(toType(P)), transformOptional({ decode: …, encode: (o) => Option.flatMap(o, (v) => v) })))`,
   `Some({ owner, limit, stray })` under a same-tag union, a list of `Filter` or a `Filter` inside
   another `Some` sent `limit` nowhere in 0.20.0, and so did a codec with an effectful encoder. They
@@ -73,7 +74,10 @@
   beside `OptionFromOptional`. Where `held`'s payload is `Union([Void, Wide])`, a `Some` there that
   was refused beside such a stray key now sends `"held":null`: inside an Option, Void is the
   schema's own and takes the payload first, as Effect's own encoding and the built-in codec do with
-  or without the stray key.
+  or without the stray key. `held` given its encoded payload there, `{ owner, limit }`, is still
+  refused beside the stray key, now naming `["held"]`: the Void on the codec's wire side takes it as
+  nothing. Without the stray key, and through the built-in codec, that payload is sent as nothing,
+  as on 0.20.0 ([#392](https://github.com/viell-dev/slop-effect-schema-http/issues/392)).
 
 - **Message change:** under its own renamed field, a hand-written codec that can omit its key
   refuses an invalid `Some` as `OptionFromOptional` does, naming a field the `Some` holds where it
@@ -84,10 +88,10 @@
   follows one that writes a value. Where a field beside it fails its strict write, such a codec
   keeps `limit` where 0.20.0 sent it nowhere or refused, if the writer finds the payload on the
   wire. `Body.jsonSchema` applies the JSON codec first, which rebuilds a payload holding a `Number`,
-  `Date`, `BigInt`, `UndefinedOr` or `Schema.optional` field, a codec that writes `undefined` or a
-  suspension. Through such a payload, and through a codec with an effectful encoder, a hand-written
-  codec, whether it writes a value or can omit its key, can still lose `limit` there with no error;
-  the built-in codec keeps it
+  `Date`, `BigInt`, `UndefinedOr`, `Schema.optional`, `Schema.Unknown` or `Schema.Option` field, a
+  codec that writes `undefined` or a suspension. Through such a payload, and through a codec with an
+  effectful encoder, a hand-written codec, whether it writes a value or can omit its key, can still
+  lose `limit` there with no error; the built-in codec keeps it
   ([#378](https://github.com/viell-dev/slop-effect-schema-http/issues/378)). Through a followed
   codec, a union member in the payload whose strict write fails runs its encoder as often as it does
   through the other followed codecs and at a plain field: four times for one request, where it ran
@@ -98,7 +102,11 @@
   that leaves its key out, for a `None` or for a `Some` its encoder writes as nothing, was refused
   naming its field. It now sends what the codec writes, as it does without that field and as
   `Schema.OptionFromOptional` does
-  ([#386](https://github.com/viell-dev/slop-effect-schema-http/issues/386)).
+  ([#386](https://github.com/viell-dev/slop-effect-schema-http/issues/386)). In a union payload,
+  that holds for a `Some` only where every member states the field: a member that does not, such as
+  `Struct({ n })` before `Struct({ n, inner })`, may have written the struct without running the
+  codec, so a `Some` the codec writes as nothing is still refused there, as on 0.20.0, while its
+  `None` sends.
 
 ## 0.20.1 — 2026-11-28
 
