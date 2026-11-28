@@ -3140,6 +3140,34 @@ describe("a caller's field under a union", () => {
     const narrow = Schema.Struct({ a: text });
     const given = { a: "x", b: "y" };
     const oneOf = { mode: "oneOf" } as const;
+    // The same check on the encoded side: the strict read passes it, and only the strict write fails.
+    const writeOnly = (message: string) =>
+      text.pipe(
+        Schema.decodeTo(text, {
+          decode: SchemaGetter.passthrough(),
+          encode: SchemaGetter.checkEffect((_value: string, options) =>
+            Effect.succeed(options.onExcessProperty !== "error" || message),
+          ),
+        }),
+      );
+    const wholeW = Schema.Struct({ a: text, b: writeOnly("Write-only b") });
+    // `b` is the reading's default where the caller leaves it out, so it is not the caller's.
+    const defaulted = Schema.Struct({
+      a: text,
+      b: strictOnlyCheck("Option-sensitive b", Schema.String).pipe(
+        Schema.withConstructorDefault(Effect.succeed("dflt")),
+      ),
+    });
+    const checked = Schema.Struct({
+      a: strictOnlyCheck("Option-sensitive a", Schema.String),
+    });
+    // Its encoded side is at least nine long, so a strict write of `"y"` fails for another reason.
+    const longCode = text.pipe(
+      Schema.encodeTo(text.check(Schema.isMinLength(9)), {
+        decode: SchemaGetter.passthrough(),
+        encode: SchemaGetter.passthrough(),
+      }),
+    );
     it.effect("writes the value through it, as Effect does", () =>
       Effect.gen(function* () {
         const forms = [
@@ -3236,6 +3264,179 @@ describe("a caller's field under a union", () => {
         }),
     );
 
+    it.effect(
+      "writes the field a stacked schema took as the member that holds the value states it",
+      () =>
+        Effect.gen(function* () {
+          // 0.20.0 wrote `narrow`, and the stacked schema wrote `b`. Now `whole` writes `b` too, as
+          // the same union writes it with the check passing strictly.
+          const union = Schema.Union([whole, narrow]);
+          const shouting = Schema.Struct({
+            b: text.pipe(
+              Schema.decodeTo(text, {
+                decode: SchemaGetter.transform((value: string) =>
+                  value.toLowerCase(),
+                ),
+                encode: SchemaGetter.transform((value: string) =>
+                  value.toUpperCase(),
+                ),
+              }),
+            ),
+          });
+          // Bound first, the stacked schema's own encoding gives way to the union's, as a schema
+          // bound later writes a field the two share in the earlier one's place.
+          expect(yield* urlOf(stacked(shouting, union), { query: given })).toBe(
+            "/x?a=x&b=y",
+          );
+          expect(
+            yield* linesOf(
+              Request.get("/x").pipe(
+                Request.headers(shouting),
+                Request.headers(union),
+              ),
+              { headers: given },
+            ),
+          ).toEqual([
+            ["a", "x"],
+            ["b", "y"],
+          ]);
+          // Bound later, it writes the field in the union's place, as it did.
+          expect(yield* urlOf(stacked(union, shouting), { query: given })).toBe(
+            "/x?a=x&b=Y",
+          );
+          expect(
+            yield* linesOf(
+              Request.get("/x").pipe(
+                Request.headers(union),
+                Request.headers(shouting),
+              ),
+              { headers: given },
+            ),
+          ).toEqual([
+            ["a", "x"],
+            ["b", "Y"],
+          ]);
+          // Under another name, the stacked schema still writes the field, so it goes out twice.
+          const renamed = Schema.Struct({ b: text }).pipe(
+            Schema.encodeKeys({ b: "B2" }),
+          );
+          expect(yield* urlOf(stacked(union, renamed), { query: given })).toBe(
+            "/x?a=x&b=y&B2=y",
+          );
+          expect(yield* urlOf(stacked(renamed, union), { query: given })).toBe(
+            "/x?B2=y&a=x&b=y",
+          );
+        }),
+    );
+
+    it.effect(
+      "writes the value through a member whose step fails only the strict write",
+      () =>
+        Effect.gen(function* () {
+          // The strict read passes, so the value is read whole wherever the union stands.
+          const kept = '{"a":"x","b":"y"}';
+          for (const union of [
+            Schema.Union([narrow, wholeW]),
+            Schema.Union([wholeW, narrow]),
+            Schema.Union([narrow, wholeW], oneOf),
+          ]) {
+            expect(yield* sentBody(union, given)).toBe(kept);
+            expect(
+              yield* sentBody(Schema.Struct({ f: union }), { f: given }),
+            ).toBe(`{"f":${kept}}`);
+            expect(yield* sentBody(Schema.Array(union), [given])).toBe(
+              `[${kept}]`,
+            );
+            expect(
+              yield* sentBody(
+                Schema.Struct({ f: union }).pipe(Schema.encodeKeys({ f: "F" })),
+                { f: given },
+              ),
+            ).toBe(`{"F":${kept}}`);
+          }
+          expect(
+            yield* urlOf(queried(Schema.Union([narrow, wholeW])), {
+              query: given,
+            }),
+          ).toBe("/x?a=x&b=y");
+        }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/335
+    // A refusal still takes its cause from a step that fails only under the strict write's options,
+    // which no request uses.
+    it.effect(
+      "currently names a strict write's own failure where a member fails only that write",
+      () =>
+        Effect.gen(function* () {
+          // `first` states every key of the value but one below `n`, and its strict write fails at
+          // `b` first, so it is neither tried loosely nor counted as holding the value.
+          const first = Schema.Struct({
+            b: writeOnly("Write-only b"),
+            n: Schema.Struct({ p: text }),
+          });
+          const both = Schema.Struct({ p: text, q: text });
+          expect(
+            yield* refusedBody(
+              Schema.Union([
+                first,
+                Schema.Struct({ n: both }),
+                Schema.Struct({ b: longCode, n: both }),
+              ]),
+              { b: "y", n: { p: "1", q: "2" } },
+            ),
+          ).toBe('Write-only b\n  at ["b"]');
+          // Given under its wire name, the value is read on its encoded side only strictly.
+          expect(
+            yield* refusedBody(
+              Schema.Union([
+                Schema.Struct({ a: text, b: longCode }),
+                Schema.Struct({ a: text, b: writeOnly("Write-only b") }).pipe(
+                  Schema.encodeKeys({ b: "B" }),
+                ),
+              ]),
+              { a: "x", B: "y" },
+            ),
+          ).toBe(
+            'Expected a value with a length of at least 9\n  at ["b"]\nWrite-only b\n  at ["b"]',
+          );
+        }),
+    );
+
+    it.effect("writes a value that is not plain data as before", () =>
+      Effect.gen(function* () {
+        // What the caller gave cannot be accounted for in such a value, so what its write drops is
+        // not refused, and no member is tried that 0.20.0 did not try.
+        class Payload {
+          a = "x";
+          b = "y";
+        }
+        class One {
+          a = "x";
+        }
+        class Held extends Schema.Class<Held>("Held")({
+          f: Schema.Union([defaulted, checked]),
+        }) {}
+        const pair = Schema.Union([checked, whole]);
+        const forms: ReadonlyArray<readonly [Schema.Top, unknown, string]> = [
+          [pair, new Payload(), '{"a":"x"}'],
+          // A name every object has makes a literal other than plain data.
+          [pair, { a: "x", b: "y", constructor: "c" }, '{"a":"x"}'],
+          [Schema.Union([defaulted, checked]), new One(), '{"a":"x"}'],
+          // Its constructor gives `f` the default, which `checked` drops.
+          [Held, new Held({ f: { a: "x" } }), '{"f":{"a":"x"}}'],
+          [Schema.Union([narrow, wholeW]), new Payload(), '{"a":"x"}'],
+        ];
+        for (const [schema, value, sent] of forms)
+          expect(yield* sentBody(schema, value)).toBe(sent);
+        expect(
+          yield* urlOf(queried(Schema.Union([defaulted, checked])), {
+            query: new One() as never,
+          }),
+        ).toBe("/x?a=x");
+      }),
+    );
+
     // https://github.com/viell-dev/slop-effect-schema-http/issues/335
     // Below a parent, the value is read with the request's own options once the strict read fails
     // on the check, and that reading takes the first member that fits, which strips `b`.
@@ -3293,15 +3494,6 @@ describe("a caller's field under a union", () => {
         Effect.gen(function* () {
           // `b` is the reading's default, not the caller's, so `checked` dropping it loses nothing,
           // and the member holding it is not tried in its place.
-          const defaulted = Schema.Struct({
-            a: text,
-            b: strictOnlyCheck("Option-sensitive b", Schema.String).pipe(
-              Schema.withConstructorDefault(Effect.succeed("dflt")),
-            ),
-          });
-          const checked = Schema.Struct({
-            a: strictOnlyCheck("Option-sensitive a", Schema.String),
-          });
           for (const union of [
             Schema.Union([defaulted, checked]),
             Schema.Union([defaulted, checked], oneOf),
@@ -3313,9 +3505,22 @@ describe("a caller's field under a union", () => {
             expect(encoded).toEqual({ a: "x" });
             expect(yield* sentBody(union, { a: "x" })).toBe('{"a":"x"}');
           }
+          // Nothing in a default the reading made is the caller's either.
+          const fallback = Schema.Struct({
+            x: text,
+            f: Schema.Union([whole, narrow]).pipe(
+              Schema.withConstructorDefault(
+                Effect.succeed({ a: "da", b: "db" }),
+              ),
+            ),
+          });
+          expect(yield* sentBody(fallback, { x: "1" })).toBe(
+            '{"x":"1","f":{"a":"da"}}',
+          );
         }),
     );
 
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/358
     it.effect(
       "keeps a one-of union's write that drops a field where two members hold the value",
       () =>
@@ -3400,7 +3605,7 @@ describe("a caller's field under a union", () => {
     );
 
     it.effect(
-      "runs a member that holds the value once more only where a supplied field would drop",
+      "runs a member that holds the value again only where a write would drop a supplied field or fail",
       () =>
         Effect.gen(function* () {
           // `Coded` reads `code` and cannot write it, as its encoded side is at least two long, so
@@ -3429,7 +3634,9 @@ describe("a caller's field under a union", () => {
               Schema.Struct({ title: text }),
             ]);
           const coded = { title: "a", code: "x" };
-          const counted = (effect: Effect.Effect<string, unknown>) =>
+          const counted = (
+            effect: Effect.Effect<string | undefined, unknown>,
+          ) =>
             Effect.suspend(() => {
               runs = 0;
               return Effect.match(effect, {
@@ -3451,7 +3658,7 @@ describe("a caller's field under a union", () => {
           );
           expect(beside).toEqual({ sent: "/x?title=a&code=x", runs: 6 });
           // A constructor default is not the caller's, so `Title` drops it as before.
-          const defaulted = yield* counted(
+          const fromDefault = yield* counted(
             urlOf(
               queried(
                 union(
@@ -3461,7 +3668,78 @@ describe("a caller's field under a union", () => {
               { query: { title: "a" } },
             ),
           );
-          expect(defaulted).toEqual({ sent: "/x?title=a", runs: 3 });
+          expect(fromDefault).toEqual({ sent: "/x?title=a", runs: 3 });
+          // Nor is anything a class instance holds, so its write runs as often as before.
+          class Titled {
+            title = "a";
+            code = "x";
+          }
+          expect(yield* counted(sentBody(union(code), new Titled()))).toEqual({
+            sent: '{"title":"a"}',
+            runs: 4,
+          });
+        }),
+    );
+
+    it.effect(
+      "writes each level of a recursive union once where a member that holds it replaces one that drops a field",
+      () =>
+        Effect.gen(function* () {
+          let runs = 0;
+          const counted = text.pipe(
+            Schema.decodeTo(text, {
+              decode: SchemaGetter.passthrough(),
+              encode: SchemaGetter.transformEffect((value: string) =>
+                Effect.sync(() => {
+                  runs++;
+                  return value;
+                }),
+              ),
+            }),
+          );
+          interface Node {
+            readonly v: string;
+            readonly kids: ReadonlyArray<Node>;
+            readonly x?: string;
+          }
+          // Every level holds `x`, which only the second member states, behind a write-only step.
+          const tree = (
+            xFirst: boolean,
+            options?: typeof oneOf,
+          ): Schema.Codec<Node> => {
+            const kids = Schema.Array(Schema.suspend(() => node));
+            const x = writeOnly("Write-only x");
+            const node: Schema.Codec<Node> = Schema.Union(
+              [
+                Schema.Struct({ v: counted, kids }),
+                xFirst
+                  ? Schema.Struct({ v: counted, x, kids })
+                  : Schema.Struct({ v: counted, kids, x }),
+              ],
+              options,
+            );
+            return node;
+          };
+          const chain = (depth: number): Node => ({
+            v: `n${depth}`,
+            kids: depth === 0 ? [] : [chain(depth - 1)],
+            x: `x${depth}`,
+          });
+          const runsAt = (schema: Schema.Codec<Node>, depth: number) =>
+            Effect.suspend(() => {
+              runs = 0;
+              return Effect.map(sentBody(schema, chain(depth)), () => runs);
+            });
+          // Where `x` comes first, the second member's strict write fails there, before the level
+          // below, and each level adds two runs of `v`, where 0.20.0 took four before refusing.
+          for (const options of [undefined, oneOf]) {
+            expect(yield* runsAt(tree(true, options), 2)).toBe(8);
+            expect(yield* runsAt(tree(true, options), 6)).toBe(16);
+          }
+          // Where the level below comes first, each strict attempt writes it too, so the work
+          // doubles with each level, as on 0.20.0, which took 186 runs at depth 4 before refusing.
+          expect(yield* runsAt(tree(false), 2)).toBe(24);
+          expect(yield* runsAt(tree(false), 4)).toBe(98);
         }),
     );
   });

@@ -244,14 +244,21 @@ options, such as a filter that checks `onExcessProperty`, can fail a member's st
 the member writes the value with the request's own options. So where the member that writes the
 value as Effect does drops a field the caller gave, a member that states every key the value holds
 is tried in its place with the request's options, wherever it stands in the union, and before the
-write fails every such member is. That runs the member's steps once more, also where a stacked
-schema then takes the field. A constructor default the reading made is not the caller's, so a write
-that drops only one stands, and nothing runs again. A member tried this way does not write a field
-under a name the caller gave where the value holds nothing by that name, as where a constructor
-default stands in for a field given under another member's wire name; that field is refused. Under
-`oneOf`, a member that drops a field does not count against one that holds the value, as in the
-strict attempt, and where two members hold it the write that dropped the field stands. Where that
-write fails too, preparation writes what the fields' own readings give and refuses what they lose.
+write fails every such member is. Where every other member Effect's write could take would drop such
+a field, the members that state every key are tried first, since the write comes to theirs whatever
+the others write. Each such attempt runs the member's steps once more, also where a stacked schema
+then takes the field, and a union below the member is written again with it. A constructor default
+the reading made is not the caller's, nor is anything in it, so a write that drops only that stands,
+and nothing runs again. A member tried this way does not write a field under a name the caller gave
+where the value holds nothing by that name, as where a constructor default stands in for a field
+given under another member's wire name; that field is refused. Under `oneOf`, a member that drops a
+field does not count against one that holds the value, as in the strict attempt, and where two
+members hold it the write that dropped the field stands. None of this applies where the union's
+value may come from data that is not plain: in or below a class instance or another value that is
+not plain data, and, where the value cannot be matched with a place in what the caller gave, as for
+text, a value Effect writes again below a renamed struct or a `Some`'s payload, unless everything
+the caller gave is plain data. There the union is written without these attempts. Where that write
+fails too, preparation writes what the fields' own readings give and refuses what they lose.
 
 A strict read takes a class instance by its class, but a loose read takes the first member that
 fits, and a struct fits any object. Where the loose read's struct would strip the instance, the
@@ -903,13 +910,30 @@ the schema does with it. These are the places where it cannot, and what happens 
   `Missing key at ["side"]`, though Effect reads it
   ([#335](https://github.com/viell-dev/slop-effect-schema-http/issues/335)). Give the value on its
   decoded side: `{ side: 42 }` sends `{"s":"42"}`.
-- Below a parent, a union whose member that holds the value fails its strict read on such a step is
-  read with the request's own options, and that reading takes the first member that fits. With
-  `whole = Struct({ a, b })`, `b` checked that way, and `narrow = Struct({ a })`,
-  `Struct({ f: Union([narrow, whole]) })` refuses `{ f: { a: "x", b: "y" } }` at `["f"]["b"]`, and
-  under `oneOf`, in either order, it reads `Expected exactly one member to match at ["f"]`
+- Below a parent, a union whose member that holds the value fails its strict read on such a step, as
+  a filter that checks `onExcessProperty` does, is read with the request's own options, and that
+  reading takes the first member that fits. With `whole = Struct({ a, b })`, `b` checked that way,
+  and `narrow = Struct({ a })`, `Struct({ f: Union([narrow, whole]) })` refuses
+  `{ f: { a: "x", b: "y" } }` at `["f"]["b"]`, and under `oneOf`, in either order, it reads
+  `Expected exactly one member to match at ["f"]`
   ([#335](https://github.com/viell-dev/slop-effect-schema-http/issues/335)). As the body itself, the
-  union sends `{"a":"x","b":"y"}`. Put the member that holds the value first in an any-of union.
+  union sends `{"a":"x","b":"y"}`, and so does the union in a field where the step checks only the
+  encoded side, as the strict read then passes. Put the member that holds the value first in an
+  any-of union.
+- A step that reads the parse options on a value's encoded side, such as an encoder that checks
+  `onExcessProperty`, passes the strict read and fails only the strict write. A refusal can then
+  name that step's strict-only failure as its cause
+  ([#335](https://github.com/viell-dev/slop-effect-schema-http/issues/335)). A member that states
+  every key at the top of the value but not one below it, and whose strict write fails first at such
+  a step, is neither tried with the request's options nor counted as holding the value, so a field
+  another member drops is refused with that step's message. A wire-named value given to a member
+  whose field is written through such a step reads that message beside the decoded side's.
+- A value that is not plain data, such as a class instance, is written without the attempts that let
+  a member whose step reads the parse options write it, so such a step still refuses it
+  ([#335](https://github.com/viell-dev/slop-effect-schema-http/issues/335)). With `keyed`, a
+  `Record(String, Number)` whose key filter checks `onExcessProperty`,
+  `Union([keyed, Struct({ other: String })])` refuses an instance of a class holding `foo: 1` with
+  that filter's failure, where `{ foo: 1 }` sends `{"foo":1}`. Give the value as plain data.
 - Some complete encoded filter fields beside a cursor held by a separate binding still refuse in
   either binding order. Bounded [stacked-union
   recovery](./schema-groups.md#declarations-and-defaults) does not perform general backtracking;
