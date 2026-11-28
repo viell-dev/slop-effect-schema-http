@@ -46,6 +46,96 @@
   the refusal also names the unstated key, and refuses it even where nothing stated is lost
   ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)).
 
+- **Breaking:** refuse a native `Option` given on the encoded side below fields that an integer-like
+  `Schema.encodeKeys` rename cannot tell apart, where any of those fields holds an Option codec at
+  that position ([#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328)). Two
+  fields with the same wire schema, such as `left: Box` and `right: Schema.toEncoded(Box)` renamed
+  to `"1"` and `"0"`, can each be the one written under either name. 0.20.0 refused a wrapper at
+  such a name, but with `Box = Struct({ held: OptionFromNullOr(P) })` a `None` given at `held` below
+  `"1"` was sent as `{"held":{}}`. Each field's schema is now followed below the name, so that
+  refuses, also through a list, tuple, record, union, nested rename, suspension or renamed class,
+  and below a suspended field, which 0.20.0 took as one it could not tell apart from the others
+  ([#361](https://github.com/viell-dev/slop-effect-schema-http/issues/361)). Where none of the
+  fields holds an Option codec at the position, an `Option` keeps the schema's own reading. Give the
+  field on its decoded side, as `left`, or its encoded payload.
+- **Breaking:** refuse a native `Option` in a suspended field of a renamed struct whose wire side
+  Effect builds again ([#344](https://github.com/viell-dev/slop-effect-schema-http/issues/344)), as
+  it does below a renamed ancestor and below the first level of a recursive renamed struct. With
+  `held: suspend(() => OptionFromNullOr(P))` in a struct renamed below a renamed ancestor, a `None`
+  given at `held` on the encoded side was sent as `{"held":{}}`. With
+  `Node = Struct({ held: OptionFromNullOr(P), kids: Array(suspend(() => Node)) })` renamed by
+  `encodeKeys({ held: "h" })`, a `None` at `h` two or more levels down, as in
+  `{ h: null, kids: [{ h: null, kids: [{ h: Option.none(), kids: [] }] }] }`, was sent as `"h":{}`,
+  with no ancestor rename. Both now refuse, as a `None` one level down already did. Give the field
+  on its decoded side or its encoded payload.
+
+  Below a suspension that a contract derived with `Schema.toCodecJson` writes, or a hand-written
+  rename spelled as `Schema.encodeKeys` spells it, a union's members are now paired with the decoded
+  union's by identity, wherever the wire lists them. With
+  `held: suspend(() => Union([Codec, Plain, BigInt]))`, where
+  `Codec = Struct({ x: OptionFromNullOr(P) })` and `Plain = Struct({ x: NullOr(Any) })`,
+  `Schema.toCodecJson` lists the `BigInt` member first, and a `None` given at `x`, which the codec's
+  wire member reads, was sent as `{}`. It now refuses, and so does a `None` there where a
+  hand-written wire union lists `Schema.toEncoded(Codec)` before `Schema.toEncoded(Plain)` against
+  the decoded `Union([Plain, Codec])`. A `Some` there, which `Plain` reads, is sent as `Any` writes
+  it, as on 0.20.0. A hand-written wire union of new members of the same kinds, listed in another
+  order, is paired by place, so such a `Some` now refuses where 0.20.0 sent it
+  ([#397](https://github.com/viell-dev/slop-effect-schema-http/issues/397)). List the members in the
+  decoded union's order, or as `Schema.toEncoded` of the decoded members.
+- **Message change:** a `Some` given on the encoded side in those positions was refused already,
+  naming the caller's field, as in
+  `The schema cannot keep this field with the rest of the value at ["row"]["1"]`. It now reports the
+  first failure of the decoded reading, made with the request's own options, as a wrapper given at a
+  renamed key does ([#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328),
+  [#344](https://github.com/viell-dev/slop-effect-schema-http/issues/344)). That failure can name
+  the decoded field, as in `Missing key at ["row"]["left"]`, or another field the reading reaches
+  first, such as `Missing key at ["n"]` where `n` is listed before `row`, or a field of the root for
+  a `Some` deep inside a recursive struct
+  ([#313](https://github.com/viell-dev/slop-effect-schema-http/issues/313)). Code that matches the
+  text of these refusals needs updating.
+- Pair each suspended field of a struct renamed to integer-like names with its own wire field
+  ([#361](https://github.com/viell-dev/slop-effect-schema-http/issues/361)). 0.20.0 took every
+  suspended field as one that could have been written under any such name. With
+  `left: suspend(() => Any)` and `right: suspend(() => OptionFromNullOr(P))` renamed to `"1"` and
+  `"0"`, `{ "1": Option.some(1), "0": null }` refused with `Expected no excess property at ["0"]`;
+  it now sends the `Option` as `Any` reads it, as 0.19.0 did. So does one `suspend(() => Any)` given
+  as both fields, or beside its own `Schema.toEncoded`. A key that only the other field's decoded
+  side states is left out, as beside a field that is not suspended, where 0.20.0 refused with
+  `The schema cannot keep this field with the rest of the value`. Preparing a recursive schema
+  through such fields took time exponential in the value's depth on 0.20.0, about 4 s at depth 20
+  for a tree with keys `"0"` and `"1"`; with the change for
+  [#355](https://github.com/viell-dev/slop-effect-schema-http/issues/355) above, it takes tens of
+  milliseconds there, as on 0.19.0. A wrapper where the field written there holds an Option codec
+  still refuses. A suspension that is no decoded field's wire side, as in a contract derived with
+  `Schema.toCodecJson` or a hand-written rename spelled as `Schema.encodeKeys` spells it, is paired
+  as on 0.20.0, so a wrapper at such a name refuses as it did. So is every suspension of a
+  hand-written rename whose wire struct holds the own wire suspensions of some decoded suspensions
+  but not of others, which neither `Schema.encodeKeys` nor a derivation builds.
+
+  Where the suspended field written at such a name is a plain struct, a native `Option` given there
+  now takes that struct's reading and can be sent as `{}`, as it is without the suspension. With
+  `held: suspend(() => OptionFromNullOr(P))` and `other: suspend(() => NullOr(P))` renamed to `"1"`
+  and `"0"`, `{ "1": null, "0": Option.some({ a: "a", b: "keep" }) }` refused on 0.20.0 with
+  `Missing key at ["held"]` and now sends `{"0":{},"1":null}`, as 0.19.0 did. That loss is
+  [#330](https://github.com/viell-dev/slop-effect-schema-http/issues/330)'s. A hand-written rename
+  whose wire struct holds each such field's own wire side at a name its mapping gives the other
+  field cannot be told from `Schema.encodeKeys` with that other mapping
+  ([#390](https://github.com/viell-dev/slop-effect-schema-http/issues/390)). There a wrapper given
+  where it writes the Option codec, which 0.20.0 refused, is now sent as `{}`, as it is without the
+  suspensions.
+- Keep the schema's own reading below a suspension that a custom transformation writes, as 0.19.0
+  did and as without the suspension
+  ([#344](https://github.com/viell-dev/slop-effect-schema-http/issues/344)). With
+  `Row = Struct({ held: OptionFromNullOr(P), n: String }).pipe(encodeKeys({ held: "h" }))`, a
+  transformation from `suspend(() => W)` to `suspend(() => D)` whose `D` holds
+  `rec: suspend(() => Row)` and whose `W` holds `rec: suspend(() => toEncoded(Row))` refused
+  `{ tag: "1", rec: { h: Option.none(), n: "x" } }` on 0.20.0. It now sends
+  `{"tag":"1","rec":{"h":{},"n":"x"}}`, as it does without the suspensions: the transformation's
+  callback alone decides which field it writes where, so a field it writes keeps the schema's own
+  reading, as the input reference states. A `Some` there still refuses, with
+  `The schema cannot keep this field with the rest of the value at ["rec"]["h"]` where 0.20.0 read
+  `Expected number at ["tag"]`.
+
 ## 0.20.1 — 2026-11-28
 
 [What's in

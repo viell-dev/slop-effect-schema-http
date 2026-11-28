@@ -6,6 +6,7 @@ import {
   Option,
   Schema,
   SchemaTransformation,
+  Struct,
 } from "effect";
 import * as Body from "./Body.js";
 import * as Inputs from "./internal/input.js";
@@ -63,6 +64,28 @@ const refusingFields = (refused: Option.Option<unknown>) => {
       '["f"]["a"]',
     ],
   ] as const;
+};
+
+/** `leaf` as the only kid of a tree node given on the encoded side, `levels` below the top. */
+const treeAbove = (levels: number, leaf: object): object => {
+  let value = leaf;
+  for (let level = 0; level < levels; level++)
+    value = { h: null, any: 1, kids: [value] };
+  return value;
+};
+
+/** Optional suspended fields at "0" and "1". */
+const integerPair = (first: () => Schema.Top, second: () => Schema.Top) =>
+  Schema.Struct({
+    "0": Schema.optionalKey(Schema.suspend(first)),
+    "1": Schema.optionalKey(Schema.suspend(second)),
+  });
+
+/** A tree `depth` levels deep at "0", with an empty tree at each "1". */
+const treeOf = (depth: number): object => {
+  let tree: object = {};
+  for (let level = 0; level < depth; level++) tree = { "0": tree, "1": {} };
+  return tree;
 };
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/143
@@ -3682,7 +3705,8 @@ describe("an invalid Some payload keeps its decoded error", () => {
           row: { "0": { b: "keep" }, "1": { a: "a" } },
           wire_n: "x",
         });
-        // Fields sharing a projection, suspended or not, refuse a wrapper too.
+        // A suspended codec refuses a wrapper at its name once its target is read, and fields
+        // sharing a projection refuse one there too.
         const H = Schema.OptionFromNullOr(payload);
         for (const fields of [
           {
@@ -3725,6 +3749,1216 @@ describe("an invalid Some payload keeps its decoded error", () => {
             wire_n: "x",
           } as never),
         ).toEqual({ row: { x: sentSome, y: { a: "a" } }, wire_n: "x" });
+      }),
+  );
+
+  /** A row below a struct whose other field is renamed. */
+  const besideRenamed = (row: Schema.Top) =>
+    Schema.Struct({ row, n: Schema.String }).pipe(
+      Schema.encodeKeys({ n: "wire_n" }),
+    ) as unknown as typeof renamed;
+
+  /** Fields `left` and `right` share one wire schema, so either could be written at "0" or "1". */
+  const ambiguousPair = (
+    box: Schema.Top,
+    names: { readonly left: string; readonly right: string } = {
+      left: "1",
+      right: "0",
+    },
+  ) =>
+    besideRenamed(
+      Schema.Struct({ left: box, right: Schema.toEncoded(box) }).pipe(
+        Schema.encodeKeys(names),
+      ),
+    );
+
+  const integerNames = [
+    { left: "1", right: "0" },
+    { left: "0", right: "1" },
+  ] as const;
+
+  /**
+   * A rename spelled as `Schema.encodeKeys` spells it, from a wire struct written by hand rather
+   * than built from the decoded fields' projections.
+   */
+  const handWritten = (
+    wire: Schema.Top,
+    decoded: Schema.Top,
+    toDecoded: Record<string, string>,
+    toWire: Record<string, string>,
+  ) =>
+    wire.pipe(
+      Schema.decodeTo(
+        decoded,
+        SchemaTransformation.transform({
+          decode: Struct.renameKeys(toDecoded),
+          encode: Struct.renameKeys(toWire),
+        }) as never,
+      ),
+    ) as unknown as typeof renamed;
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/328
+  it.effect(
+    "refuses a wrapper below fields an integer-like rename cannot tell apart",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.OptionFromNullOr(payload);
+        const Box = Schema.Struct({ held });
+        class ClassRow extends Schema.Class<ClassRow>("AmbiguousClassRow")({
+          held,
+        }) {}
+        const none = Option.none();
+        // Each shape with the wrapper given below it, where the wrapper is, and its payload.
+        for (const [box, given, wrapper, other] of [
+          [Box, { held: none }, '["held"]', { held: { b: "ok" } }],
+          [
+            Schema.Struct({ held: Schema.Array(held) }),
+            { held: [none] },
+            '["held"][0]',
+            { held: [] },
+          ],
+          [
+            Schema.Struct({ held: Schema.Tuple([held]) }),
+            { held: [none] },
+            '["held"][0]',
+            { held: [null] },
+          ],
+          [
+            Schema.Struct({ held: Schema.Record(Schema.String, held) }),
+            { held: { k: none } },
+            '["held"]["k"]',
+            { held: {} },
+          ],
+          [
+            Schema.Struct({ held: Schema.Union([held, Schema.String]) }),
+            { held: none },
+            '["held"]',
+            { held: "s" },
+          ],
+          [
+            Schema.Struct({ held }).pipe(
+              Schema.encodeKeys({ held: "wire_held" }),
+            ),
+            { wire_held: none },
+            '["wire_held"]',
+            { wire_held: null },
+          ],
+          // Swapped names: the codec's wire side is `other`.
+          [
+            Schema.Struct({ held, other: Schema.Any }).pipe(
+              Schema.encodeKeys({ held: "other", other: "held" }),
+            ),
+            { other: none, held: 1 },
+            '["other"]',
+            { other: null, held: 1 },
+          ],
+          // A pair that the inner rename cannot tell apart either.
+          [
+            Schema.Struct({ left: Box, right: Schema.toEncoded(Box) }).pipe(
+              Schema.encodeKeys({ left: "1", right: "0" }),
+            ),
+            { "1": { held: none }, "0": { held: null } },
+            '["1"]["held"]',
+            { "1": { held: null }, "0": { held: null } },
+          ],
+          [
+            Schema.suspend(() => Box),
+            { held: none },
+            '["held"]',
+            { held: null },
+          ],
+          [
+            Schema.Struct({ held: Schema.suspend(() => held) }),
+            { held: none },
+            '["held"]',
+            { held: null },
+          ],
+          [
+            ClassRow.pipe(Schema.encodeKeys({ held: "wire_held" })),
+            { wire_held: none },
+            '["wire_held"]',
+            { wire_held: null },
+          ],
+        ] as const)
+          for (const names of integerNames)
+            for (const at of ["1", "0"]) {
+              const row =
+                at === "1"
+                  ? { "1": given, "0": other }
+                  : { "1": other, "0": given };
+              const failure = yield* Effect.flip(
+                json(ambiguousPair(box, names), { row, wire_n: "x" } as never),
+              );
+              expect(failure.message).toBe(
+                notHeld(`["row"]["${at}"]${wrapper}`),
+              );
+            }
+        // A Some there was refused already, naming the caller's field; the refusal now names the
+        // decoded field, as it does for a wrapper given at a renamed key.
+        const some = yield* Effect.flip(
+          json(ambiguousPair(Box), {
+            row: {
+              "1": { held: Option.some({ a: "a", b: "keep" }) },
+              "0": { held: null },
+            },
+            wire_n: "x",
+          } as never),
+        );
+        expect(some.message).toContain('Missing key\n  at ["row"]["left"]');
+        // Where none of the fields the rename could have written holds an Option codec, an Option
+        // keeps the schema's own reading.
+        const sentNone = { _id: "Option", _tag: "None" };
+        const beside = Schema.Struct({
+          held,
+          any: Schema.Any,
+          list: Schema.Array(Schema.Any),
+          record: Schema.Record(Schema.String, Schema.Any),
+          option: Schema.Option(Schema.Number),
+        });
+        expect(
+          yield* json(ambiguousPair(beside), {
+            row: {
+              "1": {
+                held: null,
+                any: none,
+                list: [none],
+                record: { k: none },
+                option: Option.some(1),
+              },
+              "0": {
+                held: { b: "ok" },
+                any: 1,
+                list: [],
+                record: {},
+                option: none,
+              },
+            },
+            wire_n: "x",
+          } as never),
+        ).toEqual({
+          row: {
+            "0": {
+              held: { b: "ok" },
+              any: 1,
+              list: [],
+              record: {},
+              option: { _tag: "None" },
+            },
+            "1": {
+              held: null,
+              any: sentNone,
+              list: [sentNone],
+              record: { k: sentNone },
+              option: { _tag: "Some", value: 1 },
+            },
+          },
+          wire_n: "x",
+        });
+        // The decoded side and the encoded payload are kept.
+        expect(
+          yield* json(ambiguousPair(Box), {
+            row: { left: { held: none }, right: { held: { b: "ok" } } },
+            n: "x",
+          } as never),
+        ).toEqual({
+          row: { "0": { held: { b: "ok" } }, "1": { held: null } },
+          wire_n: "x",
+        });
+        expect(
+          yield* json(ambiguousPair(Box), {
+            row: { "1": { held: { a: "a" } }, "0": { held: null } },
+            wire_n: "x",
+          } as never),
+        ).toEqual({
+          row: { "0": { held: null }, "1": { held: { a: "a" } } },
+          wire_n: "x",
+        });
+        // A rename that can tell its fields apart pairs the one written there, as before.
+        const unambiguous = besideRenamed(
+          Schema.Struct({ left: Box, right: Schema.String }).pipe(
+            Schema.encodeKeys({ left: "1", right: "0" }),
+          ),
+        );
+        const told = yield* Effect.flip(
+          json(unambiguous, {
+            row: { "1": { held: none }, "0": "s" },
+            wire_n: "x",
+          } as never),
+        );
+        expect(told.message).toBe(notHeld('["row"]["1"]["held"]'));
+        expect(
+          yield* json(unambiguous, {
+            row: { left: { held: none }, right: "s" },
+            n: "x",
+          } as never),
+        ).toEqual({ row: { "0": "s", "1": { held: null } }, wire_n: "x" });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/361
+  it.effect(
+    "pairs each suspended field under an integer-like name with its own wire field",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.OptionFromNullOr(payload);
+        const none = Option.none();
+        const sentNone = { _id: "Option", _tag: "None" };
+        const sentSome = { _id: "Option", _tag: "Some", value: 1 };
+        for (const names of integerNames) {
+          const { left: L, right: R } = names;
+          // Different shapes below the names: only the field written at `L` holds a codec.
+          const shapes = Schema.Struct({
+            left: Schema.suspend(() => Schema.Struct({ x: held })),
+            right: Schema.suspend(() => Schema.Struct({ x: Schema.Any })),
+          }).pipe(Schema.encodeKeys(names));
+          for (const [schema, within, path] of [
+            [shapes, (row: object) => row, ""],
+            [
+              besideRenamed(shapes),
+              (row: object) => ({ row, wire_n: "x" }),
+              '["row"]',
+            ],
+          ] as const) {
+            expect(
+              yield* json(
+                schema as typeof renamed,
+                within({ [L]: { x: null }, [R]: { x: none } }) as never,
+              ),
+            ).toEqual(within({ [L]: { x: null }, [R]: { x: sentNone } }));
+            const lost = yield* Effect.flip(
+              json(
+                schema as typeof renamed,
+                within({ [L]: { x: none }, [R]: { x: 1 } }) as never,
+              ),
+            );
+            expect(lost.message).toBe(notHeld(`${path}["${L}"]["x"]`));
+          }
+          // At the names themselves, a wrapper keeps the reading of the field written there.
+          const atNames = Schema.Struct({
+            left: Schema.suspend(() => Schema.Any),
+            right: Schema.suspend(() => held),
+          }).pipe(Schema.encodeKeys(names));
+          expect(
+            yield* json(atNames, { [L]: Option.some(1), [R]: null } as never),
+          ).toEqual({ [L]: sentSome, [R]: null });
+          const refused = yield* Effect.flip(
+            json(atNames, { [L]: 1, [R]: none } as never),
+          );
+          expect(refused.message).toBe(notHeld(`["${R}"]`));
+          // A key that only the other field's decoded side states is left out, as Effect leaves it.
+          const stated = Schema.Struct({
+            left: Schema.suspend(() =>
+              Schema.Struct({ x: Schema.String }).pipe(
+                Schema.encodeKeys({ x: "wx" }),
+              ),
+            ),
+            right: Schema.suspend(() => Schema.Struct({ y: Schema.String })),
+          }).pipe(Schema.encodeKeys(names));
+          expect(
+            yield* json(stated, {
+              [L]: { wx: "s" },
+              [R]: { y: "t", x: "u" },
+            } as never),
+          ).toEqual({ [L]: { wx: "s" }, [R]: { y: "t" } });
+        }
+        // One suspension given as both fields is one schema, read the same way whichever field the
+        // rename wrote at a name: a codec there refuses a wrapper at either name, and `Any` keeps
+        // an Option at either name. A suspension beside its own projection shares one wire side,
+        // so a wrapper refuses where either may be a codec, and only there.
+        const codec = Schema.suspend(() => held);
+        const any = Schema.suspend(() => Schema.Any);
+        for (const names of integerNames)
+          for (const at of ["0", "1"]) {
+            const other = at === "0" ? "1" : "0";
+            for (const right of [codec, Schema.toEncoded(codec)]) {
+              const failure = yield* Effect.flip(
+                json(
+                  Schema.Struct({ left: codec, right }).pipe(
+                    Schema.encodeKeys(names),
+                  ),
+                  { [at]: none, [other]: null } as never,
+                ),
+              );
+              expect(failure.message).toBe(notHeld(`["${at}"]`));
+            }
+            for (const right of [any, Schema.toEncoded(any)])
+              expect(
+                yield* json(
+                  Schema.Struct({ left: any, right }).pipe(
+                    Schema.encodeKeys(names),
+                  ),
+                  { [at]: Option.some(1), [other]: null } as never,
+                ),
+              ).toEqual({ [at]: sentSome, [other]: null });
+          }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/361
+  it.effect(
+    "pairs a rename's own suspensions where they are not the nodes toEncoded returns",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.OptionFromNullOr(payload);
+        const none = Option.none();
+        const some = Option.some({ a: "a", b: "keep" });
+        // A derived codec builds new suspensions on both sides of the rename.
+        interface Node {
+          readonly held: Option.Option<typeof payload.Type>;
+          readonly next?: Node;
+        }
+        const Node: Schema.Codec<Node, unknown> = Schema.Struct({
+          held,
+          next: Schema.optionalKey(Schema.suspend(() => Node)),
+        }).pipe(Schema.encodeKeys({ held: "h" }));
+        const derived = Schema.toCodecJson(Node) as unknown as typeof renamed;
+        // A hand-written rename spelled as Schema.encodeKeys spells it writes its own suspensions.
+        const hand = handWritten(
+          Schema.Struct({
+            h: Schema.suspend(() => Schema.NullOr(payload)),
+            n: Schema.String,
+          }),
+          Schema.Struct({ held: Schema.suspend(() => held), n: Schema.String }),
+          { h: "held" },
+          { held: "h" },
+        );
+        // Its own suspension can hold the codec, as can one further down.
+        const handCodec = (inner: (codec: Schema.Top) => Schema.Top) =>
+          handWritten(
+            Schema.Struct({ h: Schema.suspend(() => inner(held)) }),
+            Schema.Struct({
+              held: Schema.suspend(() => inner(Schema.Option(payload))),
+            }),
+            { h: "held" },
+            { held: "h" },
+          );
+        const handNested = handCodec((codec) =>
+          Schema.Struct({
+            inner: Schema.suspend(() => Schema.Struct({ x: codec })),
+          }),
+        );
+        const handOwn = handCodec((codec) => Schema.Struct({ x: codec }));
+        const integer = Schema.Struct({
+          held: Schema.suspend(() => held),
+          n: Schema.String,
+        }).pipe(Schema.encodeKeys({ held: "1", n: "0" }));
+        // Several such suspensions under integer-like names could each be the one written at a
+        // name, so a wrapper refuses there, even where the field written there is `Any`.
+        const handIntegers = handWritten(
+          Schema.Struct({
+            "1": Schema.suspend(() => Schema.NullOr(payload)),
+            "0": Schema.suspend(() => Schema.Any),
+          }),
+          Schema.Struct({
+            held: Schema.suspend(() => held),
+            other: Schema.suspend(() => Schema.Any),
+          }),
+          { "1": "held", "0": "other" },
+          { held: "1", other: "0" },
+        );
+        for (const [schema, value, path] of [
+          [derived, { h: none }, '["h"]'],
+          [derived, { h: null, next: { h: none } }, '["next"]["h"]'],
+          [
+            Schema.Struct({ f: derived }) as unknown as typeof renamed,
+            { f: { h: none } },
+            '["f"]["h"]',
+          ],
+          [
+            Schema.toCodecJson(integer) as unknown as typeof renamed,
+            { "1": none, "0": "x" },
+            '["1"]',
+          ],
+          [hand, { h: none, n: "x" }, '["h"]'],
+          [
+            besideRenamed(hand),
+            { row: { h: none, n: "x" }, wire_n: "x" },
+            '["row"]["h"]',
+          ],
+          [
+            besideRenamed(handOwn),
+            { row: { h: { x: none } }, wire_n: "x" },
+            '["row"]["h"]["x"]',
+          ],
+          [
+            besideRenamed(handNested),
+            { row: { h: { inner: { x: none } } }, wire_n: "x" },
+            '["row"]["h"]["inner"]["x"]',
+          ],
+          [handIntegers, { "1": none, "0": 1 }, '["1"]'],
+          [handIntegers, { "1": null, "0": Option.some(1) }, '["0"]'],
+        ] as const) {
+          const failure = yield* Effect.flip(json(schema, value as never));
+          expect(failure.message).toBe(notHeld(path));
+        }
+        for (const schema of [derived, hand]) {
+          const failure = yield* Effect.flip(
+            json(schema, { h: some, n: "x" } as never),
+          );
+          expect(failure.message).toContain('Missing key\n  at ["held"]');
+        }
+        // The decoded side and the encoded payload are kept.
+        expect(yield* json(hand, { held: none, n: "x" } as never)).toEqual({
+          h: null,
+          n: "x",
+        });
+        expect(
+          yield* json(derived, { h: null, next: { h: { a: "a" } } } as never),
+        ).toEqual({ h: null, next: { h: { a: "a" } } });
+      }),
+  );
+
+  const heldSuspended = Schema.suspend(() => Schema.OptionFromNullOr(payload));
+  const otherSuspended = Schema.suspend(() => Schema.NullOr(payload));
+  /** `held` and `other` renamed to "1" and "0" by hand, from the given wire fields. */
+  const renamedByHand = (
+    wire: Schema.Struct.Fields,
+    decoded: Schema.Struct.Fields = {
+      held: heldSuspended,
+      other: otherSuspended,
+    },
+  ) =>
+    handWritten(
+      Schema.Struct(wire),
+      Schema.Struct(decoded),
+      { "1": "held", "0": "other" },
+      { held: "1", other: "0" },
+    );
+
+  // Schema.encodeKeys writes every suspension's own wire side and a derivation none that is a
+  // suspension, so in each of these wire structs identity does not show which is written where.
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/361
+  it.effect.each([
+    [
+      "the other suspension's own wire side at both names",
+      renamedByHand({
+        "1": Schema.toEncoded(otherSuspended),
+        "0": Schema.toEncoded(otherSuspended),
+      }),
+    ],
+    [
+      "the codec's own wire side at the other name, beside a suspension of its own",
+      renamedByHand({
+        "1": Schema.suspend(() => Schema.NullOr(payload)),
+        "0": Schema.toEncoded(heldSuspended),
+      }),
+    ],
+    [
+      "the codec given as both fields, its own wire side at one name only",
+      renamedByHand(
+        {
+          "1": Schema.suspend(() => Schema.NullOr(payload)),
+          "0": Schema.toEncoded(heldSuspended),
+        },
+        { held: heldSuspended, other: heldSuspended },
+      ),
+    ],
+  ] as const)(
+    "refuses a wrapper at the codec's name where a hand-written wire struct holds %s",
+    ([, form]) =>
+      Effect.gen(function* () {
+        const none = Option.none();
+        const some = Option.some({ a: "a", b: "keep" });
+        for (const [schema, within, path, held] of [
+          [form, (row: object) => row, '["1"]', '["held"]'],
+          [
+            besideRenamed(form),
+            (row: object) => ({ row, wire_n: "x" }),
+            '["row"]["1"]',
+            '["row"]["held"]',
+          ],
+        ] as const) {
+          const refused = yield* Effect.flip(
+            json(schema, within({ "1": none, "0": null }) as never),
+          );
+          expect(refused.message).toBe(notHeld(path));
+          const named = yield* Effect.flip(
+            json(schema, within({ "1": some, "0": null }) as never),
+          );
+          expect(named.message).toContain(`Missing key\n  at ${held}`);
+          // The encoded payload is kept.
+          expect(
+            yield* json(
+              schema,
+              within({ "1": { a: "a" }, "0": null }) as never,
+            ),
+          ).toEqual(within({ "0": null, "1": { a: "a" } }));
+        }
+        // So is the decoded side.
+        expect(yield* json(form, { held: none, other: null } as never)).toEqual(
+          { "0": null, "1": null },
+        );
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/361
+  it.effect(
+    "refuses a wrapper at every suspension of such a wire struct, even where `Any` is written",
+    () =>
+      Effect.gen(function* () {
+        const any = Schema.suspend(() => Schema.Any);
+        // "1" is the codec's own wire side, "0" a suspension of the rename's own: either decoded
+        // suspension may be the one written at "0", as on 0.20.0.
+        const failure = yield* Effect.flip(
+          json(
+            renamedByHand(
+              { "1": Schema.toEncoded(heldSuspended), "0": any },
+              { held: heldSuspended, other: any },
+            ),
+            { "1": null, "0": Option.some(1) } as never,
+          ),
+        );
+        expect(failure.message).toBe(notHeld('["0"]'));
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/361
+  it.effect(
+    "pairs a derived suspension beside one whose own wire side is no suspension",
+    () =>
+      Effect.gen(function* () {
+        // Schema.toCodecJson builds the wire suspension of `held` again but keeps the string `doc`
+        // is written as, doc's own wire side, so the derived wire struct holds one decoded
+        // suspension's own wire side and not the other's.
+        const doc = Schema.fromJsonString(
+          Schema.suspend(() => Schema.Struct({ y: Schema.String })),
+        );
+        const text = JSON.stringify({ y: "s" });
+        const renamedBeside = (held: Schema.Top) =>
+          Schema.Struct({ held, doc }).pipe(
+            Schema.encodeKeys({ held: "1", doc: "0" }),
+          );
+        const codec = renamedBeside(
+          Schema.suspend(() =>
+            Schema.Struct({ x: Schema.OptionFromNullOr(payload) }),
+          ),
+        );
+        const any = renamedBeside(Schema.suspend(() => Schema.Any));
+        for (const derive of [false, true]) {
+          const form = (schema: Schema.Top) =>
+            (derive
+              ? Schema.toCodecJson(schema)
+              : schema) as unknown as typeof renamed;
+          const failure = yield* Effect.flip(
+            json(form(codec), {
+              "1": { x: Option.none() },
+              "0": text,
+            } as never),
+          );
+          expect(failure.message).toBe(notHeld('["1"]["x"]'));
+          expect(
+            yield* json(form(any), { "1": Option.some(1), "0": text } as never),
+          ).toEqual({
+            "0": text,
+            "1": { _id: "Option", _tag: "Some", value: 1 },
+          });
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/361
+  it.effect(
+    "keeps an Option below a field whose wire side is a suspension beside a decoded suspension",
+    () =>
+      Effect.gen(function* () {
+        const Codec = Schema.Struct({ x: Schema.OptionFromNullOr(payload) });
+        const Plain = Schema.Struct({ x: Schema.Any });
+        // Not a suspension itself, though its wire side is one.
+        const fromSuspension = Schema.suspend(() => Plain).pipe(
+          Schema.decodeTo(Plain, SchemaTransformation.passthrough()),
+        );
+        const decoded = Schema.Struct({
+          s: Schema.suspend(() => Codec),
+          f: fromSuspension,
+        });
+        const derived = Schema.toCodecJson(
+          decoded.pipe(Schema.encodeKeys({ s: "1", f: "0" })),
+        ) as unknown as typeof renamed;
+        const hand = handWritten(
+          Schema.Struct({
+            "1": Schema.suspend(() => Schema.toEncoded(Codec)),
+            "0": Schema.suspend(() => Plain),
+          }),
+          decoded,
+          { "1": "s", "0": "f" },
+          { s: "1", f: "0" },
+        );
+        const sentSome = { _id: "Option", _tag: "Some", value: 1 };
+        for (const form of [derived, hand])
+          for (const [schema, within, path] of [
+            [form, (row: object) => row, '["1"]["x"]'],
+            [
+              besideRenamed(form),
+              (row: object) => ({ row, wire_n: "x" }),
+              '["row"]["1"]["x"]',
+            ],
+          ] as const) {
+            // `f` is written at "0", where `x` is `Any`.
+            expect(
+              yield* json(
+                schema,
+                within({
+                  "1": { x: null },
+                  "0": { x: Option.some(1) },
+                }) as never,
+              ),
+            ).toEqual(within({ "0": { x: sentSome }, "1": { x: null } }));
+            // A None below the codec field still refuses.
+            const failure = yield* Effect.flip(
+              json(
+                schema,
+                within({ "1": { x: Option.none() }, "0": { x: 1 } }) as never,
+              ),
+            );
+            expect(failure.message).toBe(notHeld(path));
+          }
+      }),
+  );
+
+  const CodecMember = Schema.Struct({ x: Schema.OptionFromNullOr(payload) });
+  const AnyMember = Schema.Struct({ x: Schema.NullOr(Schema.Any) });
+  /** `held`, a suspended union, renamed to `h` by hand, from a wire union of the given members. */
+  const unionByHand = (
+    decoded: ReadonlyArray<Schema.Top>,
+    wire: ReadonlyArray<Schema.Top>,
+  ) =>
+    handWritten(
+      Schema.Struct({
+        h: Schema.suspend(() => Schema.Union(wire)),
+        n: Schema.String,
+      }),
+      Schema.Struct({
+        held: Schema.suspend(() => Schema.Union(decoded)),
+        n: Schema.String,
+      }),
+      { h: "held" },
+      { held: "h" },
+    );
+
+  /** The same renamed to `h` by `Schema.encodeKeys`, with the wire side Schema.toCodecJson derives. */
+  const derivedUnion = (members: ReadonlyArray<Schema.Top>) =>
+    Schema.toCodecJson(
+      Schema.Struct({
+        held: Schema.suspend(() => Schema.Union(members)),
+        n: Schema.String,
+      }).pipe(Schema.encodeKeys({ held: "h" })),
+    ) as unknown as typeof renamed;
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/344
+  it.effect(
+    "pairs a union's members below a rename's own suspension wherever the wire lists them",
+    () =>
+      Effect.gen(function* () {
+        const sentSome = { _id: "Option", _tag: "Some", value: 1 };
+        // Schema.toCodecJson moves a BigInt member first, and a hand-written wire union can list
+        // the members' own wire sides in any order. A None is kept only where the `Any` member
+        // reads it on both sides. Elsewhere the codec's wire side reads it, on the wire or in the
+        // decoded union once the rename hands the value over, and it refuses.
+        for (const [form, keepsNone] of [
+          [derivedUnion([AnyMember, CodecMember, Schema.BigInt]), true],
+          [derivedUnion([CodecMember, AnyMember, Schema.BigInt]), false],
+          [
+            unionByHand(
+              [AnyMember, CodecMember],
+              [Schema.toEncoded(CodecMember), Schema.toEncoded(AnyMember)],
+            ),
+            false,
+          ],
+          [
+            unionByHand(
+              [CodecMember, AnyMember],
+              [Schema.toEncoded(AnyMember), Schema.toEncoded(CodecMember)],
+            ),
+            false,
+          ],
+        ] as const)
+          for (const [schema, within, path] of [
+            [form, (row: object) => row, '["h"]["x"]'],
+            [
+              besideRenamed(form),
+              (row: object) => ({ row, wire_n: "x" }),
+              '["row"]["h"]["x"]',
+            ],
+          ] as const) {
+            // The `Any` member reads a Some on both sides.
+            expect(
+              yield* json(
+                schema,
+                within({ h: { x: Option.some(1) }, n: "s" }) as never,
+              ),
+            ).toEqual(within({ h: { x: sentSome }, n: "s" }));
+            const none = json(
+              schema,
+              within({ h: { x: Option.none() }, n: "s" }) as never,
+            );
+            if (keepsNone)
+              expect(yield* none).toEqual(
+                within({ h: { x: { _id: "Option", _tag: "None" } }, n: "s" }),
+              );
+            else expect((yield* Effect.flip(none)).message).toBe(notHeld(path));
+          }
+        // Where Schema.toCodecJson builds every member again, none keeps its identity, and the
+        // kinds in place show the reorder, so nothing below is followed, as on 0.20.0.
+        const AnyBig = Schema.Struct({
+          x: Schema.NullOr(Schema.Any),
+          big: Schema.BigInt,
+        });
+        const CodecBig = Schema.Struct({
+          x: Schema.OptionFromNullOr(payload),
+          big: Schema.BigInt,
+        });
+        for (const [x, sent] of [
+          [Option.some(1), sentSome],
+          [Option.none(), { _id: "Option", _tag: "None" }],
+        ] as const)
+          expect(
+            yield* json(derivedUnion([AnyBig, CodecBig, Schema.BigInt]), {
+              h: { x, big: "1" },
+              n: "s",
+            } as never),
+          ).toEqual({ h: { x: sent, big: "1" }, n: "s" });
+        // In their order they pair by place, so the codec member still refuses a None.
+        const failure = yield* Effect.flip(
+          json(derivedUnion([CodecBig, AnyBig]), {
+            h: { x: Option.none(), big: "1" },
+            n: "s",
+          } as never),
+        );
+        expect(failure.message).toBe(notHeld('["h"]["x"]'));
+      }),
+  );
+
+  // A hand-written wire union of new members, listed in another order than the decoded union's:
+  // nothing shows which member each stands for, so they are paired by place.
+  const reordered = unionByHand(
+    [AnyMember, CodecMember],
+    [
+      Schema.Struct({ x: Schema.NullOr(payload) }),
+      Schema.Struct({ x: Schema.NullOr(Schema.Any) }),
+    ],
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/397
+  it.effect(
+    "currently pairs a hand-written wire union's new members by place in another order",
+    () =>
+      Effect.gen(function* () {
+        // The wire's `Any` member reads the Some and is paired with the codec member.
+        for (const some of [Option.some(1), Option.some({ a: "a" })]) {
+          const failure = yield* Effect.flip(
+            json(reordered, { h: { x: some }, n: "s" } as never),
+          );
+          expect(failure.message).toBe(notHeld('["h"]["x"]'));
+        }
+        // The codec's wire member reads the None and is paired with the `Any` member.
+        expect(
+          yield* json(reordered, { h: { x: Option.none() }, n: "s" } as never),
+        ).toEqual({ h: { x: {} }, n: "s" });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/397
+  it.effect.fails(
+    "keeps an Option a hand-written wire union's Any member reads, in any member order",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* json(reordered, { h: { x: Option.some(1) }, n: "s" } as never),
+        ).toEqual({
+          h: { x: { _id: "Option", _tag: "Some", value: 1 } },
+          n: "s",
+        });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/390
+  it.effect(
+    "currently reads a hand-written rename of swapped own wire sides as the opposite mapping",
+    () =>
+      Effect.gen(function* () {
+        for (const [held, other] of [
+          [Schema.OptionFromNullOr(payload), Schema.NullOr(payload)],
+          [heldSuspended, otherSuspended],
+        ] as const) {
+          // The mapping writes the codec `held` at "1", but the wire struct is the one
+          // Schema.encodeKeys({ held: "0", other: "1" }) builds, so "1" is read as `other`.
+          const swapped = renamedByHand(
+            { "1": Schema.toEncoded(other), "0": Schema.toEncoded(held) },
+            { held, other },
+          );
+          for (const wrapper of [
+            Option.none(),
+            Option.some({ a: "a", b: "keep" }),
+          ])
+            expect(
+              yield* json(swapped, { "1": wrapper, "0": null } as never),
+            ).toEqual({ "0": null, "1": {} });
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+  it.effect(
+    "currently sends a native Option at a suspended plain field under an integer-like rename as {}",
+    () =>
+      Effect.gen(function* () {
+        const Row = Schema.Struct({
+          held: heldSuspended,
+          other: otherSuspended,
+        }).pipe(Schema.encodeKeys({ held: "1", other: "0" }));
+        // `other` is written at "0" and reads the Option as a struct, as it does unsuspended.
+        for (const wrapper of [
+          Option.none(),
+          Option.some({ a: "a", b: "keep" }),
+        ])
+          expect(
+            yield* json(Row, { "1": null, "0": wrapper } as never),
+          ).toEqual({ "0": {}, "1": null });
+        // The codec field written at "1" still refuses a wrapper.
+        const failure = yield* Effect.flip(
+          json(Row, { "1": Option.none(), "0": null } as never),
+        );
+        expect(failure.message).toBe(notHeld('["1"]'));
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/381
+  it.effect(
+    "currently sends a nested Option as {} below a name several unproven suspensions could fill",
+    () =>
+      Effect.gen(function* () {
+        const held = Schema.OptionFromNullOr(payload);
+        const Tree = Schema.Struct({
+          l: Schema.optionalKey(
+            Schema.suspend(() => Schema.Struct({ x: held })),
+          ),
+          r: Schema.optionalKey(
+            Schema.suspend(() => Schema.Struct({ x: Schema.Any })),
+          ),
+        }).pipe(Schema.encodeKeys({ l: "1", r: "0" }));
+        const given = { "1": { x: Option.none() }, "0": { x: 1 } };
+        // A derivation builds new suspensions, so the one written at "1" is not known and the
+        // codec below it is not followed.
+        expect(
+          yield* json(
+            Schema.toCodecJson(Tree) as unknown as typeof renamed,
+            given as never,
+          ),
+        ).toEqual({ "0": { x: 1 }, "1": { x: {} } });
+        // Paired by identity, the same value refuses.
+        const failure = yield* Effect.flip(json(Tree, given as never));
+        expect(failure.message).toBe(notHeld('["1"]["x"]'));
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/361
+  it.effect(
+    "prepares recursion through integer-named suspended fields in linear time",
+    () =>
+      Effect.gen(function* () {
+        // 0.20.0 took every suspended field as a candidate at every integer-like name, so the
+        // work doubled about every level: at depth 20 the tree took about 4 s and the pair of
+        // types 1.4 s, and carrying the candidates below the names ran out of memory at depth 18.
+        // Paired with its own wire field, each takes tens of milliseconds. Every key is renamed,
+        // which keeps #355's cost out of this check. A hand-written rename's own suspensions are
+        // paired without identity, and following several candidates below such a name doubled
+        // the work per level again: about 2 s at depth 13 and 0.5 GB, out of memory at 16.
+        interface Tree {
+          readonly l?: Tree;
+          readonly r?: Tree;
+        }
+        const Tree: Schema.Codec<Tree, unknown> = Schema.Struct({
+          l: Schema.optionalKey(Schema.suspend(() => Tree)),
+          r: Schema.optionalKey(Schema.suspend(() => Tree)),
+        }).pipe(Schema.encodeKeys({ l: "0", r: "1" }));
+        // The same tree with the suspension written once, as one node for both fields.
+        const Child = Schema.suspend((): Schema.Codec<Tree, unknown> => Shared);
+        const Shared: Schema.Codec<Tree, unknown> = Schema.Struct({
+          l: Schema.optionalKey(Child),
+          r: Schema.optionalKey(Child),
+        }).pipe(Schema.encodeKeys({ l: "0", r: "1" }));
+        // Hand-written renames between two types, each read through a hand-written wire twin.
+        const Wire1: Schema.Top = integerPair(
+          () => Wire1,
+          () => Wire2,
+        );
+        const Wire2: Schema.Top = integerPair(
+          () => Wire2,
+          () => Wire1,
+        );
+        const fromWire = { "0": "l", "1": "r" };
+        const toWire = { l: "0", r: "1" };
+        const Hand1: Schema.Top = handWritten(
+          integerPair(
+            () => Wire1,
+            () => Wire2,
+          ),
+          Schema.Struct({
+            l: Schema.optionalKey(Schema.suspend(() => Hand1)),
+            r: Schema.optionalKey(Schema.suspend(() => Hand2)),
+          }),
+          fromWire,
+          toWire,
+        );
+        const Hand2: Schema.Top = handWritten(
+          integerPair(
+            () => Wire2,
+            () => Wire1,
+          ),
+          Schema.Struct({
+            l: Schema.optionalKey(Schema.suspend(() => Hand2)),
+            r: Schema.optionalKey(Schema.suspend(() => Hand1)),
+          }),
+          fromWire,
+          toWire,
+        );
+        interface Pair {
+          readonly a?: Pair;
+          readonly b?: Pair;
+        }
+        const First: Schema.Codec<Pair, unknown> = Schema.Struct({
+          a: Schema.optionalKey(Schema.suspend(() => First)),
+          b: Schema.optionalKey(Schema.suspend(() => Second)),
+        }).pipe(Schema.encodeKeys({ a: "0", b: "1" }));
+        const Second: Schema.Codec<Pair, unknown> = Schema.Struct({
+          a: Schema.optionalKey(Schema.suspend(() => Second)),
+          b: Schema.optionalKey(Schema.suspend(() => First)),
+        }).pipe(Schema.encodeKeys({ a: "0", b: "1" }));
+        let chain: object = {};
+        for (let level = 0; level < 20; level++) chain = { "0": chain };
+        for (const [schema, value] of [
+          [Tree, treeOf(20)],
+          [Shared, treeOf(20)],
+          [First, chain],
+          [Hand1 as typeof Tree, treeOf(13)],
+        ] as const) {
+          const start = performance.now();
+          expect(yield* json(schema, value as never)).toEqual(value);
+          expect(performance.now() - start).toBeLessThan(1_000);
+        }
+      }),
+    30_000,
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/321
+  it.effect(
+    "keeps the schema's own reading of a suspension another transformation writes",
+    () =>
+      Effect.gen(function* () {
+        const Decoded = Schema.Struct({
+          held: Schema.OptionFromNullOr(payload),
+          other: Schema.Any,
+        });
+        const Wire = Schema.Struct({
+          held: Schema.Any,
+          other: Schema.NullOr(Schema.toEncoded(payload)),
+        });
+        const swapped = Schema.suspend(() => Wire).pipe(
+          Schema.decodeTo(
+            Schema.suspend(() => Decoded),
+            SchemaTransformation.transform({
+              decode: (wire: typeof Wire.Type) => ({
+                held: wire.other,
+                other: wire.held,
+              }),
+              encode: (decoded: typeof Wire.Type) => ({
+                held: decoded.other,
+                other: decoded.held,
+              }),
+            }),
+          ),
+        );
+        // The transformation writes the `Any` field at `held`, so an Option there is its own value.
+        const given = { held: Option.some(1), other: null };
+        const sent = {
+          held: { _id: "Option", _tag: "Some", value: 1 },
+          other: null,
+        };
+        expect(yield* json(swapped, given as never)).toEqual(sent);
+        expect(
+          yield* json(Schema.Struct({ f: swapped }), { f: given } as never),
+        ).toEqual({ f: sent });
+        expect(
+          yield* json(besideRenamed(swapped), {
+            row: given,
+            wire_n: "x",
+          } as never),
+        ).toEqual({ row: sent, wire_n: "x" });
+        // A suspension written as one that holds an Option codec still refuses a wrapper there.
+        const codec = Schema.suspend(() => Schema.Any).pipe(
+          Schema.decodeTo(
+            Schema.suspend(() => Schema.OptionFromNullOr(payload)),
+            SchemaTransformation.transform({
+              decode: (wire: unknown) =>
+                Option.isOption(wire) ? null : (wire as typeof payload.Encoded),
+              encode: (decoded): unknown => decoded,
+            }),
+          ),
+        );
+        for (const [schema, value, message] of [
+          [
+            codec,
+            Option.some(1),
+            "The schema cannot keep the content of this value",
+          ],
+          [
+            Schema.Struct({ f: codec }),
+            { f: Option.some(1) },
+            notHeld('["f"]'),
+          ],
+        ] as const) {
+          const failure = yield* Effect.flip(
+            json(schema as typeof codec, value as never),
+          );
+          expect(failure.message).toBe(message);
+        }
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/344
+  it.effect(
+    "refuses a wrapper in a suspended field of a renamed row below a renamed ancestor",
+    () =>
+      Effect.gen(function* () {
+        const Box = Schema.Struct({
+          held: Schema.suspend(() => Schema.OptionFromNullOr(payload)),
+          any: Schema.suspend(() => Schema.Any),
+        });
+        const renameRow = Schema.encodeKeys({ left: "l", right: "r" });
+        const Row = Schema.Struct({ left: Box, right: Schema.String }).pipe(
+          renameRow,
+        );
+        const DeepRow = Schema.Struct({
+          left: Schema.Struct({ inner: Box }),
+          right: Schema.String,
+        }).pipe(renameRow);
+        const schema = besideRenamed(Row);
+        const none = Option.none();
+        for (const [within, row, path] of [
+          [schema, { l: { held: none, any: 1 }, r: "s" }, '["l"]["held"]'],
+          [
+            besideRenamed(DeepRow),
+            { l: { inner: { held: none, any: 1 } }, r: "s" },
+            '["l"]["inner"]["held"]',
+          ],
+          [
+            besideRenamed(Schema.Array(Row)),
+            [{ l: { held: none, any: 1 }, r: "s" }],
+            '[0]["l"]["held"]',
+          ],
+        ] as const) {
+          const failure = yield* Effect.flip(
+            json(within, { row, wire_n: "x" } as never),
+          );
+          expect(failure.message).toBe(notHeld(`["row"]${path}`));
+        }
+        // Three renames deep, with a list between.
+        const three = Schema.Struct({
+          s: besideRenamed(Schema.Array(Row)),
+          m: Schema.String,
+        }).pipe(Schema.encodeKeys({ m: "wire_m" }));
+        const deep = yield* Effect.flip(
+          json(three, {
+            s: { row: [{ l: { held: none, any: 1 }, r: "s" }], wire_n: "x" },
+            wire_m: "y",
+          } as never),
+        );
+        expect(deep.message).toBe(notHeld('["s"]["row"][0]["l"]["held"]'));
+        // A Some there was refused already, naming the caller's field; the refusal now names the
+        // decoded field.
+        const some = yield* Effect.flip(
+          json(schema, {
+            row: { l: { held: Option.some({ a: "a" }), any: 1 }, r: "s" },
+            wire_n: "x",
+          } as never),
+        );
+        expect(some.message).toContain('Missing key\n  at ["row"]["left"]');
+        // An Option at the suspended `Any` beside it is that field's own value.
+        expect(
+          yield* json(schema, {
+            row: { l: { held: null, any: none }, r: "s" },
+            wire_n: "x",
+          } as never),
+        ).toEqual({
+          row: {
+            l: { held: null, any: { _id: "Option", _tag: "None" } },
+            r: "s",
+          },
+          wire_n: "x",
+        });
+        expect(
+          yield* json(schema, {
+            row: { left: { held: none, any: 1 }, right: "s" },
+            n: "x",
+          } as never),
+        ).toEqual({ row: { l: { held: null, any: 1 }, r: "s" }, wire_n: "x" });
+        expect(
+          yield* json(schema, {
+            row: { l: { held: { a: "a" }, any: 1 }, r: "s" },
+            wire_n: "x",
+          } as never),
+        ).toEqual({
+          row: { l: { held: { a: "a" }, any: 1 }, r: "s" },
+          wire_n: "x",
+        });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/344
+  it.effect(
+    "refuses a wrapper at every level of a recursive renamed struct",
+    () =>
+      Effect.gen(function* () {
+        interface Node {
+          readonly held: Option.Option<typeof payload.Type>;
+          readonly any: unknown;
+          readonly kids: ReadonlyArray<Node>;
+        }
+        const Node: Schema.Codec<Node, unknown> = Schema.Struct({
+          held: Schema.OptionFromNullOr(payload),
+          any: Schema.Any,
+          kids: Schema.Array(Schema.suspend(() => Node)),
+        }).pipe(Schema.encodeKeys({ held: "h" }));
+        const none = Option.none();
+        for (const levels of [1, 2, 3]) {
+          const failure = yield* Effect.flip(
+            json(
+              Node,
+              treeAbove(levels, { h: none, any: 1, kids: [] }) as never,
+            ),
+          );
+          expect(failure.message).toBe(
+            notHeld(`${'["kids"][0]'.repeat(levels)}["h"]`),
+          );
+        }
+        const below = yield* Effect.flip(
+          json(besideRenamed(Node), {
+            row: treeAbove(2, { h: none, any: 1, kids: [] }),
+            wire_n: "x",
+          } as never),
+        );
+        expect(below.message).toBe(
+          notHeld('["row"]["kids"][0]["kids"][0]["h"]'),
+        );
+        // An Option at `any` is that field's own value, and the encoded payload is kept.
+        expect(
+          yield* json(
+            Node,
+            treeAbove(2, { h: null, any: none, kids: [] }) as never,
+          ),
+        ).toEqual(
+          treeAbove(2, {
+            h: null,
+            any: { _id: "Option", _tag: "None" },
+            kids: [],
+          }),
+        );
+        expect(
+          yield* json(
+            Node,
+            treeAbove(2, { h: { a: "a" }, any: 1, kids: [] }) as never,
+          ),
+        ).toEqual(treeAbove(2, { h: { a: "a" }, any: 1, kids: [] }));
       }),
   );
 

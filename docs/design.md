@@ -232,12 +232,18 @@ each field keeps its own side; a whole union, which this would read member by me
 whose fields cannot be read that way, reports the decoded failure. A relaxed read can use the plain
 payload itself where both sides accept an empty struct and the payload holds none of their fields.
 
-The guard caches the rewritten schema per AST. An observed decode carries a flag in its parse
-options, tests the inputs at the guarded positions, and gives each tried union member a local flag
-so a failed member leaves no note. There is no additional schema parse. A refusal can end
-preparation before later callbacks would have run on a lossy reading. A note from a failed read
-inside decoding middleware is kept, so preparation can refuse input even when `Schema.catchDecoding`
-supplies a recovery value.
+The guard caches the rewritten schema per AST and, below a rename, per the decoded layers it reads
+it with. Effect builds a new copy of a recursive renamed schema's wire side for each level, so the
+guard rewrites one copy per level of the value it reads. It drops a layer that is the very node
+`toEncoded` returns for the next one, which holds nothing the next does not, and keeps the last, so
+where Effect built the wire side the layers do not grow with depth. Below fields that a rename
+cannot tell apart, each level of recursion adds one alternative. Where the fields are suspensions
+that no identity pairs, as a hand-written rename writes them, a wrapper refuses at the name and no
+alternative is followed below it. An observed decode carries a flag in its parse options, tests the
+inputs at the guarded positions, and gives each tried union member a local flag so a failed member
+leaves no note. There is no additional schema parse. A refusal can end preparation before later
+callbacks would have run on a lossy reading. A note from a failed read inside decoding middleware is
+kept, so preparation can refuse input even when `Schema.catchDecoding` supplies a recovery value.
 
 The loose writer follows unwrapping codecs into the payload schema and its decoded projection. It
 can also follow a plain transformation whose wire shape exposes the same payload schema directly or

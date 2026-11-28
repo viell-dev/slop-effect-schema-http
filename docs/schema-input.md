@@ -806,11 +806,33 @@ the schema does with it. These are the places where it cannot, and what happens 
   a suspension, a recursive schema, a nested rename or a renamed class, and in a list or union below
   a renamed ancestor. A wire field is paired with the decoded field a `Schema.encodeKeys` rename
   wrote there: the one in its place, or, for an integer-like name such as `"1"`, which JavaScript
-  lists first, the one field whose wire side it is. Where several fields share that wire side, a
-  wrapper given there refuses if any of them may be an Option codec, even when the one written there
-  is not. Below such a field, a nested Option keeps the schema's own reading and can be sent as `{}`
-  ([#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328)). A field written by
-  another transformation keeps the schema's own reading
+  lists first, the one field whose wire side it is. Each suspension has its own wire side, and one
+  schema given as several fields is read the same way whichever of them was written. Where several
+  fields share one wire side, as `Box` and `Schema.toEncoded(Box)` do, a wrapper given there, or
+  anywhere below it, refuses if any of them may hold an Option codec at that position, even when the
+  one written there does not
+  ([#328](https://github.com/viell-dev/slop-effect-schema-http/issues/328)). A suspension that is no
+  decoded field's wire side, as a derivation such as `Schema.toCodecJson` builds one or a
+  hand-written rename spelled as `Schema.encodeKeys` spells it can write one, pairs with the
+  suspension in its place or, for integer-like names, with the one decoded suspension whose wire
+  side is missing. Where several are missing, or where a hand-written rename's wire struct holds the
+  own wire suspensions of some decoded suspensions but not of others, which neither
+  `Schema.encodeKeys` nor a derivation builds, a wrapper given at such a name refuses, and a nested
+  Option below it keeps the schema's own reading and can be sent as `{}`
+  ([#381](https://github.com/viell-dev/slop-effect-schema-http/issues/381)). Below such a
+  suspension, a union's members are paired with the decoded union's by identity with
+  `Schema.toEncoded`'s nodes wherever the wire lists them, and otherwise by place where nothing
+  shows another order. `Schema.toCodecJson` moves members that encode `BigInt`, `Symbol` and
+  `UniqueSymbol` first, which changes the kinds in place. A hand-written wire union of new members
+  of the same kinds, listed in another order, is paired wrongly: an `Option` that its `Any` member
+  reads refuses, and a `None` that its codec's wire member reads can be sent as `{}`
+  ([#397](https://github.com/viell-dev/slop-effect-schema-http/issues/397)). A hand-written rename
+  whose wire struct holds every decoded field's own wire side, each at a name its mapping gives
+  another field, cannot be told from `Schema.encodeKeys` with the mapping those places show, and is
+  read as that. A wrapper given where it writes an Option codec is then read as the other field's
+  value and can be sent as `{}`, with or without suspensions
+  ([#390](https://github.com/viell-dev/slop-effect-schema-http/issues/390)). A field written by
+  another transformation, including one below a suspension it writes, keeps the schema's own reading
   ([#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321)). A recovery's value is
   not checked against what it was given: a `Schema.catchDecoding` record beside a list member can
   take a list whose cells hold a key the list member does not state, and what it recovers is sent.
