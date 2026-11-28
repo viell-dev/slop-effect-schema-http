@@ -54,14 +54,17 @@ In an existing Node.js 24 or 26 ESM project with Effect `^4.0.7`, add the librar
 npm install viell-effect-schema-http
 ```
 
-`0.20.0` is the current release. The same package is available as a checksummed [GitHub release
-tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.20.0). This is a
-breaking release. Read [What's in
-0.20](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.20) before updating from
-`0.19`: `Option` values now keep or refuse what they are given too. A payload keeps the fields its
-schema states, a native `Option` where its encoded payload belongs is no longer sent as `{}`, some
-built-ins a struct would rebuild now refuse, though others are still sent as `{}`, and a fieldless
-value several `oneOf` members read refuses as ambiguous.
+`0.20.1` is the current release. The same package is available as a checksummed [GitHub release
+tarball](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.20.1). This compatible
+patch sends a `Schema.Error` or `Schema.TaggedError` body again in most schemas, as `0.19` did,
+prepares a recursive struct with a renamed key without its time doubling at each level, and names
+some refusals more precisely. Read [What's in
+0.20](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.20) for the checked
+example. Updating from `0.19` still includes 0.20.0's breaking changes: `Option` values now keep or
+refuse what they are given too. A payload keeps the fields its schema states, a native `Option`
+where its encoded payload belongs is no longer sent as `{}`, some built-ins a struct would rebuild
+now refuse, though others are still sent as `{}`, and a fieldless value several `oneOf` members read
+refuses as ambiguous.
 
 TypeScript declarations and editor documentation are included. The supported environments are Node
 24 or 26 on Windows/Linux and browser Fetch in Chromium. See [compatibility and
@@ -80,8 +83,9 @@ versions and provider boundaries.
   Operation, Policy, Interaction, UrlEncoding and Transport, from basic use to advanced behavior.
 - [Limits and recovery](https://viell-dev.github.io/slop-effect-schema-http/limits): compatibility,
   where the library's promise stops, failure stages and bug reporting.
-- [What's in 0.20](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.20): Option
-  payloads and wrappers kept or refused, built-ins, `oneOf` ambiguity, migration and limits.
+- [What's in 0.20](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.20): the
+  compatible 0.20.1 fixes, Option payloads and wrappers kept or refused, built-ins, `oneOf`
+  ambiguity, migration and limits.
 - [Release history](https://viell-dev.github.io/slop-effect-schema-http/release-notes/): earlier
   articles and a comparison of the related schema-input repairs.
 - [Versions](https://viell-dev.github.io/slop-effect-schema-http/versions): updates and

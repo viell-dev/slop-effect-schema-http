@@ -163,3 +163,26 @@ assert.match(
   /given under both "limit" and "page_size"; give it under one name\s+at \["page_size"\]/,
 );
 assert.match(await refused(decodedInvalid), /Expected number\s+at \["limit"\]/);
+
+// #region error-class
+class Failed extends Schema.Error<Failed>("Failed")({ id: Schema.Number }) {}
+const Report = Schema.Struct({ held: Failed });
+const fromInstance = Request.compile(post(Report), {
+  body: { held: new Failed({ id: 1 }) },
+});
+const fromData = Request.compile(post(Report), {
+  body: { held: { id: 1 } },
+});
+const EitherShape = Schema.Struct({
+  held: Schema.Union([Failed, Schema.Struct({ id: Schema.Number })]),
+});
+const inUnion = Request.compile(post(EitherShape), {
+  body: { held: new Failed({ id: 1 }) },
+});
+// #endregion error-class
+assert.equal(await prepared(fromInstance), '{"held":{"id":1}}');
+assert.equal(await prepared(fromData), '{"held":{"id":1}}');
+assert.match(
+  await refused(inUnion),
+  /cannot keep this Error as an object\s+at \["held"\]/,
+);

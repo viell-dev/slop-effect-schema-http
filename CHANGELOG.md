@@ -1,6 +1,10 @@
 # Change history
 
-## Unreleased
+## 0.20.1 — 2026-11-28
+
+[What's in
+0.20](https://viell-dev.github.io/slop-effect-schema-http/release-notes/0.20#send-a-schema-error-body-again)
+gives the compatible fixes, with a checked example of a `Schema.Error` body that sends again.
 
 - Correct which clients retry a body cut off after its headers
   ([#369](https://github.com/viell-dev/slop-effect-schema-http/issues/369)). The Limits page and the
