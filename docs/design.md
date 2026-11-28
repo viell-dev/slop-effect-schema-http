@@ -154,7 +154,11 @@ where the member written as Effect writes drops a field the caller gave, a membe
 key is tried loosely in its place, and every such member is tried before the write fails. It may not
 write a field under a name the caller gave where the value holds nothing by that name. Under `oneOf`
 a dropping member does not count against it, and where two such members write the value the dropping
-write stands.
+write stands. Where every other member the loose write could take would drop a field the caller
+gave, the members that state every key go first, so no write is made only to be set aside and a
+recursive union does not write each level twice. These attempts follow what the caller gave, so they
+run only where the union's value comes from plain data: not in or below a value that is not, and,
+where the value cannot be matched with a place in the caller's, only if all of it is plain data.
 
 These checks, and the relaxed write's below, run only where preparation can establish what the
 caller gave: on plain data, judged place by place. Plain data is a list whose prototype is
