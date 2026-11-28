@@ -4415,6 +4415,162 @@ describe("an invalid Some payload keeps its decoded error", () => {
       }),
   );
 
+  const CodecMember = Schema.Struct({ x: Schema.OptionFromNullOr(payload) });
+  const AnyMember = Schema.Struct({ x: Schema.NullOr(Schema.Any) });
+  /** `held`, a suspended union, renamed to `h` by hand, from a wire union of the given members. */
+  const unionByHand = (
+    decoded: ReadonlyArray<Schema.Top>,
+    wire: ReadonlyArray<Schema.Top>,
+  ) =>
+    handWritten(
+      Schema.Struct({
+        h: Schema.suspend(() => Schema.Union(wire)),
+        n: Schema.String,
+      }),
+      Schema.Struct({
+        held: Schema.suspend(() => Schema.Union(decoded)),
+        n: Schema.String,
+      }),
+      { h: "held" },
+      { held: "h" },
+    );
+
+  /** The same renamed to `h` by `Schema.encodeKeys`, with the wire side Schema.toCodecJson derives. */
+  const derivedUnion = (members: ReadonlyArray<Schema.Top>) =>
+    Schema.toCodecJson(
+      Schema.Struct({
+        held: Schema.suspend(() => Schema.Union(members)),
+        n: Schema.String,
+      }).pipe(Schema.encodeKeys({ held: "h" })),
+    ) as unknown as typeof renamed;
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/344
+  it.effect(
+    "pairs a union's members below a rename's own suspension wherever the wire lists them",
+    () =>
+      Effect.gen(function* () {
+        const sentSome = { _id: "Option", _tag: "Some", value: 1 };
+        // Schema.toCodecJson moves a BigInt member first, and a hand-written wire union can list
+        // the members' own wire sides in any order. A None is kept only where the `Any` member
+        // reads it on both sides. Elsewhere the codec's wire side reads it, on the wire or in the
+        // decoded union once the rename hands the value over, and it refuses.
+        for (const [form, keepsNone] of [
+          [derivedUnion([AnyMember, CodecMember, Schema.BigInt]), true],
+          [derivedUnion([CodecMember, AnyMember, Schema.BigInt]), false],
+          [
+            unionByHand(
+              [AnyMember, CodecMember],
+              [Schema.toEncoded(CodecMember), Schema.toEncoded(AnyMember)],
+            ),
+            false,
+          ],
+          [
+            unionByHand(
+              [CodecMember, AnyMember],
+              [Schema.toEncoded(AnyMember), Schema.toEncoded(CodecMember)],
+            ),
+            false,
+          ],
+        ] as const)
+          for (const [schema, within, path] of [
+            [form, (row: object) => row, '["h"]["x"]'],
+            [
+              besideRenamed(form),
+              (row: object) => ({ row, wire_n: "x" }),
+              '["row"]["h"]["x"]',
+            ],
+          ] as const) {
+            // The `Any` member reads a Some on both sides.
+            expect(
+              yield* json(
+                schema,
+                within({ h: { x: Option.some(1) }, n: "s" }) as never,
+              ),
+            ).toEqual(within({ h: { x: sentSome }, n: "s" }));
+            const none = json(
+              schema,
+              within({ h: { x: Option.none() }, n: "s" }) as never,
+            );
+            if (keepsNone)
+              expect(yield* none).toEqual(
+                within({ h: { x: { _id: "Option", _tag: "None" } }, n: "s" }),
+              );
+            else expect((yield* Effect.flip(none)).message).toBe(notHeld(path));
+          }
+        // Where Schema.toCodecJson builds every member again, none keeps its identity, and the
+        // kinds in place show the reorder, so nothing below is followed, as on 0.20.0.
+        const AnyBig = Schema.Struct({
+          x: Schema.NullOr(Schema.Any),
+          big: Schema.BigInt,
+        });
+        const CodecBig = Schema.Struct({
+          x: Schema.OptionFromNullOr(payload),
+          big: Schema.BigInt,
+        });
+        for (const [x, sent] of [
+          [Option.some(1), sentSome],
+          [Option.none(), { _id: "Option", _tag: "None" }],
+        ] as const)
+          expect(
+            yield* json(derivedUnion([AnyBig, CodecBig, Schema.BigInt]), {
+              h: { x, big: "1" },
+              n: "s",
+            } as never),
+          ).toEqual({ h: { x: sent, big: "1" }, n: "s" });
+        // In their order they pair by place, so the codec member still refuses a None.
+        const failure = yield* Effect.flip(
+          json(derivedUnion([CodecBig, AnyBig]), {
+            h: { x: Option.none(), big: "1" },
+            n: "s",
+          } as never),
+        );
+        expect(failure.message).toBe(notHeld('["h"]["x"]'));
+      }),
+  );
+
+  // A hand-written wire union of new members, listed in another order than the decoded union's:
+  // nothing shows which member each stands for, so they are paired by place.
+  const reordered = unionByHand(
+    [AnyMember, CodecMember],
+    [
+      Schema.Struct({ x: Schema.NullOr(payload) }),
+      Schema.Struct({ x: Schema.NullOr(Schema.Any) }),
+    ],
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/397
+  it.effect(
+    "currently pairs a hand-written wire union's new members by place in another order",
+    () =>
+      Effect.gen(function* () {
+        // The wire's `Any` member reads the Some and is paired with the codec member.
+        for (const some of [Option.some(1), Option.some({ a: "a" })]) {
+          const failure = yield* Effect.flip(
+            json(reordered, { h: { x: some }, n: "s" } as never),
+          );
+          expect(failure.message).toBe(notHeld('["h"]["x"]'));
+        }
+        // The codec's wire member reads the None and is paired with the `Any` member.
+        expect(
+          yield* json(reordered, { h: { x: Option.none() }, n: "s" } as never),
+        ).toEqual({ h: { x: {} }, n: "s" });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/397
+  it.effect.fails(
+    "keeps an Option a hand-written wire union's Any member reads, in any member order",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* json(reordered, { h: { x: Option.some(1) }, n: "s" } as never),
+        ).toEqual({
+          h: { x: { _id: "Option", _tag: "Some", value: 1 } },
+          n: "s",
+        });
+      }),
+  );
+
   // https://github.com/viell-dev/slop-effect-schema-http/issues/390
   it.effect(
     "currently reads a hand-written rename of swapped own wire sides as the opposite mapping",

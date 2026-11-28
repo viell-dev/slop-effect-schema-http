@@ -68,6 +68,20 @@
   `{ h: null, kids: [{ h: null, kids: [{ h: Option.none(), kids: [] }] }] }`, was sent as `"h":{}`,
   with no ancestor rename. Both now refuse, as a `None` one level down already did. Give the field
   on its decoded side or its encoded payload.
+
+  Below a suspension that a contract derived with `Schema.toCodecJson` writes, or a hand-written
+  rename spelled as `Schema.encodeKeys` spells it, a union's members are now paired with the decoded
+  union's by identity, wherever the wire lists them. With
+  `held: suspend(() => Union([Codec, Plain, BigInt]))`, where
+  `Codec = Struct({ x: OptionFromNullOr(P) })` and `Plain = Struct({ x: NullOr(Any) })`,
+  `Schema.toCodecJson` lists the `BigInt` member first, and a `None` given at `x`, which the codec's
+  wire member reads, was sent as `{}`. It now refuses, and so does a `None` there where a
+  hand-written wire union lists `Schema.toEncoded(Codec)` before `Schema.toEncoded(Plain)` against
+  the decoded `Union([Plain, Codec])`. A `Some` there, which `Plain` reads, is sent as `Any` writes
+  it, as on 0.20.0. A hand-written wire union of new members of the same kinds, listed in another
+  order, is paired by place, so such a `Some` now refuses where 0.20.0 sent it
+  ([#397](https://github.com/viell-dev/slop-effect-schema-http/issues/397)). List the members in the
+  decoded union's order, or as `Schema.toEncoded` of the decoded members.
 - **Message change:** a `Some` given on the encoded side in those positions was refused already,
   naming the caller's field, as in
   `The schema cannot keep this field with the rest of the value at ["row"]["1"]`. It now reports the

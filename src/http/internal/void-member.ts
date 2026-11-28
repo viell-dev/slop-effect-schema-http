@@ -377,6 +377,72 @@ type Counterpart =
     }
   | { readonly _tag: "Unproven" };
 
+/** The encoded kind of a node, which every copy of it that Effect builds keeps. */
+const kindOf = (ast: SchemaAST.AST): SchemaAST.AST["_tag"] =>
+  SchemaAST.toEncoded(ast)._tag;
+
+const memberPairings = new WeakMap<
+  SchemaAST.AST,
+  WeakMap<SchemaAST.AST, ReadonlyArray<SchemaAST.AST | undefined>>
+>();
+
+/**
+ * The member of the union `decoded` that each member of `wire`, its projection or a union written
+ * as one, stands for, where one is shown.
+ *
+ * @remarks
+ * A union reads a value with the first member that takes it, on each side in its own order, so a
+ * member's index is no place in the data, as a key or a list index is. A wire member that is the
+ * very node `toEncoded` returns for a decoded member pairs with it wherever it is listed; where
+ * several decoded members have that node, only the one in its place pairs. A member without that
+ * identity pairs with the one in its place only where nothing shows another order: both unions have
+ * as many members, no member is the projection of one listed elsewhere, and each member without
+ * identity has the encoded kind of the one in its place. Effect's copies keep the order, and keep
+ * the identity of every member that holds no suspension. `Schema.toCodecJson` moves the members
+ * that encode `BigInt`, `Symbol` and `UniqueSymbol` first and gives them another encoded kind, so
+ * the kinds in place differ. A hand-written wire union can list members in any order: one whose
+ * members are not `toEncoded`'s nodes is paired by place, which is wrong where it lists members of
+ * the same kinds in another order (#397).
+ */
+const pairMembers = (
+  decoded: SchemaAST.Union,
+  wire: SchemaAST.Union,
+): ReadonlyArray<SchemaAST.AST | undefined> => {
+  let byWire = memberPairings.get(decoded);
+  const known = byWire?.get(wire);
+  if (known !== undefined) return known;
+  const byProjection = new Map<SchemaAST.AST, SchemaAST.AST[]>();
+  for (const type of decoded.types) {
+    const projection = SchemaAST.toEncoded(type);
+    const found = byProjection.get(projection);
+    if (found === undefined) byProjection.set(projection, [type]);
+    else found.push(type);
+  }
+  const own = wire.types.map(
+    (member) => byProjection.get(originOf(member)) ?? [],
+  );
+  const inPlace =
+    wire.types.length === decoded.types.length &&
+    wire.types.every((member, at) => {
+      const placed = decoded.types[at]!;
+      return own[at]!.length === 0
+        ? kindOf(member) === kindOf(placed)
+        : own[at]!.includes(placed);
+    });
+  const pairs = own.map((found, at) => {
+    const placed = decoded.types[at];
+    if (found.length === 0) return inPlace ? placed : undefined;
+    if (placed !== undefined && found.includes(placed)) return placed;
+    return found.length === 1 ? found[0] : undefined;
+  });
+  if (byWire === undefined) {
+    byWire = new WeakMap();
+    memberPairings.set(decoded, byWire);
+  }
+  byWire.set(wire, pairs);
+  return pairs;
+};
+
 /**
  * The child of `layer` that `child`, the child of `reference` under `key`, is the projection of.
  * Where `layer` is written as `reference` by its last encoding, only a rename's own pairing says
@@ -389,12 +455,15 @@ type Counterpart =
  * of node as `child`, without comparing the nodes. `toEncoded` of a projected node that holds a
  * suspension builds new copies of every node above it, since Effect builds a new suspension each
  * time, so `child` need not be the node `toEncoded` returns for the child of `layer`. A copy keeps
- * every node's kind, so a child of another kind is no projection. This stops the walk where a
- * rename paired a suspension without identity and the targets' children do not correspond. The
- * keys pair the rest because each layer is the projection of the next or written as it, down from a
- * rename's own pairing. So layers start only where a node is written as its wire node by its last
- * encoding, where only a rename pairs anything, and they continue into a suspension's target only
- * where the suspension has no encoding of its own. A suspension written as another by a
+ * every node's kind, so a child of another kind is no projection. That stops the walk only where
+ * the kinds differ: below a suspension a rename paired without identity, children of one kind under
+ * one key are taken to correspond. A union's members are paired by {@link pairMembers} instead,
+ * since a member's index is no place in the data.
+ *
+ * The keys pair the rest because each layer is the projection of the next or written as it, down
+ * from a rename's own pairing. So layers start only where a node is written as its wire node by its
+ * last encoding, where only a rename pairs anything, and they continue into a suspension's target
+ * only where the suspension has no encoding of its own. A suspension written as another by a
  * transformation says nothing of how their targets' children correspond.
  */
 const counterpart = (
@@ -413,11 +482,14 @@ const counterpart = (
     const type = pairing?.pairs.get(key);
     return type === undefined ? undefined : { _tag: "Field", type };
   }
-  const type = childrenOf(layer).find(
-    (candidate) => candidate.key === key,
-  )?.type;
-  return type !== undefined &&
-    SchemaAST.toEncoded(type)._tag === SchemaAST.toEncoded(originOf(child))._tag
+  const wire = originOf(reference);
+  const type =
+    decoded._tag !== "Union"
+      ? childrenOf(layer).find((candidate) => candidate.key === key)?.type
+      : wire._tag === "Union" && typeof key === "number"
+        ? pairMembers(decoded, wire)[key]
+        : undefined;
+  return type !== undefined && kindOf(type) === kindOf(originOf(child))
     ? { _tag: "Field", type }
     : undefined;
 };

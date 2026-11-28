@@ -819,7 +819,14 @@ the schema does with it. These are the places where it cannot, and what happens 
   own wire suspensions of some decoded suspensions but not of others, which neither
   `Schema.encodeKeys` nor a derivation builds, a wrapper given at such a name refuses, and a nested
   Option below it keeps the schema's own reading and can be sent as `{}`
-  ([#381](https://github.com/viell-dev/slop-effect-schema-http/issues/381)). A hand-written rename
+  ([#381](https://github.com/viell-dev/slop-effect-schema-http/issues/381)). Below such a
+  suspension, a union's members are paired with the decoded union's by identity with
+  `Schema.toEncoded`'s nodes wherever the wire lists them, and otherwise by place where nothing
+  shows another order. `Schema.toCodecJson` moves members that encode `BigInt`, `Symbol` and
+  `UniqueSymbol` first, which changes the kinds in place. A hand-written wire union of new members
+  of the same kinds, listed in another order, is paired wrongly: an `Option` that its `Any` member
+  reads refuses, and a `None` that its codec's wire member reads can be sent as `{}`
+  ([#397](https://github.com/viell-dev/slop-effect-schema-http/issues/397)). A hand-written rename
   whose wire struct holds every decoded field's own wire side, each at a name its mapping gives
   another field, cannot be told from `Schema.encodeKeys` with the mapping those places show, and is
   read as that. A wrapper given where it writes an Option codec is then read as the other field's
