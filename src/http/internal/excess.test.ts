@@ -700,7 +700,13 @@ describe("normalising visible Some payloads", () => {
     const HeldWide = Schema.OptionFromNullOr(Either);
     const input = Option.some({ a: "inner", b: "b" });
     expect(
-      Excess.optionLoss(HeldWide.ast, input, input, { a: "inner" }, true),
+      Excess.optionLoss(
+        HeldWide.ast,
+        input,
+        input,
+        { a: "inner" },
+        { checkWrite: true },
+      ),
     ).toEqual([["value", "b"]]);
     expect(
       Excess.optionLoss(
@@ -708,7 +714,6 @@ describe("normalising visible Some payloads", () => {
         input,
         Option.some({ a: "outer", b: "b" }),
         { a: "outer", b: "b" },
-        false,
       ),
     ).toEqual([["value", "a"]]);
   });
@@ -882,9 +887,9 @@ describe("boundaries of a visible Some payload", () => {
     payload.next = payload;
     const some = Option.some(payload);
     expect(Excess.normalisedOptions(option.ast, some)).toBe(some);
-    expect(Excess.optionLoss(option.ast, some, some, payload, true)).toEqual(
-      [],
-    );
+    expect(
+      Excess.optionLoss(option.ast, some, some, payload, { checkWrite: true }),
+    ).toEqual([]);
   });
 
   it("does not follow a schema cycle at the same value", () => {
@@ -899,13 +904,9 @@ describe("boundaries of a visible Some payload", () => {
     );
     const nested = { x: "x" };
     expect(
-      Excess.optionLoss(
-        option.ast,
-        Option.some({ nested }),
-        Option.some({}),
-        { nested },
-        false,
-      ),
+      Excess.optionLoss(option.ast, Option.some({ nested }), Option.some({}), {
+        nested,
+      }),
     ).toEqual([["value", "nested"]]);
   });
 
@@ -938,7 +939,9 @@ describe("accounting for written Some fields", () => {
     const output = { held: { owner: "a" } };
     const assertKept = (given: unknown) =>
       expect(
-        Excess.optionLoss(schema.ast, given, { held }, output, true),
+        Excess.optionLoss(schema.ast, given, { held }, output, {
+          checkWrite: true,
+        }),
       ).toEqual([]);
     assertKept({ bare: { owner: "b" }, held });
     assertKept({
@@ -972,11 +975,17 @@ describe("accounting for written Some fields", () => {
         input,
         input,
         { SIZE: "5", owner: "a" },
-        true,
+        { checkWrite: true },
       ),
     ).toEqual([]);
     expect(
-      Excess.optionLoss(schema.ast, input, input, { owner: "a" }, true),
+      Excess.optionLoss(
+        schema.ast,
+        input,
+        input,
+        { owner: "a" },
+        { checkWrite: true },
+      ),
     ).toEqual([["value", "size"]]);
   });
 
@@ -1052,9 +1061,9 @@ it("allows None to omit a field only where a visible codec unwraps it", () => {
     }),
   );
   const input = Option.some({ visible: Option.none(), opaque: Option.none() });
-  expect(Excess.optionLoss(schema.ast, input, input, {}, true)).toEqual([
-    ["value", "opaque"],
-  ]);
+  expect(
+    Excess.optionLoss(schema.ast, input, input, {}, { checkWrite: true }),
+  ).toEqual([["value", "opaque"]]);
 });
 
 it("requires a single written candidate to hold every child", () => {
@@ -1065,7 +1074,7 @@ it("requires a single written candidate to hold every child", () => {
   const value = { a: "a", b: "b" };
   const some = Option.some({ kid: value });
   const lost = (output: unknown) =>
-    Excess.optionLoss(schema.ast, some, some, output, true);
+    Excess.optionLoss(schema.ast, some, some, output, { checkWrite: true });
 
   expect(lost({ child: { a: "a" } })).toEqual([["value", "kid", "b"]]);
   expect(lost({ kid: { a: "a" }, child: value })).toEqual([]);
@@ -1082,10 +1091,10 @@ it("distinguishes a scalar from another field that can write its wire name", () 
   const schema = Schema.OptionFromNullOr(Schema.Union([first, second]));
   const some = Option.some({ limit: "caller" });
   const output = { page_size: "other" };
-  expect(Excess.optionLoss(schema.ast, some, some, output, true)).toEqual([
-    ["value", "limit"],
-  ]);
-  expect(Excess.optionLoss(schema.ast, some, some, output, false)).toEqual([]);
+  expect(
+    Excess.optionLoss(schema.ast, some, some, output, { checkWrite: true }),
+  ).toEqual([["value", "limit"]]);
+  expect(Excess.optionLoss(schema.ast, some, some, output)).toEqual([]);
 });
 
 it("lets a scalar codec change its representation at a shared wire name", () => {
@@ -1096,7 +1105,13 @@ it("lets a scalar codec change its representation at a shared wire name", () => 
   const schema = Schema.OptionFromNullOr(Schema.Union([first, second]));
   const input = Option.some({ limit: 5 });
   expect(
-    Excess.optionLoss(schema.ast, input, input, { page_size: "5" }, true),
+    Excess.optionLoss(
+      schema.ast,
+      input,
+      input,
+      { page_size: "5" },
+      { checkWrite: true },
+    ),
   ).toEqual([]);
 });
 
@@ -1108,7 +1123,13 @@ it("does not pair a reordered wire name by position after a loose write", () => 
   const schema = Schema.OptionFromNullOr(payload);
   const input = Option.some({ b: "2" });
   expect(
-    Excess.optionLoss(schema.ast, input, input, { "0": "2" }, true),
+    Excess.optionLoss(
+      schema.ast,
+      input,
+      input,
+      { "0": "2" },
+      { checkWrite: true },
+    ),
   ).toEqual([]);
 });
 
@@ -1132,9 +1153,17 @@ it("does not pair a reordered decoded name from a handwritten link", () => {
   const schema = Schema.OptionFromNullOr(payload);
   const b = Option.some({ b: "bee" });
   const zero = Option.some({ 0: "zed" });
-  expect(Excess.optionLoss(schema.ast, b, b, { B: "bee" }, true)).toEqual([]);
   expect(
-    Excess.optionLoss(schema.ast, zero, zero, { zero: "zed" }, true),
+    Excess.optionLoss(schema.ast, b, b, { B: "bee" }, { checkWrite: true }),
+  ).toEqual([]);
+  expect(
+    Excess.optionLoss(
+      schema.ast,
+      zero,
+      zero,
+      { zero: "zed" },
+      { checkWrite: true },
+    ),
   ).toEqual([]);
 });
 
@@ -1148,7 +1177,9 @@ it("stops the loose comparison at Schema.Option", () => {
   const narrowed = Option.some({ owner: "a" });
   expect(Excess.mayWriteUnwrappedOption(schema.ast)).toBe(false);
   expect(
-    Excess.optionLoss(schema.ast, given, narrowed, undefined, true),
+    Excess.optionLoss(schema.ast, given, narrowed, undefined, {
+      checkWrite: true,
+    }),
   ).toEqual([]);
 });
 
@@ -1190,12 +1221,95 @@ it("compares configured unwrapping codecs on the loose route", () => {
   const given = Option.some({ inner: Option.some({ a: "a", b: "b" }) });
   const narrowed = Option.some({ inner: Option.some({ a: "a" }) });
   const written = { inner: { a: "a" } };
+  expect(Excess.optionLoss(schema.ast, given, narrowed, written)).toEqual([]);
   expect(
-    Excess.optionLoss(schema.ast, given, narrowed, written, false),
-  ).toEqual([]);
-  expect(Excess.optionLoss(schema.ast, given, narrowed, written, true)).toEqual(
-    [["value", "inner", "value", "b"]],
+    Excess.optionLoss(schema.ast, given, narrowed, written, {
+      checkWrite: true,
+    }),
+  ).toEqual([["value", "inner", "value", "b"]]);
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/334
+it("compares a hand-written codec's read after a strict write, never what it writes", () => {
+  const payload = Either;
+  const handWritten = Schema.NullOr(payload).pipe(
+    Schema.decodeTo(
+      Schema.Option(payload),
+      SchemaTransformation.transform<
+        Option.Option<typeof payload.Type>,
+        typeof payload.Type | null
+      >({
+        decode: Option.fromNullOr,
+        encode: (value) => Option.getOrElse(value, () => null),
+      }),
+    ),
   );
+  const schema = Schema.Struct({ held: handWritten });
+  const given = { held: Option.some({ a: "a", b: "b" }) };
+  const narrowed = { held: Option.some({ a: "a" }) };
+  expect(Excess.optionLoss(schema.ast, given, narrowed, {})).toEqual([]);
+  expect(
+    Excess.optionLoss(
+      schema.ast,
+      given,
+      narrowed,
+      {},
+      { writerOnlyCodecs: true },
+    ),
+  ).toEqual([["held", "value", "b"]]);
+  // What the read kept is not checked against what the codec wrote.
+  expect(
+    Excess.optionLoss(
+      schema.ast,
+      given,
+      given,
+      { held: {} },
+      { writerOnlyCodecs: true },
+    ),
+  ).toEqual([]);
+  // Effect's own codecs keep the comparison their recognition gives: a configured codec is
+  // recognised on a loose read only.
+  const configured = Schema.Struct({
+    held: Schema.OptionFromOptionalNullOr(payload, { onNoneEncoding: null }),
+  });
+  expect(
+    Excess.optionLoss(
+      configured.ast,
+      given,
+      narrowed,
+      {},
+      { writerOnlyCodecs: true },
+    ),
+  ).toEqual([]);
+  // The JSON codec of a built-in one whose payload has a JSON form of its own, such as a Date's,
+  // puts another payload schema on the wire. Only the writer follows it, as it follows a
+  // hand-written codec, where the built-in codec itself is compared on every route.
+  const Dated = Schema.Union([
+    Schema.Struct({ a: text, when: Schema.Date }),
+    Schema.Struct({ a: text, when: Schema.Date, b: text }),
+  ]);
+  const when = new Date(0);
+  const dated = { held: Option.some({ a: "a", when, b: "b" }) };
+  const narrowedDated = { held: Option.some({ a: "a", when }) };
+  const builtIn = Schema.Struct({ held: Schema.OptionFromNullOr(Dated) });
+  expect(Excess.optionLoss(builtIn.ast, dated, narrowedDated, {})).toEqual([
+    ["held", "value", "b"],
+  ]);
+  for (const json of [
+    Schema.Struct({ held: Schema.toCodecJson(Schema.OptionFromNullOr(Dated)) }),
+    Schema.toCodecJson(builtIn),
+  ]) {
+    expect(Excess.optionLoss(json.ast, dated, narrowedDated, {})).toEqual([]);
+    expect(
+      Excess.optionLoss(
+        json.ast,
+        dated,
+        narrowedDated,
+        {},
+        { writerOnlyCodecs: true },
+      ),
+    ).toEqual([["held", "value", "b"]]);
+  }
 });
 
 it("uses another written name when only one candidate shares its name", () => {
@@ -1219,19 +1333,27 @@ it("uses another written name when only one candidate shares its name", () => {
   const schema = Schema.OptionFromNullOr(payload);
   const value = Option.some({ code: "abc" });
   expect(
-    Excess.optionLoss(schema.ast, value, value, { CODE: "ABC" }, true),
+    Excess.optionLoss(
+      schema.ast,
+      value,
+      value,
+      { CODE: "ABC" },
+      { checkWrite: true },
+    ),
   ).toEqual([]);
 });
 
 it("accounts for each list cell when a loose Option write omits it", () => {
   const schema = Schema.OptionFromNullOr(Schema.Array(Schema.String));
   const input = Option.some(["given"]);
-  expect(Excess.optionLoss(schema.ast, input, input, ["given"], true)).toEqual(
-    [],
-  );
-  expect(Excess.optionLoss(schema.ast, input, input, [], true)).toEqual([
-    ["value", 0],
-  ]);
+  expect(
+    Excess.optionLoss(schema.ast, input, input, ["given"], {
+      checkWrite: true,
+    }),
+  ).toEqual([]);
+  expect(
+    Excess.optionLoss(schema.ast, input, input, [], { checkWrite: true }),
+  ).toEqual([["value", 0]]);
 });
 
 it("accepts the key a record retains beside a renamed alternative", () => {
@@ -1242,7 +1364,13 @@ it("accepts the key a record retains beside a renamed alternative", () => {
   const schema = Schema.OptionFromNullOr(Schema.Union([renamed, record]));
   const input = Option.some({ a: "given" });
   expect(
-    Excess.optionLoss(schema.ast, input, input, { a: "given" }, true),
+    Excess.optionLoss(
+      schema.ast,
+      input,
+      input,
+      { a: "given" },
+      { checkWrite: true },
+    ),
   ).toEqual([]);
 });
 
@@ -1253,17 +1381,11 @@ it("distinguishes a missing null from an empty value held as undefined", () => {
     }),
   );
   const input = Option.some({ x: null });
+  expect(Excess.optionLoss(schema.ast, input, Option.some({}), {})).toEqual([
+    ["value", "x"],
+  ]);
   expect(
-    Excess.optionLoss(schema.ast, input, Option.some({}), {}, false),
-  ).toEqual([["value", "x"]]);
-  expect(
-    Excess.optionLoss(
-      schema.ast,
-      input,
-      Option.some({ x: undefined }),
-      {},
-      false,
-    ),
+    Excess.optionLoss(schema.ast, input, Option.some({ x: undefined }), {}),
   ).toEqual([]);
 });
 

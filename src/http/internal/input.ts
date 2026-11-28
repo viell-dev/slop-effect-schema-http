@@ -1560,11 +1560,12 @@ const readerForCodec = <S extends Schema.Top, A, R>(
   // A custom writer is the caller's own, except that it knows no guard.
   const strictWriter =
     guarded === codec.ast ? write : Schema.encodeEffect(guardedCodec);
-  // Only the built-in writer establishes how the codec exposes a Some on the wire.
-  const visibleOptions = custom === undefined && Excess.mayUnwrapOption(ast);
-  // A configured codec, such as OptionFromOptionalNullOr with an onNoneEncoding, exposes a Some's
-  // payload the same way, so its unstated keys are left out before the strict read too.
-  const cleansOptions =
+  // Only the built-in writer establishes how a codec exposes a Some on the wire. A configured codec,
+  // such as OptionFromOptionalNullOr with an onNoneEncoding, exposes a Some's payload as the other
+  // built-in codecs do, so its unstated keys are left out before the strict read too. The relaxed
+  // route compares the Somes the writer unwraps with what the caller gave, including those of codecs
+  // only the writer follows, such as a hand-written one, as optionLoss says.
+  const writesUnwrappedOptions =
     custom === undefined && Excess.mayWriteUnwrappedOption(ast);
   const readOriginal = decodedReading(contract);
   const readingFrom = (input: Input<S>, caller: Input<S>) =>
@@ -1735,14 +1736,11 @@ const readerForCodec = <S extends Schema.Top, A, R>(
               }).filter(isHeld),
               rebuilt.lost,
               lostByRead,
-              visibleOptions || (strict !== undefined && cleansOptions)
-                ? Excess.optionLoss(
-                    ast,
-                    given,
-                    value,
-                    output,
-                    strict !== undefined,
-                  )
+              writesUnwrappedOptions
+                ? Excess.optionLoss(ast, given, value, output, {
+                    checkWrite: strict !== undefined,
+                    writerOnlyCodecs: true,
+                  })
                 : [],
             ),
             refused,
@@ -1803,14 +1801,9 @@ const readerForCodec = <S extends Schema.Top, A, R>(
                   lost: mergePaths(
                     rebuilt.lost,
                     changed
-                      ? Excess.optionLoss(
-                          ast,
-                          from,
-                          read.value,
-                          output,
-                          false,
-                          true,
-                        )
+                      ? Excess.optionLoss(ast, from, read.value, output, {
+                          looseRead: true,
+                        })
                       : [],
                   ),
                   causes: rebuilt.causes,
@@ -1916,7 +1909,7 @@ const readerForCodec = <S extends Schema.Top, A, R>(
     });
   };
   return (input: Input<S>) => {
-    const cleaned = cleansOptions
+    const cleaned = writesUnwrappedOptions
       ? (Excess.normalisedOptions(ast, input) as Input<S>)
       : input;
     if (cleaned === input) return reading(input, input);

@@ -17,6 +17,35 @@
   beside a stray key in an opaque sibling, `Some({ extra: 1 })` still refuses where `Some({})` sends
   `{}` ([#340](https://github.com/viell-dev/slop-effect-schema-http/issues/340)).
 
+- **Breaking:** refuse a stated field that the relaxed read loses through an Option codec only the
+  writer follows ([#334](https://github.com/viell-dev/slop-effect-schema-http/issues/334)). That is
+  a hand-written codec whose encoder is a plain `SchemaTransformation.transform` writing a value in
+  the field's place, as one over `NullOr` or `UndefinedOr` does, a built-in one behind middleware,
+  or an explicit `Schema.toCodecJson` of a built-in codec where it rebuilds the payload, as it does
+  for a payload with a `Date` or `BigInt` field or a suspended payload. With
+  `Filter = Union([Struct({ owner }), Struct({ owner, limit })])` and a codec such as
+  `NullOr(P).pipe(decodeTo(Option(toType(P)), transform({ decode: Option.fromNullOr, encode: (o) => Option.getOrElse(o, () => null) })))`,
+  `Some({ owner, limit, stray })` under a same-tag union, a list of `Filter` or a `Filter` inside
+  another `Some` sent `limit` nowhere in 0.20.0. It now fails naming `limit`, as it already did
+  under `Filter` itself. A stray key in the codec's own `Some` is one trigger; whatever makes the
+  strict attempt fail does the same, such as a stray key only in a sibling `Schema.Option`, a
+  `limit` the wider member refuses, or a constructor-defaulted field the `Some` leaves out.
+  `OptionFromNullOr` refuses those three as well. Where the relaxed read keeps every stated field,
+  the request sends as before, and an encoder that writes fewer fields still writes what it writes.
+  Preparation cannot tell what these encoders write, so it leaves no key out of their `Some`: leave
+  unstated keys out, or use the built-in codec itself, without middleware or an explicit
+  `Schema.toCodecJson`, which `Body.jsonSchema` applies on its own. The built-in codec leaves a
+  stray key out and keeps `limit`. Inside a `Some` that a hand-written codec reads, a nested codec
+  can still lose `limit`, with or without a stray key in its own `Some`
+  ([#347](https://github.com/viell-dev/slop-effect-schema-http/issues/347)). A hand-written codec
+  that can omit its key, as `OptionFromOptional` does, or whose encoder is effectful
+  (`transformEffect`), is not followed by the writer and can still lose `limit` in those three
+  places wherever the strict attempt fails, for any of the reasons above; the built-in
+  `Schema.OptionFromOptional` refuses in all of them
+  ([#364](https://github.com/viell-dev/slop-effect-schema-http/issues/364)). Under `Filter` itself
+  the refusal also names the unstated key, and refuses it even where nothing stated is lost
+  ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)).
+
 ## 0.20.1 — 2026-11-28
 
 [What's in
