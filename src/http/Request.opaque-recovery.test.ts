@@ -4225,8 +4225,8 @@ describe("an invalid Some payload keeps its decoded error", () => {
       { held: "1", other: "0" },
     );
 
-  // Schema.encodeKeys writes every suspension's own wire side and a derivation none, so in each of
-  // these wire structs identity does not show which suspension is written where.
+  // Schema.encodeKeys writes every suspension's own wire side and a derivation none that is a
+  // suspension, so in each of these wire structs identity does not show which is written where.
   // https://github.com/viell-dev/slop-effect-schema-http/issues/361
   it.effect.each([
     [
@@ -4309,6 +4309,50 @@ describe("an invalid Some payload keeps its decoded error", () => {
           ),
         );
         expect(failure.message).toBe(notHeld('["0"]'));
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/361
+  it.effect(
+    "pairs a derived suspension beside one whose own wire side is no suspension",
+    () =>
+      Effect.gen(function* () {
+        // Schema.toCodecJson builds the wire suspension of `held` again but keeps the string `doc`
+        // is written as, doc's own wire side, so the derived wire struct holds one decoded
+        // suspension's own wire side and not the other's.
+        const doc = Schema.fromJsonString(
+          Schema.suspend(() => Schema.Struct({ y: Schema.String })),
+        );
+        const text = JSON.stringify({ y: "s" });
+        const renamedBeside = (held: Schema.Top) =>
+          Schema.Struct({ held, doc }).pipe(
+            Schema.encodeKeys({ held: "1", doc: "0" }),
+          );
+        const codec = renamedBeside(
+          Schema.suspend(() =>
+            Schema.Struct({ x: Schema.OptionFromNullOr(payload) }),
+          ),
+        );
+        const any = renamedBeside(Schema.suspend(() => Schema.Any));
+        for (const derive of [false, true]) {
+          const form = (schema: Schema.Top) =>
+            (derive
+              ? Schema.toCodecJson(schema)
+              : schema) as unknown as typeof renamed;
+          const failure = yield* Effect.flip(
+            json(form(codec), {
+              "1": { x: Option.none() },
+              "0": text,
+            } as never),
+          );
+          expect(failure.message).toBe(notHeld('["1"]["x"]'));
+          expect(
+            yield* json(form(any), { "1": Option.some(1), "0": text } as never),
+          ).toEqual({
+            "0": text,
+            "1": { _id: "Option", _tag: "Some", value: 1 },
+          });
+        }
       }),
   );
 

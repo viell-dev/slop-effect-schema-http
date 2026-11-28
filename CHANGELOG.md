@@ -95,8 +95,8 @@
   still refuses. A suspension that is no decoded field's wire side, as in a contract derived with
   `Schema.toCodecJson` or a hand-written rename spelled as `Schema.encodeKeys` spells it, is paired
   as on 0.20.0, so a wrapper at such a name refuses as it did. So is every suspension of a
-  hand-written rename whose wire struct holds some decoded suspensions' own wire sides but not
-  others'.
+  hand-written rename whose wire struct holds the own wire suspensions of some decoded suspensions
+  but not of others, which neither `Schema.encodeKeys` nor a derivation builds.
 
   Where the suspended field written at such a name is a plain struct, a native `Option` given there
   now takes that struct's reading and can be sent as `{}`, as it is without the suspension. With

@@ -815,9 +815,10 @@ the schema does with it. These are the places where it cannot, and what happens 
   decoded field's wire side, as a derivation such as `Schema.toCodecJson` builds one or a
   hand-written rename spelled as `Schema.encodeKeys` spells it can write one, pairs with the
   suspension in its place or, for integer-like names, with the one decoded suspension whose wire
-  side is missing. Where several are missing, or where a hand-written rename's wire struct holds
-  some decoded suspensions' own wire sides but not others', a wrapper given at such a name refuses,
-  and a nested Option below it keeps the schema's own reading and can be sent as `{}`
+  side is missing. Where several are missing, or where a hand-written rename's wire struct holds the
+  own wire suspensions of some decoded suspensions but not of others, which neither
+  `Schema.encodeKeys` nor a derivation builds, a wrapper given at such a name refuses, and a nested
+  Option below it keeps the schema's own reading and can be sent as `{}`
   ([#381](https://github.com/viell-dev/slop-effect-schema-http/issues/381)). A hand-written rename
   whose wire struct holds every decoded field's own wire side, each at a name its mapping gives
   another field, cannot be told from `Schema.encodeKeys` with the mapping those places show, and is

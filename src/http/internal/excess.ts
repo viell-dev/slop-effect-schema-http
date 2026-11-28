@@ -1357,21 +1357,32 @@ const renamePairs = new WeakMap<SchemaAST.Link, RenamePairing | null>();
  * The rename's mapping lives in a closure no schema node exposes, so it is recovered from the
  * schemas. Effect builds the wire struct from the projections of the decoded fields in their order,
  * and JavaScript keeps that order for every name but an integer-like one, which it lists first in
- * numeric order. Without such names a field pairs with the one in its place, where that is its
- * projection or both are suspensions. With them, a wire field pairs only with the one decoded field
- * whose projection it is; where several are, it lists them all as ambiguous, so a caller can refuse
- * what any of them would refuse rather than guess. One schema given as several fields is listed
- * once: whichever of them the rename wrote, it is read the same way. A wire suspension that is no
- * decoded field's projection pairs with the one decoded suspension given as more fields than there
- * are wire fields that are its projection, or lists them all as unproven where there are several.
- * A wire struct that holds some decoded suspensions' projections but not others' was written by
- * hand, since `Schema.encodeKeys` writes all of them and a derivation none, so each of its wire
- * suspensions lists every decoded suspension as unproven, and a wrapper there refuses as on
- * 0.20.0. A wire struct that holds each decoded field's projection at a name its mapping gives
- * another field reads as `Schema.encodeKeys` with the mapping those places show (#390). Any other
- * transformation pairs nothing, since its callback alone knows which field it writes where. The
- * rename is recognised by its getters, as configured Option codecs are, which a hand-written
- * transformation spelled the same way would also match (#327).
+ * numeric order. A field's projection is the node {@link projectsTo} names.
+ *
+ * - Without such names a field pairs with the wire field in its place, where that is its
+ *   projection or both are suspensions.
+ * - With them, a wire field pairs with the one decoded field whose projection it is. Where several
+ *   are, it lists them all as ambiguous, so a caller can refuse what any of them would refuse
+ *   rather than guess. One schema given as several fields is listed once: whichever of them the
+ *   rename wrote, it is read the same way.
+ * - A wire suspension that is no decoded field's projection pairs with the one decoded suspension
+ *   given as more fields than there are wire fields that are its projection, or lists them all as
+ *   unproven where there are several.
+ * - `Schema.encodeKeys` writes every decoded field's projection. A derivation such as
+ *   `Schema.toCodecJson` builds every wire suspension again and keeps a wire node it does not
+ *   change, such as the string a `Schema.fromJsonString` suspension is written as. So a wire struct
+ *   that holds the projections of some decoded suspensions whose projection is a suspension, but
+ *   not of others, was written by hand. Each of its wire suspensions lists every decoded
+ *   suspension as unproven, and a wrapper there refuses as on 0.20.0.
+ * - A wire struct that holds each decoded field's projection at a name its mapping gives another
+ *   field reads as `Schema.encodeKeys` with the mapping those places show (#390).
+ * - Any other transformation pairs nothing, since its callback alone knows which field it writes
+ *   where.
+ *
+ * The rename is recognised by its getters' source, as configured Option codecs are. That source is
+ * Effect's closure for a data-last call, which `Struct.pick`, `Struct.omit` and `Struct.evolve`
+ * return too, so a hand-written transformation through any of them between structs with as many
+ * fields also matches (#327).
  */
 export const renamedPairs = (
   from: Ast,
@@ -1407,13 +1418,17 @@ export const renamedPairs = (
           decoded.filter((field) => field.type === type).length >
           wire.filter((field) => projectsTo(type, field.type)).length,
       );
-      // Schema.encodeKeys writes every decoded suspension's own wire node, and a derivation writes
-      // none of them, so a wire struct that holds some of them but not others was written by hand,
-      // and identity does not show which suspension it wrote where.
+      // A derivation builds every wire suspension again, so it holds none of the projections that
+      // are suspensions, though it can keep another, such as a Schema.fromJsonString suspension's
+      // string. A wire struct that holds some projections that are suspensions but not others was
+      // written by hand, and identity does not show which suspension it wrote where.
       const suspended = types.filter((type) => type._tag === "Suspend");
+      const rebuilt = suspended.filter(
+        (type) => SchemaAST.toEncoded(type)._tag === "Suspend",
+      );
       const partlyOwn =
-        suspended.some((type) => unpaired.includes(type)) &&
-        suspended.some((type) => !unpaired.includes(type));
+        rebuilt.some((type) => unpaired.includes(type)) &&
+        rebuilt.some((type) => !unpaired.includes(type));
       for (const { name, type } of wire) {
         const own =
           partlyOwn && type._tag === "Suspend"
