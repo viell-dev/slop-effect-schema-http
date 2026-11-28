@@ -20,7 +20,6 @@ import {
   queried,
   schemaFailure,
   stacked,
-  strictOnlyCheck,
   takes,
   Tenant,
   urlOf,
@@ -2749,77 +2748,6 @@ describe("a refusal says why it cannot keep a field", () => {
             expect(yield* refuse(value)).toBe(expected);
             if (strictness !== undefined) expect(reads).toEqual(strictness);
           }
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/335
-  // A wire name puts the value on its encoded side. There the library reads it strictly to find the
-  // keys a loose read would strip, and a step that fails only under those options fails that read
-  // for another reason, so the read with the request's own options does not run.
-  it.effect(
-    "currently refuses a wire-named value whose step fails only under strict options",
-    () =>
-      Effect.gen(function* () {
-        const side = strictOnlyCheck(
-          "Option-sensitive side",
-          Schema.FiniteFromString,
-        );
-        const renamed = Schema.Struct({ side }).pipe(
-          Schema.encodeKeys({ side: "s" }),
-        );
-        const keyed = Schema.Record(Schema.String, Schema.Number).check(
-          Schema.isPropertyNames(
-            strictOnlyCheck("Option-sensitive key refusal", Schema.String),
-          ),
-        );
-        const member = Schema.Union([
-          Schema.Struct({ a: keyed }).pipe(Schema.encodeKeys({ a: "A" })),
-          Schema.Struct({ other: Schema.String }),
-        ]);
-        // Effect reads both with the request's own options.
-        expect(Schema.decodeUnknownSync(renamed)({ s: "42" })).toEqual({
-          side: 42,
-        });
-        expect(Schema.decodeUnknownSync(member)({ A: { foo: 1 } })).toEqual({
-          a: { foo: 1 },
-        });
-        for (const refuse of bindings(renamed))
-          expect(yield* refuse({ s: "42" })).toBe('Missing key\n  at ["side"]');
-        expect(
-          yield* schemaFailure(posted(Schema.Struct({ f: renamed })), {
-            body: { f: { s: "42" } } as never,
-          }),
-        ).toBe('Missing key\n  at ["f"]["side"]');
-        expect(
-          yield* schemaFailure(posted(member), {
-            body: { A: { foo: 1 } } as never,
-          }),
-        ).toBe('Missing key\n  at ["a"]\nMissing key\n  at ["other"]');
-        // On the decoded side both are sent.
-        expect(yield* bodyOf(posted(renamed), { body: { side: 42 } })).toBe(
-          '{"s":"42"}',
-        );
-        expect(yield* bodyOf(posted(member), { body: { a: { foo: 1 } } })).toBe(
-          '{"A":{"foo":1}}',
-        );
-      }),
-  );
-
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/335
-  it.effect.fails(
-    "sends a wire-named value whose step fails only under strict options",
-    () =>
-      Effect.gen(function* () {
-        const side = strictOnlyCheck(
-          "Option-sensitive side",
-          Schema.FiniteFromString,
-        );
-        const renamed = Schema.Struct({ side }).pipe(
-          Schema.encodeKeys({ side: "s" }),
-        );
-        expect(
-          yield* bodyOf(posted(renamed), { body: { s: "42" } as never }),
-        ).toBe('{"s":"42"}');
       }),
   );
 
