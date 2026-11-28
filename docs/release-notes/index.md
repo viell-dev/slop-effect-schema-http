@@ -1,6 +1,6 @@
 # Release history
 
-The current release is [0.20.0](./0.20.md). [Versions](../versions.md) covers installation and
+The current release is [0.20.1](./0.20.md). [Versions](../versions.md) covers installation and
 updates. Use [Schema-backed input](../schema-input.md) and [Schema-backed
 groups](../schema-groups.md) for today's rules and active limits; the articles below explain changes
 between releases.
@@ -17,7 +17,9 @@ separately stops the field-by-field reading from sending a list as an index-keye
 release](./0.19.md) replaces those proofs: every reading accounts for the values it was given,
 whatever the schema's shape, which finishes the constructor-default repair and the recorded
 preservation gaps. The [0.20 release](./0.20.md) applies that rule to `Option` payloads and
-wrappers.
+wrappers. Compatible patch [0.20.1](./0.20.md#send-a-schema-error-body-again) sends `Schema.Error`
+bodies again and removes the extra preparation time and check runs 0.20.0 added; it does not extend
+the rule.
 
 ## Schema-input hardening
 

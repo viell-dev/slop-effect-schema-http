@@ -2,16 +2,20 @@
 
 ## Choose a release
 
-`0.20.0` is the current stable release, available from npm and GitHub. [Getting
-started](./getting-started.md) adds it to your Effect project. [What's in
-0.20](./release-notes/0.20.md) covers updating from `0.19`: an `Option`'s payload keeps the fields
-its schema states, a native `Option` given where its encoded payload belongs is kept or refused
-instead of being sent as `{}`, some built-ins a struct would rebuild now refuse, though others are
-still sent as `{}`, and a fieldless value several `oneOf` members read refuses as ambiguous.
-Updating from `0.18` or earlier also includes the breaking migration in [What's in
-0.19](./release-notes/0.19.md). [Release history](./release-notes/index.md) compares earlier changes
-and links every migration article. Use the [current input reference](./schema-input.md) for today's
-supported behavior and [Schema-backed groups](./schema-groups.md) for the recovery boundary.
+`0.20.1` is the current stable release, available from npm and GitHub. [Getting
+started](./getting-started.md) adds it to your Effect project. This compatible patch sends a
+`Schema.Error` or `Schema.TaggedError` body again in most schemas, as `0.19` did, prepares a
+recursive struct with a renamed key without its time doubling at each level, runs a schema's checks
+as often as `0.19` beside a key the schema does not state, and names some refusals more precisely.
+[What's in 0.20](./release-notes/0.20.md) gives a checked example and retains 0.20.0's breaking
+migration for updates from `0.19`: an `Option`'s payload keeps the fields its schema states, a
+native `Option` given where its encoded payload belongs is kept or refused instead of being sent as
+`{}`, some built-ins a struct would rebuild now refuse, though others are still sent as `{}`, and a
+fieldless value several `oneOf` members read refuses as ambiguous. Updating from `0.18` or earlier
+also includes the breaking migration in [What's in 0.19](./release-notes/0.19.md). [Release
+history](./release-notes/index.md) compares earlier changes and links every migration article. Use
+the [current input reference](./schema-input.md) for today's supported behavior and [Schema-backed
+groups](./schema-groups.md) for the recovery boundary.
 
 The npm `latest` tag selects the stable release, so ordinary install commands need no version
 suffix. The `rc` tag still identifies `0.1.0-rc.1`; use an explicit prerelease version when
@@ -44,20 +48,20 @@ meets your project's policy, then retry the install command.
 
 ## Install a GitHub release tarball
 
-The [GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.20.0)
+The [GitHub release](https://github.com/viell-dev/slop-effect-schema-http/releases/tag/0.20.1)
 offers the same package bytes as npm. This is an alternative to registry installation.
 
 Download both
-[`viell-effect-schema-http-0.20.0.tgz`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.20.0/viell-effect-schema-http-0.20.0.tgz)
+[`viell-effect-schema-http-0.20.1.tgz`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.20.1/viell-effect-schema-http-0.20.1.tgz)
 and
-[`SHA256SUMS`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.20.0/SHA256SUMS)
+[`SHA256SUMS`](https://github.com/viell-dev/slop-effect-schema-http/releases/download/0.20.1/SHA256SUMS)
 into one directory. Open a terminal in that directory and compare the downloaded tarball with its
 listed checksum.
 
 ### PowerShell
 
 ```powershell
-$archive = "viell-effect-schema-http-0.20.0.tgz"
+$archive = "viell-effect-schema-http-0.20.1.tgz"
 $entries = @(Get-Content -LiteralPath "./SHA256SUMS" |
     Where-Object { $_.EndsWith("  $archive") })
 if ($entries.Count -ne 1) { throw "Expected one checksum entry for $archive" }
@@ -72,7 +76,7 @@ if ($expected -notmatch "^[0-9a-f]{64}$" -or $actual -ne $expected) {
 ### Linux
 
 ```sh
-test -f ./viell-effect-schema-http-0.20.0.tgz &&
+test -f ./viell-effect-schema-http-0.20.1.tgz &&
   sha256sum --check --strict --ignore-missing SHA256SUMS
 ```
 
@@ -80,7 +84,7 @@ This checks the listed files present in the directory; `--ignore-missing` permit
 assets to be absent. With just the two downloads above, success prints:
 
 ```text
-viell-effect-schema-http-0.20.0.tgz: OK
+viell-effect-schema-http-0.20.1.tgz: OK
 ```
 
 Both versions compare the calculated SHA-256 with the release's recorded value. A missing checksum,
@@ -92,7 +96,7 @@ After the comparison succeeds, run this from your application directory, adjusti
 downloaded archive is elsewhere:
 
 ```sh
-npm install ./viell-effect-schema-http-0.20.0.tgz
+npm install ./viell-effect-schema-http-0.20.1.tgz
 ```
 
 ## Compatibility policy
