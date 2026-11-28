@@ -636,17 +636,21 @@ and one that leaves its key out sends nothing there, also where the value is wri
 union payload, a missing key is the codec's own only where every member states its field: a member
 that does not, such as `Struct({ n })` before `Struct({ n, inner })`, may have written the struct
 without running the codec, so a `Some` missing there is refused, even one the codec would write as
-nothing. A `None` missing there sends. What the encoder writes is its own for an encoder that writes
-none of the payload too, such as a flag that writes only whether there is a `Some`: beside a stray
-key, a `limit` its read lost is refused, although the flag would send the same `true` with it.
+nothing ([#400](https://github.com/viell-dev/slop-effect-schema-http/issues/400)). A `None` missing
+there sends. What the encoder writes is its own for an encoder that writes none of the payload too,
+such as a flag that writes only whether there is a `Some`: beside a stray key, a `limit` its read
+lost is refused, although the flag would send the same `true` with it.
 
 A struct with renamed keys, such as one from `Schema.encodeKeys`, that holds a codec whose payload
 preparation cannot find on the wire is a frame for the check, as one holding `OptionFromOptional`
-is, also where that codec's wire key is optional. The check then compares the struct's fields, and
-its other fields read as they do beside the built-in codec: a built-in codec there leaves a stray
-key out of its own `Some` and keeps `limit`. Given its encoded payload in place of an `Option`, a
-codec that can omit its key there is still refused beside such a stray key where a Void on its wire
-side takes the payload as nothing, as it was before such a codec made the struct a frame.
+is, also where that codec's wire key is optional: the check pairs its decoded and wire names and
+compares its fields. Where such a codec that can omit its key is one of the struct's own fields,
+preparation still leaves no key out below the struct, also where it is a union member its tag rules
+out. A stray key there, such as one in a built-in sibling's `Some`, takes the value to the relaxed
+read, which refuses what a Void takes at any depth and refuses the sibling's `limit` where its read
+loses it. Beside `OptionFromOptional` in its place, the sibling leaves the stray key out and keeps
+`limit`, and a payload that a Void takes there can be sent as nothing, as the limits below say
+([#392](https://github.com/viell-dev/slop-effect-schema-http/issues/392)).
 
 `Body.jsonSchema` applies `Schema.toCodecJson` itself, so give it the built-in codec rather than its
 JSON form. Declare a hand-written codec's decoded side as `Schema.Option(Schema.toType(payload))`,

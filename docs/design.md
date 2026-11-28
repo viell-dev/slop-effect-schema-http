@@ -254,20 +254,20 @@ missing from the output is its own only where every frame there states the field
 that does not may have written the struct without running the codec, so a missing `Some` there is a
 loss. A key rename holding such a codec is a frame for the check and pairs its names for output
 comparison, as one holding `OptionFromOptional` does, also where the codec's wire key is optional.
-Where only such a codec makes the rename a frame, a value whose unstated keys are left out below it
-can take the strict route the relaxed read used to decide, so there a codec given its encoded
-payload in place of an `Option` has to read it as something: a Void on its wire side takes any
-value. `Schema.toType` leaves a codec nested in that decoded payload with no encoding, as
-`Schema.Option` has none, so the check finds it by identity: as `toType` of a codec in the outer
-codec's own schema, which Effect memoizes. That needs the decoded side to be built from the same
-payload schema, and it cannot tell the codec from its own decoded side placed beside it, which is
-the same node, so both are compared. It is compared on its own decoded payload the same way, and a
-`Schema.Option` there keeps Effect's reading. A suspension in that schema is followed only where the
-check resolves it on the decoded side. Output comparison uses candidate wire names where they can be
-paired. An unpairable rename supplies no output evidence, and the writer can still select a wider
-member. A value that Void reads as nothing in place still holds its field. `Schema.Option(X)` uses
-Effect's own reading and member selection for its contents on every write route. A narrower member
-can drop a field there.
+Preparation does not count it as one where only such a codec makes it a frame: nothing is left out
+below it, also where it is a union member its tag rules out. A stray key there then still takes the
+value to the relaxed read, which refuses what a Void takes at any depth, where the strict read of
+the value without that key could send it as nothing. `Schema.toType` leaves a codec nested in that
+decoded payload with no encoding, as `Schema.Option` has none, so the check finds it by identity: as
+`toType` of a codec in the outer codec's own schema, which Effect memoizes. That needs the decoded
+side to be built from the same payload schema, and it cannot tell the codec from its own decoded
+side placed beside it, which is the same node, so both are compared. It is compared on its own
+decoded payload the same way, and a `Schema.Option` there keeps Effect's reading. A suspension in
+that schema is followed only where the check resolves it on the decoded side. Output comparison uses
+candidate wire names where they can be paired. An unpairable rename supplies no output evidence, and
+the writer can still select a wider member. A value that Void reads as nothing in place still holds
+its field. `Schema.Option(X)` uses Effect's own reading and member selection for its contents on
+every write route. A narrower member can drop a field there.
 
 The second rule: an empty struct, an open schema without a check, or, for a value that is not a
 list, an empty class keeps every key of the value it reads, at every depth, as an alternative of its

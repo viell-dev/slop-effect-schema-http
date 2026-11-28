@@ -11,7 +11,7 @@
   left out beside members that state fields, but a Void member, which reads any payload, kept the
   payload as given. Code that received `null` for these values now receives `{}` or a `SchemaError`.
   A payload with a key a member states, set or not, is read as before: `Some({ limit: undefined })`
-  keeps 0.20.0's result ([#340](https://github.com/viell-dev/slop-effect-schema-http/issues/340)),
+  keeps 0.20.1's result ([#340](https://github.com/viell-dev/slop-effect-schema-http/issues/340)),
   and `Some({ limit: 5, extra: 1 })` is still sent as `null`
   ([#341](https://github.com/viell-dev/slop-effect-schema-http/issues/341)). Under the `anyOf` form,
   beside a stray key in an opaque sibling, `Some({ extra: 1 })` still refuses where `Some({})` sends
@@ -26,7 +26,7 @@
   `Filter = Union([Struct({ owner }), Struct({ owner, limit })])` and a codec such as
   `NullOr(P).pipe(decodeTo(Option(toType(P)), transform({ decode: Option.fromNullOr, encode: (o) => Option.getOrElse(o, () => null) })))`,
   `Some({ owner, limit, stray })` under a same-tag union, a list of `Filter` or a `Filter` inside
-  another `Some` sent `limit` nowhere in 0.20.0. It now fails naming `limit`, as it already did
+  another `Some` sent `limit` nowhere in 0.20.1. It now fails naming `limit`, as it already did
   under `Filter` itself. A stray key in the codec's own `Some` is one trigger; whatever makes the
   strict attempt fail does the same, such as a stray key only in a sibling `Schema.Option`, a
   `limit` the wider member refuses, or a constructor-defaulted field the `Some` leaves out.
@@ -45,12 +45,12 @@
   ([#379](https://github.com/viell-dev/slop-effect-schema-http/issues/379)). With
   `OptionalKey(P) = optional(P).pipe(decodeTo(Option(toType(P)), transformOptional({ decode: …, encode: (o) => Option.flatMap(o, (v) => v) })))`,
   `Some({ owner, limit, stray })` under a same-tag union, a list of `Filter` or a `Filter` inside
-  another `Some` sent `limit` nowhere in 0.20.0, and so did a codec with an effectful encoder. They
+  another `Some` sent `limit` nowhere in 0.20.1, and so did a codec with an effectful encoder. They
   now fail naming `limit`, as `Schema.OptionFromOptional` does. The read is compared, never what the
   encoder writes, so this includes a codec that writes none of its payload, such as a flag that
   writes `true` for a `Some`: beside a stray key, where the schema shows a choice such as a renamed
   sibling, a `limit` its read lost is now refused, although the flag sent the same `true` with it on
-  0.20.0. Where the relaxed read keeps every stated field, the request sends as before.
+  0.20.1. Where the relaxed read keeps every stated field, the request sends as before.
 
 - **Breaking:** an Option codec nested in such a codec's payload, built-in or hand-written, is
   compared too ([#347](https://github.com/viell-dev/slop-effect-schema-http/issues/347)). Inside
@@ -64,20 +64,18 @@
   one schema and both are compared. A renamed payload there is compared under its decoded names, so
   a wire name given inside the nested `Some` is left out, as before.
 
-- A struct with renamed keys that holds a hand-written codec that can omit its key now reads as one
-  holding `Schema.OptionFromOptional` does, and so do its other fields
-  ([#364](https://github.com/viell-dev/slop-effect-schema-http/issues/364)). Beside
-  `held: OptionalKey(Filter)` in
-  `Struct({ held, other: OptionFromNullOr(Filter), n }).pipe(encodeKeys({ n: "wire_n" }))`,
-  `other: Some({ owner, limit, stray })` was refused at `["other"]["value"]["limit"]` and
-  `["other"]["value"]["stray"]`; it now sends `other` with `limit` and without the stray key, as
-  beside `OptionFromOptional`. Where `held`'s payload is `Union([Void, Wide])`, a `Some` there that
-  was refused beside such a stray key now sends `"held":null`: inside an Option, Void is the
-  schema's own and takes the payload first, as Effect's own encoding and the built-in codec do with
-  or without the stray key. `held` given its encoded payload there, `{ owner, limit }`, is still
-  refused beside the stray key, now naming `["held"]`: the Void on the codec's wire side takes it as
-  nothing. Without the stray key, and through the built-in codec, that payload is sent as nothing,
-  as on 0.20.0 ([#392](https://github.com/viell-dev/slop-effect-schema-http/issues/392)).
+- A struct with renamed keys, such as one from `Schema.encodeKeys`, that holds a hand-written codec
+  that can omit its key is now checked as one holding `Schema.OptionFromOptional` is: the check
+  pairs its decoded and wire names and compares its fields, so the refusals above reach a codec it
+  holds ([#364](https://github.com/viell-dev/slop-effect-schema-http/issues/364)). With
+  `held: OptionalKey(P)` in `Struct({ held, n }).pipe(encodeKeys({ n: "wire_n" }))`,
+  `Some({ _tag: "A", owner, limit, stray })` under a same-tag union sent `limit` nowhere in 0.20.1
+  and now fails naming it. Preparation still leaves no stray key out below such a struct, as in
+  0.20.1: the strict read of the value without it could send what a Void takes as nothing, where the
+  relaxed read refuses it ([#392](https://github.com/viell-dev/slop-effect-schema-http/issues/392)).
+  So beside `other: OptionFromNullOr(Filter)` in that struct, `other: Some({ owner, limit, stray })`
+  is still refused at `["other"]["value"]["limit"]` and `["other"]["value"]["stray"]`, where with
+  `held: OptionFromOptional(P)` it sends `limit` and leaves the stray key out.
 
 - **Message change:** under its own renamed field, a hand-written codec that can omit its key
   refuses an invalid `Some` as `OptionFromOptional` does, naming a field the `Some` holds where it
@@ -86,7 +84,7 @@
 
 - The loose writer now follows a hand-written codec that can omit its key into its payload, as it
   follows one that writes a value. Where a field beside it fails its strict write, such a codec
-  keeps `limit` where 0.20.0 sent it nowhere or refused, if the writer finds the payload on the
+  keeps `limit` where 0.20.1 sent it nowhere or refused, if the writer finds the payload on the
   wire. `Body.jsonSchema` applies the JSON codec first, which rebuilds a payload holding a `Number`,
   `Date`, `BigInt`, `UndefinedOr`, `Schema.optional`, `Schema.Unknown` or `Schema.Option` field, a
   codec that writes `undefined` or a suspension. Through such a payload, and through a codec with an
@@ -105,8 +103,8 @@
   ([#386](https://github.com/viell-dev/slop-effect-schema-http/issues/386)). In a union payload,
   that holds for a `Some` only where every member states the field: a member that does not, such as
   `Struct({ n })` before `Struct({ n, inner })`, may have written the struct without running the
-  codec, so a `Some` the codec writes as nothing is still refused there, as on 0.20.0, while its
-  `None` sends.
+  codec, so a `Some` the codec writes as nothing is still refused there, as on 0.20.1, while its
+  `None` sends ([#400](https://github.com/viell-dev/slop-effect-schema-http/issues/400)).
 
 ## 0.20.1 — 2026-11-28
 

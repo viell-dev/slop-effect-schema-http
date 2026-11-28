@@ -1586,13 +1586,22 @@ const isOptionFrame = (ast: Ast): boolean =>
   isStructural(ast) || (ast._tag === "Objects" && isKeyRename(ast, mayOmitKey));
 
 /**
- * A key rename that is a frame only because a codec without a source, such as a hand-written one,
- * may omit its key there. A built-in codec that can omit its key made such a rename a frame before.
+ * A codec whose payload preparation finds on the wire, as Effect's own. OptionFromOptionalKey and
+ * its relatives can omit a wire key required on the decoded side.
  */
-const framedWithoutSource = (ast: Ast): boolean =>
-  ast._tag === "Objects" &&
-  !isStructural(ast) &&
-  !isKeyRename(ast, (type) => optionSource(type, true) !== undefined);
+const unwrapsOption = (ast: Ast): boolean =>
+  optionSource(ast, true) !== undefined;
+
+/**
+ * Whether a frame is one only because a codec without a source, such as a hand-written one, may
+ * omit its key there: a key rename that {@link isOptionFrame} takes and that would not be a frame
+ * if only codecs {@link unwrapsOption} could omit their keys. Call it only on a frame: any other
+ * struct with an encoding passes too.
+ */
+const framedWithoutSource = (frame: Ast): boolean =>
+  frame._tag === "Objects" &&
+  !isStructural(frame) &&
+  !isKeyRename(frame, unwrapsOption);
 
 /**
  * How the declaration of an Effect class, such as a `Schema.Class` or a `Schema.Error`, describes
@@ -1628,16 +1637,30 @@ const optionFrame = (type: Ast): Ast | undefined => {
   return eligible ? frame : undefined;
 };
 
-/**
- * Structural alternatives left by the same literal-tag rule as an ordinary field. With `withVoid`,
- * a Void alternative is known too: it reads any value as `undefined`, so it states and keeps
- * nothing, and `voided` says whether one is left.
- */
+/** Structural alternatives left by the same literal-tag rule as an ordinary field. */
 const structuralAlternatives = (
   types: ReadonlyArray<Ast>,
   value: Record<PropertyKey, unknown>,
-  withVoid: boolean,
-  within?: DecodedCodecs,
+  {
+    withVoid = false,
+    within,
+    preparing = false,
+  }: {
+    /**
+     * Know a Void alternative too: it reads any value as `undefined`, so it states and keeps
+     * nothing, and `voided` says whether one is left.
+     */
+    readonly withVoid?: boolean;
+    /** Below a decoded payload, the codecs in it, as {@link decodedCodecs} finds them. */
+    readonly within?: DecodedCodecs | undefined;
+    /**
+     * The frames are for leaving unstated keys out. A frame {@link framedWithoutSource} is then an
+     * unknown alternative, so nothing is left out below it: a stray key there takes the value to
+     * the relaxed read, which refuses what a Void takes at any depth, where the strict read of the
+     * value without that key may send it as nothing (#392).
+     */
+    readonly preparing?: boolean;
+  } = {},
 ):
   | { readonly frames: ReadonlyArray<Ast>; readonly voided: boolean }
   | undefined => {
@@ -1648,6 +1671,7 @@ const structuralAlternatives = (
     if (active.has(type)) return false;
     const frame = optionFrame(type);
     if (frame !== undefined) {
+      if (preparing && framedWithoutSource(frame)) return false;
       if (retained) frames.push(frame);
       return true;
     }
@@ -1682,7 +1706,7 @@ const structuralFrames = (
   value: Record<PropertyKey, unknown>,
   within?: DecodedCodecs,
 ): ReadonlyArray<Ast> | undefined =>
-  structuralAlternatives(types, value, false, within)?.frames;
+  structuralAlternatives(types, value, { within })?.frames;
 
 /**
  * Include names from either side. Where a rename leaves a name intact, its encoded field is a
@@ -1966,7 +1990,10 @@ export const normalisedOptions = (ast: Ast, input: unknown): unknown => {
     if (!isPlainData(value)) return value;
     const list = Array.isArray(value);
     // Inside a Some, Void is Effect's own and reads any payload as `undefined`.
-    const found = structuralAlternatives(types, value, inSome && !list);
+    const found = structuralAlternatives(types, value, {
+      withVoid: inSome && !list,
+      preparing: true,
+    });
     if (found === undefined) return value;
     const { frames: sides, voided } = found;
     const descriptors = Object.getOwnPropertyDescriptors(value);
@@ -2142,7 +2169,6 @@ export const optionLoss = (
     checkWrite = false,
     looseRead = checkWrite,
     codecsWithoutSource = false,
-    encodedPayloads = false,
   }: {
     /**
      * The write was loose, so check that it holds what the read kept, and compare the read through
@@ -2156,14 +2182,6 @@ export const optionLoss = (
      * such a codec writes is never compared. A loose write compares it already.
      */
     readonly codecsWithoutSource?: boolean;
-    /**
-     * The read was strict, of a value whose unstated keys {@link normalisedOptions} left out. In a
-     * rename that only a codec without a source makes a frame, a codec given its encoded payload in
-     * place of an Option has to read it as something. Without that codec, the rename would not
-     * have been a frame, and a stray key beside it would have sent the value to the relaxed read,
-     * which refuses what a Void on the codec's wire side takes.
-     */
-    readonly encodedPayloads?: boolean;
   } = {},
 ): ReadonlyArray<Path> => {
   const lost: Path[] = [];
@@ -2258,22 +2276,6 @@ export const optionLoss = (
         holdsNothing(expected)
       )
         continue;
-      // An encoded payload given in a codec's place that the strict read took as nothing.
-      if (
-        encodedPayloads &&
-        !Option.isOption(expected) &&
-        !holdsNothing(expected) &&
-        Option.isOption(decoded) &&
-        Option.match(decoded, {
-          onNone: () => true,
-          onSome: (payload) => payload === undefined || holdsNothing(payload),
-        }) &&
-        children.some(readsOptionPayload) &&
-        sides.some(framedWithoutSource)
-      ) {
-        lost.push(here);
-        continue;
-      }
       // Strict writes do not strip excess properties. A link can also transform the value, and
       // where its names cannot be paired we have no evidence about which field it wrote.
       const wire = writing ? optionWireNames(sides, key) : undefined;
@@ -2282,13 +2284,20 @@ export const optionLoss = (
       // field as its encoder does, which is never compared. A missing Some is that codec's only
       // where every frame here states the field: a member that does not may have written the struct
       // in its place, without running the codec.
-      const mayBeOmitted = () =>
-        Option.isOption(expected) &&
-        ((Option.isNone(expected) &&
-          sourceAt(children, { loose: looseRead }) !== undefined) ||
-          ((Option.isNone(expected) ||
-            sides.every((side) => typesAt([side], key).length > 0)) &&
-            sourceAt(children, { decoded: "withoutSource" }) !== undefined));
+      const mayBeOmitted = (): boolean => {
+        if (!Option.isOption(expected)) return false;
+        const withoutSource = () =>
+          sourceAt(children, { decoded: "withoutSource" }) !== undefined;
+        if (Option.isNone(expected))
+          return (
+            sourceAt(children, { loose: looseRead }) !== undefined ||
+            withoutSource()
+          );
+        const everyFrameStates = sides.every(
+          (side) => typesAt([side], key).length > 0,
+        );
+        return everyFrameStates && withoutSource();
+      };
       // Value equality can distinguish an unchanged scalar from another field under its wire
       // name. A field codec with its own encoding may legitimately change that scalar.
       const directScalar =

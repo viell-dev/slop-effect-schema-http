@@ -1479,30 +1479,38 @@ it("takes a codec's missing Some as its own only where every member states its f
   expect(loss(bothState, Option.some({ a: "a" }))).toEqual([]);
 });
 
-// https://github.com/viell-dev/slop-effect-schema-http/issues/392
-it("refuses a codec's encoded payload a strict read took as nothing in a rename only such a codec makes a frame", () => {
-  const VoidFirst = Schema.Union([Schema.Void, Schema.Struct({ a: text })]);
-  const renamed = (held: Schema.Top) =>
-    Schema.Struct({ held, n: text }).pipe(Schema.encodeKeys({ n: "wire_n" }))
-      .ast;
-  const given = { held: { a: "a" }, n: "n" };
-  const loss = (ast: SchemaAST.AST, held: unknown, encodedPayloads = true) =>
-    Excess.optionLoss(
-      ast,
-      given,
-      { held, n: "n" },
-      { wire_n: "n" },
-      { looseRead: true, encodedPayloads },
+// https://github.com/viell-dev/slop-effect-schema-http/issues/364
+it("leaves nothing out below a rename that only a codec without a source makes a frame", () => {
+  const renamed = (tag: string, held: Schema.Top) =>
+    Schema.Struct({ tag: Schema.Literal(tag), held, n: text }).pipe(
+      Schema.encodeKeys({ n: "wire_n" }),
     );
-  const omitting = renamed(omittingOver(VoidFirst));
-  expect(loss(omitting, Option.none())).toEqual([["held"]]);
-  expect(loss(omitting, Option.some(undefined))).toEqual([["held"]]);
-  expect(loss(omitting, Option.some({ a: "a" }))).toEqual([]);
-  expect(loss(omitting, Option.none(), false)).toEqual([]);
-  // A built-in codec that can omit its key made the rename a frame before, as it reads there.
+  const omitting = renamed("a", omittingOver(Either));
+  const builtIn = renamed("a", Schema.OptionFromOptional(Either));
+  const other = Schema.Struct({ tag: Schema.Literal("b"), b: text });
+  const given = Option.some({ tag: "a", held: Option.none(), n: "n", x: 1 });
   expect(
-    loss(renamed(Schema.OptionFromOptional(VoidFirst)), Option.none()),
-  ).toEqual([]);
+    Excess.normalisedOptions(Schema.OptionFromNullOr(omitting).ast, given),
+  ).toBe(given);
+  // A built-in codec that can omit its key made the rename a frame before, and still does.
+  expect(
+    Excess.normalisedOptions(Schema.OptionFromNullOr(builtIn).ast, given),
+  ).toEqual(Option.some({ tag: "a", held: Option.none(), n: "n" }));
+  // A member whose tag rules it out still keeps the union unknown, as before such a codec made it
+  // a frame, so the stray key beside the member that reads the value stays too.
+  const besideOther = Option.some({ tag: "b", b: "b", x: 1 });
+  expect(
+    Excess.normalisedOptions(
+      Schema.OptionFromNullOr(Schema.Union([omitting, other])).ast,
+      besideOther,
+    ),
+  ).toBe(besideOther);
+  expect(
+    Excess.normalisedOptions(
+      Schema.OptionFromNullOr(Schema.Union([builtIn, other])).ast,
+      besideOther,
+    ),
+  ).toEqual(Option.some({ tag: "b", b: "b" }));
 });
 
 // https://github.com/viell-dev/slop-effect-schema-http/issues/347

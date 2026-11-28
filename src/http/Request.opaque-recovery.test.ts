@@ -2957,40 +2957,133 @@ describe("a codec whose payload preparation cannot find on the wire keeps or ref
       }),
   );
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/364
+  /** A renamed struct of `held`, a built-in codec's `other`, and the given fields. */
+  const besideOther = (held: Codec, fields: Fields = {}) =>
+    Schema.Struct({
+      held,
+      ...fields,
+      other: Schema.OptionFromNullOr(Filter),
+      n: Schema.String,
+    }).pipe(Schema.encodeKeys({ n: "wire_n" }));
+  const otherWithStray = Option.some({ owner: "b", limit: "m", stray: "x" });
+  const sentOther = { owner: "b", limit: "m" };
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/392
   it.effect(
-    "reads the other fields of a renamed struct holding a codec that can omit its key as beside the built-in one",
+    "currently refuses a sibling's stray key in a renamed struct that only a hand-written codec that can omit its key makes a frame",
     () =>
       Effect.gen(function* () {
-        const other = Option.some({ owner: "b", limit: "m", stray: "x" });
-        const sentOther = { owner: "b", limit: "m" };
-        for (const codec of [optionalKey, Schema.OptionFromOptional]) {
-          const holding = (payload: Codec) =>
-            Schema.Struct({
-              held: codec(payload),
-              other: Schema.OptionFromNullOr(Filter),
-              n: Schema.String,
-            }).pipe(Schema.encodeKeys({ n: "wire_n" }));
-          // The struct is a frame, so the built-in sibling leaves its stray key out and keeps
-          // `limit`, as it does with no `held` beside it.
-          expect(
-            yield* json(holding(Filter), {
-              held: Option.none(),
-              other,
-              n: "n",
-            } as never),
-          ).toEqual({ other: sentOther, wire_n: "n" });
-          // Inside an Option, Void is the schema's own and takes the payload first, as Effect's
-          // own encoding does: `null` with or without the sibling's stray key.
-          const voidFirst = holding(Schema.Union([Schema.Void, Wide]));
-          for (const given of [other, Option.some(sentOther)])
-            expect(
-              yield* json(voidFirst, {
-                held: Option.some(wide),
-                other: given,
+        // Preparation leaves nothing out below such a struct, so the relaxed read takes `other`'s
+        // narrower member and the refusal names `limit`. Leaving the stray key out would take the
+        // value to the strict read, which could lose what a Void takes there (#392).
+        const VoidFirst = Schema.Union([Schema.Void, Wide]);
+        for (const codec of [optionalKey, exactKey]) {
+          for (const [payload, held] of [
+            [Filter, Option.none()],
+            [VoidFirst, Option.some(wide)],
+          ] as const) {
+            const failure = yield* Effect.flip(
+              json(besideOther(codec(payload)), {
+                held,
+                other: otherWithStray,
                 n: "n",
               } as never),
-            ).toEqual({ held: null, other: sentOther, wire_n: "n" });
+            );
+            expect(failure.message).toContain('["other"]["value"]["limit"]');
+          }
+          // Without the stray key it sends. Inside an Option, Void is the schema's own and takes
+          // the payload first, as Effect's own encoding does.
+          expect(
+            yield* json(besideOther(codec(VoidFirst)), {
+              held: Option.some(wide),
+              other: Option.some(sentOther),
+              n: "n",
+            } as never),
+          ).toEqual({ held: null, other: sentOther, wire_n: "n" });
+        }
+        // Where a built-in codec that can omit its key makes the struct a frame, the sibling leaves
+        // its stray key out and keeps `limit`.
+        expect(
+          yield* json(besideOther(Schema.OptionFromOptional(Filter)), {
+            held: Option.none(),
+            other: otherWithStray,
+            n: "n",
+          } as never),
+        ).toEqual({ other: sentOther, wire_n: "n" });
+        expect(
+          yield* json(besideOther(Schema.OptionFromOptional(VoidFirst)), {
+            held: Option.some(wide),
+            other: otherWithStray,
+            n: "n",
+          } as never),
+        ).toEqual({ held: null, other: sentOther, wire_n: "n" });
+      }),
+  );
+
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/364
+  it.effect(
+    "sends a hand-written codec's own encoded None in a renamed struct that a codec that can omit its key makes a frame",
+    () =>
+      Effect.gen(function* () {
+        // Each reads its own wire form of None, which holds nothing, so no field is lost.
+        type Payload = Option.Option<typeof Filter.Type>;
+        const hand = <W>(
+          wire: Schema.Codec<W>,
+          decode: (value: NoInfer<W>) => Payload,
+          encode: (value: Payload) => NoInfer<W>,
+        ) =>
+          wire.pipe(
+            Schema.decodeTo(
+              Schema.Option(Schema.toType(Filter)),
+              SchemaTransformation.transform<Payload, W>({ decode, encode }),
+            ),
+          );
+        const emptyIsNone = hand(
+          Schema.String,
+          (text) => (text === "" ? Option.none() : Option.some(owner)),
+          (value) => (Option.isNone(value) ? "" : "owner"),
+        );
+        const flag = hand(
+          Schema.Boolean,
+          (present) => (present ? Option.some(owner) : Option.none()),
+          Option.isSome,
+        );
+        const tagged = hand(
+          Schema.Union([
+            Schema.Struct({ kind: Schema.Literal("none") }),
+            Schema.Struct({ kind: Schema.Literal("some"), value: Filter }),
+          ]),
+          (wire) =>
+            wire.kind === "none" ? Option.none() : Option.some(wire.value),
+          (value) =>
+            Option.isNone(value)
+              ? ({ kind: "none" } as const)
+              : ({ kind: "some", value: value.value } as const),
+        );
+        for (const [codec, none] of [
+          [emptyIsNone, ""],
+          [flag, false],
+          [tagged, { kind: "none" }],
+        ] as const) {
+          // A stray key outside the struct takes the value to the strict read of a cleaned value.
+          const schema = Schema.Struct({
+            x: Schema.OptionFromNullOr(Filter),
+            inner: besideOther(optionalKey(Filter), { e: codec }),
+          });
+          expect(
+            yield* json(schema, {
+              x: Option.some(withStray),
+              inner: {
+                held: Option.none(),
+                e: none,
+                other: Option.some(sentOther),
+                n: "n",
+              },
+            } as never),
+          ).toEqual({
+            x: wide,
+            inner: { e: none, other: sentOther, wire_n: "n" },
+          });
         }
       }),
   );
@@ -3213,13 +3306,13 @@ describe("a codec whose payload preparation cannot find on the wire keeps or ref
       }),
   );
 
-  // https://github.com/viell-dev/slop-effect-schema-http/issues/386
+  // https://github.com/viell-dev/slop-effect-schema-http/issues/400
   it.effect(
     "currently refuses a Some a codec writes as nothing in a union payload whose narrower member does not state it",
     () =>
       Effect.gen(function* () {
         // The check cannot tell which member wrote, so a missing Some is the codec's own only where
-        // every member states its field, as on 0.20.0. Effect's own encoding sends `{"n":"n"}`.
+        // every member states its field, as on 0.20.1. Effect's own encoding sends `{"n":"n"}`.
         const writesNothing = optionalKey(Filter, () => Option.none());
         const sendBesideAdds = (
           held: Codec,
@@ -3250,25 +3343,87 @@ describe("a codec whose payload preparation cannot find on the wire keeps or ref
 
   // https://github.com/viell-dev/slop-effect-schema-http/issues/392
   it.effect(
-    "refuses an encoded payload a Void takes in a renamed struct that a codec that can omit its key makes a frame",
+    "refuses an encoded payload a Void takes in a renamed struct that only a hand-written codec that can omit its key makes a frame",
     () =>
       Effect.gen(function* () {
-        const other = Option.some({ owner: "b", limit: "m", stray: "x" });
-        for (const codec of [optionalKey, exactKey]) {
-          const schema = Schema.Struct({
-            held: codec(Schema.Union([Schema.Void, Wide])),
-            other: Schema.OptionFromNullOr(Filter),
-            n: Schema.String,
-          }).pipe(Schema.encodeKeys({ n: "wire_n" }));
-          // The sibling's stray key is left out, so the strict read takes the payload, and the Void
-          // on the codec's wire side reads it as nothing. Before such a codec made the struct a
-          // frame, the stray key led to the relaxed read, which refused that, as this does.
+        // Nothing is left out below the struct, so the sibling's stray key takes the value to the
+        // relaxed read, which refuses what the Void on the codec's wire side takes, at the codec's
+        // own field and below it.
+        const VoidFirst = Schema.Union([Schema.Void, Wide]);
+        const omit = { omit: optionalKey(Filter) };
+        const cases = [
+          [
+            besideOther(optionalKey(VoidFirst)),
+            { held: wide },
+            '["held"]["owner"]',
+          ],
+          [
+            besideOther(exactKey(VoidFirst)),
+            { held: wide },
+            '["held"]["owner"]',
+          ],
+          [
+            besideOther(
+              optionalKey(Schema.Struct({ deep: VoidFirst, k: Schema.String })),
+            ),
+            { held: { deep: wide, k: "k" } },
+            '["held"]["deep"]',
+          ],
+          [
+            besideOther(optionalKey(Filter), {
+              box: Schema.Struct({ deep: optionalKey(VoidFirst) }),
+            }),
+            { held: Option.none(), box: { deep: wide } },
+            '["box"]["deep"]["owner"]',
+          ],
+          [
+            besideOther(
+              Schema.Struct({ deep: optionalKey(VoidFirst), k: Schema.String }),
+              omit,
+            ),
+            { held: { deep: wide, k: "k" }, omit: Option.none() },
+            '["held"]["deep"]["owner"]',
+          ],
+          [
+            besideOther(Schema.Array(fromNull(VoidFirst)), omit),
+            { held: [wide], omit: Option.none() },
+            '["held"][0]["owner"]',
+          ],
+        ] as const;
+        for (const [schema, given, path] of cases) {
           const failure = yield* Effect.flip(
-            json(schema, { held: wide, other, n: "n" } as never),
+            json(schema, { ...given, other: otherWithStray, n: "n" } as never),
           );
-          expect(failure.message).toContain('["held"]');
-          expect(failure.message).not.toContain('["held"][');
-          expect(failure.message).not.toContain("other");
+          expect(failure.message).toContain(path);
+        }
+        // So is a union holding such a struct as a member its tag rules out: the stray key beside
+        // the member that reads the value stays, and the relaxed read refuses.
+        for (const codec of [optionalKey, fromNull, Schema.OptionFromNullOr]) {
+          const schema = Schema.Struct({
+            held: Schema.OptionFromNullOr(
+              Schema.Union([
+                Schema.Struct({
+                  tag: Schema.Literal("a"),
+                  omit: optionalKey(Filter),
+                  n: Schema.String,
+                }).pipe(Schema.encodeKeys({ n: "wire_n" })),
+                Schema.Struct({
+                  tag: Schema.Literal("b"),
+                  x: Schema.Struct({ d: codec(VoidFirst), k: Schema.String }),
+                }),
+              ]),
+            ),
+          });
+          const failure = yield* Effect.flip(
+            json(schema, {
+              held: Option.some({
+                tag: "b",
+                x: { d: Option.some(wide), k: "k" },
+                stray: "x",
+              }),
+            } as never),
+          );
+          expect(failure.message).toContain('["held"]["value"]["stray"]');
         }
       }),
   );
