@@ -1804,7 +1804,6 @@ const readerForCodec = <S extends Schema.Top, A, R>(
                     changed
                       ? Excess.optionLoss(ast, from, read.value, output, {
                           looseRead: true,
-                          encodedPayloads: true,
                         })
                       : [],
                   ),
