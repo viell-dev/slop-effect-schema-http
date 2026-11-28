@@ -211,9 +211,7 @@ than sent without it, and the message says why where it can. In these examples `
   taken only from readings with the request's own parse options, and in most schemas only a strict
   read, with other options, reads such a value on its side. Effect gives a read's options to the
   decoders, checks and declarations it runs, which can then fail otherwise, so that read's error is
-  not shown. A step that fails only under the strict write's options is the exception: its failure
-  can still appear, as the input reference's [limits](./schema-input.md#active-limits-and-recovery)
-  describe. Where the value also holds a key the schema does not state, the request's own reading,
+  not shown. Where the value also holds a key the schema does not state, the request's own reading,
   which strips that key, can report the value: `{ page_size: "many", stray: "1" }` reads
   `Expected a finite number at ["page_size"]`.
 - **A wire-named value beside a field that cannot be read either**: where the renamed struct is the
