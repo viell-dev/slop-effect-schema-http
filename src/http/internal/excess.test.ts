@@ -1430,6 +1430,81 @@ it("compares what a renamed struct holding a codec that can omit its key wrote, 
   ).toEqual([]);
 });
 
+/** A hand-written codec over `Schema.optional(payload)`, which can omit its key. */
+const omittingOver = <S extends Schema.Top>(payload: S) =>
+  Schema.optional(payload).pipe(
+    Schema.decodeTo(
+      Schema.Option(Schema.toType(payload)),
+      SchemaTransformation.transformOptional<
+        Option.Option<S["Type"]>,
+        S["Type"] | undefined
+      >({
+        decode: (value) =>
+          Option.some(Option.flatMap(value, Option.fromUndefinedOr)),
+        encode: (value) => Option.flatMap(value, (some) => some),
+      }),
+    ),
+  );
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/386
+it("takes a codec's missing Some as its own only where every member states its field", () => {
+  const omitting = omittingOver(Either);
+  const n = { n: text };
+  const written = { held: { n: "n" } };
+  const loss = (members: ReadonlyArray<Schema.Top>, inner: unknown) => {
+    const given = { held: Option.some({ n: "n", inner }) };
+    return Excess.optionLoss(
+      Schema.Struct({ held: Schema.OptionFromNullOr(Schema.Union(members)) })
+        .ast,
+      given,
+      given,
+      written,
+      { checkWrite: true },
+    );
+  };
+  // A narrower member that does not state `inner` may have written the struct, without the codec.
+  const narrowFirst = [
+    Schema.Struct(n),
+    Schema.Struct({ ...n, inner: omitting }),
+  ] as const;
+  expect(loss(narrowFirst, Option.some({ a: "a" }))).toEqual([
+    ["held", "value", "inner"],
+  ]);
+  // A None holds nothing a member could lose.
+  expect(loss(narrowFirst, Option.none())).toEqual([]);
+  const bothState = [
+    Schema.Struct({ ...n, inner: omitting, k: Schema.optionalKey(text) }),
+    Schema.Struct({ ...n, inner: omitting }),
+  ] as const;
+  expect(loss(bothState, Option.some({ a: "a" }))).toEqual([]);
+});
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/392
+it("refuses a codec's encoded payload a strict read took as nothing in a rename only such a codec makes a frame", () => {
+  const VoidFirst = Schema.Union([Schema.Void, Schema.Struct({ a: text })]);
+  const renamed = (held: Schema.Top) =>
+    Schema.Struct({ held, n: text }).pipe(Schema.encodeKeys({ n: "wire_n" }))
+      .ast;
+  const given = { held: { a: "a" }, n: "n" };
+  const loss = (ast: SchemaAST.AST, held: unknown, encodedPayloads = true) =>
+    Excess.optionLoss(
+      ast,
+      given,
+      { held, n: "n" },
+      { wire_n: "n" },
+      { looseRead: true, encodedPayloads },
+    );
+  const omitting = renamed(omittingOver(VoidFirst));
+  expect(loss(omitting, Option.none())).toEqual([["held"]]);
+  expect(loss(omitting, Option.some(undefined))).toEqual([["held"]]);
+  expect(loss(omitting, Option.some({ a: "a" }))).toEqual([]);
+  expect(loss(omitting, Option.none(), false)).toEqual([]);
+  // A built-in codec that can omit its key made the rename a frame before, as it reads there.
+  expect(
+    loss(renamed(Schema.OptionFromOptional(VoidFirst)), Option.none()),
+  ).toEqual([]);
+});
+
 // https://github.com/viell-dev/slop-effect-schema-http/issues/347
 it("compares a codec inside a hand-written codec's decoded payload, never a Schema.Option there", () => {
   const given = {

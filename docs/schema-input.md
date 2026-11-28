@@ -632,13 +632,21 @@ Option schema at its position, or to share its payload schema with the codecs be
 limits below say.
 
 What the encoder writes from the read is its own: one that writes only `owner` sends only `owner`,
-and one that leaves its key out sends nothing there, also where the value is written loosely. That
-holds for an encoder that writes none of the payload too, such as a flag that writes only whether
-there is a `Some`: beside a stray key, a `limit` its read lost is refused, although the flag would
-send the same `true` with it. A struct with renamed keys, such as one from `Schema.encodeKeys`, that
-holds such a codec is followed as one holding `OptionFromOptional` is, also where the codec's wire
-key is optional. Its other fields read as they do beside the built-in codec: a built-in codec there
-leaves a stray key out of its own `Some` and keeps `limit`.
+and one that leaves its key out sends nothing there, also where the value is written loosely. In a
+union payload, a missing key is the codec's own only where every member states its field: a member
+that does not, such as `Struct({ n })` before `Struct({ n, inner })`, may have written the struct
+without running the codec, so a `Some` missing there is refused, even one the codec would write as
+nothing. A `None` missing there sends. What the encoder writes is its own for an encoder that writes
+none of the payload too, such as a flag that writes only whether there is a `Some`: beside a stray
+key, a `limit` its read lost is refused, although the flag would send the same `true` with it.
+
+A struct with renamed keys, such as one from `Schema.encodeKeys`, that holds a codec whose payload
+preparation cannot find on the wire is a frame for the check, as one holding `OptionFromOptional`
+is, also where that codec's wire key is optional. The check then compares the struct's fields, and
+its other fields read as they do beside the built-in codec: a built-in codec there leaves a stray
+key out of its own `Some` and keeps `limit`. Given its encoded payload in place of an `Option`, a
+codec that can omit its key there is still refused beside such a stray key where a Void on its wire
+side takes the payload as nothing, as it was before such a codec made the struct a frame.
 
 `Body.jsonSchema` applies `Schema.toCodecJson` itself, so give it the built-in codec rather than its
 JSON form. Declare a hand-written codec's decoded side as `Schema.Option(Schema.toType(payload))`,
@@ -807,14 +815,21 @@ the schema does with it. These are the places where it cannot, and what happens 
   follows a hand-written codec into its payload only where the codec has one transformation with a
   synchronous encoder and the payload it was built over is still on the wire. `Body.jsonSchema`
   applies `Schema.toCodecJson` first, which rebuilds a payload holding a `Number`, `Date`, `BigInt`,
-  `UndefinedOr` or `Schema.optional` field, a codec that writes `undefined`, such as
-  `OptionFromOptional`, or a suspension. Through a codec the writer does not follow, such as one
-  over such a payload, one with an effectful encoder or one with more than one transformation, a
-  union in its payload can take a narrower member and lose `limit` with no error, and so can a codec
-  nested in it. A `Finite`, `Int`, `Boolean`, `String` or `NullOr` field leaves the payload as it
-  is. Use the built-in codec, such as `OptionFromNullOr` or `OptionFromOptional`, which keeps
-  `limit` there, or let the failing field write only what its wire struct states
+  `UndefinedOr`, `Schema.optional`, `Schema.Unknown` or `Schema.Option` field, a codec that writes
+  `undefined`, such as `OptionFromOptional`, or a suspension. Through a codec the writer does not
+  follow, such as one over such a payload, one with an effectful encoder or one with more than one
+  transformation, a union in its payload can take a narrower member and lose `limit` with no error,
+  and so can a codec nested in it. A `Finite`, `Int`, `Boolean`, `String` or `NullOr` field leaves
+  the payload as it is. Use the built-in codec, such as `OptionFromNullOr` or `OptionFromOptional`,
+  which keeps `limit` there, or let the failing field write only what its wire struct states
   ([#378](https://github.com/viell-dev/slop-effect-schema-http/issues/378)).
+- A Void on an Option codec's wire side, first in a union or alone, takes the codec's encoded
+  payload given in its place, through a built-in or a hand-written codec. With
+  `Wide = Struct({ owner: String, limit: String })`, `{ held: { owner, limit } }` under
+  `OptionFromOptional(Union([Void, Wide]))` sends `{}`, and under `OptionFromNullOr` sends
+  `"held":null`, with no error, where `Union([Void, Wide])` with no codec keeps the payload. Give
+  the codec an `Option`, or put `Wide` first
+  ([#392](https://github.com/viell-dev/slop-effect-schema-http/issues/392)).
 - An Option codec whose wire side does not show its payload's union, such as one that writes the
   payload as text, can lose `limit` with no stray key: the schema shows preparation no choice, so it
   reads and writes as Effect does. Beside a renamed sibling, which does show a choice, `limit` is
