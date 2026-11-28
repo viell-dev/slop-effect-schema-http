@@ -46,6 +46,56 @@
   the refusal also names the unstated key, and refuses it even where nothing stated is lost
   ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)).
 
+- **Breaking:** refuse a built-in that a struct rebuilds from its own fields wherever the struct
+  reads it, not only where the struct is read on its own
+  ([#330](https://github.com/viell-dev/slop-effect-schema-http/issues/330)). Beside a union anywhere
+  in the schema, in a union of structs, below a rename, through a suspension, with a constructor
+  default, under `Schema.TaggedStruct`, in a recursive schema, and as the payload of a `Some` given
+  to `OptionFromNullOr` or another unwrapping Option codec, `{ held: new Date(0) }` sent `{}` or the
+  struct's defaults, as on 0.19.0. It now fails with
+  `The schema cannot keep this Date as an object at ["held"]`, at the path the caller used, also for
+  a field given under its wire name. A `Map`, a `Set`, an `Option.none()` and the other values the
+  plain struct refuses are refused too, and so is a `URLSearchParams`, `Map` or `Headers` given to a
+  renamed query or header group. A struct that reads a field the value holds without listing it,
+  such as an `Error`'s `message`, now refuses beside or in a union as it already did on its own.
+  Where another schema at that place may take the value as its own, the struct's reading is sent as
+  on 0.20.1: a class whose own instance it is, in either member order, and a declaration Effect
+  tries before the struct, which writes it as it chooses, as Effect writes the first member that
+  accepts the value. That includes a declaration in a nested union, in `Schema.NullOr`, behind
+  `Schema.suspend` or in an earlier member of an enclosing union
+  ([#396](https://github.com/viell-dev/slop-effect-schema-http/issues/396) records where it would
+  write something else). Effect's built-in declarations, such as `Schema.Date` and `Schema.URL`, and
+  Effect's classes are asked whether they take the value, so a struct after one that does not, such
+  as `Schema.Date` given an `Error`, now refuses too. Any other declaration, such as one
+  `Schema.instanceOf` or `Schema.declare` makes, is taken to accept it, and there the struct's
+  reading is still sent ([#399](https://github.com/viell-dev/slop-effect-schema-http/issues/399)). A
+  record in such a `Some` now also refuses a built-in or a symbol field it would drop, as it already
+  did for a value given on the codec's encoded side. In a `Some`, a class's own instance in a union
+  is left to the class, as on 0.20.1, even where a struct or record before it reads it. Class
+  instances with fields, typed arrays, an `Option.some`, a `Result` and plain objects are read by
+  their own fields as before. A struct that reads a name the value only inherits, such as a `URL`'s
+  `href` or a `Map`'s `size`, still sends it, a codec that reads the built-in itself writes it as on
+  0.20.1 ([#374](https://github.com/viell-dev/slop-effect-schema-http/issues/374) records where it
+  does not), and an empty struct keeps the value as given. Every request that 0.20.1 sent and that
+  does not refuse sends the same bytes. Convert the value to plain data first. `ObjectKeyword`'s
+  JSON codec below a rename, a field below an integer-like rename, a struct with a default in a
+  union beside a class, another codec, `Schema.Unknown` or `Schema.Void`, or in a field of a union
+  member, a `Schema.StructWithRest` with a default, and a union of tagged structs with a member
+  behind `Schema.suspend` can still send a built-in as `{}` or as the struct's defaults
+  ([#337](https://github.com/viell-dev/slop-effect-schema-http/issues/337)), and so can a
+  `Schema.Class` with fields
+  ([#375](https://github.com/viell-dev/slop-effect-schema-http/issues/375)).
+- The rebuild comparison reads a caller's value that is not plain data more often on the routes it
+  now covers: once per comparison, it reads the value's kind with `Object.prototype.toString`, which
+  runs a `Symbol.toStringTag` getter, and its `toJSON` where the value has no own enumerable field,
+  as the plain struct route already did. A value whose getter throws there now fails preparation
+  with a defect on those routes too. Where a struct would refuse a value preparation copied, the
+  comparison also asks each Effect class there whether the value is its own instance, and each of
+  Effect's built-in declarations before the struct whether it takes the value. A union in the
+  payload of a `Some` given on the decoded side asks its classes too. Each class asks once per
+  value. These tests use `instanceof`, which runs a Proxy's `getPrototypeOf` trap, and
+  `Schema.Date`'s calls the value's `getTime`.
+
 ## 0.20.1 — 2026-11-28
 
 [What's in

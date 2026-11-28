@@ -192,11 +192,11 @@ An open schema that rebuilds an object from its own fields, as `Schema.ObjectKey
 string-indexed record do, refuses with `SchemaError` instead a built-in whose content is not in its
 own fields, such as a `Map`, a `Set`, an `ArrayBuffer`, a `DataView` or a `Date`. A typed array's
 elements are its own fields, so such a schema writes `new Uint8Array([1])` as `{"0":1}`. Not covered
-is a symbol inside a declaration's type parameter, such as a record in an `Option`. The checks add
-no nesting limit of their own. Nesting deeper than the engine's own `JSON.stringify` allows fails
-with `HttpBodyError` too. That limit depends on the engine and its stack: Node 24 on Windows stops
-at about 4,700 levels, while Node 26 on Linux writes over a million. An empty incoming body is a
-decoding error. Choose `Body.jsonSchema` to validate the application shape, or `Body.empty` for a
+is a symbol inside a declaration's type parameter, such as a record in `Schema.Option`. The checks
+add no nesting limit of their own. Nesting deeper than the engine's own `JSON.stringify` allows
+fails with `HttpBodyError` too. That limit depends on the engine and its stack: Node 24 on Windows
+stops at about 4,700 levels, while Node 26 on Linux writes over a million. An empty incoming body is
+a decoding error. Choose `Body.jsonSchema` to validate the application shape, or `Body.empty` for a
 response with no useful body.
 
 Use `Body.formData.pipe(Body.encodeSchema(Schema.fromFormData(fields)))` when a schema supplies the

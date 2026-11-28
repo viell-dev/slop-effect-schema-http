@@ -8,6 +8,7 @@ import {
   Exit,
   Option,
   Redacted,
+  Result,
   Schema,
   SchemaGetter,
   SchemaTransformation,
@@ -84,9 +85,22 @@ const outcomes = (schema: Schema.Top, body: unknown) =>
       }),
   );
 
+/** What `Body.jsonSchema` writes for a body. */
+const encodeAt = (schema: Schema.Top, body: unknown) =>
+  Body.jsonSchema(schema as Schema.Codec<unknown>).encode(body);
+
+/** What `Body.jsonSchema` wrote, or how it refused. */
+const outcomeAt = (schema: Schema.Top, body: unknown) =>
+  Effect.match(encodeAt(schema, body), {
+    onSuccess: (sent) => `sent ${textOf(sent)}`,
+    onFailure: (error) => `${error.name}: ${error.message}`,
+  });
+
 /** A struct holding a value in its field `held`, the body that gives it there, and what is sent. */
 const heldBy = (schema: Schema.Top) => Schema.Struct({ held: schema });
 const givenHeld = (value: unknown) => ({ held: value });
+/** The body that gives a value as the payload of a `Some` in the field `held`. */
+const givenHeldSome = (value: unknown) => ({ held: Option.some(value) });
 const sentHeld = (text: string) => `{"held":${text}}`;
 
 /** The property Effect's class check also accepts as the class's own, for hot reloads. */
@@ -1002,6 +1016,904 @@ describe("writers keep or refuse what they cannot write", () => {
           )).message,
         ).toBe("The schema cannot keep this Date as a record");
       }),
+    );
+
+    const defaulted = Schema.Struct({
+      a: Schema.optionalKey(Schema.String).pipe(
+        Schema.withConstructorDefault(Effect.succeed("d")),
+      ),
+    });
+    const taggedStruct = Schema.TaggedStruct("T", {
+      a: Schema.optionalKey(Schema.String),
+    });
+    /** A codec that reads a `Date` itself and writes its content as a struct. */
+    const instant = Schema.instanceOf(Date).pipe(
+      Schema.encodeTo(Schema.Struct({ a: Schema.String }), {
+        decode: SchemaGetter.transform(({ a }) => new Date(a)),
+        encode: SchemaGetter.transform((date) => ({
+          a: date.toISOString(),
+        })),
+      }),
+    );
+    /** A union in a field beside the value, which makes the whole value choose a member. */
+    const beside = Schema.optionalKey(
+      Schema.Union([
+        Schema.Struct({ x: Schema.String }),
+        Schema.Struct({ y: Schema.String }),
+      ]),
+    );
+
+    /**
+     * Where a struct reads a value other than on its own: each schema, the body that holds the
+     * value, and the path a refusal names, which is the one the body uses.
+     */
+    const structRoutes = () => {
+      const P = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+      interface Tree {
+        readonly a?: string;
+        readonly kids?: ReadonlyArray<Tree>;
+      }
+      const Tree: Schema.Codec<Tree> = Schema.Struct({
+        a: Schema.optionalKey(Schema.String),
+        kids: Schema.optionalKey(Schema.Array(Schema.suspend(() => Tree))),
+      });
+      const renamed = Schema.Struct({ held: P }).pipe(
+        Schema.encodeKeys({ held: "h" }),
+      );
+      const routes: ReadonlyArray<
+        readonly [Schema.Top, (value: unknown) => unknown, string]
+      > = [
+        [Schema.Struct({ held: P, kind: beside }), givenHeld, '["held"]'],
+        [
+          Schema.Struct({
+            held: Schema.Union([
+              P,
+              Schema.Struct({
+                a: Schema.optionalKey(Schema.String),
+                b: Schema.optionalKey(Schema.String),
+              }),
+            ]),
+          }),
+          givenHeld,
+          '["held"]',
+        ],
+        [renamed, givenHeld, '["held"]'],
+        [renamed, (value) => ({ h: value }), '["h"]'],
+        [
+          Schema.Struct({ held: P.pipe(Schema.encodeKeys({ a: "A" })) }),
+          givenHeld,
+          '["held"]',
+        ],
+        [
+          Schema.Struct({ held: Schema.suspend(() => P) }),
+          givenHeld,
+          '["held"]',
+        ],
+        [Schema.Struct({ held: defaulted }), givenHeld, '["held"]'],
+        [
+          Schema.Struct({ held: defaulted, kind: beside }),
+          givenHeld,
+          '["held"]',
+        ],
+        [Schema.Struct({ held: taggedStruct }), givenHeld, '["held"]'],
+        [
+          Schema.Struct({
+            held: Schema.Union([taggedStruct, Schema.TaggedStruct("U", {})]),
+          }),
+          givenHeld,
+          '["held"]',
+        ],
+        [Schema.Struct({ held: Tree }), givenHeld, '["held"]'],
+        [
+          Schema.Struct({ held: Tree }),
+          (value) => ({ held: { kids: [value] } }),
+          '["held"]["kids"][0]',
+        ],
+        ...[
+          Schema.OptionFromNullOr(P),
+          Schema.OptionFromUndefinedOr(P),
+          Schema.OptionFromOptionalKey(P),
+          Schema.OptionFromNullishOr(P),
+          Schema.OptionFromOptional(P),
+          Schema.OptionFromOptionalNullOr(P),
+          Schema.OptionFromOptionalNullOr(P, { onNoneEncoding: null }),
+        ].map(
+          (codec) =>
+            [
+              Schema.Struct({ held: codec }),
+              givenHeldSome,
+              '["held"]',
+            ] as const,
+        ),
+        [
+          Schema.Struct({
+            held: Schema.OptionFromNullOr(Schema.Struct({ inner: P })),
+          }),
+          (value) => givenHeldSome({ inner: value }),
+          '["held"]["inner"]',
+        ],
+        [
+          Schema.Struct({ held: Schema.OptionFromNullOr(Schema.Array(P)) }),
+          (value) => givenHeldSome([value]),
+          '["held"][0]',
+        ],
+      ];
+      return routes;
+    };
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+    it.effect("is refused on each route a struct reads it on", () =>
+      Effect.gen(function* () {
+        for (const [schema, body, at] of structRoutes())
+          for (const [value, kind] of named()) {
+            const error = yield* Effect.flip(encodeAt(schema, body(value)));
+            expect(error).toBeInstanceOf(Schema.SchemaError);
+            expect(error.message).toBe(
+              `The schema cannot keep ${kind} as an object\n  at ${at}`,
+            );
+          }
+      }),
+    );
+
+    // An Option.none() holds nothing a struct reads but the `_tag` it inherits, which a tagged
+    // struct refuses as Effect does, before anything is rebuilt.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+    it.effect("refuses an Option.none() on each of those routes", () =>
+      Effect.gen(function* () {
+        for (const [schema, body, at] of structRoutes()) {
+          const none = yield* outcomeAt(schema, body(Option.none()));
+          expect(none.startsWith("SchemaError: ")).toBe(true);
+          expect([
+            `SchemaError: The schema cannot keep the content of this value as an object\n  at ${at}`,
+            yield* outcomeAt(schema, body({ _tag: "None" })),
+          ]).toContain(none);
+        }
+      }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+    it.effect("is refused through a renamed query or header group", () =>
+      Effect.gen(function* () {
+        const fields = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+        for (const schema of [
+          fields,
+          fields.pipe(Schema.encodeKeys({ a: "A" })),
+        ])
+          for (const [value, kind] of [
+            [new URLSearchParams("a=x"), "this URLSearchParams"],
+            [new Map([["a", "x"]]), "this Map"],
+            [new Headers({ a: "x" }), "this Headers"],
+          ] as const)
+            for (const compiled of [
+              Request.compile(Request.get("/x").pipe(Request.query(schema)), {
+                query: value as never,
+              }),
+              Request.compile(Request.get("/x").pipe(Request.headers(schema)), {
+                headers: value as never,
+              }),
+            ]) {
+              const error = yield* Effect.flip(compiled);
+              expect(error).toBeInstanceOf(Schema.SchemaError);
+              expect(error.message).toBe(
+                `The schema cannot keep ${kind} as an object`,
+              );
+            }
+      }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+    it.effect("is read by its own fields on those routes", () =>
+      Effect.gen(function* () {
+        class Point {
+          readonly a = "x";
+        }
+        for (const [schema, body] of structRoutes()) {
+          // A class instance with fields is read as the plain object of its fields.
+          const plain = textOf(yield* encodeAt(schema, body({ a: "x" })));
+          expect(plain).toContain('"x"');
+          expect(textOf(yield* encodeAt(schema, body(new Point())))).toBe(
+            plain,
+          );
+          // Each is read as a plain object of the fields it has, with the `_tag` an Option or a
+          // Result inherits, which a TaggedStruct reads as Effect does.
+          for (const value of [
+            new Uint8Array([1]),
+            Option.some("x"),
+            Result.succeed("x"),
+          ])
+            expect(yield* outcomeAt(schema, body(value))).toBe(
+              yield* outcomeAt(
+                schema,
+                body({
+                  ...value,
+                  ...("_tag" in value && { _tag: value._tag }),
+                }),
+              ),
+            );
+        }
+        // A codec that reads the Date itself writes its content, and a struct with a default beside
+        // it does not claim what the codec wrote.
+        for (const held of [instant, Schema.Union([instant, defaulted])])
+          expect(
+            textOf(
+              yield* Body.jsonSchema(Schema.Struct({ held })).encode({
+                held: new Date(0),
+              }),
+            ),
+          ).toBe('{"held":{"a":"1970-01-01T00:00:00.000Z"}}');
+      }),
+    );
+
+    // Where a class or a codec can read the value too, no struct alone rebuilt it, so each field it
+    // holds is kept or named, as before the struct check.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+    it.effect("names its own fields where a class or a codec reads it", () =>
+      Effect.gen(function* () {
+        const P = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+        class Point extends Schema.Class<Point>("Point")({
+          x: Schema.Number,
+        }) {}
+        class Row extends Schema.Class<Row>("Row")({
+          a: Schema.optionalKey(Schema.String),
+        }) {}
+        const s = Symbol.for("s");
+        const field =
+          "SchemaError: The schema cannot keep this field with the rest of the value";
+        const cases: ReadonlyArray<readonly [Schema.Top, object, string]> = [
+          [
+            Schema.Union([defaulted, Point]),
+            Object.assign(new Error("x"), { code: 1 }),
+            '["held"]["code"]',
+          ],
+          [
+            Schema.Union([defaulted, instant]),
+            Object.assign(new Error("x"), { code: 1 }),
+            '["held"]["code"]',
+          ],
+          [
+            Schema.Union([Row, P]),
+            Object.assign(new Date(0), { extra: 1 }),
+            '["held"]["extra"]',
+          ],
+          [
+            Schema.Union([defaulted, Point]),
+            Object.assign(new Map(), { [s]: 1 }),
+            '["held"][Symbol(s)]',
+          ],
+        ];
+        for (const [held, value, at] of cases)
+          expect(
+            yield* outcomeAt(Schema.Struct({ held }), { held: value }),
+          ).toBe(`${field}\n  at ${at}`);
+        expect(
+          yield* outcomeAt(Schema.Struct({ held: Row, kind: beside }), {
+            held: Object.assign(new Date(0), { extra: 1 }),
+          }),
+        ).toBe(`${field}\n  at ["held"]["extra"]`);
+        // A Blob holds its content behind symbol fields of its own, which are named.
+        const blob = yield* outcomeAt(
+          Schema.Struct({ held: Row, kind: beside }),
+          {
+            held: new Blob(["x"]),
+          },
+        );
+        expect(blob.startsWith(`${field}\n  at ["held"][Symbol(`)).toBe(true);
+      }),
+    );
+
+    // A name the value only inherits, as an accessor, hands its content to the member that reads
+    // it, so no other member's defaults rebuilt the value.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+    it.effect("is read through a name it inherits", () =>
+      Effect.gen(function* () {
+        const P = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+        const href = '{"held":{"href":"https://x.test/p"}}';
+        const cases: ReadonlyArray<readonly [Schema.Top, object, string]> = [
+          [
+            Schema.Struct({ href: Schema.String }),
+            new URL("https://x.test/p"),
+            href,
+          ],
+          [
+            Schema.Union([P, Schema.Struct({ href: Schema.String })]),
+            new URL("https://x.test/p"),
+            href,
+          ],
+          // A sibling reads `href` under its wire name, so the struct that reads only `a` did not
+          // build the result from nothing.
+          [
+            Schema.Union([
+              Schema.Struct({ a: Schema.String }).pipe(
+                Schema.encodeKeys({ a: "href" }),
+              ),
+              Schema.Struct({ a: Schema.String }),
+            ]),
+            new URL("https://x.test/p"),
+            href,
+          ],
+          [
+            Schema.Union([P, Schema.Struct({ size: Schema.Number })]),
+            new Map([["k", 1]]),
+            '{"held":{"size":1}}',
+          ],
+          [
+            Schema.Union([P, Schema.Struct({ name: Schema.String })]),
+            new Error("x"),
+            '{"held":{"name":"Error"}}',
+          ],
+          [
+            Schema.Union([P, Schema.Struct({ byteLength: Schema.Number })]),
+            new ArrayBuffer(1),
+            '{"held":{"byteLength":1}}',
+          ],
+        ];
+        for (const [held, value, text] of cases)
+          for (const schema of [
+            Schema.Struct({ held }),
+            Schema.Struct({ held, kind: beside }),
+          ])
+            expect(yield* outcomeAt(schema, { held: value })).toBe(
+              `sent ${text}`,
+            );
+        // A field the value holds itself, even one it does not list, as an Error's message, is one
+        // of its own fields, which the struct rebuilt the value from on every route.
+        for (const [inner, value, name] of [
+          [Schema.Struct({ message: Schema.String }), new Error("x"), "Error"],
+          [Schema.Struct({ lastIndex: Schema.Number }), /x/u, "RegExp"],
+        ] as const)
+          for (const schema of [
+            Schema.Struct({ held: inner }),
+            Schema.Struct({ held: inner, kind: beside }),
+            Schema.Struct({ held: Schema.Union([P, inner]) }),
+          ])
+            expect(yield* outcomeAt(schema, { held: value })).toBe(
+              `SchemaError: The schema cannot keep this ${name} as an object\n  at ["held"]`,
+            );
+      }),
+    );
+
+    /** A struct that reads an Error's own field, and a codec that takes the Error itself. */
+    const messageStruct = Schema.Struct({ message: Schema.String });
+    const errorAsStruct = Schema.instanceOf(Error).pipe(
+      Schema.encodeTo(messageStruct, {
+        decode: SchemaGetter.transform(({ message }) => new Error(message)),
+        encode: SchemaGetter.transform((error) => ({ message: error.message })),
+      }),
+    );
+
+    // Effect writes a union's first member that takes the caller's value. A codec before the struct
+    // may take the Error as its own and write it as it chooses, so the struct did not rebuild it.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+    it.effect(
+      "is written by a codec before a struct that reads its field",
+      () =>
+        Effect.gen(function* () {
+          const either = Schema.Union([errorAsStruct, messageStruct]);
+          for (const [schema, body, sent] of [
+            [
+              Schema.Struct({ held: either }),
+              { held: new Error("x") },
+              '{"held":{"message":"x"}}',
+            ],
+            [either, new Error("x"), '{"message":"x"}'],
+            [Schema.Array(either), [new Error("x")], '[{"message":"x"}]'],
+          ] as const)
+            expect(yield* outcomeAt(schema, body)).toBe(`sent ${sent}`);
+          // With the struct first, the struct takes the Error and rebuilds it from its fields.
+          expect(
+            yield* outcomeAt(
+              Schema.Struct({
+                held: Schema.Union([messageStruct, errorAsStruct]),
+              }),
+              { held: new Error("x") },
+            ),
+          ).toBe(
+            'SchemaError: The schema cannot keep this Error as an object\n  at ["held"]',
+          );
+          // Under its wire name, the value is read on the encoded side, where the codec is a struct.
+          expect(
+            yield* outcomeAt(
+              Schema.Struct({
+                held: Schema.Union([
+                  instant,
+                  Schema.Struct({ a: Schema.optionalKey(Schema.String) }),
+                ]),
+              }).pipe(Schema.encodeKeys({ held: "h" })),
+              { h: new Date(0) },
+            ),
+          ).toBe(
+            'SchemaError: The schema cannot keep this Date as an object\n  at ["h"]',
+          );
+        }),
+    );
+
+    // Effect tries the members through nested unions, Schema.NullOr and suspended schemas, and an
+    // enclosing union's members where they hold the same position, so a codec there before the
+    // struct may take the Error as its own too.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+    it.effect(
+      "is written by a codec before a struct through nested, wrapped or suspended unions",
+      () =>
+        Effect.gen(function* () {
+          const P = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+          for (const union of [
+            Schema.Union([Schema.NullOr(errorAsStruct), messageStruct]),
+            Schema.Union([Schema.UndefinedOr(errorAsStruct), messageStruct]),
+            Schema.Union([Schema.Union([errorAsStruct, P]), messageStruct]),
+            Schema.Union([Schema.suspend(() => errorAsStruct), messageStruct]),
+            Schema.Union([errorAsStruct, Schema.suspend(() => messageStruct)]),
+            Schema.Union([errorAsStruct, Schema.NullOr(messageStruct)]),
+            Schema.Union([errorAsStruct, Schema.UndefinedOr(messageStruct)]),
+          ]) {
+            expect(
+              yield* outcomeAt(heldBy(union), givenHeld(new Error("x"))),
+            ).toBe('sent {"held":{"message":"x"}}');
+            expect(
+              yield* outcomeAt(Schema.Array(union), [new Error("x")]),
+            ).toBe('sent [{"message":"x"}]');
+          }
+          expect(
+            yield* outcomeAt(
+              Schema.Union([heldBy(errorAsStruct), heldBy(messageStruct)]),
+              givenHeld(new Error("x")),
+            ),
+          ).toBe('sent {"held":{"message":"x"}}');
+          // With the struct first, it takes the Error and rebuilds it from its fields.
+          for (const schema of [
+            heldBy(Schema.Union([Schema.NullOr(messageStruct), errorAsStruct])),
+            heldBy(
+              Schema.Union([
+                Schema.suspend(() => messageStruct),
+                errorAsStruct,
+              ]),
+            ),
+            Schema.Union([heldBy(messageStruct), heldBy(errorAsStruct)]),
+          ])
+            expect(yield* outcomeAt(schema, givenHeld(new Error("x")))).toBe(
+              'SchemaError: The schema cannot keep this Error as an object\n  at ["held"]',
+            );
+        }),
+    );
+
+    /** An Error class whose one field an Error holds as its own `message`, which it does not list. */
+    class MessageError extends Schema.Error<MessageError>("MessageError")({
+      message: Schema.String,
+    }) {}
+
+    // Effect's own built-in declarations and Effect's classes are asked whether they take the value.
+    // Where they do not, the struct after them is Effect's first fit and rebuilds it.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+    it.effect(
+      "is refused after a built-in or a class that does not take it",
+      () =>
+        Effect.gen(function* () {
+          for (const declaration of [
+            Schema.Date,
+            Schema.DateFromString,
+            Schema.URL,
+            Row,
+            MessageError,
+          ])
+            for (const schema of [
+              heldBy(Schema.Union([declaration, messageStruct])),
+              Schema.Struct({
+                held: Schema.Union([declaration, messageStruct]),
+                kind: beside,
+              }),
+            ])
+              expect(yield* outcomeAt(schema, givenHeld(new Error("x")))).toBe(
+                'SchemaError: The schema cannot keep this Error as an object\n  at ["held"]',
+              );
+          // Where the built-in takes the value, it writes it.
+          expect(
+            yield* outcomeAt(
+              Schema.Struct({
+                held: Schema.Union([
+                  Schema.Date,
+                  Schema.Struct({ a: Schema.optionalKey(Schema.String) }),
+                ]),
+                kind: beside,
+              }),
+              givenHeld(new Date(0)),
+            ),
+          ).toBe('sent {"held":"1970-01-01T00:00:00.000Z"}');
+        }),
+    );
+
+    // An Error holds its message as an own field it does not list, so preparation copies the class's
+    // instance to bring the field out, and a struct before the class reads the copy. The instance is
+    // the class's own, which writes it as its fields, so the struct rebuilt nothing the schema owns.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+    it.effect(
+      "leaves a class's own instance to the class where a struct before it reads a field it holds",
+      () =>
+        Effect.gen(function* () {
+          class Caused extends Schema.Error<Caused>("Caused")({
+            id: Schema.Number,
+            cause: Schema.optionalKey(Schema.String),
+          }) {}
+          class Tagged extends Schema.TaggedError<Tagged>()("Tagged", {
+            message: Schema.String,
+          }) {}
+          const first = Schema.Union([messageStruct, MessageError]);
+          const instance = () => new MessageError({ message: "m" });
+          for (const [schema, body, sent] of [
+            [first, instance(), '{"message":"m"}'],
+            [heldBy(first), givenHeld(instance()), '{"held":{"message":"m"}}'],
+            [Schema.Array(first), [instance()], '[{"message":"m"}]'],
+            [
+              Schema.Struct({ held: first, kind: beside }),
+              givenHeld(instance()),
+              '{"held":{"message":"m"}}',
+            ],
+            [
+              heldBy(
+                Schema.Union([
+                  Schema.Struct({ message: Schema.optionalKey(Schema.String) }),
+                  MessageError,
+                ]),
+              ),
+              givenHeld(instance()),
+              '{"held":{"message":"m"}}',
+            ],
+            [
+              heldBy(
+                Schema.Union([
+                  Schema.Struct({
+                    _tag: Schema.Literal("Tagged"),
+                    message: Schema.String,
+                  }),
+                  Tagged,
+                ]),
+              ),
+              givenHeld(new Tagged({ message: "m" })),
+              '{"held":{"_tag":"Tagged","message":"m"}}',
+            ],
+            [
+              heldBy(
+                Schema.Union([
+                  Schema.Struct({
+                    id: Schema.Number,
+                    cause: Schema.optionalKey(Schema.String),
+                  }),
+                  Caused,
+                ]),
+              ),
+              givenHeld(new Caused({ id: 1, cause: "c" })),
+              '{"held":{"id":1,"cause":"c"}}',
+            ],
+          ] as const)
+            expect(yield* outcomeAt(schema, body)).toBe(`sent ${sent}`);
+          // A native Error, or another class's instance, is not this class's own.
+          class OtherError extends Schema.Error<OtherError>("OtherError")({
+            message: Schema.String,
+          }) {}
+          for (const value of [
+            new Error("m"),
+            new OtherError({ message: "m" }),
+          ])
+            expect(yield* outcomeAt(heldBy(first), givenHeld(value))).toBe(
+              'SchemaError: The schema cannot keep this Error as an object\n  at ["held"]',
+            );
+        }),
+    );
+
+    /**
+     * Where a struct's reading of a copied built-in is still sent, because a declaration before it
+     * that the library does not ask is taken to accept the value: each route, its schema and body,
+     * what is sent, and what the refusal it should meet instead cannot keep, at `["held"]`.
+     */
+    const takenToAccept = (): ReadonlyArray<
+      readonly [string, Schema.Top, unknown, string, string]
+    > => {
+      class AppError extends Error {}
+      const mapAsRecord = Schema.instanceOf(Map<string, number>).pipe(
+        Schema.encodeTo(Schema.Record(Schema.String, Schema.Number), {
+          decode: SchemaGetter.transform(
+            (entries) => new Map(Object.entries(entries)),
+          ),
+          encode: SchemaGetter.transform((map) => Object.fromEntries(map)),
+        }),
+      );
+      /** Takes any object as its own and passes it on to its struct. */
+      const anyObject = Schema.declare(
+        (value: unknown): value is object =>
+          typeof value === "object" && value !== null,
+      ).pipe(
+        Schema.encodeTo(
+          Schema.Struct({ message: Schema.optionalKey(Schema.String) }),
+          {
+            decode: SchemaGetter.transform((value: object) => value),
+            encode: SchemaGetter.transform((value: object) => value),
+          },
+        ),
+      );
+      const error = "this Error as an object";
+      return [
+        [
+          "after Schema.instanceOf of another class",
+          Schema.Struct({
+            held: Schema.Union([Schema.instanceOf(AppError), messageStruct]),
+            kind: beside,
+          }),
+          givenHeld(new Error("x")),
+          '{"held":{"message":"x"}}',
+          error,
+        ],
+        [
+          "after a codec of another built-in",
+          heldBy(Schema.Union([mapAsRecord, messageStruct])),
+          givenHeld(new Error("x")),
+          '{"held":{"message":"x"}}',
+          error,
+        ],
+        [
+          "after a codec of another built-in, from a RegExp",
+          heldBy(
+            Schema.Union([
+              mapAsRecord,
+              Schema.Struct({ lastIndex: Schema.Number }),
+            ]),
+          ),
+          givenHeld(/x/g),
+          '{"held":{"lastIndex":0}}',
+          "this RegExp as an object",
+        ],
+        [
+          "after a codec in an enclosing member that fails on another field",
+          Schema.Union([
+            Schema.Struct({ held: errorAsStruct, a: Schema.String }),
+            heldBy(messageStruct),
+          ]),
+          givenHeld(new Error("x")),
+          '{"held":{"message":"x"}}',
+          error,
+        ],
+        [
+          "in a declaration's own struct, which it passes the value on to",
+          Schema.Struct({ held: anyObject, kind: beside }),
+          givenHeld(new Error("x")),
+          '{"held":{"message":"x"}}',
+          error,
+        ],
+      ];
+    };
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/399
+    it.effect(
+      "currently sends a struct's reading of a value a declaration before it is taken to accept",
+      () =>
+        Effect.gen(function* () {
+          for (const [, schema, body, sent] of takenToAccept())
+            expect(yield* outcomeAt(schema, body)).toBe(`sent ${sent}`);
+        }),
+    );
+
+    // One test per route, so that each runs its own refusal.
+    for (const [route, schema, body, , kept] of takenToAccept())
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/399
+      it.effect.fails(
+        `refuses a built-in a struct rebuilds ${route}, at the path the caller used`,
+        () =>
+          Effect.gen(function* () {
+            expect(yield* outcomeAt(schema, body)).toBe(
+              `SchemaError: The schema cannot keep ${kept}\n  at ["held"]`,
+            );
+          }),
+      );
+
+    // A class's own instance is the class's to write. In the payload of a Some given on the decoded
+    // side it is left to the class, although a struct or record before it reads it first.
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/330
+    it.effect("leaves a Schema.Error instance in a Some to its class", () =>
+      Effect.gen(function* () {
+        class Failed extends Schema.Error<Failed>("Failed")({
+          id: Schema.Number,
+        }) {}
+        const unions = [
+          Schema.Union([Schema.Struct({ id: Schema.Number }), Failed]),
+          Schema.Union([Schema.Record(Schema.String, Schema.Number), Failed]),
+        ];
+        for (const union of unions) {
+          expect(
+            yield* outcomeAt(
+              Schema.Struct({ held: Schema.OptionFromNullOr(union) }),
+              { held: Option.some(new Failed({ id: 1 })) },
+            ),
+          ).toBe('sent {"held":{"id":1}}');
+          expect(
+            yield* outcomeAt(
+              Schema.Struct({
+                held: Schema.OptionFromNullOr(Schema.Struct({ inner: union })),
+              }),
+              { held: Option.some({ inner: new Failed({ id: 1 }) }) },
+            ),
+          ).toBe('sent {"held":{"inner":{"id":1}}}');
+        }
+        // A built-in that holds the class's field is not its instance, and the struct rebuilt it.
+        expect(
+          yield* outcomeAt(
+            Schema.Struct({ held: Schema.OptionFromNullOr(unions[0]!) }),
+            { held: Option.some(Object.assign(new Date(0), { id: 1 })) },
+          ),
+        ).toBe(
+          'SchemaError: The schema cannot keep this Date as an object\n  at ["held"]',
+        );
+      }),
+    );
+
+    /**
+     * Where a struct still sends a built-in as `{}` or as its defaults: each route, its schema and
+     * body, what is sent, and what the refusal the body should meet instead cannot keep, at the
+     * path it uses.
+     */
+    const remaining = (): ReadonlyArray<
+      readonly [string, Schema.Top, unknown, string, string, string]
+    > => {
+      const P = Schema.Struct({ a: Schema.optionalKey(Schema.String) });
+      class Point extends Schema.Class<Point>("Point")({
+        x: Schema.Number,
+      }) {}
+      const Node = Schema.TaggedStruct("Node", { n: Schema.Number });
+      const renamedOpen = Schema.Struct({ held: Schema.ObjectKeyword }).pipe(
+        Schema.encodeKeys({ held: "h" }),
+      );
+      const date = "this Date as an object";
+      return [
+        // The JSON object codec rebuilds on the write step, whose output holds the wire name.
+        [
+          "through the JSON object codec below a rename",
+          renamedOpen,
+          { held: new Date(0) },
+          '{"h":{}}',
+          date,
+          '["held"]',
+        ],
+        [
+          "through the JSON object codec below a rename, under the wire name",
+          renamedOpen,
+          { h: new Date(0) },
+          '{"h":{}}',
+          date,
+          '["h"]',
+        ],
+        [
+          "or a symbol field through the JSON object codec below a rename",
+          renamedOpen,
+          { held: { a: 1, [Symbol.for("s")]: 2 } },
+          '{"h":{"a":1}}',
+          "this field with the rest of the value",
+          '["held"][Symbol(s)]',
+        ],
+        // An integer-like wire name does not keep its field's place.
+        [
+          "below an integer-like rename",
+          Schema.Struct({ held: P }).pipe(Schema.encodeKeys({ held: "0" })),
+          { 0: new Date(0) },
+          '{"0":{}}',
+          date,
+          '["0"]',
+        ],
+        // A default fills a field that another member could have written.
+        ...(
+          [
+            ["a class", Point],
+            ["Schema.Unknown", Schema.Unknown],
+            ["Schema.Void", Schema.Void],
+          ] as const
+        ).map(
+          ([name, other]) =>
+            [
+              `as a default beside ${name}`,
+              Schema.Struct({ held: Schema.Union([defaulted, other]) }),
+              { held: new Date(0) },
+              '{"held":{"a":"d"}}',
+              date,
+              '["held"]',
+            ] as const,
+        ),
+        [
+          "as a tag beside a suspended member",
+          Schema.Struct({
+            held: Schema.Union([
+              Schema.TaggedStruct("Leaf", {}),
+              Schema.suspend(() => Node),
+            ]),
+          }),
+          { held: new Date(0) },
+          '{"held":{"_tag":"Leaf"}}',
+          date,
+          '["held"]',
+        ],
+        ...(
+          [
+            ["as a default", defaulted, '{"held":{"a":"d"},"k":"1"}'],
+            [
+              "as a tag",
+              Schema.TaggedStruct("T", {}),
+              '{"held":{"_tag":"T"},"k":"1"}',
+            ],
+          ] as const
+        ).map(
+          ([name, held, sent]) =>
+            [
+              `${name} in a field of a union member`,
+              Schema.Union([
+                Schema.Struct({ held, k: Schema.Literal("1") }),
+                Schema.Struct({ other: Schema.String }),
+              ]),
+              { held: new Date(0), k: "1" },
+              sent,
+              date,
+              '["held"]',
+            ] as const,
+        ),
+        [
+          "as a default of Schema.StructWithRest",
+          Schema.Struct({
+            held: Schema.StructWithRest(defaulted, [
+              Schema.Record(Schema.String, Schema.Unknown),
+            ]),
+          }),
+          { held: new Date(0) },
+          '{"held":{"a":"d"}}',
+          "this Date as a record",
+          '["held"]',
+        ],
+      ];
+    };
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/337
+    it.effect(
+      "currently sends a built-in as {} or as a struct's defaults on the remaining routes",
+      () =>
+        Effect.gen(function* () {
+          for (const [, schema, body, sent] of remaining())
+            expect(yield* outcomeAt(schema, body)).toBe(`sent ${sent}`);
+        }),
+    );
+
+    // One test per route, so that each runs its own refusal.
+    for (const [route, schema, body, , kept, at] of remaining())
+      // https://github.com/viell-dev/slop-effect-schema-http/issues/337
+      it.effect.fails(
+        `refuses a built-in ${route}, at the path the caller used`,
+        () =>
+          Effect.gen(function* () {
+            expect(yield* outcomeAt(schema, body)).toBe(
+              `SchemaError: The schema cannot keep ${kept}\n  at ${at}`,
+            );
+          }),
+      );
+
+    /** A class reads the value through the struct of its fields, and builds an instance. */
+    class Row extends Schema.Class<Row>("Row")({
+      a: Schema.optionalKey(Schema.String),
+    }) {}
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/375
+    it.effect("currently sends a built-in a Schema.Class reads as {}", () =>
+      Effect.gen(function* () {
+        for (const value of [new Date(0), new Map([["a", 1]])])
+          expect(
+            yield* outcomeAt(Schema.Struct({ held: Row }), { held: value }),
+          ).toBe('sent {"held":{}}');
+      }),
+    );
+
+    // https://github.com/viell-dev/slop-effect-schema-http/issues/375
+    it.effect.fails(
+      "refuses a built-in a Schema.Class reads, at the path the caller used",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* outcomeAt(Schema.Struct({ held: Row }), {
+              held: new Date(0),
+            }),
+          ).toBe(
+            'SchemaError: The schema cannot keep this Date as an object\n  at ["held"]',
+          );
+        }),
     );
 
     it.effect("is kept beside a member that reads its content", () =>
