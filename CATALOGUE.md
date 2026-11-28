@@ -4901,8 +4901,11 @@ EXT-36c, EXT-42k/l/o, EXT-43g and EXT-44j cases.
   would accept the wrapper on their encoded side. Status: tested.
 - **EXT-68** [#321](https://github.com/viell-dev/slop-effect-schema-http/issues/321). Both wrapper
   variants refuse at encoded names across a renamed field, sibling, ancestor, class and list
-  ancestor. The native value sends on the decoded side, and a direct payload sends at `wire_held`.
-  Status: tested.
+  ancestor. Beside the sibling given under its wire name, `None`, which the payload's optional
+  fields could read as an object, is named at the wrapper with the library's own message instead of
+  an excess-property error at `wire_count`
+  ([#351](https://github.com/viell-dev/slop-effect-schema-http/issues/351)). The native value sends
+  on the decoded side, and a direct payload sends at `wire_held`. Status: tested.
 - **EXT-69** [#312](https://github.com/viell-dev/slop-effect-schema-http/issues/312) and
   [#326](https://github.com/viell-dev/slop-effect-schema-http/issues/326). A configured
   `OptionFromOptionalNullOr` and a union of two unwrapping codecs sharing `Filter` retain `owner`
