@@ -46,6 +46,30 @@
   the refusal also names the unstated key, and refuses it even where nothing stated is lost
   ([#346](https://github.com/viell-dev/slop-effect-schema-http/issues/346)).
 
+- **Breaking:** refuse a built-in that a struct rebuilds from its own fields wherever the struct
+  reads it, not only where the struct is read on its own
+  ([#330](https://github.com/viell-dev/slop-effect-schema-http/issues/330)). Beside a union anywhere
+  in the schema, in a union of structs, below a rename, through a suspension, with a constructor
+  default, under `Schema.TaggedStruct`, in a recursive schema, and as the payload of a `Some` given
+  to `OptionFromNullOr` or another unwrapping Option codec, `{ held: new Date(0) }` sent `{}` or the
+  struct's defaults, as on 0.19.0. It now fails with
+  `The schema cannot keep this Date as an object at ["held"]`, at the path the caller used, also for
+  a field given under its wire name. A `Map`, a `Set`, an `Option.none()` and the other values the
+  plain struct refuses are refused too, and so is a `URLSearchParams`, `Map` or `Headers` given to a
+  renamed query or header group. A struct that reads a field the value holds without listing it,
+  such as an `Error`'s `message`, now refuses beside or in a union as it already did on its own. A
+  record in such a `Some` now also refuses a built-in or a symbol field it would drop, as it already
+  did for a value given on the codec's encoded side. Class instances with fields, typed arrays, an
+  `Option.some`, a `Result` and plain objects are read by their own fields as before. A struct that
+  reads a name the value only inherits, such as a `URL`'s `href` or a `Map`'s `size`, still sends
+  it, a codec that reads the built-in itself still writes it, and an empty struct keeps the value as
+  given. Convert the value to plain data first. `ObjectKeyword`'s JSON codec below a rename, a field
+  below an integer-like rename, a struct with a default in a union beside a class, another codec,
+  `Schema.Unknown` or `Schema.Void`, or in a field of a union member, a `Schema.StructWithRest` with
+  a default, a union of tagged structs with a member behind `Schema.suspend`, and a `Schema.Class`
+  with fields can still send a built-in as `{}` or as the struct's defaults
+  ([#337](https://github.com/viell-dev/slop-effect-schema-http/issues/337)).
+
 ## 0.20.1 — 2026-11-28
 
 [What's in

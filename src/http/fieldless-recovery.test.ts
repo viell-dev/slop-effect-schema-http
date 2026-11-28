@@ -400,11 +400,23 @@ it.effect(
           );
         }
       }
+    }),
+);
+
+// https://github.com/viell-dev/slop-effect-schema-http/issues/330
+it.effect(
+  "refuses a built-in a member with a default would rebuild, rather than read it as empty",
+  () =>
+    Effect.gen(function* () {
+      // An empty Map copied during normalization holds no field, but the struct that read it lost
+      // its content, as the plain route refuses.
       expect(
         yield* outcome(post(Schema.Struct({ f: oneOf(Adef, B) })), {
           f: new Map(),
         }),
-      ).toBe('sent {"f":{"a":"x"}}');
+      ).toBe(
+        'SchemaError: The schema cannot keep this Map as an object\n  at ["f"]',
+      );
     }),
 );
 

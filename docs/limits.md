@@ -252,9 +252,9 @@ than sent without it, and the message says why where it can. In these examples `
 - **A built-in whose content is not in its own fields**, such as a `Map`, a `Set` or a `Date`, given
   where a string-keyed record, `Schema.ObjectKeyword` or a struct would rebuild it from its fields:
   `The schema cannot keep this Map as a record`, or `as an object` for `Schema.ObjectKeyword` and a
-  struct. A struct refuses only where it is read on its own; see
-  [#330](https://github.com/viell-dev/slop-effect-schema-http/issues/330) for the schemas where a
-  built-in is still sent as `{}`, and
+  struct, at the path the caller used. See
+  [#337](https://github.com/viell-dev/slop-effect-schema-http/issues/337) for the schemas where a
+  built-in is still sent as `{}` or as a struct's defaults, and
   [#375](https://github.com/viell-dev/slop-effect-schema-http/issues/375) for a `Schema.Class` that
   reads it.
 

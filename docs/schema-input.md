@@ -918,33 +918,42 @@ the schema does with it. These are the places where it cannot, and what happens 
   among a class's fields, a link whose encoded end is such a record, and the canonical JSON codec of
   `Schema.ObjectKeyword`, which copies only the string fields of an object and the positions of an
   array, report a `SchemaError`. So does such a record or codec, or a struct, that rebuilds a
-  built-in, such as a `Map` or a `Date`, from its own fields, including a struct that reads a value
-  given on the encoded side of an Option codec such as `OptionFromNullOr`. An empty struct keeps the
-  value as given. A class, such as a `Schema.Error`, writes its own instance, or one it built from
-  plain data, as its fields, and another codec writes what it built from plain data as it chooses.
-  That holds where preparation reads the caller's value at that position. A value a class's fields
-  read from anything else, or a built-in a codec takes as its own, is compared as above. So is a
-  value built to pass a class's check, such as a `Date` given the class's prototype, or a `Map`, an
-  `Error` or a proxy that carries its marker. A value built from the class's own prototype that
-  holds what its instances hold, such as an `Error` given an Error class's prototype, cannot be told
-  from an instance and is written as the class writes its fields. A proxy of an Error class's
-  instance that holds none of its fields cannot be told from a proxy of a built-in, and is compared
-  as above. So a codec's own built-in is refused where its struct or record could have rebuilt what
-  the codec writes ([#374](https://github.com/viell-dev/slop-effect-schema-http/issues/374)). A
-  `Schema.Error` or `Schema.TaggedError` is still refused in a union with a struct, a record or
-  another class that could have built what it writes, and where preparation does not read the value
-  given there: its instance inside another instance kept as given, as in a recursive class's
-  instance, and its instance or plain data below a hand-written transformation
-  ([#350](https://github.com/viell-dev/slop-effect-schema-http/issues/350)). A struct refuses only
-  where it is read on its own: beside a union of structs, below a rename, through a suspension, with
-  a constructor default, or as an `Option.some` payload, a built-in can still be sent as `{}` or as
-  the struct's defaults ([#330](https://github.com/viell-dev/slop-effect-schema-http/issues/330)).
-  So can a built-in that a `Schema.Class` other than an Error class reads
+  built-in, such as a `Map` or a `Date`, from its own fields, wherever it reads one: beside or in a
+  union, below a rename under either name, through a suspension, with a constructor default, and in
+  the payload of an Option codec such as `OptionFromNullOr`, given on either side of the codec. A
+  field the built-in holds without listing it, such as an `Error`'s `message`, is one of its own
+  fields. A name it only inherits, such as a `URL`'s `href`, can hold its content, so a struct that
+  reads one keeps what it read. An empty struct keeps the value as given. A class, such as a
+  `Schema.Error`, writes its own instance, or one it built from plain data, as its fields, and
+  another codec writes what it built from plain data as it chooses. That holds where preparation
+  reads the caller's value at that position. A value a class's fields read from anything else, or a
+  built-in a codec takes as its own, is compared as above. So is a value built to pass a class's
+  check, such as a `Date` given the class's prototype, or a `Map`, an `Error` or a proxy that
+  carries its marker. A value built from the class's own prototype that holds what its instances
+  hold, such as an `Error` given an Error class's prototype, cannot be told from an instance and is
+  written as the class writes its fields. A proxy of an Error class's instance that holds none of
+  its fields cannot be told from a proxy of a built-in, and is compared as above. So a codec's own
+  built-in is refused where its struct or record could have rebuilt what the codec writes
+  ([#374](https://github.com/viell-dev/slop-effect-schema-http/issues/374)). A `Schema.Error` or
+  `Schema.TaggedError` is still refused in a union with a struct, a record or another class that
+  could have built what it writes, and where preparation does not read the value given there: its
+  instance inside another instance kept as given, as in a recursive class's instance, and its
+  instance or plain data below a hand-written transformation
+  ([#350](https://github.com/viell-dev/slop-effect-schema-http/issues/350)). A field a default
+  fills counts as holding nothing of the value only where nothing else could have written it, so a
+  struct with a default can still send a built-in as its defaults in a union beside a class,
+  another codec, `Schema.Unknown` or `Schema.Void`, in a field of a union member, and as
+  `Schema.StructWithRest`, and so can a union of tagged structs with a member behind
+  `Schema.suspend`. `Schema.ObjectKeyword`'s JSON codec below a rename, which rebuilds on the
+  written side, and a field below an integer-like rename can still send a built-in as `{}` too
+  ([#337](https://github.com/viell-dev/slop-effect-schema-http/issues/337)). So can a built-in that
+  a `Schema.Class` other than an Error class reads
   ([#375](https://github.com/viell-dev/slop-effect-schema-http/issues/375)). Not covered: a symbol
-  inside a declaration's type parameter, such as `Option(Record(…))`, `ReadonlyMap`, `Redacted` or
-  `OptionFromNullOr`. A symbol key the schema declares is written as it chooses, and one at a
-  class's root is stripped. See the [Body guide](./modules/body.md#text-json-and-finite-body-limits)
-  for writer rules. An opaque transformation can still choose its own encoded representation.
+  inside another declaration's type parameter, such as `Option(Record(…))`, `ReadonlyMap` or
+  `Redacted`; an unwrapping codec such as `OptionFromNullOr` exposes its payload, which is checked.
+  A symbol key the schema declares is written as it chooses, and one at a class's root is stripped.
+  See the [Body guide](./modules/body.md#text-json-and-finite-body-limits) for writer rules. An
+  opaque transformation can still choose its own encoded representation.
 - Opaque contents use their schema's own reading. A `ReadonlyMap` containing
   `{ term: "x", page_size: "05" }` can lose the alias through construction. Use decoded contents
   such as `{ term: "x", limit: "05" }` for a predictable decoded route.
