@@ -672,11 +672,7 @@ const unlisted = (
  * there it keeps its keys, and stays an instance unless something in it has to change.
  */
 const readAsStruct = (sides: ReadonlyArray<Ast>, open: boolean): boolean =>
-  !open && !readsAsDeclaration(sides);
-
-/** Whether a declaration is among these sides, which may take a value as its own. */
-const readsAsDeclaration = (sides: ReadonlyArray<Ast>): boolean =>
-  sides.some(({ _tag }) => _tag === "Declaration");
+  !open && !sides.some(({ _tag }) => _tag === "Declaration");
 
 /**
  * Whether an instance beside an empty struct reads as a struct does, because it holds a key set to
@@ -793,8 +789,12 @@ const distinct = (types: ReadonlyArray<Ast>): ReadonlyArray<Ast> =>
 interface Copy {
   /** The object the copy stands for. */
   readonly of: object;
-  /** Whether a declaration could read the object where it was copied, and so take it as its own. */
-  readonly besideDeclaration: boolean;
+  /**
+   * The schemas the object could be read against where it was copied, which {@link takenAsOwn}
+   * asks: the members there in the order Effect tries them, through nested unions and suspended
+   * schemas, each followed by its encoded sides.
+   */
+  readonly sides: ReadonlyArray<Ast>;
 }
 
 /**
@@ -893,11 +893,7 @@ const rewriting = (drops: (item: unknown, stated: boolean) => boolean) => {
     if (!changed) return value;
     if (!isList) {
       const copy = Object.fromEntries(entries);
-      if (!plain)
-        copiedFrom.set(copy, {
-          of: value,
-          besideDeclaration: readsAsDeclaration(sides),
-        });
+      if (!plain) copiedFrom.set(copy, { of: value, sides });
       return copy;
     }
     // Own-key inspection already read this descriptor. Do not add a length getter read when an
@@ -2340,13 +2336,15 @@ interface Found {
    */
   owned?: Map<Ast, Map<object, boolean>>;
   /**
-   * The {@link hiddenContent} of each value that is not plain data the comparison has read it for,
-   * so that the members of a union judging one value read its kind once.
+   * The {@link hiddenKind} of each value that is not plain data the comparison has read it for, so
+   * that the members of a union and the class tests judging one value read its kind once.
    */
   kinds?: Map<object, string | null | undefined>;
+  /** Whether each value a class's {@link ownInstanceTest} has tested is the class's own instance. */
+  instances?: Map<OwnInstanceTest, Map<object, boolean>>;
   /**
    * How many payloads of a `Some` given on an unwrapping Option codec's decoded side the comparison
-   * is inside. 0.20.1 compared none of them.
+   * is inside: there a class's own instance in a union is the class's to write.
    */
   someDepth?: number;
 }
@@ -2405,13 +2403,50 @@ const builtFromOwnFields = (
   return true;
 };
 
+/** The {@link hiddenKind} of a value that is not plain data, read once per comparison. */
+const kindOf = (value: object, found: Found): string | null | undefined => {
+  const kinds = (found.kinds ??= new Map());
+  if (!kinds.has(value)) kinds.set(value, hiddenKind(value));
+  return kinds.get(value);
+};
+
 /**
- * Where an object was rebuilt from another's fields as `rebuilt` says, and lost the content outside
- * them, record the loss with the kind of value that held it. Returns whether it was lost.
- *
- * @remarks
- * What the result holds is judged by {@link builtFromOwnFields}, with `credited` as it says. The
- * value's kind is read last, since a result not rebuilt from it needs none, and once per comparison.
+ * The kind of content `supplied` held outside its fields, where `result` was rebuilt from those
+ * fields and so lost it, or undefined where it lost none. What the result holds is judged by
+ * {@link builtFromOwnFields}, with `credited` as it says. The value's kind is read last, since a
+ * result not rebuilt from it needs none.
+ */
+const rebuiltKind = (
+  supplied: object,
+  result: object,
+  found: Found,
+  credited?: ReadonlyArray<PropertyKey>,
+): string | null | undefined =>
+  isPlain(supplied) ||
+  !isPlain(result) ||
+  Array.isArray(result) ||
+  !builtFromOwnFields(supplied, result, credited)
+    ? undefined
+    : kindOf(supplied, found);
+
+/** Record that an object of this kind was rebuilt at `path` as `rebuilt` says, losing its content. */
+const recordContentLoss = (
+  kind: string | null,
+  path: ReadonlyArray<PropertyKey>,
+  found: Found,
+  rebuilt: "record" | "object",
+) => {
+  found.lost.push([...path]);
+  found.causes.push({
+    at: [...path],
+    kind: "place",
+    issue: contentNotHeld(kind, rebuilt),
+  });
+};
+
+/**
+ * Where an object was rebuilt from another's own fields as `rebuilt` says, and lost the content
+ * outside them, record the loss with the kind of value that held it. Returns whether it was lost.
  */
 const lostHiddenContent = (
   supplied: object,
@@ -2419,25 +2454,10 @@ const lostHiddenContent = (
   path: ReadonlyArray<PropertyKey>,
   found: Found,
   rebuilt: "record" | "object",
-  credited?: ReadonlyArray<PropertyKey>,
 ): boolean => {
-  if (
-    isPlain(supplied) ||
-    !isPlain(result) ||
-    Array.isArray(result) ||
-    !builtFromOwnFields(supplied, result, credited)
-  )
-    return false;
-  const kinds = (found.kinds ??= new Map());
-  if (!kinds.has(supplied)) kinds.set(supplied, hiddenKind(supplied));
-  const kind = kinds.get(supplied);
+  const kind = rebuiltKind(supplied, result, found);
   if (kind === undefined) return false;
-  found.lost.push([...path]);
-  found.causes.push({
-    at: [...path],
-    kind: "place",
-    issue: contentNotHeld(kind, rebuilt),
-  });
+  recordContentLoss(kind, path, found, rebuilt);
   return true;
 };
 
@@ -2535,6 +2555,11 @@ const noteOwned = (found: Found, node: Ast, value: object, own: boolean) => {
   values.set(value, (values.get(value) ?? true) && own);
 };
 
+/** Whether a value is a class's own instance, as {@link ownInstanceTest} decides. */
+type OwnInstanceTest = (value: object, found: Found) => boolean;
+
+const ownInstanceTests = new WeakMap<Ast, OwnInstanceTest | null>();
+
 /**
  * A test of an Effect class's own instances, such as a `Schema.Class`'s or a `Schema.Error`'s,
  * which the class's codec writes as its fields. Undefined for any other declaration, whatever it
@@ -2549,11 +2574,21 @@ const noteOwned = (found: Found, node: Ast, value: object, own: boolean) => {
  * instance, such as a `Date` given the class's prototype, a `Map` or an `Error` that carries the
  * marker, or a proxy that names the prototype. Should a later Effect describe its classes
  * differently, an instance gets the comparison any rebuild gets, which refuses rather than sends.
+ * Each value is tested once per comparison, and its kind read through `found`.
  */
-const ownInstanceTest = (
-  ast: Ast,
-): ((value: unknown) => boolean) | undefined => {
+const ownInstanceTest = (ast: Ast): OwnInstanceTest | undefined => {
   if (ast._tag !== "Declaration") return undefined;
+  let test = ownInstanceTests.get(ast);
+  if (test === undefined) {
+    test = makeOwnInstanceTest(ast) ?? null;
+    ownInstanceTests.set(ast, test);
+  }
+  return test ?? undefined;
+};
+
+const makeOwnInstanceTest = (
+  ast: SchemaAST.Declaration,
+): OwnInstanceTest | undefined => {
   const describe = constructorDescription(ast);
   if (describe === undefined) return undefined;
   const descriptor = describe(ast.typeParameters);
@@ -2564,16 +2599,93 @@ const ownInstanceTest = (
   const accepts = (value: unknown): value is Record<PropertyKey, unknown> =>
     isObject(value) &&
     (isConstructed as (value: unknown) => unknown)(value) === true;
-  return (value) => {
+  const isOwn = (value: object, found: Found): boolean => {
     if (!accepts(value)) return false;
     const prototype: unknown = Object.getPrototypeOf(value);
+    // The class's marker is on its prototype, so the value is no plain data.
     if (!accepts(prototype)) return false;
-    const kind = hiddenContent(value);
+    const kind = kindOf(value, found);
     return prototype instanceof Error
       ? kind === "Error"
       : kind === undefined ||
           (kind === null && value.toJSON === prototype.toJSON);
   };
+  const test: OwnInstanceTest = (value, found) => {
+    const tested = (found.instances ??= new Map());
+    let values = tested.get(test);
+    if (values === undefined) tested.set(test, (values = new Map()));
+    let own = values.get(value);
+    if (own === undefined) values.set(value, (own = isOwn(value, found)));
+    return own;
+  };
+  return test;
+};
+
+/**
+ * Effect's own declarations of platform built-ins, by the parser each keeps through annotations,
+ * checks and the codecs built on it, such as `Schema.DateFromString`, with Effect's own test of what
+ * it accepts. Each test is an `instanceof`, and for a `Date` also its time, so no schema callback
+ * runs. A Proxy's traps do. Another declaration's check, such as one `Schema.instanceOf` or
+ * `Schema.declare` makes, may be its author's code, so it is not run.
+ */
+const builtInTests: ReadonlyMap<
+  SchemaAST.Declaration["run"],
+  (value: unknown) => boolean
+> = new Map(
+  [
+    Schema.Date,
+    Schema.URL,
+    Schema.RegExp,
+    Schema.Uint8Array,
+    Schema.File,
+    Schema.FormData,
+    Schema.URLSearchParams,
+  ].map(
+    (schema): [SchemaAST.Declaration["run"], (value: unknown) => boolean] => [
+      (schema.ast as SchemaAST.Declaration).run,
+      Schema.is(schema),
+    ],
+  ),
+);
+
+/**
+ * Whether a declaration that is not a class may accept a value as Effect tries a union's members:
+ * one of Effect's built-ins where its own test accepts it, and any other declaration, whose check is
+ * not run. A test that throws, as `Schema.Date`'s does on a Proxy, proves nothing.
+ */
+const mayAccept = (
+  declaration: SchemaAST.Declaration,
+  value: object,
+): boolean => {
+  const accepts = builtInTests.get(declaration.run);
+  if (accepts === undefined) return true;
+  try {
+    return accepts(value);
+  } catch {
+    return true;
+  }
+};
+
+/**
+ * Whether another schema where normalisation copied a value may take the caller's value as its own,
+ * so that a struct there which read the copy did not rebuild that value. That is so for an Effect
+ * class there whose own instance it is, which writes it as its fields whichever member Effect tries
+ * first, and for another declaration that Effect tries before the struct and that
+ * {@link mayAccept} the value, which writes it as it chooses. A declaration's own fields come after
+ * it, and so do the members after it in a union, also through nested unions, `Schema.NullOr`,
+ * suspended schemas and an enclosing union's members that hold this place. Only a value given where
+ * a declaration reads it can be taken so: under a rename's wire name the encoded side reads it,
+ * where a codec is its struct.
+ */
+const takenAsOwn = (copy: Copy, struct: Ast, found: Found): boolean => {
+  const place = copy.sides.indexOf(struct);
+  return copy.sides.some((side, index) => {
+    if (side._tag !== "Declaration") return false;
+    const owns = ownInstanceTest(side);
+    return owns === undefined
+      ? index < place && mayAccept(side, copy.of)
+      : owns(copy.of, found);
+  });
 };
 
 /** Both checks at one position, either of which may be absent. */
@@ -2589,25 +2701,6 @@ const both = (
       };
 
 /**
- * Which value a struct's check judges where normalisation copied what it read: the value the
- * `"caller"` gave, which the copy stands for, or the `"copy"` as it is, where a declaration that
- * could read the value there may have taken it as its own.
- */
-type Judged = "caller" | "copy";
-
-/** The value a struct's check judges for `supplied`, as `judged` says. */
-const judgedValue = (supplied: object, judged: Judged): object => {
-  const copy = copiedFrom.get(supplied);
-  return copy === undefined || (judged === "copy" && copy.besideDeclaration)
-    ? supplied
-    : copy.of;
-};
-
-/** A union member that may take a value as its own: a declaration that reads an object. */
-const takesAsOwn = (member: Ast): boolean =>
-  member._tag === "Declaration" && !takesNoObject(member);
-
-/**
  * A struct builds a plain object from the fields it states, so the content of a built-in such as a
  * `Map` or a `Date` is lost there too. An empty struct keeps the value as given. In a union, only a
  * result this struct could have built is its loss.
@@ -2615,15 +2708,12 @@ const takesAsOwn = (member: Ast): boolean =>
  * @remarks
  * `credited` is what a default is credited with, as {@link builtFromOwnFields} says. Where
  * normalisation copied the value, the caller's value the copy stands for ({@link copiedFrom}) is
- * judged. With `judged` set to `"copy"`, a copy made where a declaration could read the value is
- * judged as it is, which finds no loss there: the declaration may have taken the value as its own,
- * and Effect writes a union's first member that accepts it. That is so for a declaration's own
- * fields and for a struct after a declaration in a union.
+ * judged, unless another schema there may take it as its own ({@link takenAsOwn}). Then the copy is
+ * judged as it is, and it holds only what the struct read.
  */
 const structLoss = (
   node: SchemaAST.Objects,
   credited: ReadonlyArray<PropertyKey> | undefined,
-  judged: Judged,
 ): RebuildCheck => {
   const stated = new Set(node.propertySignatures.map(({ name }) => name));
   const required = node.propertySignatures
@@ -2631,21 +2721,21 @@ const structLoss = (
     .map(({ name }) => name);
   return (supplied, result, path, found) => {
     if (
-      supplied !== result &&
-      isObject(supplied) &&
-      isObject(result) &&
-      !Array.isArray(supplied) &&
-      required.every((name) => Object.hasOwn(result, name)) &&
-      Reflect.ownKeys(result).every((key) => stated.has(key))
+      supplied === result ||
+      !isObject(supplied) ||
+      !isObject(result) ||
+      Array.isArray(supplied) ||
+      !required.every((name) => Object.hasOwn(result, name)) ||
+      !Reflect.ownKeys(result).every((key) => stated.has(key))
     )
-      lostHiddenContent(
-        judgedValue(supplied, judged),
-        result,
-        path,
-        found,
-        "object",
-        credited,
-      );
+      return;
+    const copy = copiedFrom.get(supplied);
+    const kind = rebuiltKind(copy?.of ?? supplied, result, found, credited);
+    if (
+      kind !== undefined &&
+      (copy === undefined || !takenAsOwn(copy, node, found))
+    )
+      recordContentLoss(kind, path, found, "object");
   };
 };
 
@@ -2715,11 +2805,11 @@ const rebuildChecks = {
  * `unstated` is set.
  *
  * A struct rebuilds a built-in too, and where normalisation copied the value it read, the value
- * itself is judged ({@link copiedFrom}), unless a declaration may have taken it as its own, as
- * {@link structLoss} says. A field given under a key rename's wire name is compared on the read step
+ * itself is judged ({@link copiedFrom}), unless another schema there may take it as its own, as
+ * {@link takenAsOwn} says. A field given under a key rename's wire name is compared on the read step
  * with the field it was read into. An unwrapping Option codec's payload is compared whichever side
- * it was given on, but a class's own instance there is left to a class in the union on the decoded
- * side, which 0.20.1 did not compare.
+ * it was given on. A class's own instance is the class's to write, so in the payload of a `Some`
+ * given on the decoded side, a union leaves it to a class among its members.
  *
  * For JSON, the canonical codec of `Schema.ObjectKeyword` also copies only the top-level string
  * fields of an object and the positions of an array. Everywhere else a symbol field or a built-in
@@ -2814,16 +2904,15 @@ function rebuildCheck(
     };
   };
   /**
-   * What is compared at this very position, where the node rebuilds the object. `credited` and
-   * `judged` say how a struct judges it, as {@link structLoss} describes.
+   * What is compared at this very position, where the node rebuilds the object. `credited` is what
+   * a struct there credits a default with, as {@link structLoss} says.
    */
   const here = (
     node: Ast,
     credited: ReadonlyArray<PropertyKey> | undefined,
-    judged: Judged = "caller",
   ): RebuildCheck | undefined => {
     if (rebuildsRecord(node)) return recordLoss(node);
-    if (node._tag === "Objects") return structLoss(node, credited, judged);
+    if (node._tag === "Objects") return structLoss(node, credited);
     if (
       step !== "writeJson" ||
       node._tag !== "ObjectKeyword" ||
@@ -2851,7 +2940,7 @@ function rebuildCheck(
    * including one the read did not reach, such as an instance below a hand-written transformation
    * or inside another instance kept as given. The declaration's codec builds what is at its
    * position and reads the value through its fields as it chooses, so where its fields' struct is
-   * compared only own fields count, and a copy normalisation made is judged as it is.
+   * compared only own fields count.
    */
   const declaration = (
     node: Ast,
@@ -2861,12 +2950,12 @@ function rebuildCheck(
     const positions = inner(fields, builder);
     const rebuilt = both(
       here(node, undefined),
-      both(here(fields, undefined, "copy"), positions),
+      both(here(fields, undefined), positions),
     );
     const isOwnInstance = ownInstanceTest(node);
     /** Plain data holds nothing outside its fields, and a class writes its own instance as them. */
-    const holdsOwn = (value: object) =>
-      isPlain(value) || isOwnInstance?.(value) === true;
+    const holdsOwn = (value: object, found: Found) =>
+      isPlain(value) || isOwnInstance?.(value, found) === true;
     if (step === "read")
       return (supplied, result, path, found) => {
         if (isObject(result))
@@ -2874,7 +2963,7 @@ function rebuildCheck(
             found,
             node,
             result,
-            isObject(supplied) && holdsOwn(callersValue(supplied)),
+            isObject(supplied) && holdsOwn(callersValue(supplied), found),
           );
         rebuilt?.(supplied, result, path, found);
       };
@@ -2996,25 +3085,17 @@ function rebuildCheck(
           builder === "alone" && readers.length > 1
             ? namesReadBy(readers)
             : undefined;
-        // Effect writes the first member that accepts the caller's value, and a declaration that
-        // reads an object may accept it as its own, so a struct after one judges a copy as it is.
-        const first = node.types.findIndex(takesAsOwn);
-        const members = node.types.flatMap((member, index) => {
+        const members = node.types.flatMap((member) => {
           const check =
             readers.length > 1
-              ? checkAt(
-                  member,
-                  credited,
-                  "shared",
-                  first !== -1 && index > first ? "copy" : "caller",
-                )
+              ? checkAt(member, credited, "shared")
               : build(member, builder);
           return check === undefined ? [] : [[member, check] as const];
         });
         if (members.length === 0) return undefined;
         // A class's own instance is the class's to write. In the payload of a Some given on the
-        // decoded side, which 0.20.1 did not compare, an instance a class in the union takes as its
-        // own is left to that class, even where a member before it read the instance.
+        // decoded side, an instance a class in the union takes as its own is left to that class,
+        // even where a member before it read the instance.
         const owners = node.types.flatMap((member) => {
           const owns = ownInstanceTest(member);
           return owns === undefined ? [] : [owns];
@@ -3024,7 +3105,7 @@ function rebuildCheck(
             owners.length > 0 &&
             (found.someDepth ?? 0) > 0 &&
             isObject(supplied) &&
-            owners.some((owns) => owns(callersValue(supplied)))
+            owners.some((owns) => owns(callersValue(supplied), found))
           )
             return;
           for (const [member, check] of members)
@@ -3045,20 +3126,19 @@ function rebuildCheck(
     }
   };
   /**
-   * The checks at a position, where `credited` is what a struct there credits a default with, and
-   * `judged` which value it judges, as {@link structLoss} says.
+   * The checks at a position, where `credited` is what a struct there credits a default with, as
+   * {@link structLoss} says.
    */
   const checkAt = (
     node: Ast,
     credited: ReadonlyArray<PropertyKey> | undefined,
     builder: Builder,
-    judged: Judged = "caller",
   ): RebuildCheck | undefined => {
     // An unwrapping Option codec such as OptionFromOptionalKey ends in a struct, as a class does,
     // but is read as its payload.
     const fields = classFields(node);
     return fields === undefined || readsOptionPayload(node)
-      ? both(here(node, credited, judged), inner(node, builder))
+      ? both(here(node, credited), inner(node, builder))
       : declaration(node, fields, builder);
   };
   const make = (node: Ast, builder: Builder): RebuildCheck | undefined =>

@@ -923,10 +923,20 @@ the schema does with it. These are the places where it cannot, and what happens 
   the payload of an Option codec such as `OptionFromNullOr`, given on either side of the codec. A
   field the built-in holds without listing it, such as an `Error`'s `message`, is one of its own
   fields. A name it only inherits, such as a `URL`'s `href`, can hold its content, so a struct that
-  reads one keeps what it read. In a union, a class or codec before the struct may take the value as
-  its own, as Effect writes the first member that accepts it, so there the struct's reading is sent.
-  Where that codec writes more than the struct's fields, as one that adds an `Error`'s `name`, it is
-  sent without it ([#396](https://github.com/viell-dev/slop-effect-schema-http/issues/396)). An
+  reads one keeps what it read. Where preparation copied the value for a strict read, as it does
+  beside a union or to bring out such a field, another schema there may take the value as its own,
+  and then the struct's reading is sent. That is so for a class whose own instance it is, in either
+  member order, and for a declaration Effect tries before the struct, as Effect writes the first
+  member that accepts the value. Such a declaration may be in a nested union, in `Schema.NullOr`,
+  behind `Schema.suspend` or in an earlier member of an enclosing union. Where the declaration would
+  write something else, the struct's reading is sent all the same, such as one that adds an
+  `Error`'s `name`, or `Schema.Date` given a `Date` holding a field with a key no member states
+  ([#396](https://github.com/viell-dev/slop-effect-schema-http/issues/396)). Effect's built-in
+  declarations, such as `Schema.Date` and `Schema.URL`, and Effect's classes are asked whether they
+  take the value. Any other declaration, such as one `Schema.instanceOf` or `Schema.declare` makes,
+  is taken to accept it, since its check is its author's code. So the struct's reading is still sent
+  after such a declaration that would refuse the value, and where a declaration passes the value on
+  to its own struct ([#399](https://github.com/viell-dev/slop-effect-schema-http/issues/399)). An
   empty struct keeps the value as given. A class, such as a `Schema.Error`, writes its own instance,
   or one it built from plain data, as its fields, and another codec writes what it built from plain
   data as it chooses. That holds where preparation reads the caller's value at that position. A
@@ -940,8 +950,9 @@ the schema does with it. These are the places where it cannot, and what happens 
   record could have rebuilt what the codec writes
   ([#374](https://github.com/viell-dev/slop-effect-schema-http/issues/374)). A `Schema.Error` or
   `Schema.TaggedError` is still refused in a union with a struct, a record or another class that
-  could have built what it writes, other than as the payload of a `Some` given on an unwrapping
-  codec's decoded side, and where preparation does not read the value given there: its instance
+  could have built what it writes, unless preparation copied its instance to bring out a field it
+  does not list or the instance is the payload of a `Some` given on an unwrapping codec's decoded
+  side. It is also still refused where preparation does not read the value given there: its instance
   inside another instance kept as given, as in a recursive class's instance, and its instance or
   plain data below a hand-written transformation
   ([#350](https://github.com/viell-dev/slop-effect-schema-http/issues/350)). A field a default fills

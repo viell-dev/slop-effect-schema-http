@@ -254,9 +254,10 @@ than sent without it, and the message says why where it can. In these examples `
   `The schema cannot keep this Map as a record`, or `as an object` for `Schema.ObjectKeyword` and a
   struct, at the path the caller used. See
   [#337](https://github.com/viell-dev/slop-effect-schema-http/issues/337) for the schemas where a
-  built-in is still sent as `{}` or as a struct's defaults, and
+  built-in is still sent as `{}` or as a struct's defaults,
   [#375](https://github.com/viell-dev/slop-effect-schema-http/issues/375) for a `Schema.Class` that
-  reads it.
+  reads it, and [#399](https://github.com/viell-dev/slop-effect-schema-http/issues/399) for a struct
+  that reads it after a declaration taken to accept it.
 
 Every other field the refusal cannot keep is named too, even one that would be kept once another
 named value is corrected, because no reading shows that it would be. A reading of the whole value on
