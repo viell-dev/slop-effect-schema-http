@@ -57,18 +57,33 @@
   a field given under its wire name. A `Map`, a `Set`, an `Option.none()` and the other values the
   plain struct refuses are refused too, and so is a `URLSearchParams`, `Map` or `Headers` given to a
   renamed query or header group. A struct that reads a field the value holds without listing it,
-  such as an `Error`'s `message`, now refuses beside or in a union as it already did on its own. A
-  record in such a `Some` now also refuses a built-in or a symbol field it would drop, as it already
-  did for a value given on the codec's encoded side. Class instances with fields, typed arrays, an
-  `Option.some`, a `Result` and plain objects are read by their own fields as before. A struct that
-  reads a name the value only inherits, such as a `URL`'s `href` or a `Map`'s `size`, still sends
-  it, a codec that reads the built-in itself still writes it, and an empty struct keeps the value as
-  given. Convert the value to plain data first. `ObjectKeyword`'s JSON codec below a rename, a field
-  below an integer-like rename, a struct with a default in a union beside a class, another codec,
-  `Schema.Unknown` or `Schema.Void`, or in a field of a union member, a `Schema.StructWithRest` with
-  a default, a union of tagged structs with a member behind `Schema.suspend`, and a `Schema.Class`
-  with fields can still send a built-in as `{}` or as the struct's defaults
-  ([#337](https://github.com/viell-dev/slop-effect-schema-http/issues/337)).
+  such as an `Error`'s `message`, now refuses beside or in a union as it already did on its own. In
+  a union, a class or codec before the struct may take the value as its own, as Effect writes the
+  first member that accepts it, so there the struct's reading is sent as on 0.20.1
+  ([#396](https://github.com/viell-dev/slop-effect-schema-http/issues/396) records where the codec
+  would write more). A record in such a `Some` now also refuses a built-in or a symbol field it
+  would drop, as it already did for a value given on the codec's encoded side, and so does a struct
+  or record before a `Schema.Error` class in a union in a `Some`, given the class's instance, as
+  0.20.1 already refuses that union outside a `Some`
+  ([#350](https://github.com/viell-dev/slop-effect-schema-http/issues/350)). Class instances with
+  fields, typed arrays, an `Option.some`, a `Result` and plain objects are read by their own fields
+  as before. A struct that reads a name the value only inherits, such as a `URL`'s `href` or a
+  `Map`'s `size`, still sends it, a codec that reads the built-in itself writes it as on 0.20.1
+  ([#374](https://github.com/viell-dev/slop-effect-schema-http/issues/374) records where it does
+  not), and an empty struct keeps the value as given. Every request that 0.20.1 sent and that does
+  not refuse sends the same bytes. Convert the value to plain data first. `ObjectKeyword`'s JSON
+  codec below a rename, a field below an integer-like rename, a struct with a default in a union
+  beside a class, another codec, `Schema.Unknown` or `Schema.Void`, or in a field of a union member,
+  a `Schema.StructWithRest` with a default, and a union of tagged structs with a member behind
+  `Schema.suspend` can still send a built-in as `{}` or as the struct's defaults
+  ([#337](https://github.com/viell-dev/slop-effect-schema-http/issues/337)), and so can a
+  `Schema.Class` with fields
+  ([#375](https://github.com/viell-dev/slop-effect-schema-http/issues/375)).
+- The rebuild comparison reads a caller's value that is not plain data more often on the routes it
+  now covers: once per comparison, it reads the value's kind with `Object.prototype.toString`, which
+  runs a `Symbol.toStringTag` getter, and its `toJSON` where the value has no own enumerable field,
+  as the plain struct route already did. A value whose getter throws there now fails preparation
+  with a defect on those routes too.
 
 ## 0.20.1 — 2026-11-28
 

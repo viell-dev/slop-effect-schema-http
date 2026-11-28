@@ -923,29 +923,34 @@ the schema does with it. These are the places where it cannot, and what happens 
   the payload of an Option codec such as `OptionFromNullOr`, given on either side of the codec. A
   field the built-in holds without listing it, such as an `Error`'s `message`, is one of its own
   fields. A name it only inherits, such as a `URL`'s `href`, can hold its content, so a struct that
-  reads one keeps what it read. An empty struct keeps the value as given. A class, such as a
-  `Schema.Error`, writes its own instance, or one it built from plain data, as its fields, and
-  another codec writes what it built from plain data as it chooses. That holds where preparation
-  reads the caller's value at that position. A value a class's fields read from anything else, or a
-  built-in a codec takes as its own, is compared as above. So is a value built to pass a class's
-  check, such as a `Date` given the class's prototype, or a `Map`, an `Error` or a proxy that
-  carries its marker. A value built from the class's own prototype that holds what its instances
-  hold, such as an `Error` given an Error class's prototype, cannot be told from an instance and is
-  written as the class writes its fields. A proxy of an Error class's instance that holds none of
-  its fields cannot be told from a proxy of a built-in, and is compared as above. So a codec's own
-  built-in is refused where its struct or record could have rebuilt what the codec writes
+  reads one keeps what it read. In a union, a class or codec before the struct may take the value as
+  its own, as Effect writes the first member that accepts it, so there the struct's reading is sent.
+  Where that codec writes more than the struct's fields, as one that adds an `Error`'s `name`, it is
+  sent without it ([#396](https://github.com/viell-dev/slop-effect-schema-http/issues/396)). An
+  empty struct keeps the value as given. A class, such as a `Schema.Error`, writes its own instance,
+  or one it built from plain data, as its fields, and another codec writes what it built from plain
+  data as it chooses. That holds where preparation reads the caller's value at that position. A
+  value a class's fields read from anything else, or a built-in a codec takes as its own, is
+  compared as above. So is a value built to pass a class's check, such as a `Date` given the class's
+  prototype, or a `Map`, an `Error` or a proxy that carries its marker. A value built from the
+  class's own prototype that holds what its instances hold, such as an `Error` given an Error
+  class's prototype, cannot be told from an instance and is written as the class writes its fields.
+  A proxy of an Error class's instance that holds none of its fields cannot be told from a proxy of
+  a built-in, and is compared as above. So a codec's own built-in is refused where its struct or
+  record could have rebuilt what the codec writes
   ([#374](https://github.com/viell-dev/slop-effect-schema-http/issues/374)). A `Schema.Error` or
   `Schema.TaggedError` is still refused in a union with a struct, a record or another class that
-  could have built what it writes, and where preparation does not read the value given there: its
-  instance inside another instance kept as given, as in a recursive class's instance, and its
-  instance or plain data below a hand-written transformation
-  ([#350](https://github.com/viell-dev/slop-effect-schema-http/issues/350)). A field a default
-  fills counts as holding nothing of the value only where nothing else could have written it, so a
-  struct with a default can still send a built-in as its defaults in a union beside a class,
-  another codec, `Schema.Unknown` or `Schema.Void`, in a field of a union member, and as
-  `Schema.StructWithRest`, and so can a union of tagged structs with a member behind
-  `Schema.suspend`. `Schema.ObjectKeyword`'s JSON codec below a rename, which rebuilds on the
-  written side, and a field below an integer-like rename can still send a built-in as `{}` too
+  could have built what it writes, other than as the payload of a `Some` given on an unwrapping
+  codec's decoded side, and where preparation does not read the value given there: its instance
+  inside another instance kept as given, as in a recursive class's instance, and its instance or
+  plain data below a hand-written transformation
+  ([#350](https://github.com/viell-dev/slop-effect-schema-http/issues/350)). A field a default fills
+  counts as holding nothing of the value only where nothing else could have written it, so a struct
+  with a default can still send a built-in as its defaults in a union beside a class, another codec,
+  `Schema.Unknown` or `Schema.Void`, in a field of a union member, and as `Schema.StructWithRest`,
+  and so can a union of tagged structs with a member behind `Schema.suspend`.
+  `Schema.ObjectKeyword`'s JSON codec below a rename, which rebuilds on the written side, and a
+  field below an integer-like rename can still send a built-in as `{}` too
   ([#337](https://github.com/viell-dev/slop-effect-schema-http/issues/337)). So can a built-in that
   a `Schema.Class` other than an Error class reads
   ([#375](https://github.com/viell-dev/slop-effect-schema-http/issues/375)). Not covered: a symbol
