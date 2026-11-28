@@ -201,18 +201,35 @@ const RenamedList = Schema.Struct({ group: Schema.Array(Holder) }).pipe(
   Schema.encodeKeys({ group: "wire_group" }),
 );
 
+// Beside the sibling given under its wire name, `Payload`'s optional fields could read the `None`
+// wrapper itself, so only the library's strict read takes the value. The refusal names the wrapper
+// with the library's own message, not that read's excess-property error at `wire_count`.
+// https://github.com/viell-dev/slop-effect-schema-http/issues/351
+const wrapperRefused = {
+  path: '["held"]',
+  message:
+    'The schema cannot keep this field with the rest of the value at ["held"]',
+};
 for (const [wrapper, held] of [
   ["Some", some],
   ["None", none],
 ] as const) {
-  for (const [label, schema, input, decodedKey, wireKey] of [
-    ["renamed field", RenamedField, { wire_held: held }, "held", "wire_held"],
+  for (const [label, schema, input, decodedKey, wireKey, noneRefused] of [
+    [
+      "renamed field",
+      RenamedField,
+      { wire_held: held },
+      "held",
+      "wire_held",
+      undefined,
+    ],
     [
       "renamed sibling",
       RenamedSibling,
       { held, wire_count: "2" },
       "count",
       "wire_count",
+      wrapperRefused,
     ],
     [
       "renamed ancestor",
@@ -220,24 +237,32 @@ for (const [wrapper, held] of [
       { wire_group: { held } },
       "group",
       "wire_group",
+      undefined,
     ],
-    ["renamed class", RenamedClass, { wire_held: held }, "held", "wire_held"],
+    [
+      "renamed class",
+      RenamedClass,
+      { wire_held: held },
+      "held",
+      "wire_held",
+      undefined,
+    ],
     [
       "list below a renamed ancestor",
       RenamedList,
       { wire_group: [{ held }] },
       "group",
       "wire_group",
+      undefined,
     ],
   ] as const) {
+    const expected =
+      wrapper === "Some"
+        ? { path: `["${decodedKey}"]`, message: undefined }
+        : (noneRefused ?? { path: `["${wireKey}"]`, message: undefined });
     it.live(
       `[EXT-68] ${wrapper} on the encoded side refuses through a ${label}`,
-      () =>
-        refuses(
-          schema,
-          input,
-          `["${wrapper === "Some" ? decodedKey : wireKey}"]`,
-        ),
+      () => refuses(schema, input, expected.path, expected.message),
     );
   }
 }
